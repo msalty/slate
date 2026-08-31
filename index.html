@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1"
+    />
+    <meta name="theme-color" content="#1c1c1e" />
+    <meta name="description" content="Local-first markdown notes that sync everywhere." />
+    <!-- The standard tag; Chrome deprecated the apple-prefixed one. -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <!-- Still required: iOS Safari reads only the prefixed form, and without it
+         an installed PWA opens inside Safari chrome instead of standalone. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Slate" />
+    <link rel="apple-touch-icon" href="./icons/icon-192.png" />
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <title>Slate</title>
+    <style>
+      /* Paint the shell colour before the CSS bundle lands, so a cold start on
+         a slow connection doesn't flash white in dark mode. */
+      html {
+        background: #fff;
+      }
+      @media (prefers-color-scheme: dark) {
+        html:not([data-theme='light']) {
+          background: #1c1c1e;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <noscript>Slate needs JavaScript to run.</noscript>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
