@@ -284,9 +284,9 @@ export function MobileScopeBar() {
         onClick={() => {
           scope.value = { kind: 'all' }
         }}
-        aria-label="Clear filter"
+        aria-label={`Close ${scopeLabel(s)}`}
       >
-        Clear
+        Close
       </button>
     </div>
   )
