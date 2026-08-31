@@ -21,6 +21,17 @@
   display: flex;
   flex-direction: column;
   height: 100%;
+  /*
+   * dvh follows mobile Safari's collapsing toolbar, so the column ends exactly
+   * at the visible bottom edge and the fixed tab bar lands where it looks like
+   * it should. `height:100%` above is the fallback for browsers without dvh.
+   *
+   * Deliberately not `position:fixed;inset:0`: in an installed iOS PWA the
+   * fixed containing block doesn't reliably resolve to the visual viewport, and
+   * the column comes up short — which presents as "the bar sits too high" even
+   * though the bar's own numbers are fine.
+   */
+  height: 100dvh;
   overflow: hidden;
 }
 
@@ -199,19 +210,48 @@
   letter-spacing: -0.025em;
 }
 
-/* --- bottom pill bar ---------------------------------------------------- */
+/* --- bottom pill bar ----------------------------------------------------
+ *
+ * A floating, translucent stadium rather than a bar welded to the bottom edge.
+ * It exists only in compact mode — the wide and medium layouts never render a
+ * <MobileNav>, so there is no docked variant to switch between here.
+ *
+ * Being out of flow is the whole point: content scrolls *under* it and blurs
+ * through the frosted background. The cost is that nothing below it reserves
+ * space any more, so every phone scroller pads itself by --nav-clear (bottom of
+ * this file, plus .list-scroll, .toast and .conflict-banner in app.css).
+ *
+ * --nav-h, --nav-gap and --nav-clear are defined in app.css.
+ */
 
 .tabbar {
-  flex: 0 0 auto;
+  position: fixed;
+  /* Inset from the edges so it reads as hovering, not as one more card. */
+  left: max(16px, env(safe-area-inset-left, 0px));
+  right: max(16px, env(safe-area-inset-right, 0px));
+  bottom: var(--nav-gap);
+  height: var(--nav-h);
   display: grid;
   grid-auto-flow: column;
   grid-auto-columns: 1fr;
   gap: 2px;
-  padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
-  background: var(--sidebar-bg);
-  backdrop-filter: saturate(180%) blur(20px);
-  border-top: 1px solid var(--border);
-  position: relative;
+  /* Inset the segments so a selected tab reads as a pill inside a pill. */
+  padding: 4px 6px;
+  /* Half the height: a true stadium, derived so it survives a height change. */
+  border-radius: calc(var(--nav-h) / 2);
+  border: 1px solid var(--border);
+  /*
+   * Frosted glass. The alpha has to stay meaningfully below 1 or the blur has
+   * nothing to show through it; --sidebar-bg is already translucent, and
+   * thinning it further keeps the effect visible in both themes.
+   */
+  background: var(--sidebar-bg); /* fallback where color-mix is unsupported */
+  background: color-mix(in srgb, var(--sidebar-bg) 85%, transparent);
+  backdrop-filter: saturate(180%) blur(14px);
+  -webkit-backdrop-filter: saturate(180%) blur(14px);
+  box-shadow: var(--shadow-float);
+  /* Keeps tap highlights and the selected pill inside the stadium. */
+  overflow: hidden;
   z-index: 20;
 }
 
@@ -219,12 +259,12 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
-  padding: 6px 0 4px;
-  border-radius: 12px;
+  justify-content: center;
+  gap: 3px;
+  /* Full-height segments: the target is the whole pill, not just the glyph. */
+  height: 100%;
+  border-radius: calc(var(--nav-h) / 2);
   color: var(--text-faint);
-  /* Comfortably above the 44px minimum touch target. */
-  min-height: 48px;
   transition: color var(--dur), background var(--dur);
   -webkit-tap-highlight-color: transparent;
 }
@@ -246,7 +286,9 @@
 }
 .tabbar-badge {
   position: absolute;
-  top: -5px;
+  /* The pill has less headroom than a full-width bar had, so sit a touch
+     lower — clear of the stadium's top edge, which clips it. */
+  top: -3px;
   right: -10px;
   min-width: 16px;
   height: 16px;
@@ -258,6 +300,16 @@
   font-weight: 700;
   line-height: 16px;
   text-align: center;
+}
+
+/*
+ * Room for the floating pill at the end of every phone scroller, so the last
+ * row can be scrolled clear of it instead of hiding underneath. .list-scroll
+ * gets the same treatment in app.css, where its phone padding already lives.
+ */
+.mobile-view .rail-scroll,
+.more-scroll {
+  padding-bottom: calc(var(--nav-clear) + 20px);
 }
 
 /* --- the editor, pushed over the current tab ---------------------------- */
@@ -314,7 +366,6 @@
 .more-scroll {
   flex: 1 1 auto;
   overflow-y: auto;
-  padding-bottom: 20px;
   -webkit-overflow-scrolling: touch;
 }
 .more-group {
