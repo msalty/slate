@@ -1,0 +1,459 @@
+/** Smart lists, the folder tree, Tag Folders, and tags. */
+
+import { useState } from 'preact/hooks'
+import { allTags, attachments, createNote, notes, tasks, trashItems, unresolvedLinks } from '../core/vault'
+import {
+  createFolder,
+  deleteFolder,
+  deleteSmartFolder,
+  deleteSmartFolderTree,
+  folderTree,
+  isGroupFolder,
+  moveSmartFolder,
+  renameFolder,
+  smartFolderAncestors,
+  smartFolderCounts,
+  smartFolderError,
+  smartFolderList,
+  smartFolders,
+  smartFolderTree,
+  type FolderNode,
+  type SmartNode,
+} from '../core/folders'
+import { parseQuery, tagsInQuery, folderInQuery } from '../core/tagquery'
+import { notify, openNote, scope, type Scope } from './state'
+import { openMenu, useLongPress, type MenuItem } from './Menu'
+import { openTagFolderDialog } from './TagFolderDialog'
+import { closeDrawer } from './layout'
+import {
+  IconCheck,
+  IconChevron,
+  IconFolder,
+  IconLink,
+  IconNotes,
+  IconPaperclip,
+  IconPlus,
+  IconTag,
+  IconTrash,
+} from './Icons'
+
+function sameScope(a: Scope, b: Scope): boolean {
+  if (a.kind !== b.kind) return false
+  if (a.kind === 'folder' && b.kind === 'folder') return a.path === b.path
+  if (a.kind === 'tag' && b.kind === 'tag') return a.tag === b.tag
+  if (a.kind === 'smart' && b.kind === 'smart') return a.id === b.id
+  return a.kind !== 'day'
+}
+
+/** Selecting anything in the sidebar dismisses it when it's a drawer. */
+function select(s: Scope) {
+  scope.value = s
+  closeDrawer()
+}
+
+function Row({
+  target,
+  icon,
+  name,
+  count,
+  indent = 0,
+  onContextMenu,
+  longPress,
+  children,
+}: {
+  target: Scope
+  icon: preact.ComponentChildren
+  name: preact.ComponentChildren
+  count?: number
+  indent?: number
+  onContextMenu?: (e: MouseEvent) => void
+  longPress?: ReturnType<typeof useLongPress>
+  children?: preact.ComponentChildren
+}) {
+  const current = sameScope(scope.value, target)
+  return (
+    <button
+      class="side-row"
+      aria-current={current}
+      style={{ paddingLeft: `${10 + indent * 15}px` }}
+      onClick={() => select(target)}
+      onContextMenu={onContextMenu}
+      {...(longPress ?? {})}
+    >
+      {children}
+      <span class="side-icon">{icon}</span>
+      <span class="side-name">{name}</span>
+      {count !== undefined && count > 0 && <span class="side-count">{count}</span>}
+    </button>
+  )
+}
+
+function folderMenu(node: FolderNode) {
+  return [
+    {
+      label: 'New note here',
+      onSelect: async () => {
+        openNote(await createNote(node.path, 'Untitled'))
+      },
+    },
+    {
+      label: 'New subfolder…',
+      onSelect: async () => {
+        const name = prompt(`New folder inside "${node.name}"`, '')
+        if (!name?.trim()) return
+        const path = await createFolder(node.path, name)
+        select({ kind: 'folder', path })
+        notify(`Created ${path}`)
+      },
+    },
+    {
+      label: 'Rename…',
+      separated: true,
+      onSelect: async () => {
+        const name = prompt('Rename folder', node.name)
+        if (!name?.trim() || name === node.name) return
+        try {
+          const dest = await renameFolder(node.path, name)
+          select({ kind: 'folder', path: dest })
+          notify('Folder renamed')
+        } catch (e) {
+          notify((e as Error).message, 'error')
+        }
+      },
+    },
+    {
+      label: 'Delete folder',
+      danger: true,
+      onSelect: async () => {
+        const n = node.count
+        const msg = n
+          ? `Move "${node.name}" and its ${n} note${n === 1 ? '' : 's'} to Recently Deleted?`
+          : `Delete the empty folder "${node.name}"?`
+        if (!confirm(msg)) return
+        await deleteFolder(node.path)
+        select({ kind: 'all' })
+        notify(n ? `${n} note${n === 1 ? '' : 's'} moved to Recently Deleted` : 'Folder deleted')
+      },
+    },
+  ]
+}
+
+function FolderRow({ node, depth }: { node: FolderNode; depth: number }) {
+  const [open, setOpen] = useState(depth < 1)
+  const hasKids = node.children.length > 0
+  const longPress = useLongPress(() => folderMenu(node), () => node.name)
+
+  return (
+    <>
+      <Row
+        target={{ kind: 'folder', path: node.path }}
+        icon={<IconFolder size={15} />}
+        name={node.name}
+        count={node.count}
+        indent={depth}
+        longPress={longPress}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          openMenu(e, folderMenu(node), node.name)
+        }}
+      >
+        {hasKids ? (
+          <span
+            class="disclose"
+            data-open={open}
+            role="button"
+            tabIndex={0}
+            aria-label={open ? 'Collapse' : 'Expand'}
+            onClick={(e) => {
+              e.stopPropagation()
+              setOpen(!open)
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.stopPropagation()
+                e.preventDefault()
+                setOpen(!open)
+              }
+            }}
+          >
+            <IconChevron size={11} />
+          </span>
+        ) : (
+          <span class="disclose" />
+        )}
+      </Row>
+      {open && node.children.map((c) => <FolderRow key={c.path} node={c} depth={depth + 1} />)}
+    </>
+  )
+}
+
+/**
+ * Its own component so `useLongPress` is called at a stable position — hooks
+ * inside a `.map()` over a list that changes length would desync.
+ */
+function SmartFolderRow({ node }: { node: SmartNode }) {
+  const sf = node.folder
+  const [open, setOpen] = useState(true)
+  const hasKids = node.children.length > 0
+  const error = smartFolderError(sf)
+  const group = isGroupFolder(sf.id)
+  const count = smartFolderCounts.value.get(sf.id)
+
+  const items: MenuItem[] = [
+    { label: 'Edit rule…', onSelect: () => openTagFolderDialog(sf) },
+    {
+      label: 'New folder inside…',
+      onSelect: () => openTagFolderDialog(undefined, sf.id),
+    },
+    {
+      label: 'New note with these tags',
+      disabled: group,
+      onSelect: async () => {
+        const parsed = parseQuery(sf.query)
+        if (!parsed.node) return
+        // Seed with every tag the folder's own rule requires, plus anything
+        // inherited from its parents, so the new note actually lands in it.
+        const inherited = smartFolderAncestors(sf.id)
+          .filter(() => sf.inherit !== false)
+          .flatMap((a) => {
+            const p = parseQuery(a.query)
+            return p.node ? tagsInQuery(p.node) : []
+          })
+        const tags = [...new Set([...inherited, ...tagsInQuery(parsed.node)])]
+        const body = tags.length ? `${tags.map((t) => `#${t}`).join(' ')}\n\n` : ''
+        openNote(await createNote(folderInQuery(parsed.node) ?? '', 'Untitled', body))
+      },
+    },
+    {
+      label: sf.parentId ? 'Move…' : 'Move into…',
+      separated: true,
+      onSelect: () => {
+        // Every folder except this one and its own descendants is a legal home.
+        const options = smartFolderList.value
+          .map((n) => n.folder)
+          .filter((f) => f.id !== sf.id && !isUnder(f.id, sf.id))
+        openMenu(
+          { clientX: window.innerWidth / 2, clientY: window.innerHeight / 2 },
+          [
+            {
+              label: 'Top level',
+              disabled: !sf.parentId,
+              onSelect: async () => {
+                await moveSmartFolder(sf.id, undefined)
+                notify('Moved to the top level')
+              },
+            },
+            ...options.map((f) => ({
+              label: `${'　'.repeat(smartFolderAncestors(f.id).length)}${f.icon ?? '🏷️'} ${f.name}`,
+              disabled: f.id === sf.parentId,
+              onSelect: async () => {
+                await moveSmartFolder(sf.id, f.id)
+                notify(`Moved into "${f.name}"`)
+              },
+            })),
+          ],
+          `Move "${sf.name}" into`,
+        )
+      },
+    },
+    {
+      label: hasKids ? 'Delete, keeping what’s inside' : 'Delete Tag Folder',
+      danger: true,
+      separated: true,
+      onSelect: async () => {
+        const msg = hasKids
+          ? `Delete "${sf.name}"? The ${node.children.length} folder${node.children.length === 1 ? '' : 's'} inside move up a level. No notes are affected.`
+          : `Delete "${sf.name}"? The notes it gathers are not affected.`
+        if (!confirm(msg)) return
+        await deleteSmartFolder(sf.id)
+        if (scope.value.kind === 'smart' && scope.value.id === sf.id) scope.value = { kind: 'all' }
+      },
+    },
+  ]
+
+  if (hasKids) {
+    items.push({
+      label: 'Delete with everything inside',
+      danger: true,
+      onSelect: async () => {
+        if (!confirm(`Delete "${sf.name}" and every folder inside it? No notes are affected.`)) return
+        const n = await deleteSmartFolderTree(sf.id)
+        if (scope.value.kind === 'smart') scope.value = { kind: 'all' }
+        notify(`Deleted ${n} Tag Folders`)
+      },
+    })
+  }
+
+  const longPress = useLongPress(
+    () => items,
+    () => sf.name,
+  )
+
+  return (
+    <>
+      <Row
+        target={{ kind: 'smart', id: sf.id }}
+        icon={<span class="side-emoji">{sf.icon ?? '🏷️'}</span>}
+        name={
+          <>
+            {sf.name}
+            {error && (
+              <span class="side-warn" title={error}>
+                {' !'}
+              </span>
+            )}
+          </>
+        }
+        count={count}
+        indent={node.depth}
+        longPress={longPress}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          openMenu(e, items, sf.name)
+        }}
+      >
+        {hasKids ? (
+          <span
+            class="disclose"
+            data-open={open}
+            role="button"
+            tabIndex={0}
+            aria-label={open ? 'Collapse' : 'Expand'}
+            onClick={(e) => {
+              e.stopPropagation()
+              setOpen(!open)
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.stopPropagation()
+                e.preventDefault()
+                setOpen(!open)
+              }
+            }}
+          >
+            <IconChevron size={11} />
+          </span>
+        ) : (
+          <span class="disclose" />
+        )}
+      </Row>
+      {open && node.children.map((c) => <SmartFolderRow key={c.folder.id} node={c} />)}
+    </>
+  )
+}
+
+/** True when `id` sits anywhere beneath `ancestorId`. */
+function isUnder(id: string, ancestorId: string): boolean {
+  return smartFolderAncestors(id).some((a) => a.id === ancestorId)
+}
+
+export function Sidebar() {
+  const tree = folderTree.value
+  const openTasks = tasks.value.filter((t) => !t.done).length
+  const trash = trashItems().length
+  const unlinked = unresolvedLinks.value.size
+
+  return (
+    <div class="sidebar-scroll">
+      <div class="side-group">
+        <Row
+          target={{ kind: 'all' }}
+          icon={<IconNotes size={15} />}
+          name="All Notes"
+          count={notes.value.length}
+        />
+        <Row target={{ kind: 'tasks' }} icon={<IconCheck size={15} />} name="Tasks" count={openTasks} />
+        <Row
+          target={{ kind: 'files' }}
+          icon={<IconPaperclip size={15} />}
+          name="Files"
+          count={attachments.value.length}
+        />
+        {unlinked > 0 && (
+          <Row
+            target={{ kind: 'unlinked' }}
+            icon={<IconLink size={15} />}
+            name="Unlinked"
+            count={unlinked}
+          />
+        )}
+        <Row
+          target={{ kind: 'trash' }}
+          icon={<IconTrash size={15} />}
+          name="Recently Deleted"
+          count={trash}
+        />
+      </div>
+
+      <div class="side-group">
+        <div class="side-group-label">
+          <span>Folders</span>
+          <button
+            class="side-add"
+            title="New folder"
+            aria-label="New folder"
+            onClick={async () => {
+              const name = prompt('New folder', '')
+              if (!name?.trim()) return
+              const path = await createFolder('', name)
+              select({ kind: 'folder', path })
+            }}
+          >
+            <IconPlus size={13} />
+          </button>
+        </div>
+        {tree.children.length === 0 ? (
+          <p class="side-hint">No folders yet.</p>
+        ) : (
+          tree.children.map((c) => <FolderRow key={c.path} node={c} depth={0} />)
+        )}
+      </div>
+
+      <div class="side-group">
+        <div class="side-group-label">
+          <span>Tag Folders</span>
+          <button
+            class="side-add"
+            title="New Tag Folder"
+            aria-label="New Tag Folder"
+            onClick={() => openTagFolderDialog()}
+          >
+            <IconPlus size={13} />
+          </button>
+        </div>
+        {smartFolders.value.length === 0 ? (
+          <p class="side-hint">
+            Saved rules like <code>#work AND #active</code> that gather notes automatically.
+          </p>
+        ) : (
+          smartFolderTree.value.map((n) => <SmartFolderRow key={n.folder.id} node={n} />)
+        )}
+      </div>
+
+      {allTags.value.length > 0 && (
+        <div class="side-group">
+          <div class="side-group-label">
+            <span>Tags</span>
+          </div>
+          <div class="tag-cloud">
+            {allTags.value.slice(0, 80).map((t) => {
+              const current = scope.value.kind === 'tag' && scope.value.tag === t.tag
+              return (
+                <button
+                  key={t.tag}
+                  class="tag-chip"
+                  aria-current={current}
+                  onClick={() => select({ kind: 'tag', tag: t.tag })}
+                  title={`${t.count} note${t.count === 1 ? '' : 's'}`}
+                >
+                  <IconTag size={11} />
+                  {t.tag}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
