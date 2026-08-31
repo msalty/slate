@@ -1,0 +1,7 @@
+# Install artifacts. package-lock.json is tracked; the tree it expands to is not.
+node_modules/
+
+# dist/ IS tracked on purpose — it is the deployed build. Its source maps are
+# not: `sourcemap: true` emits them next to the bundles on every build, and
+# they have never been part of what ships.
+dist/**/*.map
