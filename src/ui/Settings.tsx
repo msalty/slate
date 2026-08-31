@@ -470,12 +470,23 @@ function displayInfo() {
   el.remove()
 
   const app = document.getElementById('app')?.getBoundingClientRect()
+  const installed = matchMedia('(display-mode: standalone)').matches
+  /*
+   * How much shorter the web view is than the screen. In a browser tab this is
+   * just the chrome and means nothing; installed, it is the band of dead space
+   * below the app that no amount of CSS can paint into, because the page was
+   * never handed those pixels. That is a web-view sizing problem — on iOS,
+   * apple-mobile-web-app-status-bar-style.
+   */
+  const short = installed ? Math.round(screen.height - innerHeight) : 0
   return {
     w: Math.round(innerWidth),
     h: Math.round(innerHeight),
+    screenH: Math.round(screen.height),
     inset,
     overhang: app ? Math.round(app.bottom - innerHeight) : 0,
-    installed: matchMedia('(display-mode: standalone)').matches,
+    short: short > 1 ? short : 0,
+    installed,
   }
 }
 
@@ -543,8 +554,11 @@ function UpdatePanel() {
       Build {formatBuild(BUILD_ID)}
       <br />
       <span style={{ color: 'var(--text-faint)' }}>
-        {d.w}×{d.h} · {d.installed ? 'installed' : 'browser tab'} · safe area{' '}
+        {d.w}×{d.h} of {d.screenH} · {d.installed ? 'installed' : 'browser tab'} · safe area{' '}
         {d.inset.top}/{d.inset.right}/{d.inset.bottom}/{d.inset.left}
+        {d.short > 0 && (
+          <span style={{ color: 'var(--danger)' }}> · view is {d.short}px short of the screen</span>
+        )}
         {d.overhang !== 0 && (
           <span style={{ color: 'var(--danger)' }}> · shell overhangs by {d.overhang}px</span>
         )}

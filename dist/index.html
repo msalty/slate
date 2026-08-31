@@ -13,7 +13,28 @@
     <!-- Still required: iOS Safari reads only the prefixed form, and without it
          an installed PWA opens inside Safari chrome instead of standalone. -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <!--
+      `default`, not `black-translucent`.
+
+      black-translucent is the tempting one: it promises an edge-to-edge web
+      view with the app painting under the status bar. What it delivers on an
+      installed iOS PWA is a view that does not reach the bottom of the screen —
+      a band of dead space below the app that no CSS inside the page can fill,
+      because the page was never given that space to paint into. It also drags
+      in a set of long-standing standalone-mode layout quirks around how the
+      viewport and the safe-area insets relate.
+
+      With `default`, iOS insets the web view itself for the status bar,
+      safe-area-inset-top reports 0 in standalone, and the view extends to the
+      bottom edge like every other app on the phone. The layout needs no
+      compensation for it: the insets are read through env() in shell.css, so
+      they simply resolve to 0 at the top and the home-indicator height at the
+      bottom, and the shell is correct without being told anything.
+
+      Only use black-translucent if you actually want content painted under the
+      status bar — edge-to-edge hero imagery. A bottom bar is not a reason to.
+    -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="Slate" />
     <link rel="apple-touch-icon" href="./icons/icon-192.png" />
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
@@ -30,7 +51,7 @@
         }
       }
     </style>
-    <script type="module" crossorigin src="./assets/index-CYqCnVqZ.js"></script>
+    <script type="module" crossorigin src="./assets/index-pMsRz_Pb.js"></script>
     <link rel="modulepreload" crossorigin href="./assets/codemirror-BDmWegcT.js">
     <link rel="stylesheet" crossorigin href="./assets/index-zkbyaS0I.css">
   <link rel="manifest" href="./manifest.webmanifest"></head>

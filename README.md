@@ -313,6 +313,14 @@ Android Chrome: menu → Install app. iOS Safari: Share → Add to Home Screen �
 this is the only way to install on iOS, and it is what gets you offline support
 and a real app icon there.
 
+**A note on the iOS status bar.** `apple-mobile-web-app-status-bar-style` is
+`default`, and changing it to `black-translucent` will break the layout in a way
+that looks unrelated: the installed app stops reaching the bottom of the screen,
+leaving a band of dead space below it that no CSS can fill, because the page is
+never handed those pixels. Settings › About reports the view height against the
+screen height, which is the fastest way to spot it. The safe-area insets are read
+through `env()` in `shell.css` and need no adjustment either way.
+
 **Updating it.** Settings › About shows the running build and a **Check for
 updates** button. Use it rather than reloading: a newly deployed build installs
 in the background and then *waits*, because a service worker cannot take over
