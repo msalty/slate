@@ -791,6 +791,30 @@ try {
   })
   check('the sync status bar is on screen, not below the fold', statusVisible)
 
+  /* ---- Settings › About: the update controls ------------------------------ */
+  // The full stale-build scenario needs two builds and a swappable server, so it
+  // is not reproduced here. This just holds the panel itself honest: the buttons
+  // exist, and a check against a server that has nothing newer says so rather
+  // than reloading or hanging.
+  await page.click('.pane-head .icon-btn[title^="Settings"]')
+  await page.waitForSelector('.dialog')
+  await page.click('.tab:has-text("About")')
+  await page.waitForSelector('.callout:has-text("Build")')
+  const aboutText = await page.locator('.callout:has-text("Build")').innerText()
+  check('About shows which build is running', /Build \d{4}-\d{2}-\d{2}/.test(aboutText), aboutText.split('\n')[1])
+  check('About offers an update button', (await page.locator('.dialog .btn:has-text("Check for updates")').count()) === 1)
+  check('About offers the reinstall escape hatch', (await page.locator('.dialog .btn:has-text("Reinstall")').count()) === 1)
+  await page.click('.dialog .btn:has-text("Check for updates")')
+  await page.waitForTimeout(2500)
+  const checked = await page.locator('.callout:has-text("Build")').innerText()
+  check(
+    'checking for updates reports back instead of hanging',
+    /newest build|nothing to update|not running Slate/i.test(checked),
+    checked.split('\n').slice(1).join(' / ').slice(0, 110),
+  )
+  await page.click('.dialog-foot .btn-primary')
+  await page.waitForTimeout(200)
+
   let minEditor = Infinity
   let anyOverflow = false
   let strandedDrawer = false

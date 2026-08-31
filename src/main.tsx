@@ -13,6 +13,7 @@
 import { render } from 'preact'
 import { App } from './ui/App'
 import { initVault, applySharedSettingsSafe } from './app/boot'
+import { apply as applyUpdate, setPluginUpdater, updateReady } from './app/update'
 import './styles/app.css'
 
 const root = document.getElementById('app')!
@@ -42,19 +43,28 @@ async function registerServiceWorker() {
   if (!('serviceWorker' in navigator)) return
   try {
     const { registerSW } = await import('virtual:pwa-register')
-    registerSW({
+    const updateSW = registerSW({
       immediate: true,
       onNeedRefresh() {
-        // A new build is waiting. Don't interrupt: the user reloads when ready.
+        // A new build is waiting. Don't interrupt: the user updates when ready.
+        updateReady.value = true
         const bar = document.createElement('div')
         bar.className = 'toast'
-        bar.textContent = 'A new version is ready — reload to update.'
+        bar.textContent = 'A new version is ready — tap to update.'
         bar.style.cursor = 'pointer'
-        bar.onclick = () => location.reload()
+        /*
+         * Not location.reload(). A waiting worker cannot take over while the
+         * old one still controls this page, and reloading does not release it,
+         * so a plain reload lands back on the same build — the update stays
+         * stuck until every tab is closed. applyUpdate() tells the new worker
+         * to skip waiting first.
+         */
+        bar.onclick = () => void applyUpdate()
         document.body.appendChild(bar)
         setTimeout(() => bar.remove(), 12000)
       },
     })
+    setPluginUpdater(updateSW)
   } catch (e) {
     console.warn('[slate] service worker not registered', e)
   }

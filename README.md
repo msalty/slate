@@ -313,6 +313,17 @@ Android Chrome: menu → Install app. iOS Safari: Share → Add to Home Screen �
 this is the only way to install on iOS, and it is what gets you offline support
 and a real app icon there.
 
+**Updating it.** Settings › About shows the running build and a **Check for
+updates** button. Use it rather than reloading: a newly deployed build installs
+in the background and then *waits*, because a service worker cannot take over
+while the old one still controls an open page — and reloading does not release
+it. Reloading therefore lands you on the same build no matter how many times you
+try, which is why stale installs have a reputation for needing site data
+cleared. The button tells the waiting build to take over and then reloads onto
+it. Next to it, **Reinstall** unregisters the worker and empties the app's
+caches before re-downloading — the same ground as clearing the browser cache,
+scoped to the app. Neither touches your notes; those live in IndexedDB.
+
 ---
 
 ## How your notes are stored
