@@ -313,13 +313,23 @@ Android Chrome: menu → Install app. iOS Safari: Share → Add to Home Screen �
 this is the only way to install on iOS, and it is what gets you offline support
 and a real app icon there.
 
-**A note on the iOS status bar.** `apple-mobile-web-app-status-bar-style` is
-`default`, and changing it to `black-translucent` will break the layout in a way
-that looks unrelated: the installed app stops reaching the bottom of the screen,
-leaving a band of dead space below it that no CSS can fill, because the page is
-never handed those pixels. Settings › About reports the view height against the
-screen height, which is the fastest way to spot it. The safe-area insets are read
-through `env()` in `shell.css` and need no adjustment either way.
+**Two lines in `index.html` are load-bearing on iOS**, and both fail the same
+way: the installed app stops reaching the bottom of the screen, leaving a band
+of dead space below it that no CSS can fill, because the page is never handed
+those pixels.
+
+- The `viewport` meta must keep `viewport-fit=cover`. Without it iOS letterboxes
+  the app inside the safe area, and every `env(safe-area-inset-*)` reads `0`, so
+  nothing in the stylesheet can even detect the situation. It is written on one
+  line with no spaces, matching a configuration known to work; reformatting it
+  is the kind of tidy-up that quietly brings the bands back.
+- `apple-mobile-web-app-status-bar-style` must be `default`. `black-translucent`
+  asks for an edge-to-edge web view and returns one shorter than the screen.
+
+Neither is observable outside a real installed iOS PWA — simulators, desktop
+Safari and headless Chromium all render correctly either way — so the smoke
+suite asserts both on the markup, and Settings › About reports the view height
+against the screen height, which is the fastest way to spot it on a device.
 
 **Updating it.** Settings › About shows the running build and a **Check for
 updates** button. Use it rather than reloading: a newly deployed build installs

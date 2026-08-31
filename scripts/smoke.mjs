@@ -96,6 +96,22 @@ try {
   await page.waitForSelector('.shell', { timeout: 10_000 })
   check('app boots', true)
 
+  /* ---- iOS standalone landmines -------------------------------------------
+   * Neither of these can be observed anywhere but a real installed iOS PWA —
+   * headless Chromium, desktop Safari and the simulators all render correctly
+   * either way — so they are asserted on the markup instead. Both have already
+   * cost a round of "the app doesn't reach the bottom of the screen": without
+   * viewport-fit=cover iOS letterboxes the app inside the safe area, and
+   * black-translucent hands back a web view shorter than the screen.
+   */
+  const head = await page.evaluate(() => ({
+    viewport: document.querySelector('meta[name=viewport]')?.content ?? '',
+    statusBar:
+      document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]')?.content ?? '',
+  }))
+  check('the viewport opts into the whole screen', /viewport-fit=cover/.test(head.viewport), head.viewport)
+  check('the iOS status bar style is default', head.statusBar === 'default', head.statusBar)
+
   /* ---- create a note ------------------------------------------------ */
   await page.click('[title^="New note"]')
   await page.waitForSelector('.cm-editor')
