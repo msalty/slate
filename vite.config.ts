@@ -16,6 +16,16 @@ export default defineConfig({
    * depth. Set VITE_BASE=/subdir/ if you need absolute paths anyway.
    */
   base: process.env.VITE_BASE ?? './',
+  /*
+   * A build stamp, so "Check for updates" has something to show for itself.
+   * Without a visible version the button is an act of faith: you click it, the
+   * app reloads, and you still cannot tell whether anything changed.
+   */
+  define: {
+    __BUILD_ID__: JSON.stringify(
+      new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z'),
+    ),
+  },
   plugins: [
     preact(),
     VitePWA({

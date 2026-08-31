@@ -8,6 +8,7 @@ import { requestPersistence, storageEstimate } from '../core/db'
 import { listAll } from '../core/vault'
 import { formatBytes } from '../core/util'
 import { notify, settingsOpen } from './state'
+import { apply, BUILD_ID, check, reinstall, updateReady } from '../app/update'
 import { IconClose, IconWarn } from './Icons'
 
 type Tab = 'sync' | 'editor' | 'files' | 'about'
@@ -416,6 +417,8 @@ export function Settings() {
                 Request persistent storage
               </button>
 
+              <UpdatePanel />
+
               <div class="callout" style={{ marginTop: 18 }}>
                 <strong>Keyboard</strong>
                 <br />
@@ -432,6 +435,159 @@ export function Settings() {
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+/* ---------------------------------------------------------------- updating */
+
+/**
+ * What the browser is actually giving us to lay out in.
+ *
+ * An installed iOS PWA cannot be inspected — no dev tools, no URL bar — so when
+ * the shell sits wrong on a device there is otherwise nothing to go on but a
+ * photograph. These are the three numbers that decide it: the viewport, the
+ * safe-area insets, and whether the shell's box ends flush with the bottom of
+ * the screen. A non-zero overhang there means the insets are being counted
+ * twice, which is exactly what a bar floating too high looks like.
+ */
+function displayInfo() {
+  // env() values are not readable directly; resolve them through the used
+  // padding of a throwaway element.
+  const el = document.createElement('div')
+  el.style.cssText =
+    'position:fixed;top:0;left:0;width:0;height:0;visibility:hidden;' +
+    'padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) ' +
+    'env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)'
+  document.body.append(el)
+  const cs = getComputedStyle(el)
+  const inset = {
+    top: Math.round(parseFloat(cs.paddingTop) || 0),
+    right: Math.round(parseFloat(cs.paddingRight) || 0),
+    bottom: Math.round(parseFloat(cs.paddingBottom) || 0),
+    left: Math.round(parseFloat(cs.paddingLeft) || 0),
+  }
+  el.remove()
+
+  const app = document.getElementById('app')?.getBoundingClientRect()
+  const installed = matchMedia('(display-mode: standalone)').matches
+  /*
+   * How much shorter the web view is than the screen. In a browser tab this is
+   * just the chrome and means nothing; installed, it is the band of dead space
+   * below the app that no amount of CSS can paint into, because the page was
+   * never handed those pixels. That is a web-view sizing problem — on iOS,
+   * apple-mobile-web-app-status-bar-style.
+   */
+  const short = installed ? Math.round(screen.height - innerHeight) : 0
+  return {
+    w: Math.round(innerWidth),
+    h: Math.round(innerHeight),
+    screenH: Math.round(screen.height),
+    inset,
+    overhang: app ? Math.round(app.bottom - innerHeight) : 0,
+    short: short > 1 ? short : 0,
+    installed,
+  }
+}
+
+/** `20260831T201000Z` → `2026-08-31 20:10 UTC`. */
+function formatBuild(id: string): string {
+  const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})/.exec(id)
+  return m ? `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]} UTC` : id
+}
+
+/**
+ * Check for, and install, a new build.
+ *
+ * This exists because the honest answer to "just reload" is that it does not
+ * work: a newly installed service worker waits for the old one to lose control
+ * of every open page, and reloading never releases it. Short of closing all
+ * tabs or clearing site data, there is otherwise no way out of a stale build
+ * from inside the app — which is exactly the corner this button unsticks.
+ */
+function UpdatePanel() {
+  const [busy, setBusy] = useState<'check' | 'reinstall' | undefined>(undefined)
+  const [said, setSaid] = useState<string>()
+  const waiting = updateReady.value
+  const d = displayInfo()
+
+  const upgrade = async () => {
+    setBusy('check')
+    setSaid(undefined)
+    try {
+      // Something already waiting means the check is done — go straight to it.
+      if (!waiting) {
+        const r = await check()
+        if (r === 'unsupported') {
+          setSaid('This browser is not running Slate from a service worker, so there is nothing to update — a normal reload always gets the latest build.')
+          return
+        }
+        if (r === 'current') {
+          setSaid('Slate is already on the newest build.')
+          return
+        }
+      }
+      setSaid('New build installed — restarting…')
+      await apply()
+    } catch (e) {
+      setSaid((e as Error).message || 'The update check failed.')
+    } finally {
+      setBusy(undefined)
+    }
+  }
+
+  const force = async () => {
+    setBusy('reinstall')
+    setSaid(undefined)
+    try {
+      await reinstall()
+    } catch (e) {
+      setSaid((e as Error).message)
+      setBusy(undefined)
+    }
+  }
+
+  return (
+    <div class="callout" style={{ marginTop: 18 }}>
+      <strong>Version</strong>
+      <br />
+      Build {formatBuild(BUILD_ID)}
+      <br />
+      <span style={{ color: 'var(--text-faint)' }}>
+        {d.w}×{d.h} of {d.screenH} · {d.installed ? 'installed' : 'browser tab'} · safe area{' '}
+        {d.inset.top}/{d.inset.right}/{d.inset.bottom}/{d.inset.left}
+        {d.short > 0 && (
+          <span style={{ color: 'var(--danger)' }}> · view is {d.short}px short of the screen</span>
+        )}
+        {d.overhang !== 0 && (
+          <span style={{ color: 'var(--danger)' }}> · shell overhangs by {d.overhang}px</span>
+        )}
+      </span>
+      {waiting && (
+        <>
+          <br />
+          <span style={{ color: 'var(--accent)' }}>A newer build is installed and ready.</span>
+        </>
+      )}
+      {said && (
+        <>
+          <br />
+          {said}
+        </>
+      )}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+        <button class="btn btn-primary" onClick={() => void upgrade()} disabled={!!busy}>
+          {busy === 'check' ? 'Updating…' : waiting ? 'Update and restart' : 'Check for updates'}
+        </button>
+        <button class="btn" onClick={() => void force()} disabled={!!busy}>
+          {busy === 'reinstall' ? 'Reinstalling…' : 'Reinstall'}
+        </button>
+      </div>
+      <small style={{ display: 'block', marginTop: 8, color: 'var(--text-faint)' }}>
+        Reinstall throws away the cached copy of the app and downloads it again — the same effect as
+        clearing the browser cache, without touching anything else the browser holds for this site.
+        Your notes live in a separate database and are not affected. Needs a connection.
+      </small>
     </div>
   )
 }

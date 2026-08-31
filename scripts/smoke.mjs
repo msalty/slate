@@ -96,6 +96,22 @@ try {
   await page.waitForSelector('.shell', { timeout: 10_000 })
   check('app boots', true)
 
+  /* ---- iOS standalone landmines -------------------------------------------
+   * Neither of these can be observed anywhere but a real installed iOS PWA —
+   * headless Chromium, desktop Safari and the simulators all render correctly
+   * either way — so they are asserted on the markup instead. Both have already
+   * cost a round of "the app doesn't reach the bottom of the screen": without
+   * viewport-fit=cover iOS letterboxes the app inside the safe area, and
+   * black-translucent hands back a web view shorter than the screen.
+   */
+  const head = await page.evaluate(() => ({
+    viewport: document.querySelector('meta[name=viewport]')?.content ?? '',
+    statusBar:
+      document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]')?.content ?? '',
+  }))
+  check('the viewport opts into the whole screen', /viewport-fit=cover/.test(head.viewport), head.viewport)
+  check('the iOS status bar style is default', head.statusBar === 'default', head.statusBar)
+
   /* ---- create a note ------------------------------------------------ */
   await page.click('[title^="New note"]')
   await page.waitForSelector('.cm-editor')
@@ -791,6 +807,30 @@ try {
   })
   check('the sync status bar is on screen, not below the fold', statusVisible)
 
+  /* ---- Settings › About: the update controls ------------------------------ */
+  // The full stale-build scenario needs two builds and a swappable server, so it
+  // is not reproduced here. This just holds the panel itself honest: the buttons
+  // exist, and a check against a server that has nothing newer says so rather
+  // than reloading or hanging.
+  await page.click('.pane-head .icon-btn[title^="Settings"]')
+  await page.waitForSelector('.dialog')
+  await page.click('.tab:has-text("About")')
+  await page.waitForSelector('.callout:has-text("Build")')
+  const aboutText = await page.locator('.callout:has-text("Build")').innerText()
+  check('About shows which build is running', /Build \d{4}-\d{2}-\d{2}/.test(aboutText), aboutText.split('\n')[1])
+  check('About offers an update button', (await page.locator('.dialog .btn:has-text("Check for updates")').count()) === 1)
+  check('About offers the reinstall escape hatch', (await page.locator('.dialog .btn:has-text("Reinstall")').count()) === 1)
+  await page.click('.dialog .btn:has-text("Check for updates")')
+  await page.waitForTimeout(2500)
+  const checked = await page.locator('.callout:has-text("Build")').innerText()
+  check(
+    'checking for updates reports back instead of hanging',
+    /newest build|nothing to update|not running Slate/i.test(checked),
+    checked.split('\n').slice(1).join(' / ').slice(0, 110),
+  )
+  await page.click('.dialog-foot .btn-primary')
+  await page.waitForTimeout(200)
+
   let minEditor = Infinity
   let anyOverflow = false
   let strandedDrawer = false
@@ -845,6 +885,42 @@ try {
 
   check('no horizontal overflow on a phone', !(await overflows()))
   await page.screenshot({ path: join(SHOTS, '10-phone-notes.png') })
+
+  /* ---- notched phone ------------------------------------------------------
+   * Headless Chromium reports every safe-area inset as 0, so a notch is
+   * simulated by injecting literals where the env() values land. This guards a
+   * bug that shipped: with the insets on <body> and a dvh height on #app, the
+   * padding pushed the shell down while its height went on measuring a full
+   * viewport, so the column overhung the bottom of the screen by the height of
+   * the notch and the end of every list was unreachable. On a real iPhone it
+   * read as "the app doesn't go all the way to the bottom".
+   */
+  const NOTCH = { top: 59, bottom: 34 }
+  await page.addStyleTag({
+    content: `#app{padding-top:${NOTCH.top}px !important}
+              .tabbar{bottom:max(12px,${NOTCH.bottom}px) !important}
+              :root{--nav-gap:max(12px,${NOTCH.bottom}px) !important}`,
+  })
+  await page.waitForTimeout(300)
+  const notched = await page.evaluate(() => {
+    const app = document.getElementById('app').getBoundingClientRect()
+    const nav = document.querySelector('.tabbar').getBoundingClientRect()
+    const sc = document.querySelector('.mobile-stack .list-scroll').getBoundingClientRect()
+    return {
+      overhang: Math.round(app.bottom - window.innerHeight),
+      contentTop: Math.round(document.querySelector('.shell').getBoundingClientRect().top),
+      gapBelowPill: Math.round(window.innerHeight - nav.bottom),
+      scrollerShort: Math.round(window.innerHeight - sc.bottom),
+    }
+  })
+  check('notched: the shell ends flush with the bottom edge', notched.overhang === 0, `overhangs ${notched.overhang}px`)
+  check('notched: content clears the notch', notched.contentTop === NOTCH.top, `top ${notched.contentTop}`)
+  check('notched: the pill clears the home indicator by exactly the inset', notched.gapBelowPill === NOTCH.bottom, `${notched.gapBelowPill}px`)
+  check('notched: the list scroller reaches the bottom edge', notched.scrollerShort === 0, `${notched.scrollerShort}px short`)
+  await page.evaluate(() => document.head.querySelectorAll('style').forEach((s) => {
+    if (s.textContent.includes('--nav-gap')) s.remove()
+  }))
+  await page.waitForTimeout(200)
 
   await page.locator('.tabbar-item:has-text("Tasks")').click()
   await page.waitForTimeout(350)

@@ -26,6 +26,21 @@
   --list-w: 320px;
   --rail-w: 300px;
 
+  /*
+   * The floating phone tab bar (see shell.css). These live here because three
+   * separate things have to agree on them: the pill itself, the bottom padding
+   * of every phone scroller, and anything else pinned to the bottom edge — the
+   * toast and the conflict banner. Change --nav-h and they all follow.
+   *
+   * --nav-gap is the distance from the bottom of the screen to the pill: 12px
+   * on a plain screen, the home-indicator inset on devices that have one.
+   * max() rather than a sum, so the two never stack into a huge gap.
+   * --nav-clear is everything the pill occupies, measured from the screen edge.
+   */
+  --nav-h: 58px;
+  --nav-gap: max(12px, env(safe-area-inset-bottom, 0px));
+  --nav-clear: calc(var(--nav-h) + var(--nav-gap));
+
   --radius: 10px;
   --radius-lg: 14px;
   --dur: 140ms;
@@ -142,10 +157,22 @@
 }
 
 html,
-body,
-#app {
+body {
   height: 100%;
   margin: 0;
+  /*
+   * The app scrolls internally — every list and the editor own their own
+   * scroller — so a scrolled *body* is always a bug. On iOS it is the one that
+   * slides the whole app up after a rotation or a keyboard dismissal, taking
+   * the fixed tab bar with it. Pinning it here is cheaper than chasing it.
+   */
+  overflow: hidden;
+}
+
+html {
+  /* Stops iOS inflating body text a step after a landscape→portrait rotation. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {
@@ -155,9 +182,11 @@ body {
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
   overscroll-behavior: none;
-  /* Keep the layout out from under iOS home indicators and notches. */
-  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
-    env(safe-area-inset-left);
+  /*
+   * No safe-area padding here. #app owns the insets (shell.css) because it is
+   * the element sized to the viewport; splitting them across both is what made
+   * the shell overhang the bottom of the screen on a notched phone.
+   */
 }
 
 button {
@@ -1380,8 +1409,9 @@ textarea {
     padding-left: 14px;
     padding-right: 14px;
   }
+  /* The tab bar floats above the list, so the last row needs room to clear it. */
   .list-scroll {
-    padding: 0 10px 24px;
+    padding: 0 10px calc(var(--nav-clear) + 20px);
   }
   .note-row {
     padding: 11px 12px;
@@ -1422,14 +1452,15 @@ textarea {
   .dialog-foot {
     padding-bottom: calc(12px + env(safe-area-inset-bottom));
   }
+  /* Anything else pinned to the bottom sits above the pill, never under it. */
   .toast {
-    bottom: calc(78px + env(safe-area-inset-bottom));
+    bottom: calc(var(--nav-clear) + 14px);
   }
   .conflict-banner {
     position: fixed;
     left: 0;
     right: 0;
-    bottom: calc(66px + env(safe-area-inset-bottom));
+    bottom: calc(var(--nav-clear) + 10px);
     z-index: 25;
     border-top: 1px solid var(--border);
   }

@@ -44,13 +44,26 @@ export const drawer = signal<'sidebar' | 'rail' | null>(null)
 export function installLayoutWatcher(): () => void {
   const onResize = () => {
     viewportWidth.value = window.innerWidth
+    /*
+     * Nothing in this app ever scrolls the body — every list and the editor own
+     * their own scroller — so a scrolled body is always iOS having done it to
+     * us, usually on a rotation or when the keyboard closes. It drags the whole
+     * shell up and leaves the floating tab bar somewhere in the middle of the
+     * screen. Putting it back here is the cheap fix.
+     */
+    window.scrollTo(0, 0)
+  }
+  const onOrientation = () => {
+    onResize()
+    // Safari settles on the new viewport a beat after the event fires.
+    setTimeout(onResize, 60)
   }
   addEventListener('resize', onResize, { passive: true })
-  addEventListener('orientationchange', onResize)
+  addEventListener('orientationchange', onOrientation)
   onResize()
   return () => {
     removeEventListener('resize', onResize)
-    removeEventListener('orientationchange', onResize)
+    removeEventListener('orientationchange', onOrientation)
   }
 }
 

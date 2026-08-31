@@ -313,6 +313,35 @@ Android Chrome: menu → Install app. iOS Safari: Share → Add to Home Screen �
 this is the only way to install on iOS, and it is what gets you offline support
 and a real app icon there.
 
+**Two lines in `index.html` are load-bearing on iOS**, and both fail the same
+way: the installed app stops reaching the bottom of the screen, leaving a band
+of dead space below it that no CSS can fill, because the page is never handed
+those pixels.
+
+- The `viewport` meta must keep `viewport-fit=cover`. Without it iOS letterboxes
+  the app inside the safe area, and every `env(safe-area-inset-*)` reads `0`, so
+  nothing in the stylesheet can even detect the situation. It is written on one
+  line with no spaces, matching a configuration known to work; reformatting it
+  is the kind of tidy-up that quietly brings the bands back.
+- `apple-mobile-web-app-status-bar-style` must be `default`. `black-translucent`
+  asks for an edge-to-edge web view and returns one shorter than the screen.
+
+Neither is observable outside a real installed iOS PWA — simulators, desktop
+Safari and headless Chromium all render correctly either way — so the smoke
+suite asserts both on the markup, and Settings › About reports the view height
+against the screen height, which is the fastest way to spot it on a device.
+
+**Updating it.** Settings › About shows the running build and a **Check for
+updates** button. Use it rather than reloading: a newly deployed build installs
+in the background and then *waits*, because a service worker cannot take over
+while the old one still controls an open page — and reloading does not release
+it. Reloading therefore lands you on the same build no matter how many times you
+try, which is why stale installs have a reputation for needing site data
+cleared. The button tells the waiting build to take over and then reloads onto
+it. Next to it, **Reinstall** unregisters the worker and empties the app's
+caches before re-downloading — the same ground as clearing the browser cache,
+scoped to the app. Neither touches your notes; those live in IndexedDB.
+
 ---
 
 ## How your notes are stored
