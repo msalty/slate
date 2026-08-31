@@ -870,6 +870,42 @@ try {
   check('no horizontal overflow on a phone', !(await overflows()))
   await page.screenshot({ path: join(SHOTS, '10-phone-notes.png') })
 
+  /* ---- notched phone ------------------------------------------------------
+   * Headless Chromium reports every safe-area inset as 0, so a notch is
+   * simulated by injecting literals where the env() values land. This guards a
+   * bug that shipped: with the insets on <body> and a dvh height on #app, the
+   * padding pushed the shell down while its height went on measuring a full
+   * viewport, so the column overhung the bottom of the screen by the height of
+   * the notch and the end of every list was unreachable. On a real iPhone it
+   * read as "the app doesn't go all the way to the bottom".
+   */
+  const NOTCH = { top: 59, bottom: 34 }
+  await page.addStyleTag({
+    content: `#app{padding-top:${NOTCH.top}px !important}
+              .tabbar{bottom:max(12px,${NOTCH.bottom}px) !important}
+              :root{--nav-gap:max(12px,${NOTCH.bottom}px) !important}`,
+  })
+  await page.waitForTimeout(300)
+  const notched = await page.evaluate(() => {
+    const app = document.getElementById('app').getBoundingClientRect()
+    const nav = document.querySelector('.tabbar').getBoundingClientRect()
+    const sc = document.querySelector('.mobile-stack .list-scroll').getBoundingClientRect()
+    return {
+      overhang: Math.round(app.bottom - window.innerHeight),
+      contentTop: Math.round(document.querySelector('.shell').getBoundingClientRect().top),
+      gapBelowPill: Math.round(window.innerHeight - nav.bottom),
+      scrollerShort: Math.round(window.innerHeight - sc.bottom),
+    }
+  })
+  check('notched: the shell ends flush with the bottom edge', notched.overhang === 0, `overhangs ${notched.overhang}px`)
+  check('notched: content clears the notch', notched.contentTop === NOTCH.top, `top ${notched.contentTop}`)
+  check('notched: the pill clears the home indicator by exactly the inset', notched.gapBelowPill === NOTCH.bottom, `${notched.gapBelowPill}px`)
+  check('notched: the list scroller reaches the bottom edge', notched.scrollerShort === 0, `${notched.scrollerShort}px short`)
+  await page.evaluate(() => document.head.querySelectorAll('style').forEach((s) => {
+    if (s.textContent.includes('--nav-gap')) s.remove()
+  }))
+  await page.waitForTimeout(200)
+
   await page.locator('.tabbar-item:has-text("Tasks")').click()
   await page.waitForTimeout(350)
   check('Tasks tab shows tasks', (await page.locator('.task-row').count()) > 0)

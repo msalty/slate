@@ -441,6 +441,44 @@ export function Settings() {
 
 /* ---------------------------------------------------------------- updating */
 
+/**
+ * What the browser is actually giving us to lay out in.
+ *
+ * An installed iOS PWA cannot be inspected — no dev tools, no URL bar — so when
+ * the shell sits wrong on a device there is otherwise nothing to go on but a
+ * photograph. These are the three numbers that decide it: the viewport, the
+ * safe-area insets, and whether the shell's box ends flush with the bottom of
+ * the screen. A non-zero overhang there means the insets are being counted
+ * twice, which is exactly what a bar floating too high looks like.
+ */
+function displayInfo() {
+  // env() values are not readable directly; resolve them through the used
+  // padding of a throwaway element.
+  const el = document.createElement('div')
+  el.style.cssText =
+    'position:fixed;top:0;left:0;width:0;height:0;visibility:hidden;' +
+    'padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) ' +
+    'env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)'
+  document.body.append(el)
+  const cs = getComputedStyle(el)
+  const inset = {
+    top: Math.round(parseFloat(cs.paddingTop) || 0),
+    right: Math.round(parseFloat(cs.paddingRight) || 0),
+    bottom: Math.round(parseFloat(cs.paddingBottom) || 0),
+    left: Math.round(parseFloat(cs.paddingLeft) || 0),
+  }
+  el.remove()
+
+  const app = document.getElementById('app')?.getBoundingClientRect()
+  return {
+    w: Math.round(innerWidth),
+    h: Math.round(innerHeight),
+    inset,
+    overhang: app ? Math.round(app.bottom - innerHeight) : 0,
+    installed: matchMedia('(display-mode: standalone)').matches,
+  }
+}
+
 /** `20260831T201000Z` → `2026-08-31 20:10 UTC`. */
 function formatBuild(id: string): string {
   const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})/.exec(id)
@@ -460,6 +498,7 @@ function UpdatePanel() {
   const [busy, setBusy] = useState<'check' | 'reinstall' | undefined>(undefined)
   const [said, setSaid] = useState<string>()
   const waiting = updateReady.value
+  const d = displayInfo()
 
   const upgrade = async () => {
     setBusy('check')
@@ -502,6 +541,14 @@ function UpdatePanel() {
       <strong>Version</strong>
       <br />
       Build {formatBuild(BUILD_ID)}
+      <br />
+      <span style={{ color: 'var(--text-faint)' }}>
+        {d.w}×{d.h} · {d.installed ? 'installed' : 'browser tab'} · safe area{' '}
+        {d.inset.top}/{d.inset.right}/{d.inset.bottom}/{d.inset.left}
+        {d.overhang !== 0 && (
+          <span style={{ color: 'var(--danger)' }}> · shell overhangs by {d.overhang}px</span>
+        )}
+      </span>
       {waiting && (
         <>
           <br />

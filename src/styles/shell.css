@@ -32,7 +32,33 @@
    * though the bar's own numbers are fine.
    */
   height: 100dvh;
+  /*
+   * The safe-area insets belong HERE, on the element that is exactly one
+   * viewport tall, and nowhere else. box-sizing is border-box, so they eat
+   * inward and the box still ends at the bottom edge of the screen.
+   *
+   * They used to sit on <body> instead, which silently broke the moment this
+   * element got a dvh height: the padding pushed #app down the page while its
+   * height went on measuring a full viewport, so the column overhung the bottom
+   * of the screen by the height of the notch and the last ~59px of every list
+   * was simply unreachable. One owner for the insets makes that unrepresentable.
+   *
+   * No bottom inset on a phone — see the compact override below.
+   */
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+    env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
   overflow: hidden;
+}
+
+/*
+ * On a phone the floating tab bar clears the home indicator itself, and every
+ * sheet and menu pads its own bottom, so reserving it here too would push the
+ * shell up off the bottom edge — the thing this whole comment block is about.
+ */
+@media (max-width: 760px) {
+  #app {
+    padding-bottom: 0;
+  }
 }
 
 .shell {

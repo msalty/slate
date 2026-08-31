@@ -183,13 +183,10 @@ body {
   -webkit-font-smoothing: antialiased;
   overscroll-behavior: none;
   /*
-   * Keep the layout out from under iOS home indicators and notches. On a phone
-   * the bottom inset is dropped again (see the compact block at the end of this
-   * file): there the floating tab bar owns the bottom edge and every sheet
-   * already pads itself, so keeping it here only double-counted the inset.
+   * No safe-area padding here. #app owns the insets (shell.css) because it is
+   * the element sized to the viewport; splitting them across both is what made
+   * the shell overhang the bottom of the screen on a notched phone.
    */
-  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
-    env(safe-area-inset-left);
 }
 
 button {
@@ -1407,14 +1404,6 @@ textarea {
 @media (max-width: 760px) {
   :root {
     --editor-measure: 100%;
-  }
-  /*
-   * The phone shell runs edge to edge and the floating tab bar clears the home
-   * indicator itself, so the body must not reserve that space a second time.
-   * Sheets, menus and the editor pane each carry their own bottom inset.
-   */
-  body {
-    padding-bottom: 0;
   }
   .editor-host .cm-content {
     padding-left: 14px;
