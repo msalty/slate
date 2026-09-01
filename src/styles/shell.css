@@ -355,8 +355,18 @@
     opacity: 0.4;
   }
 }
+/*
+ * Sit above the keyboard rather than behind it. The layout viewport does not
+ * shrink when the keyboard opens, so without this the end of the note — and
+ * whatever you are typing — is underneath it. `--kb-inset` is published by the
+ * keyboard watcher in layout.ts and is 0 whenever there is no keyboard.
+ */
+.editor-overlay {
+  padding-bottom: var(--kb-inset, 0px);
+}
 .editor-overlay .editor-pane {
-  padding-bottom: env(safe-area-inset-bottom);
+  /* The home indicator is covered by the keyboard, so its inset is redundant. */
+  padding-bottom: max(0px, calc(env(safe-area-inset-bottom, 0px) - var(--kb-inset, 0px)));
 }
 
 /* --- current-filter strip above the list -------------------------------- */

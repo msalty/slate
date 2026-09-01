@@ -9,11 +9,27 @@
  * That is the whole reason this approach was chosen over a document-model
  * WYSIWYG: there is no serialization step that could quietly rewrite the user's
  * file, so a round-trip is lossless by construction.
+ *
+ * Two modes share all of this:
+ *
+ *   - `live` reveals the source of whatever the caret is inside. You see
+ *     `**bold**` while you are editing that word, and bold text everywhere else.
+ *   - `rich` never reveals *formatting* syntax — emphasis, headings, quotes,
+ *     list markers, checkboxes — so the note reads as a word processor
+ *     document. Since the marks are atomic, backspacing over a hidden `## `
+ *     removes the whole thing and the line becomes body text, which is how a
+ *     rich-text editor behaves anyway.
+ *
+ * Rich mode still reveals *structural* source — link URLs, wikilink targets,
+ * tables, rules — because those carry data with nowhere else to be edited.
+ * Hiding them permanently would make parts of a note unreachable, which is a
+ * worse sin than showing a bracket.
  */
 
 import { syntaxTree } from '@codemirror/language'
 import {
   type EditorState,
+  Facet,
   type Range,
   RangeSet,
   StateEffect,
@@ -33,7 +49,16 @@ import { noteContext, requestOpenLink } from './context'
 import { resolveEmbed, resolveLink } from '../core/vault'
 import { revision } from '../core/vault'
 
+/** Which of the two rendering modes the preview extensions are running in. */
+export type PreviewMode = 'live' | 'rich'
+
+export const previewMode = Facet.define<PreviewMode, PreviewMode>({
+  combine: (values) => values[0] ?? 'live',
+})
+
 const hidden = Decoration.replace({})
+const underlined = Decoration.mark({ class: 'cm-underline' })
+const highlighted = Decoration.mark({ class: 'cm-highlight' })
 
 const lineDeco = (cls: string) => Decoration.line({ class: cls })
 
@@ -82,6 +107,26 @@ export const focusWatcher = EditorView.focusChangeEffect.of((_state, focusing) =
 )
 
 /**
+ * Seed that flag when the extensions are installed.
+ *
+ * `focusChangeEffect` only fires on a *change*, so switching editor mode while
+ * the caret is in the note leaves a freshly configured field believing the
+ * editor is unfocused — and an unfocused editor never reveals anything. The
+ * dispatch is deferred because a plugin may not update the view it is being
+ * constructed for.
+ */
+export const focusSeeder = ViewPlugin.fromClass(
+  class {
+    constructor(view: EditorView) {
+      if (!view.hasFocus) return
+      queueMicrotask(() => {
+        if (view.dom.isConnected && view.hasFocus) view.dispatch({ effects: setFocused.of(true) })
+      })
+    }
+  },
+)
+
+/**
  * Has the user actually done anything in this editor yet?
  *
  * Opening a note focuses it with the caret at position 0. That position is
@@ -108,8 +153,20 @@ export const interactedField = StateField.define<boolean>({
   },
 })
 
-/** True when the caret is in [from, to] and the user is actually working there. */
-function touched(state: EditorState, from: number, to: number): boolean {
+/**
+ * True when the caret is in [from, to] and the user is actually working there.
+ *
+ * `kind` says what would be revealed: `format` is styling the toolbar can apply
+ * and remove on its own, so rich mode keeps it hidden; `structure` is source
+ * with nowhere else to be edited, revealed in both modes.
+ */
+function touched(
+  state: EditorState,
+  from: number,
+  to: number,
+  kind: 'format' | 'structure' = 'structure',
+): boolean {
+  if (kind === 'format' && state.facet(previewMode) === 'rich') return false
   if (!state.field(focusedField, false)) return false
   if (!state.field(interactedField, false)) return false
   for (const r of state.selection.ranges) {
@@ -119,13 +176,24 @@ function touched(state: EditorState, from: number, to: number): boolean {
 }
 
 /** True when a selection range is on any line the node spans. */
-function lineTouched(state: EditorState, from: number, to: number): boolean {
+function lineTouched(
+  state: EditorState,
+  from: number,
+  to: number,
+  kind: 'format' | 'structure' = 'structure',
+): boolean {
   const a = state.doc.lineAt(from).from
   const b = state.doc.lineAt(to).to
-  return touched(state, a, b)
+  return touched(state, a, b, kind)
 }
 
 const TAG_RE = /(^|[\s(>])(#[A-Za-z0-9_][A-Za-z0-9/_-]*)/g
+
+/** Inline styles the markdown parser has no node for: `<u>text</u>`, `==text==`. */
+const INLINE_EXTRAS: Array<[RegExp, Decoration]> = [
+  [/<u>(.+?)<\/u>/g, underlined],
+  [/==(?!\s)(.+?)(?<!\s)==/g, highlighted],
+]
 
 /** Line numbers of a leading `---` frontmatter block, fences included. */
 function frontmatterLines(state: EditorState): number[] {
@@ -242,7 +310,7 @@ function buildDecorations(view: EditorView): DecorationSet {
         /* ---- list markers ---------------------------------------------- */
         if (name === 'ListMark') {
           const line = state.doc.lineAt(node.from)
-          if (lineTouched(state, node.from, node.to)) return
+          if (lineTouched(state, node.from, node.to, 'format')) return
           const rest = line.text.slice(node.to - line.from)
           // A task's own checkbox is the marker; a literal dash beside it is
           // noise, so it goes entirely.
@@ -263,7 +331,7 @@ function buildDecorations(view: EditorView): DecorationSet {
         if (name === 'TaskMarker') {
           const raw = state.doc.sliceString(node.from, node.to)
           const checked = /x/i.test(raw)
-          if (!touched(state, node.from - 1, node.to + 1)) {
+          if (!touched(state, node.from - 1, node.to + 1, 'format')) {
             out.push(
               Decoration.replace({ widget: new CheckboxWidget(checked) }).range(node.from, node.to),
             )
@@ -371,10 +439,12 @@ function buildDecorations(view: EditorView): DecorationSet {
           const parent = node.node.parent
           const scopeFrom = parent ? parent.from : node.from
           const scopeTo = parent ? parent.to : node.to
+          // Link brackets are structure: the URL they hide has to be reachable.
+          const kind = name === 'LinkMark' || name === 'WikiLinkMark' ? 'structure' : 'format'
           const reveal =
             name === 'HeaderMark' || name === 'QuoteMark'
-              ? lineTouched(state, scopeFrom, scopeTo)
-              : touched(state, scopeFrom, scopeTo)
+              ? lineTouched(state, scopeFrom, scopeTo, kind)
+              : touched(state, scopeFrom, scopeTo, kind)
           if (reveal) return
           // A HeaderMark swallows the space that follows it, so the heading
           // text doesn't start with a stray indent once the "#" is hidden.
@@ -386,6 +456,37 @@ function buildDecorations(view: EditorView): DecorationSet {
       },
     })
 
+    /*
+     * Underline and highlight.
+     *
+     * Neither is CommonMark, so the parser knows nothing about them and they
+     * are matched textually, like hashtags below. Underline is the `<u>` HTML
+     * markdown passes through — the only way to write one at all — and it is
+     * what the toolbar's U button produces.
+     */
+    for (let p = vFrom; p <= vTo; ) {
+      const line = state.doc.lineAt(p)
+      // A setext underline (`====`) is a heading marker, not a highlight.
+      const setext = /^[=]+$/.test(line.text.trim())
+      for (const [re, deco] of INLINE_EXTRAS) {
+        if (deco === highlighted && setext) continue
+        re.lastIndex = 0
+        let m: RegExpExecArray | null
+        while ((m = re.exec(line.text))) {
+          const from = line.from + m.index
+          const to = from + m[0].length
+          if (isInsideCodeOrLink(tree.resolveInner(from + 1, 1))) continue
+          if (touched(state, from, to, 'format')) continue
+          const innerFrom = from + m[0].indexOf(m[1])
+          out.push(hidden.range(from, innerFrom))
+          out.push(deco.range(innerFrom, innerFrom + m[1].length))
+          out.push(hidden.range(innerFrom + m[1].length, to))
+        }
+      }
+      if (line.to >= vTo) break
+      p = line.to + 1
+    }
+
     /* ---- hashtags: not a markdown construct, so matched textually ---- */
     for (let p = vFrom; p <= vTo; ) {
       const line = state.doc.lineAt(p)
@@ -396,7 +497,7 @@ function buildDecorations(view: EditorView): DecorationSet {
         const to = from + m[2].length
         // Skip anything the markdown parser already claimed (code, links, URLs).
         const node = tree.resolveInner(from + 1, 1)
-        if (isInsideCodeOrLink(node)) continue
+        if (isInsideCodeOrLink(node, true)) continue
         out.push(Decoration.mark({ class: 'cm-tag', attributes: { 'data-tag': m[2].slice(1) } }).range(from, to))
       }
       if (line.to >= vTo) break
@@ -407,7 +508,18 @@ function buildDecorations(view: EditorView): DecorationSet {
   return RangeSet.of(out, true)
 }
 
-function isInsideCodeOrLink(node: { name: string; parent: unknown } | null): boolean {
+/**
+ * Is this position inside something the markdown parser has already claimed?
+ *
+ * `orHeading` is what separates the two textual scanners that use this. A `#`
+ * inside a heading is the heading's own marker, never a hashtag, so the tag
+ * scan excludes headings — but a `<u>` or `==` inside a heading is ordinary
+ * formatting and has to keep working, so the inline-extras scan does not.
+ */
+function isInsideCodeOrLink(
+  node: { name: string; parent: unknown } | null,
+  orHeading = false,
+): boolean {
   let n = node as { name: string; parent: unknown } | null
   let depth = 0
   while (n && depth++ < 12) {
@@ -419,15 +531,10 @@ function isInsideCodeOrLink(node: { name: string; parent: unknown } | null): boo
       n.name === 'URL' ||
       n.name === 'Link' ||
       n.name === 'WikiLink' ||
-      n.name === 'WikiEmbed' ||
-      n.name === 'ATXHeading1' ||
-      n.name === 'ATXHeading2' ||
-      n.name === 'ATXHeading3' ||
-      n.name === 'ATXHeading4' ||
-      n.name === 'ATXHeading5' ||
-      n.name === 'ATXHeading6'
+      n.name === 'WikiEmbed'
     )
       return true
+    if (orHeading && /^ATXHeading[1-6]$/.test(n.name)) return true
     n = n.parent as { name: string; parent: unknown } | null
   }
   return false

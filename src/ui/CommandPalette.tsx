@@ -10,7 +10,15 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { createNote, notes, search } from '../core/vault'
 import { sync } from '../core/sync'
 import { settings, update } from '../core/settings'
-import { notify, openNote, paletteOpen, scope, settingsOpen } from './state'
+import {
+  editorModeLabel,
+  nextEditorMode,
+  notify,
+  openNote,
+  paletteOpen,
+  scope,
+  settingsOpen,
+} from './state'
 import { relativeTime } from '../core/util'
 
 interface Cmd {
@@ -57,12 +65,11 @@ export function CommandPalette() {
       { id: 'settings', label: 'Open settings', hint: '⌘,', run: () => (settingsOpen.value = true) },
       {
         id: 'mode',
-        label:
-          settings.value.editorMode === 'live'
-            ? 'Switch to markdown source'
-            : 'Switch to live preview',
+        label: `Editor mode: ${editorModeLabel(settings.value.editorMode)} — switch to ${editorModeLabel(
+          nextEditorMode(settings.value.editorMode),
+        ).toLowerCase()}`,
         hint: '⌘⇧M',
-        run: () => update({ editorMode: settings.value.editorMode === 'live' ? 'source' : 'live' }),
+        run: () => update({ editorMode: nextEditorMode(settings.value.editorMode) }),
       },
       {
         id: 'rail',

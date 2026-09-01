@@ -82,6 +82,20 @@ const RULES: Array<{
     re: /^~~([\s\S]+?)~~/,
     build: (m, ctx) => wrap('del', m[1], ctx),
   },
+  // Underline has no markdown syntax; the editor writes the HTML for it.
+  {
+    re: /^<u>([\s\S]+?)<\/u>/,
+    build: (m, ctx) => wrap('u', m[1], ctx),
+  },
+  {
+    re: /^==([^\s][\s\S]*?)==/,
+    build: (m, ctx) => {
+      const el = document.createElement('span')
+      el.className = 'cm-highlight'
+      appendInline(el, m[1], ctx)
+      return el
+    },
+  },
   {
     re: /^\*([^*\s][\s\S]*?)\*(?!\*)/,
     build: (m, ctx) => wrap('em', m[1], ctx),

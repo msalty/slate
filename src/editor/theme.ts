@@ -26,7 +26,15 @@ export const editorTheme = EditorView.theme({
     padding: '0',
   },
   '.cm-content': {
-    padding: '8px 0 45vh 0',
+    /*
+     * The horizontal padding is what keeps the note off the edge of its pane.
+     * It belongs here rather than on `.cm-line`, because a code block, a table
+     * or an image bleeds to the full width of the content box and would
+     * otherwise sit flush against the pane. 12px here plus the 4px on a line
+     * puts body text exactly under the title in the header above it.
+     * The phone overrides this in app.css, where the pane is the whole screen.
+     */
+    padding: '8px 12px 45vh',
     caretColor: 'var(--accent)',
     maxWidth: 'var(--editor-measure)',
     margin: '0 auto',
@@ -43,10 +51,46 @@ export const editorTheme = EditorView.theme({
   '.cm-placeholder': { color: 'var(--text-faint)', fontStyle: 'normal' },
 
   /* --- block-level live preview ------------------------------------- */
-  '.cm-line.cm-h1': { fontSize: '1.75em', fontWeight: '700', lineHeight: '1.25', margin: '0.7em 0 0.1em' },
-  '.cm-line.cm-h2': { fontSize: '1.4em', fontWeight: '700', lineHeight: '1.3', margin: '0.7em 0 0.1em' },
-  '.cm-line.cm-h3': { fontSize: '1.18em', fontWeight: '650', lineHeight: '1.35', margin: '0.6em 0 0.1em' },
-  '.cm-line.cm-h4': { fontSize: '1.05em', fontWeight: '650', margin: '0.5em 0 0.1em' },
+  /*
+   * Vertical space around a block is PADDING (or a transparent border), never
+   * margin — anywhere in this file that touches a `.cm-line` or the root of a
+   * widget.
+   *
+   * CodeMirror keeps its own height map of the document and measures each line
+   * box to build it. `getBoundingClientRect()` includes padding and border but
+   * not margin, so a margin here makes the editor believe every line below it
+   * sits higher on screen than it really does — and since a click is turned
+   * into a document position by looking up that height map, the caret lands on
+   * the wrong line. One heading with `margin: 0.7em 0` was enough to put every
+   * click below it a line out.
+   */
+  '.cm-line.cm-h1': {
+    fontSize: '1.75em',
+    fontWeight: '700',
+    lineHeight: '1.25',
+    paddingTop: '0.7em',
+    paddingBottom: '0.1em',
+  },
+  '.cm-line.cm-h2': {
+    fontSize: '1.4em',
+    fontWeight: '700',
+    lineHeight: '1.3',
+    paddingTop: '0.7em',
+    paddingBottom: '0.1em',
+  },
+  '.cm-line.cm-h3': {
+    fontSize: '1.18em',
+    fontWeight: '650',
+    lineHeight: '1.35',
+    paddingTop: '0.6em',
+    paddingBottom: '0.1em',
+  },
+  '.cm-line.cm-h4': {
+    fontSize: '1.05em',
+    fontWeight: '650',
+    paddingTop: '0.5em',
+    paddingBottom: '0.1em',
+  },
   '.cm-line.cm-h5, .cm-line.cm-h6': {
     fontSize: '1em',
     fontWeight: '650',
@@ -62,21 +106,23 @@ export const editorTheme = EditorView.theme({
     fontFamily: 'var(--font-mono)',
     fontSize: '0.9em',
     padding: '0 12px',
+    // Keeps the tinted background off the transparent border below.
+    backgroundClip: 'padding-box',
   },
   '.cm-line.cm-codeblock-first': {
     borderRadius: '8px 8px 0 0',
     paddingTop: '8px',
-    marginTop: '6px',
+    borderTop: '6px solid transparent',
   },
   '.cm-line.cm-codeblock-last': {
     borderRadius: '0 0 8px 8px',
     paddingBottom: '8px',
-    marginBottom: '6px',
+    borderBottom: '6px solid transparent',
   },
   '.cm-line.cm-table': { fontFamily: 'var(--font-mono)', fontSize: '0.88em' },
   '.cm-table-wrap': {
     overflowX: 'auto',
-    margin: '10px 0',
+    padding: '10px 0',
     maxWidth: '100%',
   },
   '.cm-table-render': {
@@ -121,6 +167,7 @@ export const editorTheme = EditorView.theme({
     cursor: 'zoom-in',
   },
   '.cm-line.cm-frontmatter': {
+    backgroundClip: 'padding-box',
     fontFamily: 'var(--font-mono)',
     fontSize: '0.8em',
     lineHeight: '1.75',
@@ -135,8 +182,25 @@ export const editorTheme = EditorView.theme({
   '.cm-line.cm-frontmatter-last': {
     borderRadius: '0 0 8px 8px',
     paddingBottom: '7px',
-    marginBottom: '14px',
+    borderBottom: '14px solid transparent',
   },
+
+  /* --- inline styles markdown has no node for ------------------------ */
+  '.cm-underline': { textDecoration: 'underline', textUnderlineOffset: '2px' },
+  '.cm-highlight': {
+    backgroundColor: 'color-mix(in srgb, var(--accent) 26%, transparent)',
+    borderRadius: '3px',
+    padding: '0 2px',
+  },
+
+  /*
+   * Rich text mode.
+   *
+   * Nothing structural changes — the same decorations run — but with no syntax
+   * ever on screen, a note that opens on a title should start at the top of
+   * the page rather than under a phantom indent.
+   */
+  '&.cm-rich .cm-content > .cm-line:first-child': { paddingTop: '0' },
 
   /* --- inline widgets ----------------------------------------------- */
   '.cm-hr': {
@@ -200,7 +264,10 @@ export const editorTheme = EditorView.theme({
   '.cm-embed': {
     display: 'block',
     position: 'relative',
-    margin: '10px 0',
+    // A border rather than padding: the resize handle is positioned against
+    // this element's padding box and would grow with it.
+    borderTop: '10px solid transparent',
+    borderBottom: '10px solid transparent',
     maxWidth: '100%',
   },
   '.cm-embed img, .cm-embed video': {

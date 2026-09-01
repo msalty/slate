@@ -9,6 +9,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryAdapter, MemoryServer } from '../adapters/memory'
+import { rebaseBuffer } from './rebase'
 
 type Device = {
   name: string
@@ -37,6 +38,38 @@ async function run(d: Device) {
 /** Reload a device's in-memory state from its own database, as a restart would. */
 async function reload(d: Device) {
   await d.vault.initVault()
+}
+
+/**
+ * Stands in for a note open in the editor: a buffer seeded from the vault that
+ * folds in whatever arrives underneath it and saves what gets typed. This is
+ * the piece that made two machines overwrite each other — an editor that keeps
+ * its own copy of the text writes that copy back on the next keystroke.
+ */
+function openEditor(d: Device, path: string) {
+  let base = d.vault.getText(path) ?? ''
+  let buffer = base
+  return {
+    get text() {
+      return buffer
+    },
+    /** The vault changed beneath the editor (a sync pull, say). */
+    async refresh() {
+      const incoming = d.vault.getText(path) ?? ''
+      if (incoming === base) return
+      const r = rebaseBuffer(base, buffer, incoming)
+      base = r.changed ? r.text : incoming
+      if (!r.changed) return
+      buffer = r.text
+      if (r.text !== incoming) await d.vault.saveNote(path, r.text)
+    },
+    /** Type, and let autosave settle. */
+    async type(next: string) {
+      buffer = next
+      base = next
+      await d.vault.saveNote(path, next)
+    },
+  }
 }
 
 beforeEach(() => {
@@ -275,5 +308,71 @@ describe('sync round trips', () => {
       expect(text).toContain(`mac ${i}`)
       expect(text).toContain(`phone ${i}`)
     }
+  })
+
+  it('does not write a stale editor buffer back over a change from another device', async () => {
+    const server = new MemoryServer()
+    const a = await makeDevice(server, 'mac')
+    const p = await a.vault.createNote('', 'Shared', 'first line\n')
+    await run(a)
+    const b = await makeDevice(server, 'phone')
+    await run(b)
+
+    // The same note is open on both machines.
+    const onMac = openEditor(a, p)
+    const onPhone = openEditor(b, p)
+
+    // The phone adds a line and sends it up.
+    await onPhone.type('first line\nfrom the phone\n')
+    await run(b)
+
+    // The mac pulls it with its editor sitting open, then the user types there.
+    await run(a)
+    await onMac.refresh()
+    await onMac.type(`${onMac.text}from the mac\n`)
+    await run(a)
+
+    const remote = (await server.readText(p))!
+    expect(remote).toContain('from the phone')
+    expect(remote).toContain('from the mac')
+
+    // And the phone ends up on exactly the same text rather than pushing back.
+    await run(b)
+    await onPhone.refresh()
+    await run(b)
+    expect(onPhone.text).toBe(onMac.text)
+    expect(await server.readText(p)).toBe(onMac.text)
+  })
+
+  it('does not clobber an edit made while the pull was in flight', async () => {
+    const server = new MemoryServer()
+    const a = await makeDevice(server, 'mac')
+    const p = await a.vault.createNote('', 'Race', 'base\n')
+    await run(a)
+
+    // Another device writes the note, and the user types here while that
+    // download is still on the wire.
+    server.writeText(p, 'base\nremote addition\n')
+    const adapter = new MemoryAdapter(server)
+    const getText = adapter.getText.bind(adapter)
+    let typed = false
+    adapter.getText = async (entry) => {
+      const res = await getText(entry)
+      if (entry.path === p && !typed) {
+        typed = true
+        await a.vault.saveNote(p, 'base\nlocal addition\n')
+      }
+      return res
+    }
+    a.sync.setAdapter(adapter)
+
+    await run(a)
+    const text = a.vault.getText(p)!
+    expect(text).toContain('remote addition')
+    expect(text).toContain('local addition')
+
+    const remote = (await server.readText(p))!
+    expect(remote).toContain('remote addition')
+    expect(remote).toContain('local addition')
   })
 })

@@ -194,7 +194,12 @@ export interface AppSettings {
   showRightRail: boolean
   showSidebar: boolean
   theme: 'system' | 'light' | 'dark'
-  editorMode: 'live' | 'source'
+  /**
+   * How the same markdown is presented: `rich` hides every formatting mark and
+   * is driven by the toolbar, `live` reveals the syntax under the caret,
+   * `source` shows the file exactly as it is written.
+   */
+  editorMode: 'rich' | 'live' | 'source'
   /** Longest edge in px for pasted images. 0 disables resizing. */
   imageMaxEdge: number
   imageQuality: number

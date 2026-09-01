@@ -19,7 +19,7 @@ npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
 npm test               # 92 unit and two-device sync tests
-node scripts/smoke.mjs # 107-check browser smoke test against dist/
+node scripts/smoke.mjs # 139-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -29,10 +29,26 @@ until you set up a backend in Settings (⌘,).
 
 ## What it does
 
-**Writing.** Live-preview markdown: formatting renders as you type, and the raw
-syntax reappears the moment your caret enters it. The buffer is always the exact
-text of the `.md` file, so nothing is ever silently rewritten. ⌘⇧M shows the
-plain source when you want it.
+**Writing.** Three ways to look at the same file, switched in Settings or with
+⌘⇧M, and the buffer is always the exact text of the `.md` file in all of them,
+so nothing is ever silently rewritten:
+
+- **Rich text** — a word processor. No `#`, no `**`, ever: a formatting bar
+  (Title / Heading / Subheading / Body, **B** *I* <u>U</u> ~~S~~, highlight,
+  monospace, lists, checklists, indent, quote) applies the markdown for you and
+  lights up to show what the caret is sitting in. On a phone the same controls
+  open as a Format sheet from the **Aa** button. Markdown still works while you
+  type — `# ` at the start of a line is still a Title, and the marker vanishes
+  the moment it becomes one — and backspacing at the start of a styled line
+  takes the style off, because the hidden marks behave as single characters.
+- **Live preview** — formatting renders as you type, and the raw syntax
+  reappears the moment your caret enters it.
+- **Markdown source** — the file, exactly as it is written.
+
+Underline has no markdown syntax, so it is written as `<u>…</u>`, which every
+renderer passes through; highlight uses `==text==`. Everything else is ordinary
+CommonMark, and a note written in rich text opens as plain markdown anywhere
+else.
 
 **Linking.** `[[Note Title]]` links notes to each other. Typing `[[` opens an
 autocomplete over every note; picking one that doesn't exist yet offers to create
@@ -137,10 +153,14 @@ or Tag Folder for an action sheet; right-click does the same on a desktop.
 | ⌘, | Settings |
 | ⌘\ | Toggle sidebar |
 | ⌘⇧R | Toggle calendar column |
-| ⌘⇧M | Toggle markdown source |
-| ⌘B / ⌘I / ⌘E | Bold / italic / code |
+| ⌘⇧M | Cycle rich text → live preview → source |
+| ⌘B / ⌘I / ⌘U | Bold / italic / underline |
+| ⌘⇧X / ⌘⇧H / ⌘E | Strikethrough / highlight / monospace |
+| ⌘⌥1 / ⌘⌥2 / ⌘⌥3 / ⌘⌥0 | Title / Heading / Subheading / Body |
 | ⌘K *(with a selection)* | Wrap in a wikilink |
-| ⌘⇧7 / ⌘⇧8 / ⌘⇧9 | Task / bullet / quote |
+| ⌘⇧7 / ⌘⇧8 / ⌘⇧0 | Checklist / bullets / numbers |
+| ⌘⇧9 | Block quote |
+| ⌘] / ⌘[ | Indent / outdent a list item |
 
 ---
 
@@ -398,7 +418,19 @@ When a file has changed on both sides:
 
 Writes are conditional (`If-Match`), so a write is refused rather than
 overwriting a change that arrived since the last listing; the refusal routes back
-into the merge above.
+into the merge above. A pull that finds the file edited locally while it was in
+flight merges rather than installs, so an edit made mid-sync is not erased by the
+download it raced.
+
+A note open in the editor is folded in too. The editor holds its own copy of the
+text, and that copy is what the next keystroke saves — so a version arriving from
+another device is applied to the live buffer rather than only to the vault
+underneath it. With no unsaved keystrokes the incoming text simply appears, at
+the narrowest possible edit so the caret, selection and scroll position stay
+put. If you were mid-sentence when it landed, the two are merged, and only genuinely
+overlapping edits leave `<<<<<<<` markers in place for you to settle. Without
+this, the same note open on two machines has each side saving its stale copy over
+the other's on the next keypress, forever.
 
 Deletes are the other classic way to lose work, so:
 
@@ -430,6 +462,7 @@ src/
 │  ├─ db.ts           IndexedDB: cache, journal, version history
 │  ├─ sync.ts         the reconcile engine
 │  ├─ merge.ts        three-way merge (diff3)
+│  ├─ rebase.ts       folding a synced change into the buffer being typed in
 │  ├─ markdown.ts     frontmatter, links, tags, tasks
 │  ├─ tagquery.ts     the Tag Folder rule language (tokenizer, parser, eval)
 │  ├─ folders.ts      nested folders + the Tag Folder tree and inheritance
@@ -437,6 +470,7 @@ src/
 │  └─ settings.ts     device-local vs vault-wide preferences
 ├─ adapters/      webdav.ts · gdrive.ts · memory.ts (tests)
 ├─ editor/        CodeMirror 6: live preview, widgets, completion, paste
+│  ├─ format.ts     the formatting commands behind the rich-text bar
 │  ├─ inline.ts      inline markdown for text inside widgets (table cells)
 │  └─ pickImage.ts   camera / photo library / file insertion
 └─ ui/            Preact components
@@ -510,7 +544,7 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 
 ```bash
 npm test                # 92 unit + two-device sync tests
-node scripts/smoke.mjs  # 107 checks in headless Chromium against dist/
+node scripts/smoke.mjs  # 139 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

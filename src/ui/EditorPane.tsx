@@ -2,23 +2,40 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks'
 import { EditorView } from '@codemirror/view'
-import { createEditorState, fontCompartment, previewCompartment } from '../editor/setup'
 import {
-  livePreview,
-  linkClicks,
-  tableField,
-  focusedField,
-  focusWatcher,
-  interactedField,
-} from '../editor/livePreview'
-import { backlinkMap, getEntry, getRaw, renameNote, saveNote, deleteNote, createNote } from '../core/vault'
+  createEditorState,
+  fontCompartment,
+  previewCompartment,
+  previewExtensions,
+  setDoc,
+} from '../editor/setup'
+import { FormatBar } from './FormatBar'
+import {
+  backlinkMap,
+  getEntry,
+  getRaw,
+  renameNote,
+  revision,
+  saveNote,
+  deleteNote,
+  createNote,
+} from '../core/vault'
+import { rebaseBuffer } from '../core/rebase'
 import { settings, update } from '../core/settings'
 import { syncSoon } from '../core/sync'
-import { activePath, closeMobileEditor, historyOpen, notify } from './state'
+import {
+  EDITOR_MODES,
+  activePath,
+  closeMobileEditor,
+  formatSheetOpen,
+  historyOpen,
+  notify,
+} from './state'
 import { layoutMode, railState, toggleRail } from './layout'
 import { debounce, relativeTime } from '../core/util'
 import {
   IconCamera,
+  IconCheck,
   IconChevronLeft,
   IconCode,
   IconDots,
@@ -27,6 +44,7 @@ import {
   IconImagePlus,
   IconPaperclip,
   IconRail,
+  IconRichText,
   IconTrash,
 } from './Icons'
 import { openMenu, type MenuItem } from './Menu'
@@ -38,8 +56,18 @@ export function EditorPane() {
   const pathRef = useRef<string | undefined>(undefined)
   const [scrolled, setScrolled] = useState(false)
   const path = activePath.value
+  const compact = layoutMode.value === 'compact'
+  // Reading the vault's revision here is what makes the editor notice writes it
+  // did not make: a sync pull, a restore from history, a task toggled elsewhere.
+  const rev = revision.value
   const entry = path ? getEntry(path) : undefined
   const file = path ? getRaw(path) : undefined
+
+  /**
+   * The text the buffer and the vault last agreed on — the base for folding in
+   * a version that arrives from somewhere else while the note is open.
+   */
+  const baseRef = useRef('')
 
   /**
    * Autosave. 400ms is short enough that a crash loses nothing meaningful and
@@ -48,6 +76,7 @@ export function EditorPane() {
    */
   const saveRef = useRef(
     debounce((p: string, text: string) => {
+      baseRef.current = text
       void saveNote(p, text).then(() => syncSoon())
     }, 400),
   )
@@ -57,7 +86,9 @@ export function EditorPane() {
     const p = pathRef.current
     if (!view || !p) return
     saveRef.current.flush()
-    void saveNote(p, view.state.doc.toString())
+    const text = view.state.doc.toString()
+    baseRef.current = text
+    void saveNote(p, text)
   }
 
   // Rebuild the editor when the open note changes. A fresh state per note means
@@ -72,10 +103,11 @@ export function EditorPane() {
     if (!path) return
 
     const f = getRaw(path)
+    baseRef.current = f?.text ?? ''
     const state = createEditorState({
       doc: f?.text ?? '',
       path,
-      live: settings.value.editorMode === 'live',
+      mode: settings.value.editorMode,
       fontSize: settings.value.fontSize,
       onChange: (text) => saveRef.current(path, text),
     })
@@ -94,17 +126,69 @@ export function EditorPane() {
     }
   }, [path])
 
+  /**
+   * Fold a version that arrived from elsewhere into the open buffer.
+   *
+   * Without this the editor keeps showing — and, on the next keystroke, saves —
+   * the text it was seeded with, so a note open on two machines has each side
+   * writing its stale copy back over the other's, forever.
+   */
+  useEffect(() => {
+    const view = viewRef.current
+    if (!path || !view || pathRef.current !== path) return
+    const incoming = getRaw(path)?.text
+    if (incoming === undefined || incoming === baseRef.current) return
+
+    const buffer = view.state.doc.toString()
+    const r = rebaseBuffer(baseRef.current, buffer, incoming)
+    baseRef.current = r.changed ? r.text : incoming
+    if (!r.changed) return
+
+    setDoc(view, r.text, path)
+    // A merge produced text neither side had; the vault needs it too, and the
+    // debounced save the dispatch just scheduled would be 400ms late.
+    if (r.text !== incoming) void saveNote(path, r.text).then(() => syncSoon())
+    if (r.conflicted)
+      notify('This note changed elsewhere while you were typing — both edits are marked in place')
+  }, [path, rev])
+
+  /*
+   * On a phone, the keyboard and the Format sheet never share the screen.
+   *
+   * Between them they leave a sliver of note visible, and you are either
+   * formatting or typing — never both in the same second. So opening the sheet
+   * dismisses the keyboard, and touching the note to type closes the sheet.
+   * The editor runs blurred while the sheet is open, which is also why the
+   * caret is kept visible by CSS: it is what the buttons act on.
+   */
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view || !compact || !formatSheetOpen.value) return
+    view.contentDOM.blur()
+    // The pane is shorter now the sheet is in it; put the caret back in sight.
+    const settle = setTimeout(() => {
+      if (!viewRef.current) return
+      viewRef.current.dispatch({
+        effects: EditorView.scrollIntoView(viewRef.current.state.selection.main.head, {
+          y: 'center',
+        }),
+      })
+    }, 60)
+    const close = () => (formatSheetOpen.value = false)
+    view.contentDOM.addEventListener('focus', close)
+    return () => {
+      clearTimeout(settle)
+      view.contentDOM.removeEventListener('focus', close)
+    }
+  }, [formatSheetOpen.value, compact, path])
+
   // Live/source toggle and font size reconfigure in place.
   useEffect(() => {
     const view = viewRef.current
     if (!view) return
     view.dispatch({
       effects: [
-        previewCompartment.reconfigure(
-          settings.value.editorMode === 'live'
-            ? [focusedField, focusWatcher, interactedField, livePreview, tableField, linkClicks]
-            : [],
-        ),
+        previewCompartment.reconfigure(previewExtensions(settings.value.editorMode)),
         fontCompartment.reconfigure(
           EditorView.theme({ '&': { '--editor-font-size': `${settings.value.fontSize}px` } } as never),
         ),
@@ -129,8 +213,6 @@ export function EditorPane() {
     }
   }, [])
 
-  const compact = layoutMode.value === 'compact'
-
   if (!path || !entry) {
     return (
       <div class="pane editor-pane">
@@ -153,7 +235,15 @@ export function EditorPane() {
   }
 
   const links = backlinkMap.value.get(path) ?? []
-  const live = settings.value.editorMode === 'live'
+  const mode = settings.value.editorMode
+  const rich = mode === 'rich'
+
+  /** The three presentations, as a menu with the active one ticked. */
+  const modeItems: MenuItem[] = EDITOR_MODES.map((m) => ({
+    label: m.label,
+    icon: mode === m.id ? <IconCheck size={15} /> : <span style={{ width: 15 }} />,
+    onSelect: () => update({ editorMode: m.id }),
+  }))
 
   /** Camera / library / any file — all land in the note as resizable embeds. */
   const insertMenu = (e: { clientX: number; clientY: number }) => {
@@ -184,7 +274,11 @@ export function EditorPane() {
   }
 
   return (
-    <div class="pane editor-pane" data-scrolled={scrolled ? '1' : '0'}>
+    <div
+      class="pane editor-pane"
+      data-scrolled={scrolled ? '1' : '0'}
+      data-format-open={rich && compact && formatSheetOpen.value ? '1' : '0'}
+    >
       <div class="pane-head editor-head">
         {compact && (
           <button class="icon-btn" onClick={closeMobileEditor} aria-label="Back">
@@ -212,6 +306,22 @@ export function EditorPane() {
           }}
         />
         <span class="spacer" />
+        {compact && rich && (
+          <button
+            class="icon-btn fmt-open"
+            aria-label="Format"
+            title="Format"
+            aria-pressed={formatSheetOpen.value}
+            onClick={() => {
+              const open = !formatSheetOpen.value
+              formatSheetOpen.value = open
+              // Closing it means they want to type again.
+              if (!open) viewRef.current?.focus()
+            }}
+          >
+            Aa
+          </button>
+        )}
         <button class="icon-btn" onClick={insertMenu} title="Insert photo or file" aria-label="Insert photo or file">
           <IconImagePlus />
         </button>
@@ -223,11 +333,14 @@ export function EditorPane() {
               openMenu(
                 e,
                 [
+                  ...modeItems,
                   {
-                    label: live ? 'Show markdown source' : 'Back to live preview',
-                    onSelect: () => update({ editorMode: live ? 'source' : 'live' }),
+                    label: 'Version history',
+                    separated: true,
+                    onSelect: () => {
+                      historyOpen.value = true
+                    },
                   },
-                  { label: 'Version history', onSelect: () => (historyOpen.value = true) },
                   {
                     label: 'Delete note',
                     danger: true,
@@ -251,11 +364,11 @@ export function EditorPane() {
           <>
             <button
               class="icon-btn"
-              aria-pressed={!live}
-              onClick={() => update({ editorMode: live ? 'source' : 'live' })}
-              title={live ? 'Show markdown source (⌘⇧M)' : 'Back to live preview (⌘⇧M)'}
+              aria-label="Editor mode"
+              title={`Editor mode: ${EDITOR_MODES.find((m) => m.id === mode)?.label} (⌘⇧M cycles)`}
+              onClick={(e) => openMenu(e, modeItems, 'Editor mode')}
             >
-              {live ? <IconCode /> : <IconEye />}
+              {mode === 'rich' ? <IconRichText /> : mode === 'live' ? <IconEye /> : <IconCode />}
             </button>
             <button
               class="icon-btn"
@@ -289,9 +402,17 @@ export function EditorPane() {
         )}
       </div>
 
+      {rich && !compact && (
+        <FormatBar variant="bar" getView={() => viewRef.current} />
+      )}
+
       <div class="editor-body">
         <div class="editor-host" ref={hostRef} />
       </div>
+
+      {rich && compact && formatSheetOpen.value && (
+        <FormatBar variant="sheet" getView={() => viewRef.current} />
+      )}
 
       {links.length > 0 && (
         <div class="backlinks">
