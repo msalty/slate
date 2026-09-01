@@ -2,7 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks'
 import { EditorView } from '@codemirror/view'
-import { createEditorState, fontCompartment, previewCompartment } from '../editor/setup'
+import { createEditorState, fontCompartment, previewCompartment, setDoc } from '../editor/setup'
 import {
   livePreview,
   linkClicks,
@@ -11,7 +11,17 @@ import {
   focusWatcher,
   interactedField,
 } from '../editor/livePreview'
-import { backlinkMap, getEntry, getRaw, renameNote, saveNote, deleteNote, createNote } from '../core/vault'
+import {
+  backlinkMap,
+  getEntry,
+  getRaw,
+  renameNote,
+  revision,
+  saveNote,
+  deleteNote,
+  createNote,
+} from '../core/vault'
+import { rebaseBuffer } from '../core/rebase'
 import { settings, update } from '../core/settings'
 import { syncSoon } from '../core/sync'
 import { activePath, closeMobileEditor, historyOpen, notify } from './state'
@@ -38,8 +48,17 @@ export function EditorPane() {
   const pathRef = useRef<string | undefined>(undefined)
   const [scrolled, setScrolled] = useState(false)
   const path = activePath.value
+  // Reading the vault's revision here is what makes the editor notice writes it
+  // did not make: a sync pull, a restore from history, a task toggled elsewhere.
+  const rev = revision.value
   const entry = path ? getEntry(path) : undefined
   const file = path ? getRaw(path) : undefined
+
+  /**
+   * The text the buffer and the vault last agreed on — the base for folding in
+   * a version that arrives from somewhere else while the note is open.
+   */
+  const baseRef = useRef('')
 
   /**
    * Autosave. 400ms is short enough that a crash loses nothing meaningful and
@@ -48,6 +67,7 @@ export function EditorPane() {
    */
   const saveRef = useRef(
     debounce((p: string, text: string) => {
+      baseRef.current = text
       void saveNote(p, text).then(() => syncSoon())
     }, 400),
   )
@@ -57,7 +77,9 @@ export function EditorPane() {
     const p = pathRef.current
     if (!view || !p) return
     saveRef.current.flush()
-    void saveNote(p, view.state.doc.toString())
+    const text = view.state.doc.toString()
+    baseRef.current = text
+    void saveNote(p, text)
   }
 
   // Rebuild the editor when the open note changes. A fresh state per note means
@@ -72,6 +94,7 @@ export function EditorPane() {
     if (!path) return
 
     const f = getRaw(path)
+    baseRef.current = f?.text ?? ''
     const state = createEditorState({
       doc: f?.text ?? '',
       path,
@@ -93,6 +116,32 @@ export function EditorPane() {
       view.scrollDOM.removeEventListener('scroll', onScroll)
     }
   }, [path])
+
+  /**
+   * Fold a version that arrived from elsewhere into the open buffer.
+   *
+   * Without this the editor keeps showing — and, on the next keystroke, saves —
+   * the text it was seeded with, so a note open on two machines has each side
+   * writing its stale copy back over the other's, forever.
+   */
+  useEffect(() => {
+    const view = viewRef.current
+    if (!path || !view || pathRef.current !== path) return
+    const incoming = getRaw(path)?.text
+    if (incoming === undefined || incoming === baseRef.current) return
+
+    const buffer = view.state.doc.toString()
+    const r = rebaseBuffer(baseRef.current, buffer, incoming)
+    baseRef.current = r.changed ? r.text : incoming
+    if (!r.changed) return
+
+    setDoc(view, r.text, path)
+    // A merge produced text neither side had; the vault needs it too, and the
+    // debounced save the dispatch just scheduled would be 400ms late.
+    if (r.text !== incoming) void saveNote(path, r.text).then(() => syncSoon())
+    if (r.conflicted)
+      notify('This note changed elsewhere while you were typing — both edits are marked in place')
+  }, [path, rev])
 
   // Live/source toggle and font size reconfigure in place.
   useEffect(() => {

@@ -117,16 +117,15 @@ async function runOnce(): Promise<void> {
     const remote = new Map<string, RemoteEntry>()
     for (const e of remoteList) if (!e.isDir) remote.set(e.path, e)
 
-    const local = new Map<string, VaultFile>()
-    for (const f of listAll()) local.set(f.path, f)
-
-    const paths = new Set<string>([...local.keys(), ...remote.keys()])
+    const paths = new Set<string>([...listAll().map((f) => f.path), ...remote.keys()])
     const plan: Array<() => Promise<void>> = []
 
     for (const path of paths) {
-      const L = local.get(path)
       const R = remote.get(path)
-      plan.push(() => reconcile(path, L, R, conflicts))
+      // The local side is read when the item actually runs, not now: a run can
+      // take seconds, and an edit made in the meantime must not be reconciled
+      // away on the strength of a stale snapshot.
+      plan.push(() => reconcile(path, R, conflicts))
     }
 
     setStatus({ phase: 'pulling', detail: `Syncing ${plan.length} files…` })
@@ -178,12 +177,13 @@ async function runOnce(): Promise<void> {
 
 async function reconcile(
   path: string,
-  L: VaultFile | undefined,
   R: RemoteEntry | undefined,
   conflicts: string[],
 ): Promise<void> {
+  const L = getRaw(path)
+
   // ---- remote-only: a file another device created. Pull it.
-  if (!L && R) return pull(path, R)
+  if (!L && R) return pull(path, R, conflicts)
 
   if (!L) return
 
@@ -198,7 +198,7 @@ async function reconcile(
     if (remoteMoved) {
       // Someone edited this file after we deleted it. An edit beats a delete —
       // resurrect rather than destroy work we can't see.
-      await pull(path, R)
+      await pull(path, R, conflicts)
       return
     }
     await adapter!.remove(R)
@@ -236,7 +236,7 @@ async function reconcile(
   const rChanged = remoteChanged(L, R)
 
   if (!localChanged && !rChanged) return
-  if (!localChanged && rChanged) return pull(path, R)
+  if (!localChanged && rChanged) return pull(path, R, conflicts)
   if (localChanged && !rChanged) return push(path, L, L.sync.remoteRev)
 
   // ---- both changed
@@ -260,12 +260,17 @@ function remoteChanged(L: VaultFile, R: RemoteEntry): boolean {
 
 /* -------------------------------------------------------------------- pull */
 
-async function pull(path: string, R: RemoteEntry): Promise<void> {
+async function pull(path: string, R: RemoteEntry, conflicts: string[]): Promise<void> {
   const now = Date.now()
   const existing = getRaw(path)
   if (isNotePath(path) || path.endsWith('.json')) {
     const { text, rev, mtime } = await adapter!.getText(R)
     const hash = await hashText(text)
+    // Typing does not stop for a network round trip. If the file changed
+    // locally while this request was in flight, installing the remote text
+    // would erase an edit the server has never seen — merge it instead.
+    const raced = racedLocalEdit(path, hash)
+    if (raced) return resolve(path, raced, R, conflicts, text)
     await installFromRemote([
       {
         path,
@@ -292,6 +297,8 @@ async function pull(path: string, R: RemoteEntry): Promise<void> {
 
   const { blob, rev, mtime } = await adapter!.getBlob(R)
   const hash = await hashBlob(blob)
+  const raced = racedLocalEdit(path, hash)
+  if (raced) return resolve(path, raced, R, conflicts)
   await installFromRemote([
     {
       path,
@@ -312,6 +319,20 @@ async function pull(path: string, R: RemoteEntry): Promise<void> {
       },
     },
   ])
+}
+
+/**
+ * Does the local file hold unpushed content that differs from what we just
+ * downloaded? If so the pull would erase an edit the server has never seen, and
+ * the two sides have to be merged instead.
+ *
+ * A tombstone is not an edit: writing the remote copy over a local tombstone is
+ * the resurrection the caller is deliberately performing.
+ */
+function racedLocalEdit(path: string, remoteHash: string): VaultFile | undefined {
+  const cur = getRaw(path)
+  if (!cur || cur.deleted || !cur.dirty) return undefined
+  return cur.hash === remoteHash ? undefined : cur
 }
 
 /* -------------------------------------------------------------------- push */
@@ -364,6 +385,7 @@ async function resolve(
   L: VaultFile,
   R: RemoteEntry,
   conflicts: string[],
+  knownRemoteText?: string,
 ): Promise<void> {
   if (L.kind === 'attachment') {
     const { blob } = await adapter!.getBlob(R)
@@ -380,7 +402,7 @@ async function resolve(
     return
   }
 
-  const { text: remoteText } = await adapter!.getText(R)
+  const remoteText = knownRemoteText ?? (await adapter!.getText(R)).text
   const localText = L.text ?? ''
 
   if (remoteText === localText) {

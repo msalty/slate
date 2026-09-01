@@ -50,6 +50,7 @@ import {
 import { pasteHandler } from './paste'
 import { WikiLink } from './wikilink-syntax'
 import { noteContext } from './context'
+import { minimalEdit } from '../core/rebase'
 import { tagCompletion, wikiCompletion } from './completion'
 
 export const previewCompartment = new Compartment()
@@ -218,13 +219,18 @@ export function createEditorState(opts: EditorOptions): EditorState {
   return EditorState.create({ doc: opts.doc, extensions })
 }
 
-/** Replace the whole document without losing undo history or scroll. */
+/**
+ * Replace the document's text without losing undo history, scroll or caret.
+ *
+ * Only the span that actually differs is replaced, so text arriving from a sync
+ * pull above the caret does not drag the caret with it, and an edit elsewhere in
+ * the note leaves the cursor exactly where the user left it.
+ */
 export function setDoc(view: EditorView, text: string, path: string) {
-  const current = view.state.doc.toString()
-  if (current === text) return
+  const edit = minimalEdit(view.state.doc.toString(), text)
+  if (!edit) return
   view.dispatch({
-    changes: { from: 0, to: view.state.doc.length, insert: text },
-    selection: { anchor: Math.min(view.state.selection.main.anchor, text.length) },
+    changes: edit,
     effects: contextCompartment.reconfigure(noteContext.of({ path })),
   } as Transaction | Parameters<EditorView['dispatch']>[0])
 }

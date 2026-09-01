@@ -398,7 +398,19 @@ When a file has changed on both sides:
 
 Writes are conditional (`If-Match`), so a write is refused rather than
 overwriting a change that arrived since the last listing; the refusal routes back
-into the merge above.
+into the merge above. A pull that finds the file edited locally while it was in
+flight merges rather than installs, so an edit made mid-sync is not erased by the
+download it raced.
+
+A note open in the editor is folded in too. The editor holds its own copy of the
+text, and that copy is what the next keystroke saves — so a version arriving from
+another device is applied to the live buffer rather than only to the vault
+underneath it. With no unsaved keystrokes the incoming text simply appears, at
+the narrowest possible edit so the caret, selection and scroll position stay
+put. If you were mid-sentence when it landed, the two are merged, and only genuinely
+overlapping edits leave `<<<<<<<` markers in place for you to settle. Without
+this, the same note open on two machines has each side saving its stale copy over
+the other's on the next keypress, forever.
 
 Deletes are the other classic way to lose work, so:
 
@@ -430,6 +442,7 @@ src/
 │  ├─ db.ts           IndexedDB: cache, journal, version history
 │  ├─ sync.ts         the reconcile engine
 │  ├─ merge.ts        three-way merge (diff3)
+│  ├─ rebase.ts       folding a synced change into the buffer being typed in
 │  ├─ markdown.ts     frontmatter, links, tags, tasks
 │  ├─ tagquery.ts     the Tag Folder rule language (tokenizer, parser, eval)
 │  ├─ folders.ts      nested folders + the Tag Folder tree and inheritance
