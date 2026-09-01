@@ -67,6 +67,51 @@ export function installLayoutWatcher(): () => void {
   }
 }
 
+/* ------------------------------------------------------------ soft keyboard */
+
+/**
+ * How much of the screen the on-screen keyboard is covering.
+ *
+ * The layout viewport does not shrink when a phone keyboard opens — only the
+ * visual viewport does — so anything anchored to the bottom of the app, the end
+ * of the note and the caret with it, ends up underneath the keyboard. Tracking
+ * the difference lets the shell simply be shorter while the keyboard is up,
+ * which puts the caret back on screen without anyone having to scroll.
+ */
+export const keyboardInset = signal(0)
+
+/**
+ * Below this, a shrunken visual viewport is a browser chrome bar — Safari's
+ * collapsing URL bar moves it by about 60px — and relaying out the app for that
+ * would make scrolling jump. Keyboards are far taller.
+ */
+const KEYBOARD_MIN = 120
+
+export function installKeyboardWatcher(): () => void {
+  const vv = typeof window === 'undefined' ? undefined : window.visualViewport
+  if (!vv) return () => {}
+  const apply = () => {
+    // A pinch-zoomed visual viewport is smaller for reasons that have nothing
+    // to do with a keyboard, and reacting to it would shrink the app instead.
+    const covered = vv.scale > 1.05 ? 0 : Math.round(window.innerHeight - vv.height - vv.offsetTop)
+    const next = covered > KEYBOARD_MIN ? covered : 0
+    if (next !== keyboardInset.peek()) keyboardInset.value = next
+  }
+  vv.addEventListener('resize', apply)
+  vv.addEventListener('scroll', apply)
+  apply()
+  return () => {
+    vv.removeEventListener('resize', apply)
+    vv.removeEventListener('scroll', apply)
+  }
+}
+
+// Published as a variable so layout can react in CSS rather than in components.
+effect(() => {
+  if (typeof document === 'undefined') return
+  document.documentElement.style.setProperty('--kb-inset', `${keyboardInset.value}px`)
+})
+
 // Close any floating panel when the mode changes, so a resize can never leave
 // a drawer hanging over the editor.
 let lastMode: LayoutMode | undefined

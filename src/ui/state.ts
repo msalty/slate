@@ -81,6 +81,9 @@ export function openNote(path: string) {
 
 export function closeMobileEditor() {
   mobileEditorOpen.value = false
+  // Leaving the note leaves formatting too; otherwise the sheet is waiting,
+  // still open, the next time a note is opened.
+  formatSheetOpen.value = false
 }
 
 /* ------------------------------------------------------------------ toasts */

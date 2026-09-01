@@ -56,6 +56,7 @@ export function EditorPane() {
   const pathRef = useRef<string | undefined>(undefined)
   const [scrolled, setScrolled] = useState(false)
   const path = activePath.value
+  const compact = layoutMode.value === 'compact'
   // Reading the vault's revision here is what makes the editor notice writes it
   // did not make: a sync pull, a restore from history, a task toggled elsewhere.
   const rev = revision.value
@@ -151,6 +152,36 @@ export function EditorPane() {
       notify('This note changed elsewhere while you were typing — both edits are marked in place')
   }, [path, rev])
 
+  /*
+   * On a phone, the keyboard and the Format sheet never share the screen.
+   *
+   * Between them they leave a sliver of note visible, and you are either
+   * formatting or typing — never both in the same second. So opening the sheet
+   * dismisses the keyboard, and touching the note to type closes the sheet.
+   * The editor runs blurred while the sheet is open, which is also why the
+   * caret is kept visible by CSS: it is what the buttons act on.
+   */
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view || !compact || !formatSheetOpen.value) return
+    view.contentDOM.blur()
+    // The pane is shorter now the sheet is in it; put the caret back in sight.
+    const settle = setTimeout(() => {
+      if (!viewRef.current) return
+      viewRef.current.dispatch({
+        effects: EditorView.scrollIntoView(viewRef.current.state.selection.main.head, {
+          y: 'center',
+        }),
+      })
+    }, 60)
+    const close = () => (formatSheetOpen.value = false)
+    view.contentDOM.addEventListener('focus', close)
+    return () => {
+      clearTimeout(settle)
+      view.contentDOM.removeEventListener('focus', close)
+    }
+  }, [formatSheetOpen.value, compact, path])
+
   // Live/source toggle and font size reconfigure in place.
   useEffect(() => {
     const view = viewRef.current
@@ -181,8 +212,6 @@ export function EditorPane() {
       viewRef.current = null
     }
   }, [])
-
-  const compact = layoutMode.value === 'compact'
 
   if (!path || !entry) {
     return (
@@ -245,7 +274,11 @@ export function EditorPane() {
   }
 
   return (
-    <div class="pane editor-pane" data-scrolled={scrolled ? '1' : '0'}>
+    <div
+      class="pane editor-pane"
+      data-scrolled={scrolled ? '1' : '0'}
+      data-format-open={rich && compact && formatSheetOpen.value ? '1' : '0'}
+    >
       <div class="pane-head editor-head">
         {compact && (
           <button class="icon-btn" onClick={closeMobileEditor} aria-label="Back">
@@ -279,7 +312,12 @@ export function EditorPane() {
             aria-label="Format"
             title="Format"
             aria-pressed={formatSheetOpen.value}
-            onClick={() => (formatSheetOpen.value = !formatSheetOpen.value)}
+            onClick={() => {
+              const open = !formatSheetOpen.value
+              formatSheetOpen.value = open
+              // Closing it means they want to type again.
+              if (!open) viewRef.current?.focus()
+            }}
           >
             Aa
           </button>
@@ -373,11 +411,7 @@ export function EditorPane() {
       </div>
 
       {rich && compact && formatSheetOpen.value && (
-        <FormatBar
-          variant="sheet"
-          getView={() => viewRef.current}
-          onClose={() => (formatSheetOpen.value = false)}
-        />
+        <FormatBar variant="sheet" getView={() => viewRef.current} />
       )}
 
       {links.length > 0 && (

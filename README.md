@@ -19,7 +19,7 @@ npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
 npm test               # 92 unit and two-device sync tests
-node scripts/smoke.mjs # 129-check browser smoke test against dist/
+node scripts/smoke.mjs # 139-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -544,7 +544,7 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 
 ```bash
 npm test                # 92 unit + two-device sync tests
-node scripts/smoke.mjs  # 129 checks in headless Chromium against dist/
+node scripts/smoke.mjs  # 139 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

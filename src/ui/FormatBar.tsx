@@ -11,7 +11,6 @@
  * the caret is actually in, rather than a mode the user has to remember.
  */
 
-import { useEffect, useState } from 'preact/hooks'
 import {
   type BlockStyle,
   type InlineMark,
@@ -25,7 +24,6 @@ import {
 } from '../editor/format'
 import type { EditorView } from '@codemirror/view'
 import {
-  IconClose,
   IconCode,
   IconHighlight,
   IconIndent,
@@ -62,37 +60,10 @@ export interface FormatBarProps {
   /** Read at click time: the view is rebuilt whenever the open note changes. */
   getView: () => EditorView | null
   variant: 'bar' | 'sheet'
-  onClose?: () => void
 }
 
-/**
- * How much of the screen the on-screen keyboard is covering.
- *
- * The layout viewport does not shrink when a phone keyboard opens, so anything
- * pinned to the bottom of the page ends up behind it. The visual viewport does
- * shrink, and the difference is the keyboard.
- */
-function useKeyboardInset(): number {
-  const [inset, setInset] = useState(0)
-  useEffect(() => {
-    const vv = window.visualViewport
-    if (!vv) return
-    const apply = () =>
-      setInset(Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop)))
-    apply()
-    vv.addEventListener('resize', apply)
-    vv.addEventListener('scroll', apply)
-    return () => {
-      vv.removeEventListener('resize', apply)
-      vv.removeEventListener('scroll', apply)
-    }
-  }, [])
-  return inset
-}
-
-export function FormatBar({ getView, variant, onClose }: FormatBarProps) {
+export function FormatBar({ getView, variant }: FormatBarProps) {
   const f = formatSnapshot.value
-  const keyboard = useKeyboardInset()
 
   /**
    * Wire a button to a command without stealing the selection.
@@ -109,7 +80,9 @@ export function FormatBar({ getView, variant, onClose }: FormatBarProps) {
       const view = getView()
       if (!view) return
       cmd(view)
-      view.focus()
+      // The sheet deliberately runs with the editor blurred so the keyboard
+      // stays down; focusing it here would bring the keyboard straight back.
+      if (variant === 'bar') view.focus()
     }
     return { onMouseDown: handler, onTouchStart: handler }
   }
@@ -195,24 +168,14 @@ export function FormatBar({ getView, variant, onClose }: FormatBarProps) {
   )
 
   if (variant === 'sheet') {
-    // No scrim: the sheet sits where the keyboard would, and the note above it
-    // stays live. Formatting one line and then tapping the next is the whole
-    // point of the panel, and a modal overlay would make that a three-tap trip.
+    /*
+     * No title bar: the sheet is three rows of controls that explain
+     * themselves, and on a phone every row it does not have is a row of the
+     * note you can still see. It is a flex child of the pane rather than an
+     * overlay, so the editor above it shrinks and the caret stays visible.
+     */
     return (
-      <div
-        class="fmt-sheet"
-        role="group"
-        aria-label="Format"
-        // Sit on top of the keyboard rather than behind it. The home-indicator
-        // padding is only wanted when there is no keyboard to cover it.
-        style={keyboard ? { bottom: `${keyboard}px`, paddingBottom: '10px' } : undefined}
-      >
-        <div class="fmt-sheet-head">
-          <h2>Format</h2>
-          <button class="icon-btn" aria-label="Close" onClick={onClose}>
-            <IconClose size={18} />
-          </button>
-        </div>
+      <div class="fmt-sheet" role="group" aria-label="Format">
         {styleRow}
         {markRow}
         {listRow}

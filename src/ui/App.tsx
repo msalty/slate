@@ -32,6 +32,7 @@ import {
 import {
   closeDrawer,
   drawer,
+  installKeyboardWatcher,
   installLayoutWatcher,
   layoutMode,
   listInline,
@@ -49,6 +50,7 @@ export function App() {
 
   /* ---- layout ------------------------------------------------------ */
   useEffect(() => installLayoutWatcher(), [])
+  useEffect(() => installKeyboardWatcher(), [])
 
   /* ---- theme ------------------------------------------------------- */
   useEffect(() => {

@@ -1071,6 +1071,78 @@ try {
   check('no horizontal overflow in the phone editor', !(await overflows()))
   await page.screenshot({ path: join(SHOTS, '14-phone-editor.png') })
 
+  /* ---- the phone's Format sheet -----------------------------------------
+   * Rich text on a phone has one rule: the keyboard and the Format sheet never
+   * share the screen. Between them they leave almost no note visible, and
+   * nobody formats and types in the same moment anyway.
+   */
+  /** Choose an editor mode from the note-actions menu, which lists all three. */
+  const chooseMode = async (label) => {
+    await page.locator('.editor-overlay [aria-label="Note actions"]').click()
+    await page.waitForTimeout(300)
+    await page.locator('.menu-item', { hasText: new RegExp(`^${label}$`) }).click()
+    await page.waitForTimeout(400)
+  }
+  await chooseMode('Rich text')
+  check('the phone can switch to rich text', (await page.locator('.fmt-open').count()) === 1)
+  await page.locator('.cm-line').first().click()
+  await page.waitForTimeout(250)
+  check(
+    'tapping the note focuses it for typing',
+    await page.evaluate(() => document.activeElement?.classList.contains('cm-content')),
+  )
+
+  await page.locator('.fmt-open').click()
+  await page.waitForTimeout(400)
+  const fmt = await page.evaluate(() => {
+    const s = document.querySelector('.fmt-sheet')?.getBoundingClientRect()
+    const body = document.querySelector('.editor-body')?.getBoundingClientRect()
+    const cursor = document.querySelector('.cm-cursor')
+    if (!s || !body) return null
+    return {
+      height: Math.round(s.height),
+      share: Math.round((s.height / window.innerHeight) * 100),
+      bodyEndsAt: Math.round(body.bottom),
+      sheetStartsAt: Math.round(s.top),
+      cursorShown: cursor ? getComputedStyle(cursor).display : 'none',
+      focused: document.activeElement?.className ?? '',
+    }
+  })
+  check('the Format sheet is compact', !!fmt && fmt.share <= 20, `${fmt?.height}px, ${fmt?.share}% of the screen`)
+  check('the sheet has no title bar to pay for', (await page.locator('.fmt-sheet h2').count()) === 0)
+  check(
+    'the note shrinks rather than hiding under the sheet',
+    !!fmt && fmt.bodyEndsAt <= fmt.sheetStartsAt + 1,
+    `note ends at ${fmt?.bodyEndsAt}, sheet starts at ${fmt?.sheetStartsAt}`,
+  )
+  check('opening the sheet dismisses the keyboard', !!fmt && !fmt.focused.includes('cm-content'), fmt?.focused)
+  check('the caret stays visible with the editor blurred', fmt?.cursorShown === 'block', fmt?.cursorShown)
+  await page.screenshot({ path: join(SHOTS, '18-phone-format.png') })
+
+  await page.locator('.cm-line').first().click()
+  await page.waitForTimeout(400)
+  check('touching the note closes the sheet', (await page.locator('.fmt-sheet').count()) === 0)
+  check(
+    'and the editor takes focus back for typing',
+    await page.evaluate(() => document.activeElement?.classList.contains('cm-content')),
+  )
+
+  // The keyboard itself: the shell is shortened by it rather than covered.
+  // Headless Chromium has no soft keyboard, so the inset the watcher publishes
+  // is set by hand.
+  const kb = await page.evaluate(() => {
+    document.documentElement.style.setProperty('--kb-inset', '336px')
+    const body = document.querySelector('.editor-body').getBoundingClientRect()
+    return { bodyEndsAt: Math.round(body.bottom), keyboardTop: window.innerHeight - 336 }
+  })
+  check(
+    'a keyboard shortens the editor instead of covering it',
+    kb.bodyEndsAt <= kb.keyboardTop,
+    `note ends at ${kb.bodyEndsAt}, keyboard starts at ${kb.keyboardTop}`,
+  )
+  await page.evaluate(() => document.documentElement.style.removeProperty('--kb-inset'))
+  await chooseMode('Live preview')
+
   await page.locator('.editor-overlay [aria-label="Back"]').click()
   await page.waitForTimeout(400)
   check('back returns to the list', (await page.locator('.editor-overlay').count()) === 0)
