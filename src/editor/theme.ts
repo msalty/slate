@@ -26,7 +26,15 @@ export const editorTheme = EditorView.theme({
     padding: '0',
   },
   '.cm-content': {
-    padding: '8px 0 45vh 0',
+    /*
+     * The horizontal padding is what keeps the note off the edge of its pane.
+     * It belongs here rather than on `.cm-line`, because a code block, a table
+     * or an image bleeds to the full width of the content box and would
+     * otherwise sit flush against the pane. 12px here plus the 4px on a line
+     * puts body text exactly under the title in the header above it.
+     * The phone overrides this in app.css, where the pane is the whole screen.
+     */
+    padding: '8px 12px 45vh',
     caretColor: 'var(--accent)',
     maxWidth: 'var(--editor-measure)',
     margin: '0 auto',
