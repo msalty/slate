@@ -452,6 +452,60 @@ try {
   check('a missing embed reports itself', (await page.locator('.cm-embed-missing').count()) === 1)
   await page.screenshot({ path: join(SHOTS, '07-kitchen-sink.png') })
 
+  /* ---- clicks land where they are aimed ---------------------------------
+   * Vertical space around a heading or a code block has to be padding or a
+   * transparent border, never margin: CodeMirror turns a click into a document
+   * position through a height map built from measured line boxes, and a margin
+   * is not part of one. A single `margin: 0.7em 0` on a heading used to put
+   * every click below it a line out — worst at the bottom of a long note,
+   * where the drift has accumulated through every block above it. This note is
+   * the right fixture for that: headings, a code block and frontmatter, with
+   * body text under all of them.
+   */
+  const clickWord = async (word) => {
+    const box = await page.evaluate((w) => {
+      const walk = document.createTreeWalker(
+        document.querySelector('.cm-content'),
+        NodeFilter.SHOW_TEXT,
+      )
+      let n
+      while ((n = walk.nextNode())) {
+        const i = n.textContent.indexOf(w)
+        if (i < 0) continue
+        const r = document.createRange()
+        r.setStart(n, i)
+        r.setEnd(n, i + w.length)
+        if (!r.getBoundingClientRect().width) continue
+        // The word has to be on screen before its coordinates mean anything.
+        n.parentElement?.scrollIntoView({ block: 'center' })
+        const b = r.getBoundingClientRect()
+        const view = document.querySelector('.cm-scroller').getBoundingClientRect()
+        if (b.top < view.top || b.bottom > view.bottom) return null
+        return { x: b.left + b.width / 2, y: b.top + b.height / 2 }
+      }
+      return null
+    }, word)
+    if (!box) return { ok: false, detail: 'not rendered' }
+    await page.mouse.click(box.x, box.y)
+    await page.waitForTimeout(120)
+    return page.evaluate((w) => {
+      const sel = getSelection()
+      if (!sel.rangeCount) return { ok: false, detail: 'no selection' }
+      const text = sel.anchorNode.textContent ?? ''
+      const at = sel.anchorOffset
+      const i = text.indexOf(w)
+      return {
+        ok: i >= 0 && at >= i && at <= i + w.length,
+        detail: `caret landed in ${JSON.stringify(text.slice(0, 28))} at ${at}`,
+      }
+    }, word)
+  }
+
+  for (const word of ['blockquote', 'numbered', 'Final']) {
+    const landed = await clickWord(word)
+    check(`clicking "${word}" puts the caret in that word`, landed.ok, landed.detail)
+  }
+
   // Clicking the rendered table must drop the caret into the source.
   await page.locator('.cm-table-render td').first().click()
   await page.waitForTimeout(400)
