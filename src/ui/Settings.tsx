@@ -263,7 +263,8 @@ export function Settings() {
                     update({ editorMode: (e.target as HTMLSelectElement).value as never })
                   }
                 >
-                  <option value="live">Live preview — formatted as you type</option>
+                  <option value="rich">Rich text — formatting bar, no syntax</option>
+                  <option value="live">Live preview — syntax on the line you're editing</option>
                   <option value="source">Markdown source</option>
                 </select>
               </label>

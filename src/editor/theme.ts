@@ -138,6 +138,27 @@ export const editorTheme = EditorView.theme({
     marginBottom: '14px',
   },
 
+  /* --- inline styles markdown has no node for ------------------------ */
+  '.cm-underline': { textDecoration: 'underline', textUnderlineOffset: '2px' },
+  '.cm-highlight': {
+    backgroundColor: 'color-mix(in srgb, var(--accent) 26%, transparent)',
+    borderRadius: '3px',
+    padding: '0 2px',
+  },
+
+  /*
+   * Rich text mode.
+   *
+   * Nothing structural changes — the same decorations run — but with no syntax
+   * ever on screen the text can breathe like a document rather than a source
+   * file: a little more air between paragraphs, and a first line that sits at
+   * the top of the note instead of under a phantom margin.
+   */
+  '&.cm-rich .cm-line': { paddingTop: '1px', paddingBottom: '1px' },
+  '&.cm-rich .cm-line.cm-h1': { margin: '0.8em 0 0.15em' },
+  '&.cm-rich .cm-line.cm-h2': { margin: '0.8em 0 0.15em' },
+  '&.cm-rich .cm-content > .cm-line:first-child': { marginTop: '0' },
+
   /* --- inline widgets ----------------------------------------------- */
   '.cm-hr': {
     display: 'inline-block',

@@ -13,6 +13,8 @@ import {
 } from '@codemirror/state'
 import {
   EditorView,
+  ViewPlugin,
+  type ViewUpdate,
   drawSelection,
   dropCursor,
   highlightSpecialChars,
@@ -42,11 +44,23 @@ import { editorTheme, highlighting } from './theme'
 import {
   livePreview,
   linkClicks,
+  previewMode,
   tableField,
   focusedField,
   focusWatcher,
+  focusSeeder,
   interactedField,
 } from './livePreview'
+import {
+  applyBlockStyle,
+  applyIndent,
+  applyInline,
+  applyList,
+  applyQuote,
+  EMPTY_SNAPSHOT,
+  formatSnapshot,
+  inspect,
+} from './format'
 import { pasteHandler } from './paste'
 import { WikiLink } from './wikilink-syntax'
 import { noteContext } from './context'
@@ -56,36 +70,6 @@ import { tagCompletion, wikiCompletion } from './completion'
 export const previewCompartment = new Compartment()
 export const contextCompartment = new Compartment()
 export const fontCompartment = new Compartment()
-
-/** Wrap the selection (or the word at the caret) in a pair of markers. */
-function wrapWith(marker: string) {
-  return (view: EditorView): boolean => {
-    const changes = view.state.changeByRange((range) => {
-      const doc = view.state.doc
-      let { from, to } = range
-      if (from === to) {
-        // No selection: operate on the word under the caret.
-        const line = doc.lineAt(from)
-        const rel = from - line.from
-        const left = /[\w'-]*$/.exec(line.text.slice(0, rel))?.[0].length ?? 0
-        const right = /^[\w'-]*/.exec(line.text.slice(rel))?.[0].length ?? 0
-        from -= left
-        to += right
-      }
-      const text = doc.sliceString(from, to)
-      const already =
-        text.startsWith(marker) && text.endsWith(marker) && text.length >= marker.length * 2
-      const next = already ? text.slice(marker.length, -marker.length) : `${marker}${text}${marker}`
-      const delta = already ? -marker.length : marker.length
-      return {
-        changes: { from, to, insert: next },
-        range: EditorSelection.range(range.from + delta, range.to + delta),
-      }
-    })
-    view.dispatch(changes, { scrollIntoView: true, userEvent: 'input.format' })
-    return true
-  }
-}
 
 /** Turn the selection into a wikilink, or open the link autocomplete. */
 function makeWikiLink(view: EditorView): boolean {
@@ -101,42 +85,25 @@ function makeWikiLink(view: EditorView): boolean {
   return true
 }
 
-/** Prefix every selected line with a marker (list, quote, task). */
-function prefixLines(prefix: string) {
-  return (view: EditorView): boolean => {
-    const { state } = view
-    const changes: Array<{ from: number; to: number; insert: string }> = []
-    const done = new Set<number>()
-    for (const range of state.selection.ranges) {
-      for (let n = state.doc.lineAt(range.from).number; n <= state.doc.lineAt(range.to).number; n++) {
-        if (done.has(n)) continue
-        done.add(n)
-        const line = state.doc.line(n)
-        const existing = new RegExp(`^\\s*${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`)
-        if (existing.test(line.text)) {
-          const m = existing.exec(line.text)!
-          changes.push({ from: line.from + m[0].length - prefix.length, to: line.from + m[0].length, insert: '' })
-        } else {
-          const indent = /^\s*/.exec(line.text)![0].length
-          changes.push({ from: line.from + indent, to: line.from + indent, insert: prefix })
-        }
-      }
-    }
-    if (!changes.length) return false
-    view.dispatch({ changes, userEvent: 'input.format' })
-    return true
-  }
-}
-
 const formattingKeymap = [
-  { key: 'Mod-b', run: wrapWith('**') },
-  { key: 'Mod-i', run: wrapWith('*') },
-  { key: 'Mod-Shift-x', run: wrapWith('~~') },
-  { key: 'Mod-e', run: wrapWith('`') },
+  { key: 'Mod-b', run: applyInline('bold') },
+  { key: 'Mod-i', run: applyInline('italic') },
+  { key: 'Mod-u', run: applyInline('underline') },
+  { key: 'Mod-Shift-x', run: applyInline('strike') },
+  { key: 'Mod-Shift-h', run: applyInline('highlight') },
+  { key: 'Mod-e', run: applyInline('code') },
   { key: 'Mod-k', run: makeWikiLink },
-  { key: 'Mod-Shift-8', run: prefixLines('- ') },
-  { key: 'Mod-Shift-9', run: prefixLines('> ') },
-  { key: 'Mod-Shift-7', run: prefixLines('- [ ] ') },
+  // Paragraph styles, on the same keys a word processor uses.
+  { key: 'Mod-Alt-1', run: applyBlockStyle('title') },
+  { key: 'Mod-Alt-2', run: applyBlockStyle('heading') },
+  { key: 'Mod-Alt-3', run: applyBlockStyle('subheading') },
+  { key: 'Mod-Alt-0', run: applyBlockStyle('body') },
+  { key: 'Mod-Shift-8', run: applyList('bullet') },
+  { key: 'Mod-Shift-0', run: applyList('number') },
+  { key: 'Mod-Shift-9', run: applyQuote },
+  { key: 'Mod-Shift-7', run: applyList('check') },
+  { key: 'Mod-]', run: applyIndent(1) },
+  { key: 'Mod-[', run: applyIndent(-1) },
   { key: 'Mod-/', run: toggleComment },
   // Continue lists and quotes on Enter — the single highest-value markdown
   // affordance, so it takes precedence over the default newline command.
@@ -150,13 +117,54 @@ const formattingKeymap = [
   },
 ]
 
+/** The three ways the same markdown can be presented. */
+export type EditorMode = 'rich' | 'live' | 'source'
+
 export interface EditorOptions {
   doc: string
   path: string
-  live: boolean
+  mode: EditorMode
   fontSize: number
   onChange: (text: string) => void
   onSelectionIdle?: () => void
+}
+
+/**
+ * Publishes what is under the caret so the format bar can show its pressed
+ * states. Only installed in rich mode, which is the only mode with a bar.
+ */
+const formatWatcher = ViewPlugin.fromClass(
+  class {
+    constructor(view: EditorView) {
+      formatSnapshot.value = inspect(view.state)
+    }
+    update(u: ViewUpdate) {
+      if (u.docChanged || u.selectionSet) formatSnapshot.value = inspect(u.state)
+    }
+    destroy() {
+      formatSnapshot.value = EMPTY_SNAPSHOT
+    }
+  },
+)
+
+/**
+ * The rendering extensions for a mode. Source mode gets none of them: the
+ * buffer is the file, shown exactly as it will be written.
+ */
+export function previewExtensions(mode: EditorMode): Extension {
+  if (mode === 'source') return []
+  const shared = [
+    focusedField,
+    focusWatcher,
+    focusSeeder,
+    interactedField,
+    livePreview,
+    tableField,
+    linkClicks,
+  ]
+  return mode === 'rich'
+    ? [previewMode.of('rich'), ...shared, formatWatcher, EditorView.editorAttributes.of({ class: 'cm-rich' })]
+    : shared
 }
 
 export function createEditorState(opts: EditorOptions): EditorState {
@@ -193,11 +201,7 @@ export function createEditorState(opts: EditorOptions): EditorState {
     editorTheme,
     highlighting,
     contextCompartment.of(noteContext.of({ path: opts.path })),
-    previewCompartment.of(
-      opts.live
-        ? [focusedField, focusWatcher, interactedField, livePreview, tableField, linkClicks]
-        : [],
-    ),
+    previewCompartment.of(previewExtensions(opts.mode)),
     fontCompartment.of(
       EditorView.theme({ '&': { '--editor-font-size': `${opts.fontSize}px` } } as never),
     ),

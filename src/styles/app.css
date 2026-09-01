@@ -537,6 +537,8 @@ textarea {
 
 .editor-pane {
   background: var(--bg);
+  /* The Format sheet anchors to the bottom of the pane. */
+  position: relative;
 }
 .editor-head {
   border-bottom: 1px solid transparent;
@@ -578,6 +580,167 @@ textarea {
 }
 .editor-host .cm-editor {
   height: 100%;
+}
+
+/* ---- rich text: the formatting bar and its phone sheet ----------------- */
+
+.fmt-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.fmt-bar::-webkit-scrollbar {
+  display: none;
+}
+.fmt-row {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.fmt-sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 5px;
+  background: var(--border);
+  flex: 0 0 auto;
+}
+
+.fmt-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 28px;
+  border-radius: 7px;
+  color: var(--text-muted);
+  font-size: 14px;
+  flex: 0 0 auto;
+  transition: background var(--dur), color var(--dur);
+  -webkit-tap-highlight-color: transparent;
+}
+.fmt-btn:hover:not(:disabled) {
+  background: var(--row-hover);
+  color: var(--text);
+}
+.fmt-btn[aria-pressed='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.fmt-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+/* The paragraph-style pills show their own style, as Notes' sheet does. */
+.fmt-style {
+  padding: 3px 10px;
+  border-radius: 7px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex: 0 0 auto;
+  transition: background var(--dur), color var(--dur);
+  -webkit-tap-highlight-color: transparent;
+}
+.fmt-style:hover {
+  background: var(--row-hover);
+  color: var(--text);
+}
+.fmt-style[aria-pressed='true'] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+/* Each pill is set in the style it applies, so the row reads as a specimen. */
+.fmt-style-title {
+  font-size: 15px;
+  font-weight: 700;
+}
+.fmt-style-heading {
+  font-size: 13.5px;
+  font-weight: 700;
+}
+.fmt-style-subheading {
+  font-size: 12.5px;
+  font-weight: 650;
+}
+.fmt-style-body {
+  font-size: 12.5px;
+}
+.fmt-sheet .fmt-style-title {
+  font-size: 19px;
+}
+.fmt-sheet .fmt-style-heading {
+  font-size: 16px;
+}
+.fmt-sheet .fmt-style-subheading,
+.fmt-sheet .fmt-style-body {
+  font-size: 15px;
+}
+
+.icon-btn.fmt-open {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.fmt-sheet {
+  /*
+   * Absolute inside the editor pane, not fixed: on a phone the pane already
+   * fills the screen, and a fixed element is at the mercy of any transformed
+   * ancestor between here and the viewport.
+   */
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 25;
+  background: var(--surface-float);
+  border-top: 1px solid var(--border);
+  border-radius: 16px 16px 0 0;
+  box-shadow: var(--shadow-float);
+  padding: 6px 12px calc(14px + env(safe-area-inset-bottom));
+  animation: sheet-in 220ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+.fmt-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 0 6px;
+}
+.fmt-sheet-head h2 {
+  font-size: 17px;
+  font-weight: 700;
+  margin: 0;
+}
+.fmt-sheet .fmt-row {
+  gap: 6px;
+  padding: 5px 0;
+}
+.fmt-sheet .fmt-styles {
+  justify-content: space-between;
+  padding-bottom: 8px;
+}
+/* Phone targets: fill the width in equal parts, at a size a thumb can hit. */
+.fmt-sheet .fmt-btn {
+  flex: 1 1 0;
+  height: 44px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  font-size: 17px;
+}
+.fmt-sheet .fmt-btn[aria-pressed='true'] {
+  background: var(--accent-soft);
+}
+.fmt-sheet .fmt-style {
+  padding: 8px 12px;
+}
+.fmt-sheet .fmt-sep {
+  height: 26px;
+  margin: 0 2px;
 }
 
 .backlinks {

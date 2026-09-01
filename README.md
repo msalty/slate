@@ -19,7 +19,7 @@ npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
 npm test               # 92 unit and two-device sync tests
-node scripts/smoke.mjs # 107-check browser smoke test against dist/
+node scripts/smoke.mjs # 126-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -29,10 +29,26 @@ until you set up a backend in Settings (⌘,).
 
 ## What it does
 
-**Writing.** Live-preview markdown: formatting renders as you type, and the raw
-syntax reappears the moment your caret enters it. The buffer is always the exact
-text of the `.md` file, so nothing is ever silently rewritten. ⌘⇧M shows the
-plain source when you want it.
+**Writing.** Three ways to look at the same file, switched in Settings or with
+⌘⇧M, and the buffer is always the exact text of the `.md` file in all of them,
+so nothing is ever silently rewritten:
+
+- **Rich text** — a word processor. No `#`, no `**`, ever: a formatting bar
+  (Title / Heading / Subheading / Body, **B** *I* <u>U</u> ~~S~~, highlight,
+  monospace, lists, checklists, indent, quote) applies the markdown for you and
+  lights up to show what the caret is sitting in. On a phone the same controls
+  open as a Format sheet from the **Aa** button. Markdown still works while you
+  type — `# ` at the start of a line is still a Title, and the marker vanishes
+  the moment it becomes one — and backspacing at the start of a styled line
+  takes the style off, because the hidden marks behave as single characters.
+- **Live preview** — formatting renders as you type, and the raw syntax
+  reappears the moment your caret enters it.
+- **Markdown source** — the file, exactly as it is written.
+
+Underline has no markdown syntax, so it is written as `<u>…</u>`, which every
+renderer passes through; highlight uses `==text==`. Everything else is ordinary
+CommonMark, and a note written in rich text opens as plain markdown anywhere
+else.
 
 **Linking.** `[[Note Title]]` links notes to each other. Typing `[[` opens an
 autocomplete over every note; picking one that doesn't exist yet offers to create
@@ -137,10 +153,14 @@ or Tag Folder for an action sheet; right-click does the same on a desktop.
 | ⌘, | Settings |
 | ⌘\ | Toggle sidebar |
 | ⌘⇧R | Toggle calendar column |
-| ⌘⇧M | Toggle markdown source |
-| ⌘B / ⌘I / ⌘E | Bold / italic / code |
+| ⌘⇧M | Cycle rich text → live preview → source |
+| ⌘B / ⌘I / ⌘U | Bold / italic / underline |
+| ⌘⇧X / ⌘⇧H / ⌘E | Strikethrough / highlight / monospace |
+| ⌘⌥1 / ⌘⌥2 / ⌘⌥3 / ⌘⌥0 | Title / Heading / Subheading / Body |
 | ⌘K *(with a selection)* | Wrap in a wikilink |
-| ⌘⇧7 / ⌘⇧8 / ⌘⇧9 | Task / bullet / quote |
+| ⌘⇧7 / ⌘⇧8 / ⌘⇧0 | Checklist / bullets / numbers |
+| ⌘⇧9 | Block quote |
+| ⌘] / ⌘[ | Indent / outdent a list item |
 
 ---
 
@@ -450,6 +470,7 @@ src/
 │  └─ settings.ts     device-local vs vault-wide preferences
 ├─ adapters/      webdav.ts · gdrive.ts · memory.ts (tests)
 ├─ editor/        CodeMirror 6: live preview, widgets, completion, paste
+│  ├─ format.ts     the formatting commands behind the rich-text bar
 │  ├─ inline.ts      inline markdown for text inside widgets (table cells)
 │  └─ pickImage.ts   camera / photo library / file insertion
 └─ ui/            Preact components
@@ -523,7 +544,7 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 
 ```bash
 npm test                # 92 unit + two-device sync tests
-node scripts/smoke.mjs  # 107 checks in headless Chromium against dist/
+node scripts/smoke.mjs  # 126 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

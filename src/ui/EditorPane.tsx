@@ -2,15 +2,14 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks'
 import { EditorView } from '@codemirror/view'
-import { createEditorState, fontCompartment, previewCompartment, setDoc } from '../editor/setup'
 import {
-  livePreview,
-  linkClicks,
-  tableField,
-  focusedField,
-  focusWatcher,
-  interactedField,
-} from '../editor/livePreview'
+  createEditorState,
+  fontCompartment,
+  previewCompartment,
+  previewExtensions,
+  setDoc,
+} from '../editor/setup'
+import { FormatBar } from './FormatBar'
 import {
   backlinkMap,
   getEntry,
@@ -24,11 +23,19 @@ import {
 import { rebaseBuffer } from '../core/rebase'
 import { settings, update } from '../core/settings'
 import { syncSoon } from '../core/sync'
-import { activePath, closeMobileEditor, historyOpen, notify } from './state'
+import {
+  EDITOR_MODES,
+  activePath,
+  closeMobileEditor,
+  formatSheetOpen,
+  historyOpen,
+  notify,
+} from './state'
 import { layoutMode, railState, toggleRail } from './layout'
 import { debounce, relativeTime } from '../core/util'
 import {
   IconCamera,
+  IconCheck,
   IconChevronLeft,
   IconCode,
   IconDots,
@@ -37,6 +44,7 @@ import {
   IconImagePlus,
   IconPaperclip,
   IconRail,
+  IconRichText,
   IconTrash,
 } from './Icons'
 import { openMenu, type MenuItem } from './Menu'
@@ -98,7 +106,7 @@ export function EditorPane() {
     const state = createEditorState({
       doc: f?.text ?? '',
       path,
-      live: settings.value.editorMode === 'live',
+      mode: settings.value.editorMode,
       fontSize: settings.value.fontSize,
       onChange: (text) => saveRef.current(path, text),
     })
@@ -149,11 +157,7 @@ export function EditorPane() {
     if (!view) return
     view.dispatch({
       effects: [
-        previewCompartment.reconfigure(
-          settings.value.editorMode === 'live'
-            ? [focusedField, focusWatcher, interactedField, livePreview, tableField, linkClicks]
-            : [],
-        ),
+        previewCompartment.reconfigure(previewExtensions(settings.value.editorMode)),
         fontCompartment.reconfigure(
           EditorView.theme({ '&': { '--editor-font-size': `${settings.value.fontSize}px` } } as never),
         ),
@@ -202,7 +206,15 @@ export function EditorPane() {
   }
 
   const links = backlinkMap.value.get(path) ?? []
-  const live = settings.value.editorMode === 'live'
+  const mode = settings.value.editorMode
+  const rich = mode === 'rich'
+
+  /** The three presentations, as a menu with the active one ticked. */
+  const modeItems: MenuItem[] = EDITOR_MODES.map((m) => ({
+    label: m.label,
+    icon: mode === m.id ? <IconCheck size={15} /> : <span style={{ width: 15 }} />,
+    onSelect: () => update({ editorMode: m.id }),
+  }))
 
   /** Camera / library / any file — all land in the note as resizable embeds. */
   const insertMenu = (e: { clientX: number; clientY: number }) => {
@@ -261,6 +273,17 @@ export function EditorPane() {
           }}
         />
         <span class="spacer" />
+        {compact && rich && (
+          <button
+            class="icon-btn fmt-open"
+            aria-label="Format"
+            title="Format"
+            aria-pressed={formatSheetOpen.value}
+            onClick={() => (formatSheetOpen.value = !formatSheetOpen.value)}
+          >
+            Aa
+          </button>
+        )}
         <button class="icon-btn" onClick={insertMenu} title="Insert photo or file" aria-label="Insert photo or file">
           <IconImagePlus />
         </button>
@@ -272,11 +295,14 @@ export function EditorPane() {
               openMenu(
                 e,
                 [
+                  ...modeItems,
                   {
-                    label: live ? 'Show markdown source' : 'Back to live preview',
-                    onSelect: () => update({ editorMode: live ? 'source' : 'live' }),
+                    label: 'Version history',
+                    separated: true,
+                    onSelect: () => {
+                      historyOpen.value = true
+                    },
                   },
-                  { label: 'Version history', onSelect: () => (historyOpen.value = true) },
                   {
                     label: 'Delete note',
                     danger: true,
@@ -300,11 +326,11 @@ export function EditorPane() {
           <>
             <button
               class="icon-btn"
-              aria-pressed={!live}
-              onClick={() => update({ editorMode: live ? 'source' : 'live' })}
-              title={live ? 'Show markdown source (⌘⇧M)' : 'Back to live preview (⌘⇧M)'}
+              aria-label="Editor mode"
+              title={`Editor mode: ${EDITOR_MODES.find((m) => m.id === mode)?.label} (⌘⇧M cycles)`}
+              onClick={(e) => openMenu(e, modeItems, 'Editor mode')}
             >
-              {live ? <IconCode /> : <IconEye />}
+              {mode === 'rich' ? <IconRichText /> : mode === 'live' ? <IconEye /> : <IconCode />}
             </button>
             <button
               class="icon-btn"
@@ -338,9 +364,21 @@ export function EditorPane() {
         )}
       </div>
 
+      {rich && !compact && (
+        <FormatBar variant="bar" getView={() => viewRef.current} />
+      )}
+
       <div class="editor-body">
         <div class="editor-host" ref={hostRef} />
       </div>
+
+      {rich && compact && formatSheetOpen.value && (
+        <FormatBar
+          variant="sheet"
+          getView={() => viewRef.current}
+          onClose={() => (formatSheetOpen.value = false)}
+        />
+      )}
 
       {links.length > 0 && (
         <div class="backlinks">

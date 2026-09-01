@@ -32,6 +32,29 @@ export const activePath = signal<string | undefined>(undefined)
 export const selectedDay = signal<number>(startOfDay(Date.now()))
 export const calendarMonth = signal<number>(startOfDay(Date.now()))
 
+/** Open state of the phone's Format sheet (rich mode). */
+export const formatSheetOpen = signal(false)
+
+/* ------------------------------------------------------------ editor mode */
+
+export const EDITOR_MODES = [
+  { id: 'rich', label: 'Rich text', detail: 'Formatting bar, no markdown symbols' },
+  { id: 'live', label: 'Live preview', detail: 'Syntax shown on the line you are editing' },
+  { id: 'source', label: 'Markdown source', detail: 'The file exactly as it is written' },
+] as const
+
+export type EditorModeId = (typeof EDITOR_MODES)[number]['id']
+
+export function editorModeLabel(id: EditorModeId): string {
+  return EDITOR_MODES.find((m) => m.id === id)?.label ?? id
+}
+
+/** The mode ⌘⇧M moves to next. Cycling beats three separate shortcuts. */
+export function nextEditorMode(id: EditorModeId): EditorModeId {
+  const i = EDITOR_MODES.findIndex((m) => m.id === id)
+  return EDITOR_MODES[(i + 1) % EDITOR_MODES.length].id
+}
+
 export const paletteOpen = signal(false)
 export const settingsOpen = signal(false)
 export const historyOpen = signal(false)

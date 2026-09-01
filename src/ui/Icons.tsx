@@ -242,3 +242,62 @@ export const IconImagePlus = (p: P) => (
     <path d="M17.5 16v6M14.5 19h6" />
   </Svg>
 )
+
+/* ---- formatting -------------------------------------------------------- */
+
+export const IconListBullet = (p: P) => (
+  <Svg {...p}>
+    <path d="M9 6h11M9 12h11M9 18h11" />
+    <circle cx="4.5" cy="6" r="1.3" fill="currentColor" stroke="none" />
+    <circle cx="4.5" cy="12" r="1.3" fill="currentColor" stroke="none" />
+    <circle cx="4.5" cy="18" r="1.3" fill="currentColor" stroke="none" />
+  </Svg>
+)
+
+export const IconListNumber = (p: P) => (
+  <Svg {...p}>
+    <path d="M10 6h10M10 12h10M10 18h10" />
+    <path d="M3.2 4.6 4.6 4v3.6M3 17.2c0-.7.6-1.2 1.3-1.2.6 0 1.2.4 1.2 1s-.4 1-1 1.4L3 19.6h2.6" stroke-width="1.5" />
+  </Svg>
+)
+
+export const IconListCheck = (p: P) => (
+  <Svg {...p}>
+    <path d="M10 6h10M10 12h10M10 18h10" />
+    <rect x="2.6" y="4" width="4.4" height="4.4" rx="1.2" stroke-width="1.5" />
+    <rect x="2.6" y="15.6" width="4.4" height="4.4" rx="1.2" stroke-width="1.5" />
+    <path d="M2.6 12.2h4.4" stroke-width="1.5" />
+  </Svg>
+)
+
+export const IconIndent = (p: P) => (
+  <Svg {...p}>
+    <path d="M10 6h10M10 12h10M10 18h10M3 9l3 3-3 3" />
+  </Svg>
+)
+
+export const IconOutdent = (p: P) => (
+  <Svg {...p}>
+    <path d="M10 6h10M10 12h10M10 18h10M6 9l-3 3 3 3" />
+  </Svg>
+)
+
+export const IconQuote = (p: P) => (
+  <Svg {...p}>
+    <path d="M4 5v14" stroke-width="2.4" />
+    <path d="M9 8h11M9 12h11M9 16h7" />
+  </Svg>
+)
+
+export const IconHighlight = (p: P) => (
+  <Svg {...p}>
+    <path d="M14.5 4.5 19.5 9.5 11 18H6.5l-1-3.5z" />
+    <path d="M4 21h16" stroke-width="2.2" />
+  </Svg>
+)
+
+export const IconRichText = (p: P) => (
+  <Svg {...p}>
+    <path d="M4 6h16M4 12h11M4 18h7" />
+  </Svg>
+)

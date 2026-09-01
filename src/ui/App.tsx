@@ -17,10 +17,10 @@ import { createNote, ready, resolveLink } from '../core/vault'
 import {
   activePath,
   closeMobileEditor,
-
   lightboxPath,
   mobileEditorOpen,
   mobileTab,
+  nextEditorMode,
   notify,
   openNote,
   paletteOpen,
@@ -140,7 +140,7 @@ export function App() {
         toggleRail()
       } else if (k === 'm' && e.shiftKey) {
         e.preventDefault()
-        update({ editorMode: settings.value.editorMode === 'live' ? 'source' : 'live' })
+        update({ editorMode: nextEditorMode(settings.value.editorMode) })
       }
     }
     addEventListener('keydown', onKey)

@@ -293,13 +293,81 @@ try {
   await page.fill('.search-box input', '')
   await page.waitForTimeout(200)
 
-  /* ---- source mode ---------------------------------------------------- */
+  /* ---- the three editor modes -------------------------------------------
+   * ⌘⇧M cycles rich → live → source and the run starts in live, so one press
+   * lands on source, the next on rich, and the third comes back where it
+   * started. Rich text is checked hardest: it is the only mode where the user
+   * never sees the markdown, so anything it writes has to be verified against
+   * the file rather than the screen.
+   */
   await page.keyboard.press('Control+Shift+m')
   await page.waitForTimeout(400)
   const sourceText = await page.locator('.cm-content').innerText()
   check('source mode reveals raw markdown', sourceText.includes('![['), sourceText.slice(0, 50))
+
+  /** The markdown of whichever note holds a given string. */
+  const noteContaining = (needle) =>
+    page.evaluate(async (n) => {
+      const db = await new Promise((res, rej) => {
+        const r = indexedDB.open('slate')
+        r.onsuccess = () => res(r.result)
+        r.onerror = () => rej(r.error)
+      })
+      const all = await new Promise((res) => {
+        const q = db.transaction('files', 'readonly').objectStore('files').getAll()
+        q.onsuccess = () => res(q.result)
+      })
+      return all.find((f) => (f.text ?? '').includes(n))?.text ?? ''
+    }, needle)
+
+  await page.keyboard.press('Control+Shift+m')
+  await page.waitForTimeout(400)
+  check('rich text mode shows a formatting bar', (await page.locator('.fmt-bar').count()) === 1)
+  const richText = await page.locator('.cm-content').innerText()
+  check(
+    'rich text mode shows no markdown syntax at all',
+    !richText.includes('![[') && !richText.includes('**') && !/(^|\n)#+ /.test(richText),
+    richText.slice(0, 50),
+  )
+
+  // The first line, not the middle of the pane: this note has an image embed
+  // in it, and clicking that opens the lightbox instead of placing a caret.
+  await page.locator('.cm-line').first().click()
+  await page.keyboard.press('Control+End')
+  await page.keyboard.type('Toolbar line')
+  await page.waitForTimeout(250)
+
+  await page.locator('.fmt-bar .fmt-style:text-is("Heading")').click()
+  await page.waitForTimeout(400)
+  check(
+    'the Heading button writes "## " into the markdown',
+    (await noteContaining('Toolbar line')).includes('## Toolbar line'),
+  )
+  check(
+    'the bar reports Heading as the active style',
+    (await page.getAttribute('.fmt-bar .fmt-style:text-is("Heading")', 'aria-pressed')) === 'true',
+  )
+  check(
+    'the heading marker itself stays hidden',
+    !(await page.locator('.cm-content').innerText()).includes('## Toolbar'),
+  )
+
+  await page.locator('.fmt-bar .fmt-btn[aria-label^="Underline"]').click()
+  await page.waitForTimeout(400)
+  const underlined = await noteContaining('Toolbar')
+  check('underline is written as HTML, which markdown has no syntax for', underlined.includes('<u>'))
+  check(
+    'the <u> tags are not shown to the reader',
+    !(await page.locator('.cm-content').innerText()).includes('<u>'),
+  )
+  check(
+    'formatting is applied on the line the caret is on',
+    (await page.locator('.cm-underline').count()) > 0,
+  )
+
   await page.keyboard.press('Control+Shift+m')
   await page.waitForTimeout(300)
+  check('cycling lands back in live preview', (await page.locator('.fmt-bar').count()) === 0)
 
   /* ---- kitchen sink ----------------------------------------------------
    * Every markdown construct in one note. This exists because a table alone
