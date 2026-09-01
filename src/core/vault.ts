@@ -30,6 +30,7 @@ import {
 } from './db'
 import {
   calendarDateFor,
+  codeRegions,
   excerptOf,
   parseFrontmatter,
   resolveTarget,
@@ -40,6 +41,12 @@ import {
   splitSizeFragment,
   stripInline,
 } from './markdown'
+import {
+  loadDeviceRecords,
+  localDeviceName,
+  pendingDeviceRecord,
+  writerFor,
+} from './devices'
 import {
   basename,
   dirname,
@@ -248,6 +255,63 @@ export const unresolvedLinks = computed(() => {
   return m
 })
 
+/**
+ * Attachments no note points at.
+ *
+ * A file nothing references is dead weight: it syncs to every device, it takes
+ * space, and no screen will ever show it again — and it is invisible, because
+ * the only way to notice is to check every note by hand. So the Files browser
+ * marks them, and the vault stays something you could hand to someone else and
+ * have it all make sense.
+ *
+ * References resolve the way `resolveEmbed` resolves them — exact path, then
+ * relative to the linking note, then by bare filename — but against a prepared
+ * index instead, because the shared-name fallback is a scan of the whole vault
+ * and this runs over every link in every note.
+ */
+export const orphanFiles = computed<Set<string>>(() => {
+  const unused = new Set<string>()
+  const byName = new Map<string, string[]>()
+  for (const f of attachments.value) {
+    unused.add(f.path)
+    const key = basename(f.path).toLowerCase()
+    const same = byName.get(key)
+    if (same) same.push(f.path)
+    else byName.set(key, [f.path])
+  }
+  if (!unused.size) return unused
+
+  const claim = (ref: string, from: string) => {
+    let clean = ref.trim()
+    if (!clean || /^[a-z]+:/i.test(clean)) return
+    try {
+      clean = decodeURI(clean)
+    } catch {
+      // A half-encoded link is still a link; match it as written.
+    }
+    ;[clean] = splitSizeFragment(clean)
+    for (const c of [normPath(clean), joinPath(dirname(from), clean)]) {
+      if (unused.delete(c)) return
+      // Resolved, but to a note or to a file already accounted for. Either way
+      // the filename fallback below must not fire and claim a different file.
+      if (exists(c)) return
+    }
+    for (const p of byName.get(basename(clean).toLowerCase()) ?? []) unused.delete(p)
+  }
+
+  for (const e of notes.value) {
+    if (!unused.size) break
+    const text = files.get(e.path)?.text
+    if (!text) continue
+    const regions = codeRegions(text)
+    // Embeds and plain links alike: `[[logo.png]]` and `[the spec](spec.pdf)`
+    // are both a note using a file, whether or not it renders inline.
+    for (const l of scanWikiLinks(text, regions)) claim(l.target, e.path)
+    for (const l of scanMdLinks(text, regions)) claim(l.url, e.path)
+  }
+  return unused
+})
+
 /* ------------------------------------------------------------------ lookup */
 
 export function getEntry(path: string): NoteIndexEntry | undefined {
@@ -293,6 +357,7 @@ export async function initVault(): Promise<void> {
   const rows = await allFiles()
   files.clear()
   for (const f of rows) files.set(f.path, f)
+  loadDeviceRecords(rows)
   reindexAll()
   ready.value = true
   bump()
@@ -303,15 +368,40 @@ export async function initVault(): Promise<void> {
  * these are not marked dirty because the remote already has them.
  */
 export async function installFromRemote(list: VaultFile[]): Promise<void> {
+  // Device files first: a note pulled in the same batch can then be credited to
+  // whoever pushed it, rather than to "somewhere else".
+  loadDeviceRecords(list)
   for (const f of list) {
     if (f.kind === 'note') {
-      await pushVersion({ path: f.path, at: f.mtime, text: f.text ?? '', hash: f.hash, reason: 'sync-pull' })
+      await pushVersion({
+        path: f.path,
+        at: f.mtime,
+        text: f.text ?? '',
+        hash: f.hash,
+        reason: 'sync-pull',
+        device: writerFor(f.path),
+      })
     }
     files.set(f.path, f)
   }
   await putFiles(list)
   for (const f of list) reindex(f.path)
   bump()
+}
+
+/**
+ * Write this device's entry in the write registry, if it has anything new to
+ * say, and return the path it wrote. Called by the sync engine either side of a
+ * run: once so anything left over goes up with this run, once so this run's
+ * writes are durable — and the second call hands the path back so the engine
+ * can push it immediately rather than leaving attribution a run behind.
+ */
+export async function persistDeviceRegistry(): Promise<string | undefined> {
+  const rec = pendingDeviceRecord()
+  if (!rec) return undefined
+  const name = `devices/${rec.id}.json`
+  await writeBackstage(name, rec)
+  return joinPath(BACKSTAGE, name)
 }
 
 /** Sync-engine hook: record that a file is now in agreement with the remote. */
@@ -397,7 +487,14 @@ export async function saveNote(path: string, text: string): Promise<void> {
   if (f.text === text) return
   const hash = await hashText(text)
   if (hash === f.hash) return
-  await pushVersion({ path, at: Date.now(), text: f.text ?? '', hash: f.hash, reason: 'edit' })
+  await pushVersion({
+    path,
+    at: Date.now(),
+    text: f.text ?? '',
+    hash: f.hash,
+    reason: 'edit',
+    device: localDeviceName(),
+  })
   const next: VaultFile = {
     ...f,
     text,
@@ -489,7 +586,14 @@ export async function deleteNote(path: string): Promise<void> {
   const f = files.get(path)
   if (!f) return
   if (f.kind === 'note') {
-    await pushVersion({ path, at: Date.now(), text: f.text ?? '', hash: f.hash, reason: 'delete' })
+    await pushVersion({
+      path,
+      at: Date.now(),
+      text: f.text ?? '',
+      hash: f.hash,
+      reason: 'delete',
+      device: localDeviceName(),
+    })
   }
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
   let dest = joinPath(TRASH, `${stamp}--${basename(path)}`)

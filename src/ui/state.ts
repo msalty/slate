@@ -55,6 +55,12 @@ export function nextEditorMode(id: EditorModeId): EditorModeId {
   return EDITOR_MODES[(i + 1) % EDITOR_MODES.length].id
 }
 
+/**
+ * The Files browser, narrowed to files no note references. Off by default —
+ * it is a way to work through the orphans, not a permanent view of the vault.
+ */
+export const orphansOnly = signal(false)
+
 export const paletteOpen = signal(false)
 export const settingsOpen = signal(false)
 export const historyOpen = signal(false)

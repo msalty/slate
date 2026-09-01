@@ -5,6 +5,7 @@ import {
   attachmentUrl,
   createNote,
   deleteNote,
+  orphanFiles,
   resolveEmbed,
   restoreFromTrash,
   forget,
@@ -20,6 +21,7 @@ import {
   lightboxPath,
   notify,
   openNote,
+  orphansOnly,
   query,
   scope,
   scopeLabel,
@@ -269,7 +271,7 @@ function TrashView() {
     <>
       <div class="section-label">Deleted notes are kept until you remove them here.</div>
       {items.map((f) => (
-        <div key={f.path} class="note-row" style={{ cursor: 'default' }}>
+        <div key={f.path} class="note-row trash-row">
           <span class="note-row-main">
             <span class="note-row-title">
               {basename(f.path).replace(/^[\d-]+T[\d-]+--(?:\d+--)?/, '')}
@@ -279,9 +281,14 @@ function TrashView() {
               <span class="note-row-excerpt">{(f.text ?? '').slice(0, 90) || formatBytes(f.size)}</span>
             </span>
           </span>
-          <span class="note-row-badges">
+          {/*
+            * Their own line, right-aligned. Sharing one with the title put two
+            * small targets hard against text that is trying to use the whole
+            * width, and in a narrow list pane they met in the middle.
+            */}
+          <span class="row-actions">
             <button
-              class="status-btn"
+              class="row-action"
               onClick={async () => {
                 const p = await restoreFromTrash(f.path)
                 openNote(p)
@@ -291,8 +298,7 @@ function TrashView() {
               Restore
             </button>
             <button
-              class="status-btn"
-              style={{ color: 'var(--danger)' }}
+              class="row-action row-action-danger"
               onClick={async () => {
                 if (!confirm('Permanently delete this note? This cannot be undone.')) return
                 await forget(f.path)
@@ -308,8 +314,14 @@ function TrashView() {
 }
 
 function FilesView() {
-  const items = fileList.value
-  if (!items.length)
+  const all = fileList.value
+  const orphans = orphanFiles.value
+  // The filter turns itself off once there is nothing left to work through,
+  // rather than leaving the browser looking empty.
+  const only = orphansOnly.value && orphans.size > 0
+  const items = only ? all.filter((f) => orphans.has(f.path)) : all
+
+  if (!all.length)
     return (
       <div class="empty">
         No files yet.
@@ -319,16 +331,45 @@ function FilesView() {
     )
   return (
     <>
-      <div class="section-label">{items.length} files</div>
+      <div class="section-label section-label-row">
+        <span>
+          {only ? `${items.length} of ${all.length} files` : `${all.length} files`}
+        </span>
+        {orphans.size > 0 && (
+          <button
+            class="orphan-filter"
+            aria-pressed={only}
+            title={
+              only
+                ? 'Show every file again'
+                : 'Show only files that no note references — safe to delete, or worth linking somewhere'
+            }
+            onClick={() => (orphansOnly.value = !only)}
+          >
+            {orphans.size} orphaned
+          </button>
+        )}
+      </div>
       {items.map((f) => {
         const kind = mediaClass(f.path)
         const url = kind === 'image' ? attachmentUrl(f.path) : undefined
+        const orphan = orphans.has(f.path)
         return (
-          <button key={f.path} class="note-row" onClick={() => (lightboxPath.value = f.path)}>
+          <button
+            key={f.path}
+            class="note-row"
+            data-orphan={orphan ? '1' : '0'}
+            onClick={() => (lightboxPath.value = f.path)}
+          >
             <span class="note-row-main">
               <span class="note-row-title">{basename(f.path)}</span>
               <span class="note-row-sub">
                 <span class="note-row-date">{kind}</span>
+                {orphan && (
+                  <span class="orphan-tag" title="No note references this file">
+                    Orphaned
+                  </span>
+                )}
                 <span class="note-row-excerpt">
                   {formatBytes(f.size)} · {f.path}
                 </span>

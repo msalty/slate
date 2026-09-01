@@ -5,6 +5,7 @@ import { WebdavAdapter } from '../adapters/webdav'
 import { GdriveAdapter } from '../adapters/gdrive'
 import { settings, updateGdrive } from '../core/settings'
 import { setAdapter, setDeviceLabel, startAutoSync, stopAutoSync, sync } from '../core/sync'
+import { setLocalDevice } from '../core/devices'
 
 export function buildAdapter(s: AppSettings): RemoteAdapter | undefined {
   if (s.backend === 'webdav') {
@@ -34,6 +35,9 @@ let lastSignature = ''
 export async function connectBackend(): Promise<void> {
   const s = settings.value
   setDeviceLabel(s.deviceName)
+  // Renaming the device in Settings renames it in everyone else's history too,
+  // from the next sync on.
+  setLocalDevice(s.deviceId, s.deviceName)
 
   const sig = JSON.stringify([
     s.backend,

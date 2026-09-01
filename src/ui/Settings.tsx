@@ -385,7 +385,10 @@ export function Settings() {
                   value={s.deviceName}
                   onInput={(e) => update({ deviceName: (e.target as HTMLInputElement).value })}
                 />
-                <small>Used to label conflict copies so you can tell them apart.</small>
+                <small>
+                  Labels conflict copies, and names this device in the version history on
+                  your other ones.
+                </small>
               </div>
 
               <div class="callout">

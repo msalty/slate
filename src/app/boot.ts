@@ -5,9 +5,13 @@ import { loadFolders, loadSmartFolders } from '../core/folders'
 import { applySharedSettings, loadSettings, settings } from '../core/settings'
 import { requestPersistence } from '../core/db'
 import { setDeviceLabel } from '../core/sync'
+import { setLocalDevice } from '../core/devices'
 
 export async function initVault(): Promise<void> {
   await loadSettings()
+  // Before the vault loads, so the device records it reads are folded into this
+  // device's own entry rather than replacing it.
+  setLocalDevice(settings.value.deviceId, settings.value.deviceName)
   await loadVault()
   // Folder and Tag Folder definitions live in the vault, so they are available
   // as soon as it is loaded — no extra round trip before the UI can render.

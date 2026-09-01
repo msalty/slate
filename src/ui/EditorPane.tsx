@@ -32,7 +32,7 @@ import {
   notify,
 } from './state'
 import { layoutMode, railState, toggleRail } from './layout'
-import { debounce, relativeTime } from '../core/util'
+import { debounce, longDateTime } from '../core/util'
 import {
   IconCamera,
   IconCheck,
@@ -406,6 +406,16 @@ export function EditorPane() {
         <FormatBar variant="bar" getView={() => viewRef.current} />
       )}
 
+      {/*
+        * Apple Notes' one piece of chrome inside the page: when the note was
+        * last touched, centred, faint, and nowhere near anything clickable.
+        */}
+      {file && (
+        <div class="editor-date" title={`Created ${longDateTime(file.ctime)}`}>
+          {longDateTime(file.mtime)}
+        </div>
+      )}
+
       <div class="editor-body">
         <div class="editor-host" ref={hostRef} />
       </div>
@@ -433,14 +443,6 @@ export function EditorPane() {
           </div>
         </div>
       )}
-
-      <div
-        class="editor-date"
-        style={{ position: 'absolute', top: 12, left: 0, right: 0, pointerEvents: 'none' }}
-        hidden
-      >
-        {file ? relativeTime(file.mtime) : ''}
-      </div>
     </div>
   )
 }

@@ -41,6 +41,8 @@ so nothing is ever silently rewritten:
   type — `# ` at the start of a line is still a Title, and the marker vanishes
   the moment it becomes one — and backspacing at the start of a styled line
   takes the style off, because the hidden marks behave as single characters.
+  Applying a marker leaves the caret after it, so a new checklist item is ready
+  to be typed into rather than in front of its own checkbox.
 - **Live preview** — formatting renders as you type, and the raw syntax
   reappears the moment your caret enters it.
 - **Markdown source** — the file, exactly as it is written.
@@ -49,6 +51,10 @@ Underline has no markdown syntax, so it is written as `<u>…</u>`, which every
 renderer passes through; highlight uses `==text==`. Everything else is ordinary
 CommonMark, and a note written in rich text opens as plain markdown anywhere
 else.
+
+Above every note, in all three modes, sits the date it was last edited — faint,
+centred and out of the way, the way Apple Notes does it. Hover it for when the
+note was created.
 
 **Linking.** `[[Note Title]]` links notes to each other. Typing `[[` opens an
 autocomplete over every note; picking one that doesn't exist yet offers to create
@@ -67,6 +73,13 @@ text files can live in the vault too.
 A capture that arrives as a bare `image.jpg` gets a dated name so a folder of
 them stays browsable; a library filename you'd recognise — `IMG_0421`,
 `Screenshot 2026-08-31` — is kept as-is.
+
+**Files that nothing points at are flagged.** The Files browser marks every
+attachment no note references — embedded or plainly linked, by path, relative
+path or bare filename — as **Orphaned**, and the count in the header filters the
+list down to them. A file in the vault that no note uses is invisible dead
+weight that still syncs to every device; this is how you find it before there
+are two hundred of them.
 
 **Tables render as tables**, including the formatting inside their cells: bold,
 italics, `code`, strikethrough, links, wikilinks, tags and images all render in a
@@ -121,8 +134,10 @@ network at all, and syncs when connectivity returns.
 
 **Never losing things.** Deletes are soft — notes move to `backstage/trash/` and
 show up under Recently Deleted. Every save, sync pull and delete writes a local
-snapshot, and the history dialog restores any of them. Conflicting edits are
-merged when possible and kept as two files when not.
+snapshot, and the history dialog restores any of them — each one labelled with
+the device it came from, so a version pulled from the server says *which*
+machine wrote it. Conflicting edits are merged when possible and kept as two
+files when not.
 
 ---
 
@@ -380,6 +395,7 @@ Vault/
 │  └─ 2026/08/pasted-a3f9.webp
 └─ backstage/                 ← app's own files, hidden in the UI
    ├─ config.json             ← shared preferences
+   ├─ devices/                ← one file per device: its name and recent writes
    └─ trash/                  ← soft-deleted notes
 ```
 
@@ -446,6 +462,13 @@ On top of all that, every save, sync pull and delete writes a local snapshot
 history is what covers "I pasted over three paragraphs an hour ago". It is
 device-local and deliberately not synced.
 
+Each snapshot names the device the text came from. Nothing in a WebDAV or Drive
+response says who wrote a file, so every device keeps one file of its own —
+`backstage/devices/<id>.json`, listing its name and the paths it recently
+pushed. Only its owner ever writes it, so the registry cannot conflict; a pull
+credits whichever device last pushed that path, and says nothing at all when it
+has not heard of one.
+
 `src/core/sync.test.ts` runs two independent "devices" — separate module
 instances with separate databases — against one in-memory server and asserts
 every one of these behaviours.
@@ -466,6 +489,7 @@ src/
 │  ├─ markdown.ts     frontmatter, links, tags, tasks
 │  ├─ tagquery.ts     the Tag Folder rule language (tokenizer, parser, eval)
 │  ├─ folders.ts      nested folders + the Tag Folder tree and inheritance
+│  ├─ devices.ts      per-device write registry, for version attribution
 │  ├─ images.ts       paste- and capture-time re-encoding
 │  └─ settings.ts     device-local vs vault-wide preferences
 ├─ adapters/      webdav.ts · gdrive.ts · memory.ts (tests)

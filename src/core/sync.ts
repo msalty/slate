@@ -30,7 +30,9 @@ import {
   markSynced,
   getRaw,
   addAttachment,
+  persistDeviceRegistry,
 } from './vault'
+import { isDevicePath, localDeviceName, recordWrite } from './devices'
 import { pushVersion } from './db'
 import { hashBlob, hashText, isNotePath, mimeForPath, ymd } from './util'
 
@@ -110,6 +112,9 @@ async function runOnce(): Promise<void> {
 
   const conflicts: string[] = []
   try {
+    // Anything this device pushed since the last run is written out now, so it
+    // travels with this run rather than waiting for the next one.
+    await persistDeviceRegistry()
     setStatus({ phase: 'listing', detail: 'Checking for changes…', progress: 0, lastError: undefined })
     if (!adapter.isConnected()) await adapter.connect()
 
@@ -118,9 +123,12 @@ async function runOnce(): Promise<void> {
     for (const e of remoteList) if (!e.isDir) remote.set(e.path, e)
 
     const paths = new Set<string>([...listAll().map((f) => f.path), ...remote.keys()])
+    // Device records go first. They are tiny, and a note pulled after the file
+    // that says who wrote it can be attributed in this run instead of the next.
+    const ordered = [...paths].sort((a, b) => Number(isDevicePath(b)) - Number(isDevicePath(a)))
     const plan: Array<() => Promise<void>> = []
 
-    for (const path of paths) {
+    for (const path of ordered) {
       const R = remote.get(path)
       // The local side is read when the item actually runs, not now: a run can
       // take seconds, and an edit made in the meantime must not be reconciled
@@ -151,6 +159,7 @@ async function runOnce(): Promise<void> {
       }
     })
     await Promise.all(workers)
+    await pushDeviceRegistry()
 
     recentConflicts.value = conflicts
     setStatus({
@@ -170,6 +179,25 @@ async function runOnce(): Promise<void> {
       lastError: msg,
       detail: msg,
     })
+  }
+}
+
+/**
+ * Save this run's record of what this device pushed, and push it too.
+ *
+ * It only becomes dirty at the very end of the run that filled it, so leaving
+ * it to the next run would mean the other devices learn who wrote a note one
+ * sync later than the note itself — and the pending-changes count would never
+ * settle at zero. A failure here costs nothing but that delay.
+ */
+async function pushDeviceRegistry(): Promise<void> {
+  try {
+    const path = await persistDeviceRegistry()
+    if (!path) return
+    const f = getRaw(path)
+    if (f?.dirty) await push(path, f, f.sync.remoteRev)
+  } catch (e) {
+    console.warn('[slate] could not publish the device registry', e)
   }
 }
 
@@ -225,6 +253,7 @@ async function reconcile(
         text: L.text ?? '',
         hash: L.hash,
         reason: 'delete',
+        device: localDeviceName(),
       })
     }
     await forget(path)
@@ -344,6 +373,7 @@ async function push(path: string, L: VaultFile, ifMatch: string | undefined): Pr
 
   try {
     const res = await adapter!.put(path, body, mime, ifMatch)
+    recordWrite(path)
     await markSynced(path, {
       baseHash: L.hash,
       baseText: L.kind === 'note' ? (L.text ?? '') : undefined,
@@ -428,6 +458,7 @@ async function resolve(
         text: localText,
         hash: L.hash,
         reason: 'conflict-merge',
+        device: localDeviceName(),
       })
       await installFromRemote([
         {
