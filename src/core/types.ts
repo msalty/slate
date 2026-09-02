@@ -203,6 +203,12 @@ export interface AppSettings {
    * `source` shows the file exactly as it is written.
    */
   editorMode: 'rich' | 'live' | 'source'
+  /**
+   * How wide the note body runs. `full` fills the pane flush left, so a wider
+   * window is wider text; `measure` caps it at a fixed reading column and
+   * centres that column in the pane.
+   */
+  editorWidth: 'full' | 'measure'
   /** Longest edge in px for pasted images. 0 disables resizing. */
   imageMaxEdge: number
   imageQuality: number

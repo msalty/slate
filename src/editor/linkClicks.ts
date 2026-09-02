@@ -71,6 +71,47 @@ function isUriLink(el: HTMLElement): boolean {
 }
 
 /**
+ * The link a pointer has already been acted on for, and when.
+ *
+ * Both halves of a click have to be handled. `mousedown` is the only place the
+ * caret can be stopped from landing in the text, and the `click` that trails it
+ * is where the browser follows a link of its own accord — a link in a rendered
+ * table cell is a real `<a>`, so without this it opens once for us and once for
+ * the browser. Handling both also means a browser that never delivers the
+ * mousedown to us still opens the link.
+ *
+ * The timestamp is what keeps the flag from going stale: a mousedown that turns
+ * into a drag produces no click at all, and the flag would otherwise swallow
+ * whichever click came next.
+ */
+let acted: { el: HTMLElement; at: number } | null = null
+const ACTED_MS = 1000
+
+function remember(el: HTMLElement, handled: boolean): boolean {
+  acted = handled ? { el, at: Date.now() } : null
+  return handled
+}
+
+/** True when this element is the one the pointer has just been acted on for. */
+function alreadyActed(el: HTMLElement): boolean {
+  const last = acted
+  acted = null
+  return !!last && last.el === el && Date.now() - last.at < ACTED_MS
+}
+
+/**
+ * The click half. It never lets the browser act on the link itself, and opens
+ * it only when the mousedown before it did not.
+ */
+function onClick(view: EditorView, event: MouseEvent): boolean {
+  const el = linkElementAt(event.target)
+  if (!el) return false
+  event.preventDefault()
+  if (alreadyActed(el)) return true
+  return followLink(view, el, { x: event.clientX, y: event.clientY, via: 'click' })
+}
+
+/**
  * The finger that went down on a link, and where. Module-level because there is
  * one finger doing one thing at a time, and because both the editor's own
  * handlers and a table cell's have to share it.
@@ -102,7 +143,7 @@ function onTouchEnd(view: EditorView, event: TouchEvent): boolean {
    * text and then close the menu this is about to open.
    */
   event.preventDefault()
-  return followLink(view, hit.el, { x: hit.x, y: hit.y, via: 'click' })
+  return remember(hit.el, followLink(view, hit.el, { x: hit.x, y: hit.y, via: 'click' }))
 }
 
 export const linkClicks = EditorView.domEventHandlers({
@@ -113,7 +154,10 @@ export const linkClicks = EditorView.domEventHandlers({
     // below, and the middle one to whatever the platform does with it.
     if (isUriLink(el) && event.button !== 0) return false
     event.preventDefault()
-    return followLink(view, el, { x: event.clientX, y: event.clientY, via: 'click' })
+    return remember(el, followLink(view, el, { x: event.clientX, y: event.clientY, via: 'click' }))
+  },
+  click(event, view) {
+    return onClick(view, event)
   },
   /**
    * Right-click on a link is the desktop way to reach its text: opening is one
@@ -155,11 +199,19 @@ export function wireLinkTaps(view: EditorView, host: HTMLElement): void {
     const el = linkElementAt(event.target)
     if (!el) return
     event.preventDefault()
-    followLink(view, el, {
-      x: event.clientX,
-      y: event.clientY,
-      via: event.button === 2 ? 'menu' : 'click',
-    })
+    remember(
+      el,
+      followLink(view, el, {
+        x: event.clientX,
+        y: event.clientY,
+        via: event.button === 2 ? 'menu' : 'click',
+      }),
+    )
+  })
+  // A cell's links really are anchors, so the browser would follow this one
+  // itself, on top of whatever the mousedown above already did with it.
+  host.addEventListener('click', (event) => {
+    onClick(view, event)
   })
   host.addEventListener('touchstart', onTouchStart)
   host.addEventListener('touchmove', onTouchMove)

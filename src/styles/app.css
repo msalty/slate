@@ -19,8 +19,9 @@
     Arial, sans-serif;
   --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', 'Cascadia Code', Menlo, Consolas, monospace;
 
-  --editor-measure: 760px;
   --editor-font-size: 15px;
+  /* The reading column, used only when the body-width setting is 'measure'. */
+  --editor-measure: 760px;
 
   --sidebar-w: 232px;
   --list-w: 320px;
@@ -766,6 +767,18 @@ body.resizing .pane-resizer::after {
 .editor-host .cm-editor {
   height: 100%;
 }
+/*
+ * Body width (Settings → Editor). The default is the full pane, flush left —
+ * the width rules for that live with the rest of the content box in
+ * editor/theme.ts. 'measure' caps the body at a reading column and centres it;
+ * the backlinks list takes the same cap so it stays aligned under the body.
+ * Below the measure — a phone, a narrow pane — the cap is inert either way.
+ */
+.editor-pane[data-width='measure'] .editor-host .cm-content,
+.editor-pane[data-width='measure'] .backlinks-inner {
+  max-width: var(--editor-measure);
+  margin: 0 auto;
+}
 
 /* ---- rich text: the formatting bar and its phone sheet ----------------- */
 
@@ -962,9 +975,8 @@ body.resizing .pane-resizer::after {
   max-height: 30vh;
   overflow-y: auto;
 }
+/* Flush left and full width by default, so it tracks the note body above it. */
 .backlinks-inner {
-  max-width: var(--editor-measure);
-  margin: 0 auto;
   padding: 0 4px;
 }
 .backlinks h3 {
@@ -1570,6 +1582,19 @@ body.resizing .pane-resizer::after {
 .lightbox-bar .icon-btn {
   color: rgba(255, 255, 255, 0.75);
 }
+/* A long attachment name shortens rather than wrapping the bar onto three lines. */
+.lightbox-name {
+  font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lightbox-meta {
+  opacity: 0.6;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
 .lightbox-bar .icon-btn:hover {
   background: rgba(255, 255, 255, 0.12);
   color: #fff;
@@ -1588,6 +1613,21 @@ body.resizing .pane-resizer::after {
   max-height: 100%;
   object-fit: contain;
   border-radius: 6px;
+}
+/*
+ * A picture is pinched, dragged and tapped rather than scrolled, so the stage
+ * takes the gestures itself: `touch-action: none` is what stops a phone
+ * scrolling or zooming the page out from under the fingers doing it, and the
+ * overflow is hidden because a zoomed image is panned, not scrolled to.
+ */
+.lightbox-stage[data-zoomable='1'] {
+  overflow: hidden;
+  touch-action: none;
+}
+.lightbox-stage[data-zoomable='1'] img {
+  will-change: transform;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 .lightbox-stage video,
 .lightbox-stage iframe,
@@ -1818,8 +1858,9 @@ body.resizing .pane-resizer::after {
 }
 
 @media (max-width: 760px) {
-  :root {
-    --editor-measure: 100%;
+  /* Pinch, drag and tap do the zooming here; see Lightbox.tsx. */
+  .lightbox-zoom {
+    display: none;
   }
   .editor-host .cm-content {
     padding-left: 14px;

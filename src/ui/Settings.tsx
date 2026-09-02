@@ -269,6 +269,21 @@ export function Settings() {
                 </select>
               </label>
               <label class="field">
+                <span>Body width</span>
+                <select
+                  value={s.editorWidth}
+                  onChange={(e) =>
+                    update({ editorWidth: (e.target as HTMLSelectElement).value as never })
+                  }
+                >
+                  <option value="full">Full width — the note fills the pane</option>
+                  <option value="measure">Reading column — 760px, centred</option>
+                </select>
+                <small>
+                  Full width starts the note at the left edge, so a wider window is wider text.
+                </small>
+              </label>
+              <label class="field">
                 <span>Theme</span>
                 <select
                   value={s.theme}

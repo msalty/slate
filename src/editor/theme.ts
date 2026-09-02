@@ -33,11 +33,13 @@ export const editorTheme = EditorView.theme({
      * otherwise sit flush against the pane. 12px here plus the 4px on a line
      * puts body text exactly under the title in the header above it.
      * The phone overrides this in app.css, where the pane is the whole screen.
+     *
+     * No measure cap and no auto margins: the note runs flush with the left
+     * edge of the pane and takes whatever width the pane has, so widening the
+     * window widens the text rather than growing two gutters around it.
      */
     padding: '8px 12px 45vh',
     caretColor: 'var(--accent)',
-    maxWidth: 'var(--editor-measure)',
-    margin: '0 auto',
     width: '100%',
   },
   '.cm-line': { padding: '0 4px' },

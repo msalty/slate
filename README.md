@@ -63,6 +63,11 @@ Above every note, in all three modes, sits the date it was last edited — faint
 centred and out of the way, the way Apple Notes does it. Hover it for when the
 note was created.
 
+The body itself runs flush with the left edge of its pane and takes the full
+width, so on a big monitor a wider window is wider text rather than wider
+margins. Settings → Editor → **Body width** switches it to a centred 760px
+reading column instead; the backlinks underneath follow whichever you pick.
+
 **Links that leave the vault.** A `https://`, a `mailto:`, a `tel:`, an
 `ssh://` to the box you keep notes about — written as markdown or left bare —
 renders as a link and opens in whatever program handles it. With a pointer a
@@ -71,7 +76,10 @@ there is no right-click and the address is hidden behind the label, a tap
 offers the same three. That tap is handled as a tap rather than as the mouse
 events a phone invents from one afterwards — they arrive too late to keep the
 caret out of the text, and the click trailing them would land on the menu the
-tap just opened. `javascript:` and `data:` are never opened: a note that syncs
+tap just opened. Installed on an iOS Home Screen, a web link is handed to the
+system rather than opened in a window of its own: there is no tab to put one in,
+so `window.open` there opens an empty view inside the app and leaves it behind
+for you to dismiss. `javascript:` and `data:` are never opened: a note that syncs
 from a shared vault is untrusted input.
 
 **Linking.** `[[Note Title]]` links notes to each other. Typing `[[` opens an
@@ -87,6 +95,14 @@ no visible difference at reading size — and every image is resizable by draggi
 its right edge (the width is written back into the markdown as
 `![[img.png|400]]`) and opens in the lightbox on click. PDFs, video, audio and
 text files can live in the vault too.
+
+In the lightbox a picture is handled rather than operated: pinch to zoom around
+whatever is between your fingers, drag to move around it — it stops with its
+edge at the edge of the screen rather than sliding off into the dark — and tap
+to go from fitted to 2× and back. A pointer gets the same gestures (drag to pan,
+click to zoom) plus the `−` / `1:1` / `+` buttons and the `-`, `0`, `+` keys;
+those buttons are hidden on a phone, where fingers do the job better and the
+space is worth more to the file name.
 
 In rich text an image stays an image: putting the caret beside one never swaps
 it back for `![[img.png]]`, and it takes no margin of its own, so a line of

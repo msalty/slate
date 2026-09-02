@@ -88,18 +88,40 @@ export function normalizeUri(raw: string): string | undefined {
 }
 
 /**
+ * A Home Screen web app on iOS.
+ *
+ * It is the one place `window.open` is the wrong call for a web link. There is
+ * no tab to open one in, so iOS opens an empty view *inside the app*, hands the
+ * URL to Safari, and leaves that blank page behind — which is what you come
+ * back to, and have to dismiss, when you return to the app.
+ *
+ * `navigator.standalone` is iOS's own flag for this and exists nowhere else. An
+ * installed app on a desktop or on Android is deliberately not included: there
+ * `window.open` puts the link in an ordinary browser window, which is exactly
+ * what it should do.
+ */
+function iosStandalone(): boolean {
+  return (navigator as Navigator & { standalone?: boolean }).standalone === true
+}
+
+/**
  * Open a link the way its scheme wants to be opened.
  *
  * Web links get a tab. Everything else is a hand-off to another program —
  * a mail client, a dialler, a terminal — and `window.open` for those leaves an
  * orphaned blank tab behind on most browsers, so they navigate instead: the
  * handler takes over and the page never actually unloads.
+ *
+ * On iOS's Home Screen apps that hand-off is the right shape for a web link
+ * too. The address is outside the app's scope, so iOS opens it in the browser
+ * and the app is still sitting there when you come back — with no blank page in
+ * between, because none was ever opened.
  */
 export function openUri(raw: string): void {
   const url = normalizeUri(raw)
   if (!url) return
   const scheme = schemeOf(url)
-  if (scheme === 'http' || scheme === 'https') {
+  if ((scheme === 'http' || scheme === 'https') && !iosStandalone()) {
     window.open(url, '_blank', 'noopener,noreferrer')
     return
   }

@@ -308,6 +308,7 @@ export function EditorPane() {
   return (
     <div
       class="pane editor-pane"
+      data-width={settings.value.editorWidth}
       data-scrolled={scrolled ? '1' : '0'}
       data-format-open={rich && compact && formatSheetOpen.value ? '1' : '0'}
     >
