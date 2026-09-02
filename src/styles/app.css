@@ -1582,6 +1582,19 @@ body.resizing .pane-resizer::after {
 .lightbox-bar .icon-btn {
   color: rgba(255, 255, 255, 0.75);
 }
+/* A long attachment name shortens rather than wrapping the bar onto three lines. */
+.lightbox-name {
+  font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lightbox-meta {
+  opacity: 0.6;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
 .lightbox-bar .icon-btn:hover {
   background: rgba(255, 255, 255, 0.12);
   color: #fff;
@@ -1600,6 +1613,21 @@ body.resizing .pane-resizer::after {
   max-height: 100%;
   object-fit: contain;
   border-radius: 6px;
+}
+/*
+ * A picture is pinched, dragged and tapped rather than scrolled, so the stage
+ * takes the gestures itself: `touch-action: none` is what stops a phone
+ * scrolling or zooming the page out from under the fingers doing it, and the
+ * overflow is hidden because a zoomed image is panned, not scrolled to.
+ */
+.lightbox-stage[data-zoomable='1'] {
+  overflow: hidden;
+  touch-action: none;
+}
+.lightbox-stage[data-zoomable='1'] img {
+  will-change: transform;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 .lightbox-stage video,
 .lightbox-stage iframe,
@@ -1830,6 +1858,10 @@ body.resizing .pane-resizer::after {
 }
 
 @media (max-width: 760px) {
+  /* Pinch, drag and tap do the zooming here; see Lightbox.tsx. */
+  .lightbox-zoom {
+    display: none;
+  }
   .editor-host .cm-content {
     padding-left: 14px;
     padding-right: 14px;

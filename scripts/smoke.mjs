@@ -258,6 +258,98 @@ try {
     const lb = await page.locator('.lightbox').isVisible()
     check('lightbox opens on image click', lb)
     if (lb) await page.screenshot({ path: join(SHOTS, '02-lightbox.png') })
+
+    /* ---- pinching a picture ---------------------------------------------
+     * Zoom buttons are a poor substitute for fingers on a phone, so the
+     * viewer takes the gesture itself. Touch is dispatched through CDP
+     * because it is the only way to put two fingers on the screen at once —
+     * Playwright's touchscreen taps with one.
+     */
+    const cdp = await page.context().newCDPSession(page)
+    const touch = (type, points) =>
+      cdp.send('Input.dispatchTouchEvent', {
+        type,
+        touchPoints: points.map((p, i) => ({ x: Math.round(p.x), y: Math.round(p.y), id: i + 1 })),
+      })
+    const drag = async (from, to, steps = 8) => {
+      await touch('touchStart', from)
+      for (let i = 1; i <= steps; i++) {
+        const t = i / steps
+        await touch(
+          'touchMove',
+          from.map((p, k) => ({ x: p.x + (to[k].x - p.x) * t, y: p.y + (to[k].y - p.y) * t })),
+        )
+      }
+      await touch('touchEnd', [])
+      await page.waitForTimeout(250)
+    }
+    const viewer = () =>
+      page.evaluate(() => {
+        const img = document.querySelector('.lightbox-stage img')
+        const stage = document.querySelector('.lightbox-stage')
+        const m = /translate\((-?[\d.]+)px, (-?[\d.]+)px\) scale\(([\d.]+)\)/.exec(
+          img.style.transform,
+        )
+        const r = img.getBoundingClientRect()
+        const s = stage.getBoundingClientRect()
+        return {
+          x: m ? +m[1] : NaN,
+          y: m ? +m[2] : NaN,
+          scale: m ? +m[3] : NaN,
+          slackX: Math.max(0, (r.width - s.width) / 2),
+          slackY: Math.max(0, (r.height - s.height) / 2),
+        }
+      })
+
+    const fitted = await viewer()
+    check('a picture opens fitted and centred', fitted.scale === 1 && fitted.x === 0 && fitted.y === 0, JSON.stringify(fitted))
+
+    const mid = await page.evaluate(() => {
+      const r = document.querySelector('.lightbox-stage').getBoundingClientRect()
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
+    })
+    // Fingers 120px apart, spread to 360: three times the gap, three times the
+    // picture.
+    await drag(
+      [
+        { x: mid.x - 60, y: mid.y },
+        { x: mid.x + 60, y: mid.y },
+      ],
+      [
+        { x: mid.x - 180, y: mid.y },
+        { x: mid.x + 180, y: mid.y },
+      ],
+    )
+    const pinched = await viewer()
+    check(
+      'pinching zooms it by how far the fingers spread',
+      Math.abs(pinched.scale - 3) < 0.35,
+      `${pinched.scale.toFixed(2)}×`,
+    )
+
+    // One finger, well past the edge of what a zoomed picture has to give.
+    await drag([{ x: mid.x, y: mid.y }], [{ x: mid.x + 4000, y: mid.y + 4000 }])
+    const dragged = await viewer()
+    check('a zoomed picture can be dragged', dragged.x > 0 && dragged.y > 0, JSON.stringify(dragged))
+    check(
+      'and stops with its edge at the edge of the stage',
+      dragged.x <= dragged.slackX + 1 && dragged.y <= dragged.slackY + 1,
+      `${dragged.x.toFixed(0)},${dragged.y.toFixed(0)} of ${dragged.slackX.toFixed(0)},${dragged.slackY.toFixed(0)}`,
+    )
+
+    await page.touchscreen.tap(Math.round(mid.x), Math.round(mid.y))
+    await page.waitForTimeout(300)
+    const tapped = await viewer()
+    check('tapping a zoomed picture puts it back', tapped.scale === 1 && tapped.x === 0, JSON.stringify(tapped))
+
+    await page.touchscreen.tap(Math.round(mid.x), Math.round(mid.y))
+    await page.waitForTimeout(300)
+    check('and tapping a fitted one zooms in', (await viewer()).scale === 2)
+
+    await page.keyboard.press('0')
+    await page.waitForTimeout(250)
+    check('0 fits it again', (await viewer()).scale === 1)
+
     await page.keyboard.press('Escape')
     await page.waitForTimeout(300)
   }

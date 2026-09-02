@@ -96,6 +96,14 @@ its right edge (the width is written back into the markdown as
 `![[img.png|400]]`) and opens in the lightbox on click. PDFs, video, audio and
 text files can live in the vault too.
 
+In the lightbox a picture is handled rather than operated: pinch to zoom around
+whatever is between your fingers, drag to move around it — it stops with its
+edge at the edge of the screen rather than sliding off into the dark — and tap
+to go from fitted to 2× and back. A pointer gets the same gestures (drag to pan,
+click to zoom) plus the `−` / `1:1` / `+` buttons and the `-`, `0`, `+` keys;
+those buttons are hidden on a phone, where fingers do the job better and the
+space is worth more to the file name.
+
 In rich text an image stays an image: putting the caret beside one never swaps
 it back for `![[img.png]]`, and it takes no margin of its own, so a line of
 text sits immediately above or below it unless you write a blank line.
