@@ -121,6 +121,13 @@
 }
 
 :root[data-theme='dark'] {
+  /*
+   * Narrowed from the `light dark` on :root above. A forced theme has to carry
+   * the UA along with it, or the parts the page does not paint itself — the
+   * on-screen keyboard, <select> popups, native scrollbars, form controls —
+   * keep rendering in the *phone's* scheme and read as seams in a themed app.
+   */
+  color-scheme: dark;
   --bg: #1c1c1e;
   --surface: #242426;
   --surface-2: #2c2c2e;
@@ -149,6 +156,11 @@
   --shadow-float: 0 16px 48px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.4);
 }
 
+/* Same reasoning as the dark block above, in the other direction. */
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+
 /* ==========================================================================
    Base
    ========================================================================== */
@@ -174,6 +186,20 @@ html {
   /* Stops iOS inflating body text a step after a landscape→portrait rotation. */
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+  /*
+   * The root element carries the theme background as well as <body>, and it is
+   * the one that matters off-screen: Android hands the system navigation bar
+   * the *root* element's background colour, so whatever is set here is what
+   * paints behind the gesture pill in an installed PWA.
+   *
+   * Leaving it to <body> alone is what put a white bar under the app: the
+   * bootstrap style in index.html gives <html> a colour before the bundle
+   * lands, and with the phone in light mode but the app set to Dark that
+   * colour stayed #fff while the body went dark. Driving both from --bg makes
+   * the three cases (system / forced light / forced dark) agree by
+   * construction, and there is no combination left that can disagree.
+   */
+  background: var(--bg);
 }
 
 body {

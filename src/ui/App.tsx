@@ -61,8 +61,28 @@ export function App() {
     const root = document.documentElement
     if (s.theme === 'system') root.removeAttribute('data-theme')
     else root.setAttribute('data-theme', s.theme)
-    const meta = document.querySelector('meta[name="theme-color"]')
-    meta?.setAttribute('content', getComputedStyle(document.body).backgroundColor)
+    /*
+     * Read the colour off the root element, which is where the theme tokens
+     * resolve for the system chrome: Android colours the navigation bar from
+     * the root background and the status bar from this meta tag, so taking
+     * both from the same element is what keeps the two ends of the screen
+     * agreeing with the app between them.
+     */
+    const apply = () => {
+      const meta = document.querySelector('meta[name="theme-color"]')
+      meta?.setAttribute('content', getComputedStyle(root).backgroundColor)
+    }
+    apply()
+    /*
+     * On 'system' the colour is the phone's to decide, and the phone can
+     * change its mind while the app is open — sunset, or a scheduled dark
+     * mode. The tokens follow that on their own through the media query; the
+     * meta tag is a manual copy of them, so it has to be told.
+     */
+    if (s.theme !== 'system') return
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    mq.addEventListener('change', apply)
+    return () => mq.removeEventListener('change', apply)
   }, [s.theme])
 
   /* ---- backend ----------------------------------------------------- */
