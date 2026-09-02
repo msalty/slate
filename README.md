@@ -63,6 +63,11 @@ Above every note, in all three modes, sits the date it was last edited — faint
 centred and out of the way, the way Apple Notes does it. Hover it for when the
 note was created.
 
+The body itself runs flush with the left edge of its pane and takes the full
+width, so on a big monitor a wider window is wider text rather than wider
+margins. Settings → Editor → **Body width** switches it to a centred 760px
+reading column instead; the backlinks underneath follow whichever you pick.
+
 **Links that leave the vault.** A `https://`, a `mailto:`, a `tel:`, an
 `ssh://` to the box you keep notes about — written as markdown or left bare —
 renders as a link and opens in whatever program handles it. With a pointer a

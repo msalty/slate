@@ -20,6 +20,8 @@
   --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', 'Cascadia Code', Menlo, Consolas, monospace;
 
   --editor-font-size: 15px;
+  /* The reading column, used only when the body-width setting is 'measure'. */
+  --editor-measure: 760px;
 
   --sidebar-w: 232px;
   --list-w: 320px;
@@ -765,6 +767,18 @@ body.resizing .pane-resizer::after {
 .editor-host .cm-editor {
   height: 100%;
 }
+/*
+ * Body width (Settings → Editor). The default is the full pane, flush left —
+ * the width rules for that live with the rest of the content box in
+ * editor/theme.ts. 'measure' caps the body at a reading column and centres it;
+ * the backlinks list takes the same cap so it stays aligned under the body.
+ * Below the measure — a phone, a narrow pane — the cap is inert either way.
+ */
+.editor-pane[data-width='measure'] .editor-host .cm-content,
+.editor-pane[data-width='measure'] .backlinks-inner {
+  max-width: var(--editor-measure);
+  margin: 0 auto;
+}
 
 /* ---- rich text: the formatting bar and its phone sheet ----------------- */
 
@@ -961,7 +975,7 @@ body.resizing .pane-resizer::after {
   max-height: 30vh;
   overflow-y: auto;
 }
-/* Flush left and full width, so it tracks the note body above it. */
+/* Flush left and full width by default, so it tracks the note body above it. */
 .backlinks-inner {
   padding: 0 4px;
 }
