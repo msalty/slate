@@ -63,7 +63,7 @@ import {
 } from './format'
 import { pasteHandler } from './paste'
 import { WikiLink } from './wikilink-syntax'
-import { noteContext } from './context'
+import { noteContext, requestLinkDialog } from './context'
 import { minimalEdit } from '../core/rebase'
 import { tagCompletion, wikiCompletion } from './completion'
 
@@ -93,6 +93,14 @@ const formattingKeymap = [
   { key: 'Mod-Shift-h', run: applyInline('highlight') },
   { key: 'Mod-e', run: applyInline('code') },
   { key: 'Mod-k', run: makeWikiLink },
+  // The other kind of link: one that leaves the vault.
+  {
+    key: 'Mod-Shift-k',
+    run: () => {
+      requestLinkDialog()
+      return true
+    },
+  },
   // Paragraph styles, on the same keys a word processor uses.
   { key: 'Mod-Alt-1', run: applyBlockStyle('title') },
   { key: 'Mod-Alt-2', run: applyBlockStyle('heading') },
@@ -127,6 +135,8 @@ export interface EditorOptions {
   fontSize: number
   onChange: (text: string) => void
   onSelectionIdle?: () => void
+  /** Deleted notes are shown, not edited: restore one to change it. */
+  readOnly?: boolean
 }
 
 /**
@@ -219,6 +229,12 @@ export function createEditorState(opts: EditorOptions): EditorState {
       if (u.docChanged) opts.onChange(u.state.doc.toString())
     }),
   ]
+
+  if (opts.readOnly) {
+    // Both: `readOnly` stops commands, `editable` stops the browser's own
+    // editing affordances (and the phone keyboard) from appearing at all.
+    extensions.push(EditorState.readOnly.of(true), EditorView.editable.of(false))
+  }
 
   return EditorState.create({ doc: opts.doc, extensions })
 }

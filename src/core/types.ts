@@ -193,6 +193,9 @@ export interface AppSettings {
   syncIntervalSec: number
   showRightRail: boolean
   showSidebar: boolean
+  /** Widths of the two resizable columns, in px. Desktop layouts only. */
+  sidebarWidth: number
+  listWidth: number
   theme: 'system' | 'light' | 'dark'
   /**
    * How the same markdown is presented: `rich` hides every formatting mark and

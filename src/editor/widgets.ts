@@ -11,6 +11,9 @@ import { attachmentUrl, getRaw } from '../core/vault'
 import { renderInline } from './inline'
 import { formatBytes, mediaClass } from '../core/util'
 import { requestLightbox } from './context'
+import { alignOf, isDelimiterRow, splitRow } from './table'
+
+export { isDelimiterRow }
 
 /* ------------------------------------------------------------------ ruler */
 
@@ -182,50 +185,6 @@ export class TableWidget extends WidgetType {
   ignoreEvent() {
     return false
   }
-}
-
-/**
- * Is this the `| --- | :--: |` row?
- *
- * Written by hand rather than taken from the markdown parser because
- * @lezer/markdown refuses a delimiter row with *any* trailing whitespace, which
- * silently makes the whole table parse as paragraph text. Trailing spaces are
- * legal per GFM and extremely common in real files, so table detection here
- * does not depend on that.
- */
-export function isDelimiterRow(line: string): boolean {
-  const t = line.trim()
-  if (!t || !/^[|\s:-]+$/.test(t)) return false
-  const cells = splitRow(line)
-  if (!cells.length) return false
-  return cells.every((c) => /^\s*:?-+:?\s*$/.test(c))
-}
-
-/** Split a pipe-table row, honouring `\|` escapes. */
-function splitRow(line: string): string[] {
-  const trimmed = line.trim().replace(/^\|/, '').replace(/\|$/, '')
-  const out: string[] = []
-  let cur = ''
-  for (let i = 0; i < trimmed.length; i++) {
-    const ch = trimmed[i]
-    if (ch === '\\' && trimmed[i + 1] === '|') {
-      cur += '\\|'
-      i++
-    } else if (ch === '|') {
-      out.push(cur)
-      cur = ''
-    } else cur += ch
-  }
-  out.push(cur)
-  return out
-}
-
-function alignOf(spec: string): 'left' | 'right' | 'center' | '' {
-  const s = spec.trim()
-  if (s.startsWith(':') && s.endsWith(':')) return 'center'
-  if (s.endsWith(':')) return 'right'
-  if (s.startsWith(':')) return 'left'
-  return ''
 }
 
 /* ------------------------------------------------------------------ embed */

@@ -42,7 +42,10 @@ so nothing is ever silently rewritten:
   the moment it becomes one — and backspacing at the start of a styled line
   takes the style off, because the hidden marks behave as single characters.
   Applying a marker leaves the caret after it, so a new checklist item is ready
-  to be typed into rather than in front of its own checkbox.
+  to be typed into rather than in front of its own checkbox. The bar also
+  inserts the two things markdown makes tedious by hand: a **link**, through a
+  dialog with the words and the address as separate fields, and a **table**,
+  which then offers add/remove row and column from the same button.
 - **Live preview** — formatting renders as you type, and the raw syntax
   reappears the moment your caret enters it.
 - **Markdown source** — the file, exactly as it is written.
@@ -55,6 +58,14 @@ else.
 Above every note, in all three modes, sits the date it was last edited — faint,
 centred and out of the way, the way Apple Notes does it. Hover it for when the
 note was created.
+
+**Links that leave the vault.** A `https://`, a `mailto:`, a `tel:`, an
+`ssh://` to the box you keep notes about — written as markdown or left bare —
+renders as a link and opens in whatever program handles it. With a pointer a
+click opens and a right-click offers *Open · Copy · Edit*; on a phone, where
+there is no right-click and the address is hidden behind the label, a tap
+offers the same three. `javascript:` and `data:` are never opened: a note that
+syncs from a shared vault is untrusted input.
 
 **Linking.** `[[Note Title]]` links notes to each other. Typing `[[` opens an
 autocomplete over every note; picking one that doesn't exist yet offers to create
@@ -70,9 +81,19 @@ its right edge (the width is written back into the markdown as
 `![[img.png|400]]`) and opens in the lightbox on click. PDFs, video, audio and
 text files can live in the vault too.
 
+In rich text an image stays an image: putting the caret beside one never swaps
+it back for `![[img.png]]`, and it takes no margin of its own, so a line of
+text sits immediately above or below it unless you write a blank line.
+
 A capture that arrives as a bare `image.jpg` gets a dated name so a folder of
 them stays browsable; a library filename you'd recognise — `IMG_0421`,
 `Screenshot 2026-08-31` — is kept as-is.
+
+**Renaming a file repoints every note that used it**, in the shape each
+reference was written in: a bare `![[logo.png]]` stays bare, a path relative to
+the note stays relative, a full vault path stays full. Right-click a file (or
+swipe it on a phone) to rename or delete it; deleted files go to Recently
+Deleted like anything else.
 
 **Files that nothing points at are flagged.** The Files browser marks every
 attachment no note references — embedded or plainly linked, by path, relative
@@ -85,6 +106,11 @@ are two hundred of them.
 italics, `code`, strikethrough, links, wikilinks, tags and images all render in a
 cell. Clicking a table puts the caret back in the pipe source to edit it, and it
 re-renders when you click away.
+
+**Pinned notes** sit in their own section at the top of the list — sorted the
+same way everything else is, by date edited, date created or title — and stay
+there while the rest of the list re-sorts around them. Pin from the note's
+context menu, or by putting `pinned: true` in its frontmatter.
 
 **Folders and Tag Folders.** Ordinary folders nest as deep as you like and are
 real directories in the vault. Tag Folders are saved boolean rules that gather
@@ -133,7 +159,8 @@ opens or closes anything by itself.
 network at all, and syncs when connectivity returns.
 
 **Never losing things.** Deletes are soft — notes move to `backstage/trash/` and
-show up under Recently Deleted. Every save, sync pull and delete writes a local
+show up under Recently Deleted, where opening one shows its contents read-only
+so you can decide with the note in front of you rather than from its title. Every save, sync pull and delete writes a local
 snapshot, and the history dialog restores any of them — each one labelled with
 the device it came from, so a version pulled from the server says *which*
 machine wrote it. Conflicting edits are merged when possible and kept as two
@@ -149,6 +176,12 @@ files when not.
 | **Mid-size** (760–1180px) | Note list + editor | Sidebar and calendar open as dismissable drawers |
 | **Wide** (≥ 1180px) | Sidebar + list + editor | Calendar sits inline from 1400px, a drawer below that |
 
+Drag the divider on the right of the sidebar or the note list to resize it, or
+double-click the divider to put it back; ⌘\ hides the sidebar entirely and the
+button in the note list's header brings it back. The editor never gives up its
+space: drag the panels wider than the window can afford and they are the ones
+that yield.
+
 Long-press or right-click a Tag Folder for *New folder inside…*, *Move…*, and
 the two delete variants.
 
@@ -156,6 +189,9 @@ On a phone the editor opens full-screen over whichever tab you came from, so
 tapping a note in Tasks and pressing back returns you to Tasks. Android's back
 button closes the editor before it leaves the app. Long-press any note, folder
 or Tag Folder for an action sheet; right-click does the same on a desktop.
+Swipe a note, a file or a deleted note to the left for its actions, the way a
+mail app does. A Tag Folder's rule is editable from the phone too — its scope
+bar above the list carries an **Edit** next to the **Close**.
 
 ## Keyboard
 
@@ -173,6 +209,7 @@ or Tag Folder for an action sheet; right-click does the same on a desktop.
 | ⌘⇧X / ⌘⇧H / ⌘E | Strikethrough / highlight / monospace |
 | ⌘⌥1 / ⌘⌥2 / ⌘⌥3 / ⌘⌥0 | Title / Heading / Subheading / Body |
 | ⌘K *(with a selection)* | Wrap in a wikilink |
+| ⌘⇧K | Add or edit an external link |
 | ⌘⇧7 / ⌘⇧8 / ⌘⇧0 | Checklist / bullets / numbers |
 | ⌘⇧9 | Block quote |
 | ⌘] / ⌘[ | Indent / outdent a list item |
@@ -495,6 +532,8 @@ src/
 ├─ adapters/      webdav.ts · gdrive.ts · memory.ts (tests)
 ├─ editor/        CodeMirror 6: live preview, widgets, completion, paste
 │  ├─ format.ts     the formatting commands behind the rich-text bar
+│  ├─ links.ts      external URI recognition, opening and editing
+│  ├─ table.ts      the pipe-table grid: parse, edit rows/columns, print
 │  ├─ inline.ts      inline markdown for text inside widgets (table cells)
 │  └─ pickImage.ts   camera / photo library / file insertion
 └─ ui/            Preact components

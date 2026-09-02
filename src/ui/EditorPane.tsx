@@ -14,12 +14,17 @@ import {
   backlinkMap,
   getEntry,
   getRaw,
+  isTrashed,
   renameNote,
+  restoreFromTrash,
   revision,
   saveNote,
   deleteNote,
   createNote,
+  forget,
+  trashDisplayName,
 } from '../core/vault'
+import { activeEditor } from '../editor/context'
 import { rebaseBuffer } from '../core/rebase'
 import { settings, update } from '../core/settings'
 import { syncSoon } from '../core/sync'
@@ -62,6 +67,9 @@ export function EditorPane() {
   const rev = revision.value
   const entry = path ? getEntry(path) : undefined
   const file = path ? getRaw(path) : undefined
+  // A note open from Recently Deleted is shown, not edited — you restore it
+  // first. Reading one is how you decide whether you want it back.
+  const trashed = !!path && isTrashed(path)
 
   /**
    * The text the buffer and the vault last agreed on — the base for folding in
@@ -84,7 +92,7 @@ export function EditorPane() {
   const flush = () => {
     const view = viewRef.current
     const p = pathRef.current
-    if (!view || !p) return
+    if (!view || !p || isTrashed(p)) return
     saveRef.current.flush()
     const text = view.state.doc.toString()
     baseRef.current = text
@@ -109,17 +117,22 @@ export function EditorPane() {
       path,
       mode: settings.value.editorMode,
       fontSize: settings.value.fontSize,
+      readOnly: isTrashed(path),
       onChange: (text) => saveRef.current(path, text),
     })
     const view = new EditorView({ state, parent: hostRef.current })
     viewRef.current = view
+    // Published so the format bar, the link dialog and the table controls can
+    // act on the editor without each being handed a getter.
+    activeEditor.value = view
 
     const onScroll = () => setScrolled(view.scrollDOM.scrollTop > 4)
     view.scrollDOM.addEventListener('scroll', onScroll, { passive: true })
 
     // Focus the body, unless the note is brand new and still called Untitled —
-    // then the title is what the user wants to type first.
-    if (getEntry(path)?.title !== 'Untitled') view.focus()
+    // then the title is what the user wants to type first. A deleted note is
+    // never focused: there is nothing to type into it.
+    if (!isTrashed(path) && getEntry(path)?.title !== 'Untitled') view.focus()
 
     return () => {
       view.scrollDOM.removeEventListener('scroll', onScroll)
@@ -210,6 +223,7 @@ export function EditorPane() {
       flush()
       viewRef.current?.destroy()
       viewRef.current = null
+      activeEditor.value = null
     }
   }, [])
 
@@ -285,6 +299,11 @@ export function EditorPane() {
             <IconChevronLeft size={20} />
           </button>
         )}
+        {trashed ? (
+          <span class="editor-title-input" aria-label="Deleted note">
+            {trashDisplayName(path)}
+          </span>
+        ) : (
         <input
           class="editor-title-input"
           value={entry.title}
@@ -305,8 +324,9 @@ export function EditorPane() {
             }
           }}
         />
+        )}
         <span class="spacer" />
-        {compact && rich && (
+        {!trashed && compact && rich && (
           <button
             class="icon-btn fmt-open"
             aria-label="Format"
@@ -322,10 +342,26 @@ export function EditorPane() {
             Aa
           </button>
         )}
-        <button class="icon-btn" onClick={insertMenu} title="Insert photo or file" aria-label="Insert photo or file">
-          <IconImagePlus />
-        </button>
-        {compact ? (
+        {!trashed && (
+          <button
+            class="icon-btn"
+            onClick={insertMenu}
+            title="Insert photo or file"
+            aria-label="Insert photo or file"
+          >
+            <IconImagePlus />
+          </button>
+        )}
+        {trashed ? (
+          <button
+            class="icon-btn"
+            aria-pressed={railState.value !== 'hidden'}
+            onClick={toggleRail}
+            title="Calendar and tasks (⌘⇧R)"
+          >
+            <IconRail />
+          </button>
+        ) : compact ? (
           <button
             class="icon-btn"
             aria-label="Note actions"
@@ -402,7 +438,38 @@ export function EditorPane() {
         )}
       </div>
 
-      {rich && !compact && (
+      {trashed && (
+        <div class="trash-banner">
+          <span>
+            In Recently Deleted. Restore it to make changes.
+          </span>
+          <span class="spacer" />
+          <button
+            class="row-action"
+            onClick={async () => {
+              const p = await restoreFromTrash(path)
+              activePath.value = p
+              notify('Restored')
+            }}
+          >
+            Restore
+          </button>
+          <button
+            class="row-action row-action-danger"
+            onClick={async () => {
+              if (!confirm(`Permanently delete "${trashDisplayName(path)}"? This cannot be undone.`))
+                return
+              await forget(path)
+              activePath.value = undefined
+              if (compact) closeMobileEditor()
+            }}
+          >
+            Delete
+          </button>
+        </div>
+      )}
+
+      {rich && !compact && !trashed && (
         <FormatBar variant="bar" getView={() => viewRef.current} />
       )}
 
@@ -420,7 +487,7 @@ export function EditorPane() {
         <div class="editor-host" ref={hostRef} />
       </div>
 
-      {rich && compact && formatSheetOpen.value && (
+      {rich && compact && !trashed && formatSheetOpen.value && (
         <FormatBar variant="sheet" getView={() => viewRef.current} />
       )}
 

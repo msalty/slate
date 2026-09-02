@@ -135,6 +135,13 @@ export const editorTheme = EditorView.theme({
     padding: '5px 11px',
     textAlign: 'left',
     verticalAlign: 'top',
+    /*
+     * A cell you have not typed into yet still has to be a target you can hit.
+     * Without a floor, a freshly inserted table collapses to a few pixels of
+     * grid and there is nowhere to click.
+     */
+    minWidth: '64px',
+    height: '1.9em',
   },
   '.cm-table-render th': {
     fontWeight: '650',
@@ -216,6 +223,15 @@ export const editorTheme = EditorView.theme({
     borderBottom: '1px solid color-mix(in srgb, var(--accent) 35%, transparent)',
   },
   '.cm-wikilink:hover': { borderBottomColor: 'var(--accent)' },
+  /* External links — http, mailto, tel, ssh, whatever the machine handles. */
+  '.cm-uri': {
+    color: 'var(--accent)',
+    cursor: 'pointer',
+    textDecoration: 'underline',
+    textDecorationColor: 'color-mix(in srgb, var(--accent) 40%, transparent)',
+    textUnderlineOffset: '2px',
+  },
+  '.cm-uri:hover': { textDecorationColor: 'var(--accent)' },
   '.cm-wikilink-broken': {
     color: 'var(--text-muted)',
     borderBottom: '1px dashed var(--text-faint)',
@@ -264,10 +280,12 @@ export const editorTheme = EditorView.theme({
   '.cm-embed': {
     display: 'block',
     position: 'relative',
-    // A border rather than padding: the resize handle is positioned against
-    // this element's padding box and would grow with it.
-    borderTop: '10px solid transparent',
-    borderBottom: '10px solid transparent',
+    /*
+     * No margin of its own. An image sits exactly where its line sits, so a
+     * line of text immediately above or below it is immediately above or
+     * below it — and anyone who wants air around a picture writes a blank
+     * line, which is what a blank line is for.
+     */
     maxWidth: '100%',
   },
   '.cm-embed img, .cm-embed video': {

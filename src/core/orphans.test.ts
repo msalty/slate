@@ -105,3 +105,45 @@ describe('orphan files', () => {
     expect(orphans(v)).toEqual(['attachments/shot.png'])
   })
 })
+
+describe('renaming a file', () => {
+  it('repoints every reference, in the shape it was written', async () => {
+    const v = await fresh()
+    await file(v, 'attachments/IMG_0421.png')
+    const full = await v.createNote('', 'Full path', '![](attachments/IMG_0421.png)\n')
+    const bare = await v.createNote('', 'Bare name', '![[IMG_0421.png|400]]\n')
+    const rel = await v.createNote('attachments', 'Relative', '![](IMG_0421.png)\n')
+
+    const dest = await v.renameAttachment('attachments/IMG_0421.png', 'Receipt August')
+
+    // The extension is kept when the new name doesn't carry one.
+    expect(dest).toBe('attachments/Receipt August.png')
+    expect(v.getText(full)).toContain('![](attachments/Receipt%20August.png)')
+    // A bare filename stays bare, and the width survives.
+    expect(v.getText(bare)).toContain('![[Receipt August.png|400]]')
+    // A path relative to the note stays relative.
+    expect(v.getText(rel)).toContain('![](Receipt%20August.png)')
+    expect(orphans(v)).toEqual([])
+  })
+
+  it('leaves a file that shares nothing but a name alone', async () => {
+    const v = await fresh()
+    await file(v, 'attachments/a.png')
+    await file(v, 'attachments/b.png')
+    const p = await v.createNote('', 'Note', '![](attachments/b.png)\n')
+    await v.renameAttachment('attachments/a.png', 'c.png')
+    expect(v.getText(p)).toContain('attachments/b.png')
+  })
+
+  it('takes a deleted file out of the vault but keeps it recoverable', async () => {
+    const v = await fresh()
+    await file(v, 'attachments/stray.png')
+    await v.deleteFile('attachments/stray.png')
+    expect(v.attachments.value.map((f) => f.path)).toEqual([])
+    const trashed = v.trashItems()
+    expect(trashed).toHaveLength(1)
+    expect(v.trashDisplayName(trashed[0].path)).toBe('stray.png')
+    await v.restoreFromTrash(trashed[0].path)
+    expect(v.attachments.value.map((f) => f.path)).toEqual(['stray.png'])
+  })
+})

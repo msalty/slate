@@ -567,6 +567,105 @@ textarea {
   background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 
+/* ---- resizable columns -------------------------------------------------- */
+
+/*
+ * A grab strip on the pane's trailing edge, sitting over the divider rather
+ * than taking space of its own — the pane is exactly as wide as the grid says,
+ * and the handle is a place to put the pointer.
+ */
+.pane-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -3px;
+  width: 7px;
+  cursor: col-resize;
+  z-index: 5;
+  touch-action: none;
+}
+.pane-resizer::after {
+  content: '';
+  position: absolute;
+  inset: 0 3px;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity var(--dur);
+}
+.pane-resizer:hover::after,
+.pane-resizer:focus-visible::after {
+  opacity: 0.6;
+}
+.pane-resizer:focus-visible {
+  outline: none;
+}
+/* While dragging, nothing else should be selecting text or showing a caret. */
+body.resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+body.resizing .pane-resizer::after {
+  opacity: 0.6;
+}
+
+/* ---- swipe to reveal actions (touch) ----------------------------------- */
+
+.swipe-row {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius);
+}
+.swipe-actions {
+  position: absolute;
+  inset: 0 0 0 auto;
+  display: flex;
+}
+/* Nothing peeks out from behind a row that is sitting still. */
+.swipe-row[data-open='0'] .swipe-actions {
+  visibility: hidden;
+}
+.swipe-action {
+  display: flex;
+  align-items: center;
+  padding: 0 18px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface-2);
+}
+.swipe-action[data-danger='1'] {
+  background: var(--danger);
+  color: #fff;
+}
+.swipe-content {
+  position: relative;
+  /* Opaque, or the actions show through the row sliding over them. */
+  background: var(--list-bg);
+  /* Vertical scrolling stays native; only sideways is ours to interpret. */
+  touch-action: pan-y;
+}
+
+/* ---- Recently Deleted -------------------------------------------------- */
+
+.trash-open {
+  display: flex;
+  width: 100%;
+  text-align: left;
+  color: inherit;
+  min-width: 0;
+}
+.trash-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 8px 14px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  border-bottom: 1px solid var(--border);
+}
+
 /* ---- orphaned files ---------------------------------------------------- */
 
 .section-label-row {
@@ -799,6 +898,26 @@ textarea {
 .fmt-sheet .fmt-styles {
   justify-content: space-between;
   padding-bottom: 4px;
+}
+/*
+ * Lists and the two insert buttons share the sheet's last row. Nine full-width
+ * targets would be a fourth row of the note you can no longer see, and the
+ * insert pair is narrow enough to ride along on the end.
+ */
+.fmt-sheet .fmt-row-split {
+  display: flex;
+  gap: 10px;
+  padding: 0;
+}
+.fmt-sheet .fmt-row-split > .fmt-row {
+  flex: 1 1 auto;
+}
+.fmt-sheet .fmt-row-split > .fmt-row:last-child {
+  flex: 0 0 auto;
+}
+.fmt-sheet .fmt-row-split > .fmt-row:last-child .fmt-btn {
+  flex: 0 0 auto;
+  width: 44px;
 }
 /* Phone targets: fill the width in equal parts, at a size a thumb can hit. */
 .fmt-sheet .fmt-btn {

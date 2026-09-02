@@ -15,6 +15,8 @@
 import { signal } from '@preact/signals'
 import { EditorSelection, type EditorState, type TransactionSpec } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
+import { bareUriAt, linkAt } from './links'
+import { tableAt } from './table'
 
 /** Paragraph styles, named as Apple Notes names them. */
 export type BlockStyle = 'title' | 'heading' | 'subheading' | 'body'
@@ -438,6 +440,10 @@ export interface FormatSnapshot {
   marks: Record<InlineMark, boolean>
   canIndent: boolean
   canOutdent: boolean
+  /** True when the caret sits in a link — the Link button then edits it. */
+  link: boolean
+  /** Where in a table the caret is, so the table controls know what to act on. */
+  table: { row: number; col: number; rows: number; cols: number } | null
 }
 
 const NO_MARKS: Record<InlineMark, boolean> = {
@@ -457,6 +463,8 @@ export const EMPTY_SNAPSHOT: FormatSnapshot = {
   marks: NO_MARKS,
   canIndent: false,
   canOutdent: false,
+  link: false,
+  table: null,
 }
 
 function styleForLevel(level: number): BlockStyle {
@@ -472,6 +480,7 @@ export function inspect(state: EditorState): FormatSnapshot {
   for (const m of Object.keys(DELIMS) as InlineMark[]) {
     marks[m] = !!spanAround(state, m, head.from, head.to)
   }
+  const t = tableAt(state, head.head)
   return {
     active: true,
     block: styleForLevel(p.level),
@@ -480,6 +489,10 @@ export function inspect(state: EditorState): FormatSnapshot {
     marks,
     canIndent: canIndent(state, 1),
     canOutdent: canIndent(state, -1),
+    link: !!(linkAt(state, head.head) ?? bareUriAt(state, head.head)),
+    table: t
+      ? { row: t.row, col: t.col, rows: t.model.rows.length, cols: t.model.align.length }
+      : null,
   }
 }
 

@@ -23,15 +23,20 @@ import {
   formatSnapshot,
 } from '../editor/format'
 import type { EditorView } from '@codemirror/view'
+import { applyTableOp, insertTable } from '../editor/table'
+import { editLinkAtCaret } from './linkActions'
+import { openMenu, type MenuItem } from './Menu'
 import {
   IconCode,
   IconHighlight,
   IconIndent,
+  IconLink,
   IconListBullet,
   IconListCheck,
   IconListNumber,
   IconOutdent,
   IconQuote,
+  IconTable,
 } from './Icons'
 
 const STYLES: Array<{ id: BlockStyle; label: string; hint: string }> = [
@@ -121,6 +126,44 @@ export function FormatBar({ getView, variant }: FormatBarProps) {
     </div>
   )
 
+  /**
+   * Table controls.
+   *
+   * Outside a table the button inserts one. Inside, it opens the operations as
+   * a menu — which is a popover with a pointer and a bottom sheet on a phone,
+   * so "add a column" is the same two taps on either, and the bar does not have
+   * to find room for seven more targets it only sometimes needs.
+   */
+  const tableMenu = (e: { clientX: number; clientY: number }) => {
+    const view = getView()
+    if (!view) return
+    if (!f.table) {
+      insertTable(view)
+      return
+    }
+    const op = (label: string, id: Parameters<typeof applyTableOp>[1], danger = false): MenuItem => ({
+      label,
+      danger,
+      onSelect: () => {
+        const v = getView()
+        if (v) applyTableOp(v, id)
+      },
+    })
+    openMenu(
+      e,
+      [
+        op('Insert row above', 'row-above'),
+        op('Insert row below', 'row-below'),
+        op('Insert column left', 'col-left'),
+        op('Insert column right', 'col-right'),
+        op('Delete row', 'row-delete', true),
+        op('Delete column', 'col-delete', true),
+        op('Delete table', 'delete', true),
+      ].map((item, i) => (i === 4 ? { ...item, separated: true } : item)),
+      `Table · row ${f.table.row + 1} of ${f.table.rows}, column ${f.table.col + 1} of ${f.table.cols}`,
+    )
+  }
+
   const listRow = (
     <div class="fmt-row" role="group" aria-label="Lists and indentation">
       {LISTS.map((l) => (
@@ -167,6 +210,49 @@ export function FormatBar({ getView, variant }: FormatBarProps) {
     </div>
   )
 
+  /*
+   * Link and table sit together: both are things you *insert* rather than
+   * styling you toggle, and both open something rather than acting at once.
+   * They keep the editor's selection the same way every other button does.
+   */
+  const insertRow = (
+    <div class="fmt-row" role="group" aria-label="Insert">
+      <button
+        class="fmt-btn"
+        title="Link (⌘⇧K)"
+        aria-label={f.link ? 'Edit link' : 'Add link'}
+        aria-pressed={f.link}
+        onMouseDown={(e) => {
+          e.preventDefault()
+          editLinkAtCaret(getView())
+        }}
+        onTouchStart={(e) => {
+          e.preventDefault()
+          editLinkAtCaret(getView())
+        }}
+      >
+        <IconLink size={18} />
+      </button>
+      <button
+        class="fmt-btn"
+        title={f.table ? 'Table rows and columns' : 'Insert table'}
+        aria-label={f.table ? 'Table rows and columns' : 'Insert table'}
+        aria-pressed={!!f.table}
+        onMouseDown={(e) => {
+          e.preventDefault()
+          tableMenu(e)
+        }}
+        onTouchStart={(e) => {
+          e.preventDefault()
+          const t = e.touches[0]
+          tableMenu({ clientX: t?.clientX ?? 0, clientY: t?.clientY ?? 0 })
+        }}
+      >
+        <IconTable size={18} />
+      </button>
+    </div>
+  )
+
   if (variant === 'sheet') {
     /*
      * No title bar: the sheet is three rows of controls that explain
@@ -178,7 +264,10 @@ export function FormatBar({ getView, variant }: FormatBarProps) {
       <div class="fmt-sheet" role="group" aria-label="Format">
         {styleRow}
         {markRow}
-        {listRow}
+        <div class="fmt-row fmt-row-split">
+          {listRow}
+          {insertRow}
+        </div>
       </div>
     )
   }
@@ -190,6 +279,8 @@ export function FormatBar({ getView, variant }: FormatBarProps) {
       {markRow}
       <span class="fmt-sep" />
       {listRow}
+      <span class="fmt-sep" />
+      {insertRow}
     </div>
   )
 }

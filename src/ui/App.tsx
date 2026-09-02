@@ -9,6 +9,10 @@ import { VersionHistory } from './VersionHistory'
 import { Lightbox } from './Lightbox'
 import { ContextMenu } from './Menu'
 import { TagFolderDialog } from './TagFolderDialog'
+import { LinkDialog } from './LinkDialog'
+import { PromptDialog } from './PromptDialog'
+import { PaneResizer } from './PaneResizer'
+import { editLinkAtCaret, handleUriClick } from './linkActions'
 import { MobileCalendar, MobileMore, MobileNav, MobileTasks } from './Mobile'
 import { settings, update } from '../core/settings'
 import { connectBackend } from '../app/backend'
@@ -94,6 +98,12 @@ export function App() {
     const onLightbox = (e: Event) => {
       lightboxPath.value = (e as CustomEvent<{ path: string }>).detail.path
     }
+    const onUri = (e: Event) => {
+      handleUriClick(
+        (e as CustomEvent<Parameters<typeof handleUriClick>[0]>).detail,
+      )
+    }
+    const onLinkDialog = () => editLinkAtCaret()
     const onTag = (e: Event) => {
       scope.value = { kind: 'tag', tag: (e as CustomEvent<{ tag: string }>).detail.tag }
       if (layoutMode.value === 'compact') {
@@ -104,10 +114,14 @@ export function App() {
     addEventListener('slate:open-link', onLink)
     addEventListener('slate:lightbox', onLightbox)
     addEventListener('slate:open-tag', onTag)
+    addEventListener('slate:uri', onUri)
+    addEventListener('slate:link-dialog', onLinkDialog)
     return () => {
       removeEventListener('slate:open-link', onLink)
       removeEventListener('slate:lightbox', onLightbox)
       removeEventListener('slate:open-tag', onTag)
+      removeEventListener('slate:uri', onUri)
+      removeEventListener('slate:link-dialog', onLinkDialog)
     }
   }, [])
 
@@ -191,6 +205,11 @@ export function App() {
         data-sidebar={sidebarState.value}
         data-rail={railState.value}
         data-list={listInline.value ? '1' : '0'}
+        /*
+         * The grid reads these; the resizers write them straight to the DOM
+         * while dragging, so a resize costs one custom property, not a render.
+         */
+        style={{ '--sidebar-w': `${s.sidebarWidth}px`, '--list-w': `${s.listWidth}px` }}
       >
         {/* --- sidebar: inline on wide, a drawer otherwise --- */}
         {sidebarState.value !== 'hidden' && (
@@ -207,6 +226,16 @@ export function App() {
               </button>
             </div>
             <Sidebar />
+            {sidebarState.value === 'inline' && (
+              <PaneResizer
+                variable="--sidebar-w"
+                setting="sidebarWidth"
+                min={170}
+                max={420}
+                fallback={232}
+                label="Resize the sidebar"
+              />
+            )}
           </div>
         )}
 
@@ -226,7 +255,16 @@ export function App() {
           </div>
         ) : (
           <>
-            <NoteList />
+            <NoteList>
+              <PaneResizer
+                variable="--list-w"
+                setting="listWidth"
+                min={240}
+                max={560}
+                fallback={320}
+                label="Resize the note list"
+              />
+            </NoteList>
             <EditorPane />
           </>
         )}
@@ -272,6 +310,8 @@ export function App() {
       <Settings />
       <VersionHistory />
       <TagFolderDialog />
+      <LinkDialog />
+      <PromptDialog />
       <Lightbox />
       <ContextMenu />
       {toast.value && (

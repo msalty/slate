@@ -50,6 +50,7 @@ import {
 import {
   basename,
   dirname,
+  extname,
   hashBlob,
   hashText,
 
@@ -578,6 +579,117 @@ async function rewriteLinksTo(oldTitle: string, newTitle: string): Promise<void>
 }
 
 /**
+ * Rename an attachment, repointing every note that used it.
+ *
+ * A file's name is part of how a note reads — `![[receipt-2026-08.pdf]]` says
+ * something `![[IMG_0421.pdf]]` does not — so renaming has to be as safe as
+ * renaming a note is. Every reference is rewritten in the shape it was written
+ * in: a bare filename stays a bare filename, a path relative to the note stays
+ * relative, and a full vault path stays full. Anything else would work but
+ * would quietly rewrite how someone had chosen to link.
+ */
+export async function renameAttachment(path: string, newName: string): Promise<string> {
+  const f = files.get(path)
+  if (!f || f.kind !== 'attachment') return path
+  const dir = dirname(path)
+  const ext = extname(path)
+  let name = safeSegment(newName.trim())
+  if (!name) return path
+  // Typing a name without its extension is the normal case; keep the old one
+  // rather than producing a file the OS no longer knows how to open.
+  if (!extname(name) && ext) name = `${name}${ext}`
+
+  let dest = joinPath(dir, name)
+  let n = 2
+  while (files.has(dest) && dest !== path) {
+    const dot = name.lastIndexOf('.')
+    dest = joinPath(dir, dot > 0 ? `${name.slice(0, dot)} ${n++}${name.slice(dot)}` : `${name} ${n++}`)
+  }
+  if (dest === path) return path
+
+  // Rewrite while the old file is still in place, so references still resolve.
+  await repointReferences(path, dest)
+  await movePath(path, dest)
+  return dest
+}
+
+/** Rewrite every reference to `from` so it points at `to`. */
+async function repointReferences(from: string, to: string): Promise<void> {
+  const touched: VaultFile[] = []
+
+  for (const e of notes.value) {
+    const f = files.get(e.path)
+    if (!f?.text) continue
+    const regions = codeRegions(f.text)
+    interface Rewrite {
+      from: number
+      to: number
+      insert: string
+    }
+    const edits: Rewrite[] = []
+
+    /** The new reference, written the way the old one was. */
+    const reshape = (ref: string): string | undefined => {
+      let clean = ref.trim()
+      if (!clean || /^[a-z]+:/i.test(clean)) return undefined
+      let decoded = clean
+      try {
+        decoded = decodeURI(clean)
+      } catch {
+        /* a half-encoded link is matched as written */
+      }
+      const [bare] = splitSizeFragment(decoded)
+      if (normPath(bare) === from) return to
+      const noteDir = dirname(e.path)
+      if (noteDir && joinPath(noteDir, bare) === from) {
+        return to.startsWith(`${noteDir}/`) ? to.slice(noteDir.length + 1) : to
+      }
+      if (basename(bare).toLowerCase() === basename(from).toLowerCase() && resolveEmbed(bare, e.path) === from)
+        return basename(to)
+      return undefined
+    }
+
+    for (const l of scanWikiLinks(f.text, regions)) {
+      const next = reshape(l.target)
+      if (next === undefined) continue
+      const inner = [next, l.anchor ? `#${l.anchor}` : '', l.alias !== undefined ? `|${l.alias}` : ''].join('')
+      edits.push({ from: l.from, to: l.to, insert: `${l.embed ? '!' : ''}[[${inner}]]` })
+    }
+    for (const l of scanMdLinks(f.text, regions)) {
+      const [, width] = splitSizeFragment(l.url)
+      const next = reshape(l.url)
+      if (next === undefined) continue
+      // Spaces have to be encoded or the parens close the link early.
+      const url = encodeURI(next) + (width ? `#w=${width}` : '')
+      edits.push({ from: l.urlFrom, to: l.urlTo, insert: url })
+    }
+    if (!edits.length) continue
+
+    // Right to left, so earlier offsets stay valid.
+    let text = f.text
+    for (const ed of edits.sort((a, b) => b.from - a.from)) {
+      text = `${text.slice(0, ed.from)}${ed.insert}${text.slice(ed.to)}`
+    }
+    const next: VaultFile = {
+      ...f,
+      text,
+      hash: await hashText(text),
+      size: text.length,
+      mtime: Date.now(),
+      dirty: true,
+    }
+    files.set(f.path, next)
+    touched.push(next)
+  }
+
+  if (touched.length) {
+    await putFiles(touched)
+    for (const f of touched) reindex(f.path)
+    bump()
+  }
+}
+
+/**
  * Soft-delete. The file is moved to backstage/trash rather than removed, so a
  * delete is always recoverable and never races a concurrent edit on another
  * device into data loss.
@@ -603,7 +715,7 @@ export async function deleteNote(path: string): Promise<void> {
 }
 
 export async function restoreFromTrash(trashPath: string, to?: string): Promise<string> {
-  const name = basename(trashPath).replace(/^\d{4}-\d{2}-\d{2}T[\d-]+--(?:\d+--)?/, '')
+  const name = trashDisplayName(trashPath)
   let dest = to ?? name
   let n = 2
   while (files.has(dest)) {
@@ -612,6 +724,27 @@ export async function restoreFromTrash(trashPath: string, to?: string): Promise<
   }
   await movePath(trashPath, dest)
   return dest
+}
+
+/**
+ * Soft-delete any vault file. Attachments go the same way notes do — into
+ * `backstage/trash/`, recoverable, and only really gone once you say so.
+ */
+export async function deleteFile(path: string): Promise<void> {
+  return deleteNote(path)
+}
+
+/** True for anything sitting in Recently Deleted. */
+export function isTrashed(path: string): boolean {
+  return path.startsWith(`${TRASH}/`)
+}
+
+/**
+ * What a trashed file was called. The timestamp that makes its trash path
+ * unique is bookkeeping, not part of the name anyone gave it.
+ */
+export function trashDisplayName(path: string): string {
+  return basename(path).replace(/^\d{4}-\d{2}-\d{2}T[\d-]+--(?:\d+--)?/, '')
 }
 
 export function trashItems(): VaultFile[] {
