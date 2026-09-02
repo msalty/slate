@@ -97,10 +97,22 @@ export function ContextMenu() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') closeMenu()
     }
+    // A menu is anchored to a point on screen, so anything scrolling out from
+    // under it should dismiss it.
     const onScroll = () => closeMenu()
     addEventListener('keydown', onKey)
-    addEventListener('scroll', onScroll, true)
+    /*
+     * ...but not the scroll the opening click itself caused. A toolbar that
+     * scrolls sideways emits one when a button in it is pressed, and that
+     * arrived just after the menu opened and closed it again — the button
+     * looked dead. Arming a frame later skips it and still catches every
+     * scroll a person makes.
+     */
+    const armed = requestAnimationFrame(() =>
+      requestAnimationFrame(() => addEventListener('scroll', onScroll, true)),
+    )
     return () => {
+      cancelAnimationFrame(armed)
       removeEventListener('keydown', onKey)
       removeEventListener('scroll', onScroll, true)
     }

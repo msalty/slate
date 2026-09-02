@@ -147,6 +147,16 @@ export const editorTheme = EditorView.theme({
     fontWeight: '650',
     backgroundColor: 'var(--surface-2)',
   },
+  /* Cells you type in — rich text only; live preview edits the pipes. */
+  '&.cm-rich .cm-table-cell': {
+    cursor: 'text',
+    caretColor: 'var(--accent)',
+    outline: 'none',
+  },
+  '&.cm-rich .cm-table-cell:focus': {
+    backgroundColor: 'var(--accent-soft)',
+    boxShadow: 'inset 0 0 0 1.5px var(--accent)',
+  },
   /* Inline markdown rendered into cells by the inline renderer. These need
      their own rules: they are widget DOM, so the editor's own syntax
      highlighting never reaches them. */
@@ -278,14 +288,26 @@ export const editorTheme = EditorView.theme({
   '.cm-task-done': { color: 'var(--text-faint)', textDecoration: 'line-through' },
 
   '.cm-embed': {
-    display: 'block',
-    position: 'relative',
     /*
-     * No margin of its own. An image sits exactly where its line sits, so a
-     * line of text immediately above or below it is immediately above or
-     * below it — and anyone who wants air around a picture writes a blank
-     * line, which is what a blank line is for.
+     * Inline-block, bottom-aligned, and this is the whole reason there is no
+     * space around a picture.
+     *
+     * A `display: block` widget inside CodeMirror's inline wrapper splits the
+     * line into anonymous blocks, and the empty inline boxes either side of it
+     * — CodeMirror's own widget buffers — each take a full line box. That was
+     * a 24px band above the image and another below it, from a rule nobody
+     * wrote. As an inline-level box the widget shares the line's box instead,
+     * and aligning it to the bottom keeps the line's strut from hanging below
+     * it as descender space.
+     *
+     * So an image sits exactly where its line sits: a line of text immediately
+     * above or below it is immediately above or below it, and anyone who wants
+     * air around a picture writes a blank line, which is what a blank line is
+     * for.
      */
+    display: 'inline-block',
+    verticalAlign: 'bottom',
+    position: 'relative',
     maxWidth: '100%',
   },
   '.cm-embed img, .cm-embed video': {

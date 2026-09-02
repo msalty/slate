@@ -55,6 +55,8 @@ export function SwipeRow({
   const contentRef = useRef<HTMLDivElement>(null)
   const railRef = useRef<HTMLDivElement>(null)
   const offset = useRef(0)
+  /** Where the row was when the finger claimed it — the origin for the drag. */
+  const from = useRef(0)
   const drag = useRef<{ x: number; y: number; locked: 'none' | 'swipe' | 'scroll' }>({
     x: 0,
     y: 0,
@@ -66,7 +68,8 @@ export function SwipeRow({
     offset.current = x
     const el = contentRef.current
     if (!el) return
-    el.style.transition = animate ? 'transform 160ms ease' : 'none'
+    // The same curve the drawers use: quick to leave, gentle to arrive.
+    el.style.transition = animate ? 'transform 200ms cubic-bezier(0.32, 0.72, 0, 1)' : 'none'
     el.style.transform = x ? `translateX(${x}px)` : ''
     rowRef.current?.setAttribute('data-open', x < 0 ? '1' : '0')
   }
@@ -103,21 +106,40 @@ export function SwipeRow({
       }
       if (Math.abs(moveX) > SLOP) {
         drag.current.locked = 'swipe'
+        /*
+         * Both origins are taken here, once. Deriving the row's starting
+         * offset from `claimed` instead made the second move event of every
+         * swipe read the row as already open — so it jumped the full width of
+         * its actions in one frame and the rest of the gesture did nothing.
+         * The finger's origin is taken here too, so the row starts moving from
+         * under the finger rather than snapping forward by the slop distance.
+         */
+        from.current = offset.current
+        drag.current.x = t.clientX
         openRow.value = id
-        drag.current.x = t.clientX - (offset.current ? moveX : 0)
       } else return
     }
     if (drag.current.locked !== 'swipe') return
     // Vertical scrolling is off the table now the row has claimed the touch.
     if (e.cancelable) e.preventDefault()
-    const base = claimed && offset.current < 0 ? -width() : 0
-    setX(Math.max(-width() - 24, Math.min(0, base + (t.clientX - drag.current.x))), false)
+    const next = from.current + (t.clientX - drag.current.x)
+    setX(Math.max(-width() - 24, Math.min(0, next)), false)
   }
 
   const onTouchEnd = () => {
     if (drag.current.locked !== 'swipe') return
     drag.current.locked = 'none'
-    if (offset.current <= -OPEN_AT) {
+    /*
+     * Judged on how far the finger travelled, not on where the row ended up:
+     * far enough left opens, far enough right closes, and anything in between
+     * goes back to whichever state the gesture started in. Measuring the
+     * absolute position instead would let a few pixels of jitter on an open
+     * row slam it shut.
+     */
+    const travelled = offset.current - from.current
+    const open =
+      travelled <= -OPEN_AT ? true : travelled >= OPEN_AT ? false : from.current < 0
+    if (open) {
       openRow.value = id
       setX(-width(), true)
     } else close()

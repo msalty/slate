@@ -23,7 +23,7 @@ import {
   formatSnapshot,
 } from '../editor/format'
 import type { EditorView } from '@codemirror/view'
-import { applyTableOp, insertTable } from '../editor/table'
+import { applyTableOp, insertTable, tableContext } from '../editor/table'
 import { editLinkAtCaret } from './linkActions'
 import { openMenu, type MenuItem } from './Menu'
 import {
@@ -69,6 +69,9 @@ export interface FormatBarProps {
 
 export function FormatBar({ getView, variant }: FormatBarProps) {
   const f = formatSnapshot.value
+  // Where the table buttons would act: the caret's table in live preview, or
+  // the cell being typed in when the table is rendered.
+  const table = f.table ?? tableContext.value
 
   /**
    * Wire a button to a command without stealing the selection.
@@ -79,6 +82,28 @@ export function FormatBar({ getView, variant }: FormatBarProps) {
    * `touchstart` also stops the browser synthesising the mouse events after it,
    * which is what keeps a single tap from running the command twice.
    */
+  /**
+   * Wire a button that *opens* something — a dialog, a menu — rather than
+   * acting at once.
+   *
+   * It has to happen on the click, not the press. These overlays put a scrim
+   * over the screen the moment they open, and a scrim that appears between a
+   * mousedown and its click swallows that click and closes itself again. The
+   * press is still cancelled, so the editor keeps its selection and a table
+   * cell keeps its focus while the menu decides what it is acting on.
+   */
+  const opens = (fn: (at: { clientX: number; clientY: number }) => void) => ({
+    onMouseDown: (e: MouseEvent) => e.preventDefault(),
+    onClick: (e: MouseEvent) => fn(e),
+    onTouchStart: (e: TouchEvent) => {
+      // Cancelling touchstart also cancels the click the browser would
+      // synthesise from it, so this is the only handler that runs on touch.
+      e.preventDefault()
+      const t = e.touches[0]
+      fn({ clientX: t?.clientX ?? 0, clientY: t?.clientY ?? 0 })
+    },
+  })
+
   const act = (cmd: (view: EditorView) => boolean) => {
     const handler = (e: Event) => {
       e.preventDefault()
@@ -137,7 +162,7 @@ export function FormatBar({ getView, variant }: FormatBarProps) {
   const tableMenu = (e: { clientX: number; clientY: number }) => {
     const view = getView()
     if (!view) return
-    if (!f.table) {
+    if (!table) {
       insertTable(view)
       return
     }
@@ -160,7 +185,7 @@ export function FormatBar({ getView, variant }: FormatBarProps) {
         op('Delete column', 'col-delete', true),
         op('Delete table', 'delete', true),
       ].map((item, i) => (i === 4 ? { ...item, separated: true } : item)),
-      `Table · row ${f.table.row + 1} of ${f.table.rows}, column ${f.table.col + 1} of ${f.table.cols}`,
+      `Table · row ${table.row + 1} of ${table.rows}, column ${table.col + 1} of ${table.cols}`,
     )
   }
 
@@ -219,34 +244,19 @@ export function FormatBar({ getView, variant }: FormatBarProps) {
     <div class="fmt-row" role="group" aria-label="Insert">
       <button
         class="fmt-btn"
-        title="Link (⌘⇧K)"
+        title="Link (⌘⇧L)"
         aria-label={f.link ? 'Edit link' : 'Add link'}
         aria-pressed={f.link}
-        onMouseDown={(e) => {
-          e.preventDefault()
-          editLinkAtCaret(getView())
-        }}
-        onTouchStart={(e) => {
-          e.preventDefault()
-          editLinkAtCaret(getView())
-        }}
+        {...opens(() => editLinkAtCaret(getView()))}
       >
         <IconLink size={18} />
       </button>
       <button
         class="fmt-btn"
-        title={f.table ? 'Table rows and columns' : 'Insert table'}
-        aria-label={f.table ? 'Table rows and columns' : 'Insert table'}
-        aria-pressed={!!f.table}
-        onMouseDown={(e) => {
-          e.preventDefault()
-          tableMenu(e)
-        }}
-        onTouchStart={(e) => {
-          e.preventDefault()
-          const t = e.touches[0]
-          tableMenu({ clientX: t?.clientX ?? 0, clientY: t?.clientY ?? 0 })
-        }}
+        title={table ? 'Table rows and columns' : 'Insert table'}
+        aria-label={table ? 'Table rows and columns' : 'Insert table'}
+        aria-pressed={!!table}
+        {...opens(tableMenu)}
       >
         <IconTable size={18} />
       </button>

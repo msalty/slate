@@ -244,10 +244,11 @@ function buildDecorations(view: EditorView): DecorationSet {
    * Claiming them here keeps the tree walk from also styling them, and
    * monospaces the pipes while the caret is inside so columns line up.
    */
+  const richTables = state.facet(previewMode) === 'rich'
   for (const t of findTables(state)) {
     const first = state.doc.line(t.fromLine)
     const last = state.doc.line(t.toLine)
-    const editing = touched(state, first.from, last.to)
+    const editing = !richTables && touched(state, first.from, last.to)
     for (let n = t.fromLine; n <= t.toLine; n++) {
       const line = state.doc.line(n)
       seenLines.add(line.from)
@@ -736,18 +737,25 @@ function countCells(line: string): number {
 function buildTableDecorations(state: EditorState): DecorationSet {
   const out: Array<Range<Decoration>> = []
   const notePath = state.facet(noteContext).path
+  const rich = state.facet(previewMode) === 'rich'
 
   for (const t of findTables(state)) {
     const first = state.doc.line(t.fromLine)
     const last = state.doc.line(t.toLine)
-    // Caret inside the table means the user is editing it: show the source.
-    if (touched(state, first.from, last.to)) continue
+    /*
+     * In live preview the caret inside a table means the user is editing it,
+     * and the source is what they came for. Rich text never shows the pipes at
+     * all: the rendered cells are the editor there, so the table stays a table
+     * and typing happens inside it.
+     */
+    if (!rich && touched(state, first.from, last.to)) continue
     out.push(
       Decoration.replace({
         widget: new TableWidget(
           state.doc.sliceString(first.from, last.to),
           first.from,
           notePath,
+          rich,
         ),
         block: true,
       }).range(first.from, last.to),

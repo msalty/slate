@@ -104,8 +104,16 @@ are two hundred of them.
 
 **Tables render as tables**, including the formatting inside their cells: bold,
 italics, `code`, strikethrough, links, wikilinks, tags and images all render in a
-cell. Clicking a table puts the caret back in the pipe source to edit it, and it
-re-renders when you click away.
+cell.
+
+In rich text you type straight into the cells — the table never shows its pipes.
+Tab moves along a row and Enter down a column, both adding a row when they run
+off the end; Escape puts you back in the note. A pipe typed into a cell is
+escaped rather than becoming a new column, and the file goes on holding an
+ordinary GFM table, printed with its columns lined up so it still reads as text.
+Live preview keeps its own contract: clicking a table there puts the caret in
+the pipe source, the same way the caret reveals every other construct it sits
+in.
 
 **Pinned notes** sit in their own section at the top of the list — sorted the
 same way everything else is, by date edited, date created or title — and stay
@@ -209,7 +217,7 @@ bar above the list carries an **Edit** next to the **Close**.
 | ⌘⇧X / ⌘⇧H / ⌘E | Strikethrough / highlight / monospace |
 | ⌘⌥1 / ⌘⌥2 / ⌘⌥3 / ⌘⌥0 | Title / Heading / Subheading / Body |
 | ⌘K *(with a selection)* | Wrap in a wikilink |
-| ⌘⇧K | Add or edit an external link |
+| ⌘⇧L | Add or edit an external link |
 | ⌘⇧7 / ⌘⇧8 / ⌘⇧0 | Checklist / bullets / numbers |
 | ⌘⇧9 | Block quote |
 | ⌘] / ⌘[ | Indent / outdent a list item |
@@ -573,9 +581,9 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
   underlying `reorderSmartFolders` exists but nothing calls it yet.
 - **A Tag Folder can't live inside a real folder.** The two hierarchies are
   separate — use `folder:Work` in the rule to pin one to a folder.
-- **Table editing is source-based.** Tables render properly and their cells
-  render inline formatting, but clicking one puts the caret in the pipe markdown
-  rather than editing in the cell.
+- **Table columns can't be aligned from the UI.** Cells are edited in place and
+  rows and columns come and go from the toolbar, but `:--:` alignment still has
+  to be typed into the delimiter row by hand, in live preview or source.
 - **Search is a linear scan.** Fast and predictable to a few thousand notes; past
   that it wants an inverted index.
 - **No encryption at rest.** Notes are plain files on your server. Per-file

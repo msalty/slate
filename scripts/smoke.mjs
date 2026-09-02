@@ -506,12 +506,17 @@ try {
     check(`clicking "${word}" puts the caret in that word`, landed.ok, landed.detail)
   }
 
-  // Clicking the rendered table must drop the caret into the source.
+  /*
+   * Clicking a table in rich text puts the caret in the cell, not in the
+   * pipes: the rendered table *is* the editor there. (Live preview's
+   * click-to-reveal is checked in the table section further down.)
+   */
   await page.locator('.cm-table-render td').first().click()
   await page.waitForTimeout(400)
   check(
-    'clicking a table reveals its markdown',
-    (await page.locator('.cm-line.cm-table').count()) > 0,
+    'clicking a table in rich text starts editing the cell',
+    (await page.evaluate(() => document.activeElement?.className)) === 'cm-table-cell' &&
+      (await page.locator('.cm-line.cm-table').count()) === 0,
   )
 
 
@@ -668,6 +673,50 @@ try {
   check('no raw markdown leaks into cells', !/\*\*|~~|`/.test(cellText), cellText.slice(0, 70))
   check('an escaped pipe stays one cell', cellText.includes('a | b'), cellText.slice(0, 70))
 
+  /* ---- typing straight into a rendered table ---------------------------
+   * Rich text never shows the pipes, so the cells have to be the editor: each
+   * one is its own contenteditable, committing to the markdown when it is
+   * left. What matters is that the file ends up holding an ordinary GFM table
+   * — that is what another editor will open.
+   */
+  // Padded on every rewrite, so the needle has to be something outside it.
+  const tableSource = () => noteContaining('# Tables')
+
+  await page.locator('.cm-table-cell[data-row="1"][data-col="1"]').click()
+  await page.waitForTimeout(200)
+  await page.keyboard.press('Control+a')
+  await page.keyboard.type('rewritten')
+  check(
+    'the table stays rendered while a cell is typed in',
+    (await page.locator('.cm-table-render').count()) === 1,
+  )
+  await page.keyboard.press('Tab')
+  await page.waitForTimeout(500)
+  check(
+    'Tab commits the cell and moves to the next one',
+    (await page.evaluate(() => {
+      const el = document.activeElement
+      return el?.dataset?.row === '2' && el?.dataset?.col === '0'
+    })) === true,
+  )
+  const edited = await tableSource()
+  check('the cell is written back as markdown', /\| rewritten +\|/.test(edited), edited.split('\n')[4])
+  check(
+    'and the table is still a table',
+    /^\| -+ \| -+ \|$/m.test(edited),
+    edited.split('\n')[3],
+  )
+
+  // A pipe typed into a cell is escaped, not a new column.
+  await page.locator('.cm-table-cell[data-row="1"][data-col="1"]').click()
+  await page.waitForTimeout(200)
+  await page.keyboard.press('Control+a')
+  await page.keyboard.type('x | y')
+  await page.locator('.cm-line').first().click()
+  await page.waitForTimeout(500)
+  check('a typed pipe is escaped', (await tableSource()).includes('x \\| y'))
+  check('the table survives it', (await page.locator('.cm-table-render').count()) === 1)
+
   // A wikilink in a cell must navigate, not just look like a link.
   await page.locator('.cm-table-render [data-wikilink]').click()
   await page.waitForTimeout(500)
@@ -690,15 +739,25 @@ try {
     (await page.locator('.cm-table-render').count()) === 1,
   )
 
-  // Clicking it still hands over to the source for editing.
+  /*
+   * Live preview keeps the older contract: the caret reveals the pipes, the
+   * same as it reveals every other construct it is sitting in. Only rich text
+   * edits the cells in place, so this hops modes to check it and hops back.
+   */
+  await page.keyboard.press('Control+Shift+m') // rich -> live
+  await page.waitForTimeout(400)
   await page.locator('.cm-table-render td').first().click()
   await page.waitForTimeout(400)
   check(
-    'clicking a table reveals its markdown',
+    'clicking a table in live preview reveals its markdown',
     (await page.locator('.cm-line.cm-table').count()) > 0 &&
       (await page.locator('.cm-table-render').count()) === 0,
   )
   await page.screenshot({ path: join(SHOTS, '17-table-source.png') })
+  await page.keyboard.press('Control+Shift+m') // live -> source
+  await page.waitForTimeout(200)
+  await page.keyboard.press('Control+Shift+m') // source -> rich
+  await page.waitForTimeout(400)
 
   /* ---- insert a photo ---------------------------------------------------- */
   await page.locator('.note-row').filter({ hasText: 'Table formatting' }).first().click()

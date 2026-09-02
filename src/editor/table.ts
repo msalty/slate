@@ -14,6 +14,7 @@
  * neither this nor the renderer asks it.
  */
 
+import { computed, signal } from '@preact/signals'
 import { EditorSelection, type EditorState, type TransactionSpec } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 
@@ -173,6 +174,21 @@ export function deleteColumn(t: TableModel, at: number): TableModel {
   }
 }
 
+/**
+ * A cell as it reads, and as it is stored.
+ *
+ * The only difference is the pipe: a literal one has to be escaped in the
+ * source or it would end the cell, and nobody wants to type `\|` by hand.
+ */
+export function cellText(stored: string): string {
+  return stored.replace(/\\\|/g, '|')
+}
+
+export function cellSource(text: string): string {
+  // Newlines cannot survive in a pipe table; a pasted one becomes a space.
+  return text.replace(/\s*\n+\s*/g, ' ').replace(/\|/g, '\\|').trim()
+}
+
 /** A fresh table, sized in *body* rows — the header is always there. */
 export function blankTable(columns = 3, bodyRows = 2): TableModel {
   return {
@@ -182,6 +198,41 @@ export function blankTable(columns = 3, bodyRows = 2): TableModel {
 }
 
 /* ------------------------------------------------------- editor integration */
+
+/**
+ * The cell being typed in, when a rendered table has focus.
+ *
+ * A cell is a contenteditable inside a widget, so the editor's own selection is
+ * nowhere near the table — CodeMirror does not even consider itself focused.
+ * The toolbar still has to know which row and column its buttons would act on,
+ * so the widget publishes it here.
+ */
+export const focusedCell = signal<{
+  from: number
+  source: string
+  row: number
+  col: number
+} | null>(null)
+
+/**
+ * Which cell the next render of a table should focus.
+ *
+ * Every edit rewrites the whole table block, which throws the widget's DOM away
+ * and builds a new one — so "keep typing in the next cell" has to be a request
+ * the new DOM picks up, not a DOM reference held across the change.
+ */
+let pendingFocus: { from: number; row: number; col: number } | null = null
+
+export function requestCellFocus(from: number, row: number, col: number): void {
+  pendingFocus = { from, row, col }
+}
+
+export function takeCellFocus(from: number): { row: number; col: number } | null {
+  if (!pendingFocus || pendingFocus.from !== from) return null
+  const { row, col } = pendingFocus
+  pendingFocus = null
+  return { row, col }
+}
 
 export interface TableCursor {
   /** Document offsets of the whole table block. */
@@ -249,6 +300,46 @@ export function tableAt(state: EditorState, pos: number): TableCursor | undefine
   }
 }
 
+/**
+ * The same cursor, derived from the focused cell rather than the caret.
+ *
+ * Verified against the document before it is trusted: the widget could be a
+ * render behind an edit made somewhere else, and rewriting a stale range would
+ * corrupt the note.
+ */
+export function focusedCellCursor(state: EditorState): TableCursor | undefined {
+  const c = focusedCell.value
+  if (!c) return undefined
+  const to = c.from + c.source.length
+  if (to > state.doc.length || state.doc.sliceString(c.from, to) !== c.source) return undefined
+  const model = parseTable(c.source)
+  if (!model) return undefined
+  const fromLine = state.doc.lineAt(c.from).number
+  return {
+    from: c.from,
+    to,
+    fromLine,
+    toLine: fromLine + c.source.split('\n').length - 1,
+    model,
+    row: Math.min(c.row, model.rows.length - 1),
+    col: Math.min(c.col, model.align.length - 1),
+  }
+}
+
+/** What the toolbar shows when the caret is nowhere near the table's source. */
+export const tableContext = computed(() => {
+  const c = focusedCell.value
+  if (!c) return null
+  const m = parseTable(c.source)
+  if (!m) return null
+  return {
+    row: Math.min(c.row, m.rows.length - 1),
+    col: Math.min(c.col, m.align.length - 1),
+    rows: m.rows.length,
+    cols: m.align.length,
+  }
+})
+
 /** Replace the table under the caret with a transformed one. */
 function rewrite(next: TableModel, cur: TableCursor): TransactionSpec {
   const insert = renderTable(next)
@@ -271,8 +362,25 @@ export type TableOp =
   | 'delete'
 
 export function applyTableOp(view: EditorView, op: TableOp): boolean {
-  const cur = tableAt(view.state, view.state.selection.main.head)
+  // The caret first, then the cell the user is typing in: in rich text the
+  // table never shows its source, so the caret is never inside it.
+  const inCell = !!focusedCell.value
+  const cur = tableAt(view.state, view.state.selection.main.head) ?? focusedCellCursor(view.state)
   if (!cur) return false
+
+  /*
+   * A cell that still has focus has text the note has not seen yet — pressing
+   * a toolbar button is not the same as leaving the cell. Take it now, or the
+   * rewrite would quietly discard whatever was just typed.
+   */
+  const active = typeof document !== 'undefined' ? document.activeElement : null
+  if (inCell && active instanceof HTMLElement && active.classList.contains('cm-table-cell')) {
+    const r = Number(active.dataset.row)
+    const c = Number(active.dataset.col)
+    if (r === cur.row && c === cur.col && cur.model.rows[r]) {
+      cur.model.rows[r][c] = cellSource(active.textContent ?? '')
+    }
+  }
 
   if (op === 'delete') {
     // Take the newline with it, so deleting a table doesn't leave a hole.
@@ -299,8 +407,24 @@ export function applyTableOp(view: EditorView, op: TableOp): boolean {
               ? insertColumn(cur.model, cur.col + 1)
               : deleteColumn(cur.model, cur.col)
 
+  // Where typing should carry on once the table is rewritten.
+  if (inCell) {
+    const rows = next.rows.length
+    const cols = next.align.length
+    const at: Record<Exclude<TableOp, 'delete'>, [number, number]> = {
+      'row-above': [Math.max(cur.row, 1), cur.col],
+      'row-below': [cur.row + 1, cur.col],
+      'row-delete': [Math.min(cur.row, rows - 1), cur.col],
+      'col-left': [cur.row, cur.col],
+      'col-right': [cur.row, cur.col + 1],
+      'col-delete': [cur.row, Math.min(cur.col, cols - 1)],
+    }
+    const [row, col] = at[op]
+    requestCellFocus(cur.from, Math.min(row, rows - 1), Math.min(col, cols - 1))
+  }
+
   view.dispatch(rewrite(next, cur))
-  view.focus()
+  if (!inCell) view.focus()
   return true
 }
 

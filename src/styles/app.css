@@ -946,6 +946,14 @@ body.resizing .pane-resizer::after {
 .editor-pane[data-format-open='1'] .cm-cursor {
   display: block;
 }
+/*
+ * ...unless the typing is happening in a table cell, which has a caret of its
+ * own. The editor's would be drawn at the edge of the block the table occupies,
+ * where it means nothing and reads as a stray line.
+ */
+.editor-pane[data-format-open='1'] .cm-editor.cm-cell-editing .cm-cursor {
+  display: none;
+}
 
 .backlinks {
   border-top: 1px solid var(--border);

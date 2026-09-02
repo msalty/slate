@@ -64,6 +64,7 @@ import {
 import { pasteHandler } from './paste'
 import { WikiLink } from './wikilink-syntax'
 import { noteContext, requestLinkDialog } from './context'
+import { focusedCell } from './table'
 import { minimalEdit } from '../core/rebase'
 import { tagCompletion, wikiCompletion } from './completion'
 
@@ -93,9 +94,15 @@ const formattingKeymap = [
   { key: 'Mod-Shift-h', run: applyInline('highlight') },
   { key: 'Mod-e', run: applyInline('code') },
   { key: 'Mod-k', run: makeWikiLink },
-  // The other kind of link: one that leaves the vault.
+  /*
+   * The other kind of link: one that leaves the vault.
+   *
+   * Not ⌘⇧K, however natural that looks beside ⌘K. CodeMirror resolves a
+   * shifted letter by trying the unshifted binding first, so ⌘K's wikilink
+   * would answer the shifted press and this would never run.
+   */
   {
-    key: 'Mod-Shift-k',
+    key: 'Mod-Shift-l',
     run: () => {
       requestLinkDialog()
       return true
@@ -173,7 +180,21 @@ export function previewExtensions(mode: EditorMode): Extension {
     linkClicks,
   ]
   return mode === 'rich'
-    ? [previewMode.of('rich'), ...shared, formatWatcher, EditorView.editorAttributes.of({ class: 'cm-rich' })]
+    ? [
+        previewMode.of('rich'),
+        ...shared,
+        formatWatcher,
+        /*
+         * Typing in the note means you are no longer typing in a table cell.
+         * The cell is its own editing host, so the editor taking focus is the
+         * only reliable signal that the toolbar should stop aiming at it.
+         */
+        EditorView.focusChangeEffect.of((_state, focusing) => {
+          if (focusing) focusedCell.value = null
+          return null
+        }),
+        EditorView.editorAttributes.of({ class: 'cm-rich' }),
+      ]
     : shared
 }
 
