@@ -67,10 +67,18 @@ export function App() {
      * the root background and the status bar from this meta tag, so taking
      * both from the same element is what keeps the two ends of the screen
      * agreeing with the app between them.
+     *
+     * Every tag, not the first one: index.html ships a light and a dark
+     * theme-color, and the browser honours whichever one's media matches. An
+     * in-app override is not a media query and cannot be expressed as one, so
+     * the only way to be sure the tag that wins is the one carrying the theme
+     * the user actually chose is for all of them to agree.
      */
     const apply = () => {
-      const meta = document.querySelector('meta[name="theme-color"]')
-      meta?.setAttribute('content', getComputedStyle(root).backgroundColor)
+      const c = getComputedStyle(root).backgroundColor
+      for (const m of document.querySelectorAll('meta[name="theme-color"]')) {
+        m.setAttribute('content', c)
+      }
     }
     apply()
     /*

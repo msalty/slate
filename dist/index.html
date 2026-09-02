@@ -18,7 +18,24 @@
       is exactly the kind of harmless-looking edit that brings the bands back.
     -->
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
-    <meta name="theme-color" content="#1c1c1e" />
+    <!--
+      Two tags, not one, and both carry a `media`.
+
+      This is the colour Chrome paints the Android status bar with, and a single
+      unconditional #1c1c1e is why a light-mode phone got a black band across the
+      top of a white app. The manifest's theme_color cannot help: a manifest
+      holds one value for both schemes, and it only governs the splash and the
+      loading phase anyway — once the document is up, the browser reads these.
+
+      Chrome takes the FIRST tag whose media matches, so ordering them
+      light-then-dark is not cosmetic. Keep both values equal to --bg in
+      app.css for the corresponding scheme; App.tsx overwrites the content of
+      every one of these from the resolved root background as soon as it
+      mounts, so these two only have to be right for the moments before that,
+      and for the case JS never gets there at all.
+    -->
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#1c1c1e" />
     <meta name="description" content="Local-first markdown notes that sync everywhere." />
     <!-- The standard tag; Chrome deprecated the apple-prefixed one. -->
     <meta name="mobile-web-app-capable" content="yes" />
@@ -84,7 +101,7 @@
         background: #1c1c1e;
       }
     </style>
-    <script type="module" crossorigin src="./assets/index-aSxFPx8D.js"></script>
+    <script type="module" crossorigin src="./assets/index-DN6Wn5-k.js"></script>
     <link rel="modulepreload" crossorigin href="./assets/codemirror-Bo7Wx4zb.js">
     <link rel="stylesheet" crossorigin href="./assets/index-DS8BHyE0.css">
   <link rel="manifest" href="./manifest.webmanifest"></head>
