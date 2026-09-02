@@ -356,6 +356,18 @@ try {
       return all.find((f) => (f.text ?? '').includes(n))?.text ?? ''
     }, needle)
 
+  /**
+   * Wait for the Tag Folder dialog to be usable, not merely present.
+   *
+   * It seeds its fields from the draft in an effect, so the input existing is
+   * not the same as the input holding what it is about to hold — typing into it
+   * any sooner is a fill the seeding then wipes.
+   */
+  const ruleDialogReady = async () => {
+    await page.waitForSelector('.rule-input')
+    await page.waitForTimeout(300)
+  }
+
   await page.keyboard.press('Control+Shift+m')
   await page.waitForTimeout(400)
   check('rich text mode shows a formatting bar', (await page.locator('.fmt-bar').count()) === 1)
@@ -555,6 +567,30 @@ try {
       (await page.locator('.cm-line.cm-table').count()) === 0,
   )
 
+  // The same operation the phone runs from its sheet, from the bar with a
+  // pointer: here typing *should* carry straight on, so the new cell takes
+  // focus rather than only being marked.
+  const barRows = await page.locator('.cm-table-render tr').count()
+  await page.locator('.fmt-bar .fmt-btn[aria-label="Table rows and columns"]').click()
+  await page.waitForTimeout(300)
+  await page.locator('.menu-item', { hasText: 'Insert row below' }).click()
+  await page.waitForTimeout(400)
+  check(
+    'the bar adds a row and keeps typing in it',
+    (await page.locator('.cm-table-render tr').count()) === barRows + 1 &&
+      (await page.evaluate(() => document.activeElement?.className)) === 'cm-table-cell',
+    `${barRows} → ${await page.locator('.cm-table-render tr').count()}`,
+  )
+  await page.locator('.fmt-bar .fmt-btn[aria-label="Table rows and columns"]').click()
+  await page.waitForTimeout(300)
+  check(
+    'the menu names the cell the buttons act on, not the caret',
+    (await page.locator('.menu-title').innerText()).includes('row 3 of 4'),
+    await page.locator('.menu-title').innerText(),
+  )
+  await page.locator('.menu-item', { hasText: 'Delete row' }).click()
+  await page.waitForTimeout(400)
+  check('and takes it away again', (await page.locator('.cm-table-render tr').count()) === barRows)
 
   /* ---- folders and Tag Folders -----------------------------------------
    * Both are new containers with real persistence, so they get exercised end
@@ -613,7 +649,7 @@ try {
 
   // --- create a Tag Folder ------------------------------------------------
   await page.click('.side-group-label:has-text("Tag Folders") .side-add')
-  await page.waitForSelector('.rule-input')
+  await ruleDialogReady()
   await page.fill('.dialog input[type="text"]', 'Active work')
   await page.fill('.rule-input', '#work AND #active NOT #archived')
   await page.waitForTimeout(400)
@@ -638,7 +674,7 @@ try {
   await page.locator('.side-row:has-text("Active work")').click({ button: 'right' })
   await page.waitForTimeout(250)
   await page.locator('.menu-item:has-text("Edit rule")').click()
-  await page.waitForSelector('.rule-input')
+  await ruleDialogReady()
   await page.fill('.rule-input', '#work AND (#active')
   await page.waitForTimeout(300)
   check('an unbalanced rule shows an error', (await page.getAttribute('.rule-status', 'data-error')) === '1')
@@ -895,7 +931,7 @@ try {
   // check that matters is that a nested folder shows FEWER notes than its
   // parent and excludes ones the parent alone would match.
   await page.click('.side-group-label:has-text("Tag Folders") .side-add')
-  await page.waitForSelector('.rule-input')
+  await ruleDialogReady()
   await page.fill('.dialog input[type="text"]', 'Work')
   await page.fill('.rule-input', '#work')
   await page.waitForTimeout(350)
@@ -908,7 +944,7 @@ try {
   await tagFolderRow('Work').click({ button: 'right' })
   await page.waitForTimeout(250)
   await page.locator('.menu-item:has-text("New folder inside")').click()
-  await page.waitForSelector('.rule-input')
+  await ruleDialogReady()
 
   const parentSelected = await page.locator('.dialog select').nth(1).inputValue()
   check('the new folder is pre-parented', parentSelected !== '', `parent="${parentSelected}"`)
@@ -952,7 +988,7 @@ try {
   await tagFolderRow('Urgent').click({ button: 'right' })
   await page.waitForTimeout(250)
   await page.locator('.menu-item:has-text("Edit rule")').click()
-  await page.waitForSelector('.rule-input')
+  await ruleDialogReady()
   await page.locator('.check input[type="checkbox"]').uncheck()
   await page.waitForTimeout(350)
   const looseStatus = (await page.locator('.rule-status').innerText()).replace(/\s+/g, ' ')
@@ -966,7 +1002,7 @@ try {
   await tagFolderRow('Work').click({ button: 'right' })
   await page.waitForTimeout(250)
   await page.locator('.menu-item:has-text("Edit rule")').click()
-  await page.waitForSelector('.rule-input')
+  await ruleDialogReady()
   await page.fill('.rule-input', '#home')
   await page.waitForTimeout(300)
   await page.click('.dialog-foot .btn-primary')
@@ -1236,7 +1272,141 @@ try {
     `note ends at ${kb.bodyEndsAt}, keyboard starts at ${kb.keyboardTop}`,
   )
   await page.evaluate(() => document.documentElement.style.removeProperty('--kb-inset'))
+
+  /* ---- editing a table from the phone's Format sheet ----------------------
+   * The one case where the sheet acts on something that is not the editor's
+   * caret. A cell is its own editing host, so opening the sheet takes its focus
+   * away along with the keyboard — and the buttons still have to know which
+   * row and column they are aimed at. Everything below is what "the table lost
+   * focus and the note jumped to the top" looked like before: the cell is
+   * marked rather than focused, the note stays where it was, and an operation
+   * from the sheet does not summon the keyboard back over it.
+   */
+  await page.locator('.editor-overlay [aria-label="Back"]').click()
+  await page.waitForTimeout(350)
+  await page.locator('.note-row', { hasText: 'Kitchen Sink' }).first().tap()
+  await page.waitForTimeout(600)
+  const cell = page.locator('.cm-table-cell[data-row="1"][data-col="1"]')
+  await cell.scrollIntoViewIfNeeded()
+  await cell.tap()
+  await page.waitForTimeout(250)
+  check(
+    'tapping a cell on a phone starts editing it',
+    (await page.evaluate(() => document.activeElement?.className)) === 'cm-table-cell',
+  )
+
+  const tableTop = async () =>
+    page.evaluate(() => {
+      const t = document.querySelector('.cm-table-render')?.getBoundingClientRect()
+      const body = document.querySelector('.editor-body')?.getBoundingClientRect()
+      return t && body ? { top: Math.round(t.top), from: Math.round(body.top), to: Math.round(body.bottom) } : null
+    })
+  const beforeSheet = await tableTop()
+  await page.locator('.fmt-open').tap()
+  await page.waitForTimeout(450)
+  const armed = await page.evaluate(() => ({
+    marked: document.querySelectorAll('.cm-table-cell[data-armed="1"]').length,
+    at: document.querySelector('.cm-table-cell[data-armed="1"]')?.dataset ?? {},
+    focused: document.activeElement?.className ?? '',
+  }))
+  const afterSheet = await tableTop()
+  check('the Format sheet opens over a table', (await page.locator('.fmt-sheet').count()) === 1)
+  check('opening it lets the keyboard go', !armed.focused.includes('cm-table-cell'), armed.focused)
+  check(
+    'the cell being formatted is still marked',
+    armed.marked === 1 && armed.at.row === '1' && armed.at.col === '1',
+    `${armed.marked} marked, row ${armed.at.row} col ${armed.at.col}`,
+  )
+  check(
+    'the table does not jump off the screen',
+    !!afterSheet && afterSheet.top >= afterSheet.from - 1 && afterSheet.top <= afterSheet.to,
+    `table at ${afterSheet?.top}, note spans ${afterSheet?.from}–${afterSheet?.to} (was ${beforeSheet?.top})`,
+  )
+  check(
+    'the table button knows it is in a table',
+    (await page.getAttribute('.fmt-sheet .fmt-btn[aria-label="Table rows and columns"]', 'aria-pressed')) === 'true',
+  )
+
+  const rowsBefore = await page.locator('.cm-table-render tr').count()
+  await page.locator('.fmt-sheet .fmt-btn[aria-label="Table rows and columns"]').tap()
+  await page.waitForTimeout(350)
+  check('the table menu opens as a sheet', (await page.locator('.menu-sheet').count()) === 1)
+  await page.locator('.menu-item', { hasText: 'Insert row below' }).tap()
+  await page.waitForTimeout(450)
+  const after = await page.evaluate(() => ({
+    rows: document.querySelectorAll('.cm-table-render tr').length,
+    at: document.querySelector('.cm-table-cell[data-armed="1"]')?.dataset ?? {},
+    focused: document.activeElement?.className ?? '',
+    sheet: document.querySelectorAll('.fmt-sheet').length,
+  }))
+  check('inserting a row from the sheet adds one', after.rows === rowsBefore + 1, `${rowsBefore} → ${after.rows}`)
+  check('the mark follows the new row', after.at.row === '2' && after.at.col === '1', `row ${after.at.row} col ${after.at.col}`)
+  check('the sheet stays open for the next operation', after.sheet === 1)
+  check('and the keyboard stays down', !after.focused.includes('cm-table-cell'), after.focused)
+  check(
+    'the note still holds a plain GFM table',
+    /\| a +\| b +\| c +\|/.test(await noteContaining('# Heading one')),
+  )
+  await page.screenshot({ path: join(SHOTS, '19-phone-table-format.png') })
+
+  // Back to typing. The sheet and the keyboard swap places rather than sharing
+  // the screen, which is what tapping a cell with the sheet up used to do.
+  await page.locator('.cm-table-cell[data-row="2"][data-col="1"]').tap()
+  await page.waitForTimeout(350)
+  check('tapping a cell again closes the sheet', (await page.locator('.fmt-sheet').count()) === 0)
+  check(
+    'and hands the cell back for typing',
+    (await page.evaluate(() => document.activeElement?.className)) === 'cm-table-cell',
+  )
+  await page.locator('.cm-line').first().tap()
+  await page.waitForTimeout(300)
+
+  /* ---- tapping a link on a phone -----------------------------------------
+   * A link in the text is a decoration, not an anchor, and the mouse events a
+   * phone synthesises from a tap arrive too late to be any use: the caret has
+   * already landed in the text, and the click trailing them lands on the menu
+   * the tap just opened and closes it again. Which is exactly what a link on a
+   * phone used to do — nothing at all, but with the keyboard up.
+   */
+  const uri = page.locator('.cm-uri').first()
+  await uri.scrollIntoViewIfNeeded()
+  await uri.tap()
+  await page.waitForTimeout(400)
+  check('tapping a link offers what to do with it', (await page.locator('.menu-sheet').count()) === 1)
+  check('the choice includes opening it', (await page.locator('.menu-item:has-text("Open link")').count()) === 1)
+  check('and editing it', (await page.locator('.menu-item:has-text("Edit link")').count()) === 1)
+  await page.screenshot({ path: join(SHOTS, '20-phone-link-tap.png') })
+  if (await page.locator('.menu-cancel').count()) {
+    await page.locator('.menu-cancel').click()
+    await page.waitForTimeout(250)
+  }
+
+  const tagBefore = await page.locator('.cm-tag').first().innerText()
+  await page.locator('.cm-tag').first().tap()
+  await page.waitForTimeout(450)
+  check(
+    'tapping a tag on a phone opens that tag',
+    (await page.locator('.scope-bar').innerText()).includes(tagBefore.replace('#', '')),
+    tagBefore,
+  )
+  await page.locator('.scope-bar button:has-text("Close")').click()
+  await page.waitForTimeout(300)
+
+  await page.locator('.note-row', { hasText: 'Kitchen Sink' }).first().tap()
+  await page.waitForTimeout(500)
   await chooseMode('Live preview')
+
+  // The same tap, in the other rendered mode: link handling is shared, and a
+  // link nobody can follow is no better in live preview than in rich text.
+  const liveUri = page.locator('.cm-uri').first()
+  await liveUri.scrollIntoViewIfNeeded()
+  await liveUri.tap()
+  await page.waitForTimeout(400)
+  check('a link is tappable in live preview too', (await page.locator('.menu-sheet').count()) === 1)
+  if (await page.locator('.menu-cancel').count()) {
+    await page.locator('.menu-cancel').click()
+    await page.waitForTimeout(250)
+  }
 
   await page.locator('.editor-overlay [aria-label="Back"]').click()
   await page.waitForTimeout(400)

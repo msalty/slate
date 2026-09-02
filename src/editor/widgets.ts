@@ -10,7 +10,8 @@ import { EditorView, WidgetType } from '@codemirror/view'
 import { attachmentUrl, getRaw } from '../core/vault'
 import { renderInline } from './inline'
 import { formatBytes, mediaClass } from '../core/util'
-import { requestLightbox, requestOpenLink, requestUri } from './context'
+import { requestLightbox } from './context'
+import { wireLinkTaps } from './linkClicks'
 import {
   cellSource,
   cellText,
@@ -202,20 +203,43 @@ export class TableWidget extends WidgetType {
     if (!this.typeable) wrap.addEventListener('mousedown', (e) => this.caretIntoSource(view, wrap, e, rows, delimIndex))
 
     // Carry on where the last edit left off, once this DOM is on screen.
-    const focus = takeCellFocus(this.from)
-    if (focus) {
+    const pending = takeCellFocus(this.from)
+    if (pending?.focus) {
       queueMicrotask(() => {
         const el = wrap.querySelector<HTMLElement>(
-          `[data-row="${focus.row}"][data-col="${focus.col}"]`,
+          `[data-row="${pending.row}"][data-col="${pending.col}"]`,
         )
         if (el?.isConnected) {
           el.focus()
           placeCaretAtEnd(el)
         }
       })
+    } else if (this.typeable) {
+      /*
+       * Nothing to focus, but the toolbar may still be aimed at a cell in this
+       * table: an edit made from the phone's Format sheet, or the commit that
+       * happens when a cell blurs to open it. The new DOM has to show which
+       * cell that is, or the buttons act on something invisible.
+       */
+      const armed = pending ?? cellOf(focusedCell.value, this.from, model)
+      if (armed) this.arm(wrap, armed.row, armed.col)
     }
 
     return wrap
+  }
+
+  /**
+   * Mark a cell as the one the toolbar is acting on, without focusing it.
+   *
+   * The styling only shows while the editor believes a cell is its editing
+   * target, so it goes away by itself the moment the note takes focus back.
+   */
+  private arm(wrap: HTMLElement, row: number, col: number) {
+    clearArmed(wrap)
+    const el = wrap.querySelector<HTMLElement>(`[data-row="${row}"][data-col="${col}"]`)
+    if (!el) return
+    el.dataset.armed = '1'
+    focusedCell.value = { from: this.from, source: this.source, row, col }
   }
 
   /**
@@ -235,41 +259,18 @@ export class TableWidget extends WidgetType {
      * A link in a cell is still a link.
      *
      * Browsers do not follow links inside editable content, and CodeMirror's
-     * own handler is deliberately kept out of this widget, so the cell has to
-     * answer for them itself. Clicking anywhere else in the cell edits it, so
-     * a cell that is nothing but a link is reached with Tab.
+     * own handlers are deliberately kept out of this widget, so the cell has to
+     * answer for them itself — taps included, which is what a phone gives it.
+     * Touching anywhere else in the cell edits it, so a cell that is nothing
+     * but a link is reached with Tab.
      */
-    cell.addEventListener('mousedown', (e) => {
-      const t = e.target as HTMLElement | null
-      const wiki = t?.closest?.('[data-wikilink]') as HTMLElement | null
-      if (wiki) {
-        e.preventDefault()
-        requestOpenLink(wiki.dataset.wikilink ?? '', wiki.dataset.exists === '1')
-        return
-      }
-      const tag = t?.closest?.('[data-tag]') as HTMLElement | null
-      if (tag) {
-        e.preventDefault()
-        dispatchEvent(new CustomEvent('slate:open-tag', { detail: { tag: tag.dataset.tag } }))
-        return
-      }
-      const anchor = t?.closest?.('a[href]') as HTMLAnchorElement | null
-      if (anchor) {
-        e.preventDefault()
-        requestUri(anchor.getAttribute('href') ?? '', {
-          x: e.clientX,
-          y: e.clientY,
-          pos: view.posAtDOM(cell),
-          via: e.button === 2 ? 'menu' : 'click',
-        })
-      }
-    })
+    wireLinkTaps(view, cell)
 
     cell.addEventListener('focus', () => {
       focusedCell.value = { from: this.from, source: this.source, row, col }
-      // The cell has its own caret; the editor's would sit at the edge of the
-      // block and read as a stray mark.
-      view.dom.classList.add('cm-cell-editing')
+      // Typing here again: the mark that said "the toolbar is aimed at this
+      // cell" has done its job, wherever in the table it was.
+      clearArmed(cell.closest('.cm-table-wrap'))
       if (cell.textContent !== raw) {
         cell.textContent = raw
         placeCaretAtEnd(cell)
@@ -277,15 +278,20 @@ export class TableWidget extends WidgetType {
     })
 
     cell.addEventListener('blur', () => {
-      view.dom.classList.remove('cm-cell-editing')
-      // Deliberately not cleared here. Tapping a toolbar button blurs the cell
-      // *before* the button's own click runs, and that click needs to know
-      // which cell it is acting on. It is cleared when the editor itself takes
-      // focus, and overwritten the moment another cell is entered.
+      // `focusedCell` is deliberately not cleared here. Tapping a toolbar
+      // button blurs the cell *before* the button's own handler runs, and that
+      // handler needs to know which cell it is acting on. It is cleared when
+      // the editor itself takes focus, and overwritten the moment another cell
+      // is entered.
       if (!this.commit(view, row, col, cell.textContent ?? '')) {
         // Nothing changed: put the rendering back, since focus took it away.
         cell.textContent = ''
         if (stored) cell.appendChild(renderInline(raw, this.notePath))
+        // No rewrite means no new DOM to carry the mark, so it is set here —
+        // unless focus has already moved on to another cell of the same table.
+        const cur = focusedCell.value
+        if (cur && cur.from === this.from && cur.row === row && cur.col === col)
+          cell.dataset.armed = '1'
       }
     })
 
@@ -439,6 +445,28 @@ export class TableWidget extends WidgetType {
     if (!this.typeable) return false
     const target = event.target as HTMLElement | null
     return !!target?.closest?.('.cm-table-cell')
+  }
+}
+
+/** Take the toolbar's mark off every cell of a table. */
+function clearArmed(root: Element | null) {
+  if (!root) return
+  for (const el of root.querySelectorAll<HTMLElement>('[data-armed]')) delete el.dataset.armed
+}
+
+/**
+ * The published cell as coordinates into a table that may have just changed
+ * shape — a deleted row leaves the toolbar aimed one row past the end.
+ */
+function cellOf(
+  cell: { from: number; row: number; col: number } | null,
+  from: number,
+  model: TableModel,
+): { row: number; col: number } | null {
+  if (!cell || cell.from !== from) return null
+  return {
+    row: Math.min(cell.row, model.rows.length - 1),
+    col: Math.min(cell.col, model.align.length - 1),
   }
 }
 
