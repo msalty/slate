@@ -81,7 +81,24 @@ export default defineConfig({
          * intended outcome here.
          */
         theme_color: undefined,
-        background_color: '#1c1c1e',
+        /*
+         * Undefined for the same reason, and by the same mechanism — the
+         * plugin's default here is '#ffffff'.
+         *
+         * Removing theme_color alone did not free the status bar: it stayed
+         * #1c1c1e in every theme, which is exactly the value that was still
+         * sitting in background_color. The nav bar at the other end of the
+         * screen provably follows the page's own background (that is what
+         * fixed it), so the guess this encodes is that Chrome's fallback for
+         * the strip at the top runs theme_color → background_color → the page,
+         * and that clearing both hands it to the page like the bottom.
+         *
+         * The cost if that guess is right is the splash: with no colour of its
+         * own it takes Chrome's default rather than the app's dark. That is a
+         * flash at launch, against a seam that is on screen the whole time the
+         * app is open.
+         */
+        background_color: undefined,
         display: 'standalone',
         orientation: 'any',
         start_url: '.',
