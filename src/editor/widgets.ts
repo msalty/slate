@@ -10,7 +10,21 @@ import { EditorView, WidgetType } from '@codemirror/view'
 import { attachmentUrl, getRaw } from '../core/vault'
 import { renderInline } from './inline'
 import { formatBytes, mediaClass } from '../core/util'
-import { requestLightbox } from './context'
+import { requestLightbox, requestOpenLink, requestUri } from './context'
+import {
+  cellSource,
+  cellText,
+  focusedCell,
+  insertRow,
+  isDelimiterRow,
+  parseTable,
+  renderTable,
+  requestCellFocus,
+  takeCellFocus,
+  type TableModel,
+} from './table'
+
+export { isDelimiterRow }
 
 /* ------------------------------------------------------------------ ruler */
 
@@ -88,6 +102,14 @@ export class CheckboxWidget extends WidgetType {
 
 /* ------------------------------------------------------------------ table */
 
+/** Chromium and Safari have had `plaintext-only` for years; Firefox recently. */
+const PLAINTEXT_ONLY = (() => {
+  if (typeof document === 'undefined') return false
+  const el = document.createElement('div')
+  el.setAttribute('contenteditable', 'plaintext-only')
+  return el.contentEditable === 'plaintext-only'
+})()
+
 /**
  * Renders a GFM pipe table as a real HTML table.
  *
@@ -96,22 +118,43 @@ export class CheckboxWidget extends WidgetType {
  * decorations can't reach text that lives inside a widget, so without this a
  * cell would show its markdown literally.
  *
- * Editing happens in the source: clicking the widget drops the caret into the
- * markdown at roughly the cell that was clicked, which reveals the pipes again.
- * That keeps the round-trip exact — the file always holds the pipe table the
- * user typed — while the resting state looks like a table.
+ * In rich text the cells are editable in place. Each one is its own
+ * contenteditable host, which is what makes that safe: CodeMirror ignores DOM
+ * mutations inside a widget, and while the browser's focus is in a cell the
+ * editor does not consider itself focused, so nothing fights over the caret.
+ * A cell commits when it loses focus or when Tab, Enter or Escape says it is
+ * finished — never on every keystroke, because every commit rewrites the table
+ * block and builds a new widget, which would pull the ground out from under
+ * the typing.
+ *
+ * In live preview the older behaviour stands: clicking drops the caret into
+ * the pipe source, because revealing the syntax under the caret is what that
+ * mode is for.
  */
 export class TableWidget extends WidgetType {
   constructor(
     readonly source: string,
     readonly from: number,
     readonly notePath: string,
+    /**
+     * Rich text: cells are typed into directly.
+     *
+     * Not called `editable`: CodeMirror's own WidgetType has a getter by that
+     * name, and shadowing it with a constructor property throws on
+     * construction — which takes the whole editor down with it.
+     */
+    readonly typeable = false,
   ) {
     super()
   }
 
   eq(other: TableWidget) {
-    return other.source === this.source && other.notePath === this.notePath
+    return (
+      other.source === this.source &&
+      other.notePath === this.notePath &&
+      other.typeable === this.typeable &&
+      other.from === this.from
+    )
   }
 
   toDOM(view: EditorView): HTMLElement {
@@ -119,113 +162,293 @@ export class TableWidget extends WidgetType {
     wrap.className = 'cm-table-wrap'
     wrap.setAttribute('contenteditable', 'false')
 
+    const model = parseTable(this.source)
     const rows = this.source.split('\n')
-    const cells = rows.map(splitRow)
     const delimIndex = rows.findIndex(isDelimiterRow)
-    const align = delimIndex >= 0 ? cells[delimIndex].map(alignOf) : []
-    // GFM pads or truncates every row to the header's column count.
-    const columns = delimIndex >= 0 ? cells[delimIndex].length : (cells[0]?.length ?? 0)
 
     const table = document.createElement('table')
     table.className = 'cm-table-render'
     const thead = document.createElement('thead')
     const tbody = document.createElement('tbody')
 
-    rows.forEach((_, r) => {
-      if (r === delimIndex) return
+    if (!model) {
+      // Not a table after all — show the source rather than eat it.
+      const pre = document.createElement('pre')
+      pre.textContent = this.source
+      wrap.appendChild(pre)
+      return wrap
+    }
+
+    model.rows.forEach((cells, r) => {
       const tr = document.createElement('tr')
-      for (let c = 0; c < columns; c++) {
-        const cell = document.createElement(delimIndex >= 0 && r < delimIndex ? 'th' : 'td')
-        const text = (cells[r][c] ?? '').trim()
-        if (text) cell.appendChild(renderInline(text, this.notePath))
-        if (align[c]) cell.style.textAlign = align[c]
+      for (let c = 0; c < model.align.length; c++) {
+        const cell = document.createElement(r === 0 ? 'th' : 'td')
+        const stored = cells[c] ?? ''
+        cell.className = 'cm-table-cell'
+        cell.dataset.row = String(r)
+        cell.dataset.col = String(c)
+        if (stored) cell.appendChild(renderInline(cellText(stored), this.notePath))
+        if (model.align[c]) cell.style.textAlign = model.align[c]
+        if (this.typeable) this.wireCell(view, cell, r, c, stored)
         tr.appendChild(cell)
       }
-      ;(delimIndex >= 0 && r < delimIndex ? thead : tbody).appendChild(tr)
+      ;(r === 0 ? thead : tbody).appendChild(tr)
     })
 
-    if (thead.childNodes.length) table.appendChild(thead)
+    table.appendChild(thead)
     table.appendChild(tbody)
     wrap.appendChild(table)
 
-    wrap.addEventListener('mousedown', (e) => {
-      // Links, tags and images inside a cell keep their own behaviour; only a
-      // click on the table itself moves the caret into the source.
-      const target = e.target as HTMLElement | null
-      if (target?.closest('[data-wikilink], [data-tag], a, img')) return
+    if (!this.typeable) wrap.addEventListener('mousedown', (e) => this.caretIntoSource(view, wrap, e, rows, delimIndex))
 
-      e.preventDefault()
-      const tr = target?.closest('tr')
-      let offset = 0
-      if (tr) {
-        const all = [...wrap.querySelectorAll('tr')]
-        const visualRow = all.indexOf(tr)
-        const sourceRow =
-          delimIndex >= 0 && visualRow >= delimIndex ? visualRow + 1 : visualRow
-        for (let i = 0; i < sourceRow && i < rows.length; i++) offset += rows[i].length + 1
-      }
-      const pos = Math.min(this.from + offset, view.state.doc.length)
-      // Tagged as a pointer selection so live preview counts it as the user
-      // choosing to edit — an untagged dispatch would leave the table rendered
-      // and the caret invisible behind it.
-      view.dispatch({
-        selection: { anchor: pos },
-        scrollIntoView: false,
-        userEvent: 'select.pointer',
+    // Carry on where the last edit left off, once this DOM is on screen.
+    const focus = takeCellFocus(this.from)
+    if (focus) {
+      queueMicrotask(() => {
+        const el = wrap.querySelector<HTMLElement>(
+          `[data-row="${focus.row}"][data-col="${focus.col}"]`,
+        )
+        if (el?.isConnected) {
+          el.focus()
+          placeCaretAtEnd(el)
+        }
       })
-      view.focus()
-    })
+    }
 
     return wrap
   }
 
-  ignoreEvent() {
-    return false
+  /**
+   * Make one cell editable.
+   *
+   * Focus swaps the rendered markdown for its source, but only when the two
+   * differ — for the ordinary cell of plain words they are the same string, and
+   * leaving the DOM alone is what lets a click land the caret exactly where it
+   * was aimed instead of at the end of the text.
+   */
+  private wireCell(view: EditorView, cell: HTMLElement, row: number, col: number, stored: string) {
+    const raw = cellText(stored)
+    cell.setAttribute('contenteditable', PLAINTEXT_ONLY ? 'plaintext-only' : 'true')
+    cell.setAttribute('role', 'textbox')
+
+    /*
+     * A link in a cell is still a link.
+     *
+     * Browsers do not follow links inside editable content, and CodeMirror's
+     * own handler is deliberately kept out of this widget, so the cell has to
+     * answer for them itself. Clicking anywhere else in the cell edits it, so
+     * a cell that is nothing but a link is reached with Tab.
+     */
+    cell.addEventListener('mousedown', (e) => {
+      const t = e.target as HTMLElement | null
+      const wiki = t?.closest?.('[data-wikilink]') as HTMLElement | null
+      if (wiki) {
+        e.preventDefault()
+        requestOpenLink(wiki.dataset.wikilink ?? '', wiki.dataset.exists === '1')
+        return
+      }
+      const tag = t?.closest?.('[data-tag]') as HTMLElement | null
+      if (tag) {
+        e.preventDefault()
+        dispatchEvent(new CustomEvent('slate:open-tag', { detail: { tag: tag.dataset.tag } }))
+        return
+      }
+      const anchor = t?.closest?.('a[href]') as HTMLAnchorElement | null
+      if (anchor) {
+        e.preventDefault()
+        requestUri(anchor.getAttribute('href') ?? '', {
+          x: e.clientX,
+          y: e.clientY,
+          pos: view.posAtDOM(cell),
+          via: e.button === 2 ? 'menu' : 'click',
+        })
+      }
+    })
+
+    cell.addEventListener('focus', () => {
+      focusedCell.value = { from: this.from, source: this.source, row, col }
+      // The cell has its own caret; the editor's would sit at the edge of the
+      // block and read as a stray mark.
+      view.dom.classList.add('cm-cell-editing')
+      if (cell.textContent !== raw) {
+        cell.textContent = raw
+        placeCaretAtEnd(cell)
+      }
+    })
+
+    cell.addEventListener('blur', () => {
+      view.dom.classList.remove('cm-cell-editing')
+      // Deliberately not cleared here. Tapping a toolbar button blurs the cell
+      // *before* the button's own click runs, and that click needs to know
+      // which cell it is acting on. It is cleared when the editor itself takes
+      // focus, and overwritten the moment another cell is entered.
+      if (!this.commit(view, row, col, cell.textContent ?? '')) {
+        // Nothing changed: put the rendering back, since focus took it away.
+        cell.textContent = ''
+        if (stored) cell.appendChild(renderInline(raw, this.notePath))
+      }
+    })
+
+    cell.addEventListener('keydown', (e) => {
+      const cols = () => (parseTable(this.source)?.align.length ?? 1)
+      const rows = () => (parseTable(this.source)?.rows.length ?? 1)
+
+      /*
+       * Select-all means this cell.
+       *
+       * Left to the browser it walks out to the outer editing host — the whole
+       * note — takes focus with it, and the next keystroke lands in the
+       * document instead of the cell. "Everything in the box I am typing in"
+       * is also what anyone pressing it here meant.
+       */
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 'a') {
+        e.preventDefault()
+        const range = document.createRange()
+        range.selectNodeContents(cell)
+        const sel = window.getSelection()
+        sel?.removeAllRanges()
+        sel?.addRange(range)
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        cell.textContent = raw
+        cell.blur()
+        view.focus()
+        return
+      }
+      if (e.key === 'Tab') {
+        e.preventDefault()
+        const back = e.shiftKey
+        let r = row
+        let c = col + (back ? -1 : 1)
+        if (c >= cols()) {
+          c = 0
+          r++
+        } else if (c < 0) {
+          c = cols() - 1
+          r--
+        }
+        if (r < 0) return
+        // Tab off the end adds a row, the way every table editor does.
+        this.moveTo(view, cell, row, col, r, c, r >= rows())
+        return
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        this.moveTo(view, cell, row, col, row + 1, col, row + 1 >= rows())
+      }
+    })
+  }
+
+  /** Commit this cell, then carry on in another one. */
+  private moveTo(
+    view: EditorView,
+    cell: HTMLElement,
+    row: number,
+    col: number,
+    nextRow: number,
+    nextCol: number,
+    addRow: boolean,
+  ) {
+    const text = cell.textContent ?? ''
+    const model = parseTable(this.source)
+    if (!model) return
+    model.rows[row][col] = cellSource(text)
+    const grown = addRow ? insertRow(model, model.rows.length) : model
+    const row2 = Math.min(nextRow, grown.rows.length - 1)
+    const col2 = Math.min(nextCol, grown.align.length - 1)
+    requestCellFocus(this.from, row2, col2)
+    if (!this.write(view, grown)) {
+      // Nothing to write — the move is still worth making.
+      const target = cell
+        .closest('table')
+        ?.querySelector<HTMLElement>(`[data-row="${row2}"][data-col="${col2}"]`)
+      if (target) {
+        target.focus()
+        placeCaretAtEnd(target)
+      }
+    }
+  }
+
+  /** Write one cell back into the note. Returns false when nothing changed. */
+  private commit(view: EditorView, row: number, col: number, text: string): boolean {
+    const model = parseTable(this.source)
+    if (!model) return false
+    const next = cellSource(text)
+    if ((model.rows[row]?.[col] ?? '') === next) return false
+    model.rows[row][col] = next
+    return this.write(view, model)
+  }
+
+  private write(view: EditorView, model: TableModel): boolean {
+    const insert = renderTable(model)
+    if (insert === this.source) return false
+    const to = this.from + this.source.length
+    // The widget can be one render behind an edit made elsewhere in the note;
+    // rewriting a range that has moved would corrupt it.
+    if (to > view.state.doc.length || view.state.doc.sliceString(this.from, to) !== this.source)
+      return false
+    view.dispatch({ changes: { from: this.from, to, insert }, userEvent: 'input.table' })
+    // Keep the published cell pointing at text that still matches the note, so
+    // a toolbar button pressed straight after this still knows where it is.
+    const cur = focusedCell.value
+    if (cur && cur.from === this.from) focusedCell.value = { ...cur, source: insert }
+    return true
+  }
+
+  /** Live preview: a click puts the caret in the markdown behind the table. */
+  private caretIntoSource(
+    view: EditorView,
+    wrap: HTMLElement,
+    e: MouseEvent,
+    rows: string[],
+    delimIndex: number,
+  ) {
+    // Links, tags and images inside a cell keep their own behaviour; only a
+    // click on the table itself moves the caret into the source.
+    const target = e.target as HTMLElement | null
+    if (target?.closest('[data-wikilink], [data-tag], [data-href], a, img')) return
+
+    e.preventDefault()
+    const tr = target?.closest('tr')
+    let offset = 0
+    if (tr) {
+      const all = [...wrap.querySelectorAll('tr')]
+      const visualRow = all.indexOf(tr)
+      const sourceRow = delimIndex >= 0 && visualRow >= delimIndex ? visualRow + 1 : visualRow
+      for (let i = 0; i < sourceRow && i < rows.length; i++) offset += rows[i].length + 1
+    }
+    const pos = Math.min(this.from + offset, view.state.doc.length)
+    // Tagged as a pointer selection so live preview counts it as the user
+    // choosing to edit — an untagged dispatch would leave the table rendered
+    // and the caret invisible behind it.
+    view.dispatch({ selection: { anchor: pos }, scrollIntoView: false, userEvent: 'select.pointer' })
+    view.focus()
+  }
+
+  /**
+   * Keep the editor's hands off events inside an editable cell.
+   *
+   * CodeMirror walks up from an event's target and, unless a widget claims it,
+   * runs its own handlers — so ⌘A inside a cell would select the whole note
+   * and the next keystroke would replace it. A cell is its own editing host
+   * and answers for everything that happens in it.
+   */
+  ignoreEvent(event: Event) {
+    if (!this.typeable) return false
+    const target = event.target as HTMLElement | null
+    return !!target?.closest?.('.cm-table-cell')
   }
 }
 
-/**
- * Is this the `| --- | :--: |` row?
- *
- * Written by hand rather than taken from the markdown parser because
- * @lezer/markdown refuses a delimiter row with *any* trailing whitespace, which
- * silently makes the whole table parse as paragraph text. Trailing spaces are
- * legal per GFM and extremely common in real files, so table detection here
- * does not depend on that.
- */
-export function isDelimiterRow(line: string): boolean {
-  const t = line.trim()
-  if (!t || !/^[|\s:-]+$/.test(t)) return false
-  const cells = splitRow(line)
-  if (!cells.length) return false
-  return cells.every((c) => /^\s*:?-+:?\s*$/.test(c))
-}
-
-/** Split a pipe-table row, honouring `\|` escapes. */
-function splitRow(line: string): string[] {
-  const trimmed = line.trim().replace(/^\|/, '').replace(/\|$/, '')
-  const out: string[] = []
-  let cur = ''
-  for (let i = 0; i < trimmed.length; i++) {
-    const ch = trimmed[i]
-    if (ch === '\\' && trimmed[i + 1] === '|') {
-      cur += '\\|'
-      i++
-    } else if (ch === '|') {
-      out.push(cur)
-      cur = ''
-    } else cur += ch
-  }
-  out.push(cur)
-  return out
-}
-
-function alignOf(spec: string): 'left' | 'right' | 'center' | '' {
-  const s = spec.trim()
-  if (s.startsWith(':') && s.endsWith(':')) return 'center'
-  if (s.endsWith(':')) return 'right'
-  if (s.startsWith(':')) return 'left'
-  return ''
+function placeCaretAtEnd(el: HTMLElement) {
+  const range = document.createRange()
+  range.selectNodeContents(el)
+  range.collapse(false)
+  const sel = window.getSelection()
+  sel?.removeAllRanges()
+  sel?.addRange(range)
 }
 
 /* ------------------------------------------------------------------ embed */

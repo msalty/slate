@@ -41,6 +41,11 @@ so nothing is ever silently rewritten:
   type — `# ` at the start of a line is still a Title, and the marker vanishes
   the moment it becomes one — and backspacing at the start of a styled line
   takes the style off, because the hidden marks behave as single characters.
+  Applying a marker leaves the caret after it, so a new checklist item is ready
+  to be typed into rather than in front of its own checkbox. The bar also
+  inserts the two things markdown makes tedious by hand: a **link**, through a
+  dialog with the words and the address as separate fields, and a **table**,
+  which then offers add/remove row and column from the same button.
 - **Live preview** — formatting renders as you type, and the raw syntax
   reappears the moment your caret enters it.
 - **Markdown source** — the file, exactly as it is written.
@@ -49,6 +54,18 @@ Underline has no markdown syntax, so it is written as `<u>…</u>`, which every
 renderer passes through; highlight uses `==text==`. Everything else is ordinary
 CommonMark, and a note written in rich text opens as plain markdown anywhere
 else.
+
+Above every note, in all three modes, sits the date it was last edited — faint,
+centred and out of the way, the way Apple Notes does it. Hover it for when the
+note was created.
+
+**Links that leave the vault.** A `https://`, a `mailto:`, a `tel:`, an
+`ssh://` to the box you keep notes about — written as markdown or left bare —
+renders as a link and opens in whatever program handles it. With a pointer a
+click opens and a right-click offers *Open · Copy · Edit*; on a phone, where
+there is no right-click and the address is hidden behind the label, a tap
+offers the same three. `javascript:` and `data:` are never opened: a note that
+syncs from a shared vault is untrusted input.
 
 **Linking.** `[[Note Title]]` links notes to each other. Typing `[[` opens an
 autocomplete over every note; picking one that doesn't exist yet offers to create
@@ -64,14 +81,44 @@ its right edge (the width is written back into the markdown as
 `![[img.png|400]]`) and opens in the lightbox on click. PDFs, video, audio and
 text files can live in the vault too.
 
+In rich text an image stays an image: putting the caret beside one never swaps
+it back for `![[img.png]]`, and it takes no margin of its own, so a line of
+text sits immediately above or below it unless you write a blank line.
+
 A capture that arrives as a bare `image.jpg` gets a dated name so a folder of
 them stays browsable; a library filename you'd recognise — `IMG_0421`,
 `Screenshot 2026-08-31` — is kept as-is.
 
+**Renaming a file repoints every note that used it**, in the shape each
+reference was written in: a bare `![[logo.png]]` stays bare, a path relative to
+the note stays relative, a full vault path stays full. Right-click a file (or
+swipe it on a phone) to rename or delete it; deleted files go to Recently
+Deleted like anything else.
+
+**Files that nothing points at are flagged.** The Files browser marks every
+attachment no note references — embedded or plainly linked, by path, relative
+path or bare filename — as **Orphaned**, and the count in the header filters the
+list down to them. A file in the vault that no note uses is invisible dead
+weight that still syncs to every device; this is how you find it before there
+are two hundred of them.
+
 **Tables render as tables**, including the formatting inside their cells: bold,
 italics, `code`, strikethrough, links, wikilinks, tags and images all render in a
-cell. Clicking a table puts the caret back in the pipe source to edit it, and it
-re-renders when you click away.
+cell.
+
+In rich text you type straight into the cells — the table never shows its pipes.
+Tab moves along a row and Enter down a column, both adding a row when they run
+off the end; Escape puts you back in the note. A pipe typed into a cell is
+escaped rather than becoming a new column, and the file goes on holding an
+ordinary GFM table, printed with its columns lined up so it still reads as text.
+Live preview keeps its own contract: clicking a table there puts the caret in
+the pipe source, the same way the caret reveals every other construct it sits
+in.
+
+**Pinned notes** sit in their own section at the top of the list — sorted the
+same way everything else is, by date edited, date created or title — and stay
+there while the rest of the list re-sorts around them. Pin from the note's
+context menu, or by putting `pinned: true` in its frontmatter.
 
 **Folders and Tag Folders.** Ordinary folders nest as deep as you like and are
 real directories in the vault. Tag Folders are saved boolean rules that gather
@@ -120,9 +167,12 @@ opens or closes anything by itself.
 network at all, and syncs when connectivity returns.
 
 **Never losing things.** Deletes are soft — notes move to `backstage/trash/` and
-show up under Recently Deleted. Every save, sync pull and delete writes a local
-snapshot, and the history dialog restores any of them. Conflicting edits are
-merged when possible and kept as two files when not.
+show up under Recently Deleted, where opening one shows its contents read-only
+so you can decide with the note in front of you rather than from its title. Every save, sync pull and delete writes a local
+snapshot, and the history dialog restores any of them — each one labelled with
+the device it came from, so a version pulled from the server says *which*
+machine wrote it. Conflicting edits are merged when possible and kept as two
+files when not.
 
 ---
 
@@ -134,6 +184,12 @@ merged when possible and kept as two files when not.
 | **Mid-size** (760–1180px) | Note list + editor | Sidebar and calendar open as dismissable drawers |
 | **Wide** (≥ 1180px) | Sidebar + list + editor | Calendar sits inline from 1400px, a drawer below that |
 
+Drag the divider on the right of the sidebar or the note list to resize it, or
+double-click the divider to put it back; ⌘\ hides the sidebar entirely and the
+button in the note list's header brings it back. The editor never gives up its
+space: drag the panels wider than the window can afford and they are the ones
+that yield.
+
 Long-press or right-click a Tag Folder for *New folder inside…*, *Move…*, and
 the two delete variants.
 
@@ -141,6 +197,9 @@ On a phone the editor opens full-screen over whichever tab you came from, so
 tapping a note in Tasks and pressing back returns you to Tasks. Android's back
 button closes the editor before it leaves the app. Long-press any note, folder
 or Tag Folder for an action sheet; right-click does the same on a desktop.
+Swipe a note, a file or a deleted note to the left for its actions, the way a
+mail app does. A Tag Folder's rule is editable from the phone too — its scope
+bar above the list carries an **Edit** next to the **Close**.
 
 ## Keyboard
 
@@ -158,6 +217,7 @@ or Tag Folder for an action sheet; right-click does the same on a desktop.
 | ⌘⇧X / ⌘⇧H / ⌘E | Strikethrough / highlight / monospace |
 | ⌘⌥1 / ⌘⌥2 / ⌘⌥3 / ⌘⌥0 | Title / Heading / Subheading / Body |
 | ⌘K *(with a selection)* | Wrap in a wikilink |
+| ⌘⇧L | Add or edit an external link |
 | ⌘⇧7 / ⌘⇧8 / ⌘⇧0 | Checklist / bullets / numbers |
 | ⌘⇧9 | Block quote |
 | ⌘] / ⌘[ | Indent / outdent a list item |
@@ -380,6 +440,7 @@ Vault/
 │  └─ 2026/08/pasted-a3f9.webp
 └─ backstage/                 ← app's own files, hidden in the UI
    ├─ config.json             ← shared preferences
+   ├─ devices/                ← one file per device: its name and recent writes
    └─ trash/                  ← soft-deleted notes
 ```
 
@@ -446,6 +507,13 @@ On top of all that, every save, sync pull and delete writes a local snapshot
 history is what covers "I pasted over three paragraphs an hour ago". It is
 device-local and deliberately not synced.
 
+Each snapshot names the device the text came from. Nothing in a WebDAV or Drive
+response says who wrote a file, so every device keeps one file of its own —
+`backstage/devices/<id>.json`, listing its name and the paths it recently
+pushed. Only its owner ever writes it, so the registry cannot conflict; a pull
+credits whichever device last pushed that path, and says nothing at all when it
+has not heard of one.
+
 `src/core/sync.test.ts` runs two independent "devices" — separate module
 instances with separate databases — against one in-memory server and asserts
 every one of these behaviours.
@@ -466,11 +534,14 @@ src/
 │  ├─ markdown.ts     frontmatter, links, tags, tasks
 │  ├─ tagquery.ts     the Tag Folder rule language (tokenizer, parser, eval)
 │  ├─ folders.ts      nested folders + the Tag Folder tree and inheritance
+│  ├─ devices.ts      per-device write registry, for version attribution
 │  ├─ images.ts       paste- and capture-time re-encoding
 │  └─ settings.ts     device-local vs vault-wide preferences
 ├─ adapters/      webdav.ts · gdrive.ts · memory.ts (tests)
 ├─ editor/        CodeMirror 6: live preview, widgets, completion, paste
 │  ├─ format.ts     the formatting commands behind the rich-text bar
+│  ├─ links.ts      external URI recognition, opening and editing
+│  ├─ table.ts      the pipe-table grid: parse, edit rows/columns, print
 │  ├─ inline.ts      inline markdown for text inside widgets (table cells)
 │  └─ pickImage.ts   camera / photo library / file insertion
 └─ ui/            Preact components
@@ -510,9 +581,9 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
   underlying `reorderSmartFolders` exists but nothing calls it yet.
 - **A Tag Folder can't live inside a real folder.** The two hierarchies are
   separate — use `folder:Work` in the rule to pin one to a folder.
-- **Table editing is source-based.** Tables render properly and their cells
-  render inline formatting, but clicking one puts the caret in the pipe markdown
-  rather than editing in the cell.
+- **Table columns can't be aligned from the UI.** Cells are edited in place and
+  rows and columns come and go from the toolbar, but `:--:` alignment still has
+  to be typed into the delimiter row by hand, in live preview or source.
 - **Search is a linear scan.** Fast and predictable to a few thousand notes; past
   that it wants an inverted index.
 - **No encryption at rest.** Notes are plain files on your server. Per-file

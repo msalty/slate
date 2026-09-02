@@ -45,7 +45,8 @@ import {
   TableWidget,
   isDelimiterRow,
 } from './widgets'
-import { noteContext, requestOpenLink } from './context'
+import { noteContext, requestOpenLink, requestUri } from './context'
+import { normalizeUri, scanUris } from './links'
 import { resolveEmbed, resolveLink } from '../core/vault'
 import { revision } from '../core/vault'
 
@@ -243,10 +244,11 @@ function buildDecorations(view: EditorView): DecorationSet {
    * Claiming them here keeps the tree walk from also styling them, and
    * monospaces the pipes while the caret is inside so columns line up.
    */
+  const richTables = state.facet(previewMode) === 'rich'
   for (const t of findTables(state)) {
     const first = state.doc.line(t.fromLine)
     const last = state.doc.line(t.toLine)
-    const editing = touched(state, first.from, last.to)
+    const editing = !richTables && touched(state, first.from, last.to)
     for (let n = t.fromLine; n <= t.toLine; n++) {
       const line = state.doc.line(n)
       seenLines.add(line.from)
@@ -380,7 +382,11 @@ function buildDecorations(view: EditorView): DecorationSet {
 
         /* ---- wikilink embeds ------------------------------------------ */
         if (name === 'WikiEmbed') {
-          if (touched(state, node.from, node.to)) return
+          // 'format' so rich mode never swaps a picture for its markdown: a
+          // caret landing beside an image is someone about to type next to it,
+          // and there is nothing in `![[img.png|400]]` the rich editor cannot
+          // do with the resize handle and the delete key.
+          if (touched(state, node.from, node.to, 'format')) return
           const raw = state.doc.sliceString(node.from, node.to)
           const inner = raw.slice(3, -2)
           const [targetPart, sizePart] = splitPipe(inner)
@@ -402,7 +408,7 @@ function buildDecorations(view: EditorView): DecorationSet {
 
         /* ---- markdown images ------------------------------------------ */
         if (name === 'Image') {
-          if (touched(state, node.from, node.to)) return
+          if (touched(state, node.from, node.to, 'format')) return
           const raw = state.doc.sliceString(node.from, node.to)
           const m = /^!\[([^\]]*)\]\(\s*(<[^>]*>|[^)\s]*)/.exec(raw)
           if (!m) return
@@ -425,11 +431,48 @@ function buildDecorations(view: EditorView): DecorationSet {
           return
         }
 
+        /* ---- markdown links: the label becomes the clickable thing ---- */
+        if (name === 'Link') {
+          const raw = state.doc.sliceString(node.from, node.to)
+          const m = /^\[([^\]\n]*)\]\(\s*(<[^>\n]*>|[^)\s]*)/.exec(raw)
+          if (!m) return
+          let url = m[2]
+          if (url.startsWith('<') && url.endsWith('>')) url = url.slice(1, -1)
+          const href = normalizeUri(url)
+          if (!href) return
+          const from = node.from + 1
+          const to = from + m[1].length
+          if (to > from) {
+            out.push(
+              Decoration.mark({
+                class: 'cm-uri',
+                attributes: { 'data-href': href, title: url },
+              }).range(from, to),
+            )
+          }
+          return
+        }
+
         /* ---- inline links: hide the URL machinery --------------------- */
         if (name === 'URL' || name === 'LinkTitle') {
           const parent = node.node.parent
           if (parent && (parent.name === 'Link' || parent.name === 'Image')) {
             if (!touched(state, parent.from, parent.to)) out.push(hidden.range(node.from, node.to))
+            return
+          }
+          // A bare URL the markdown parser autolinked for us. It is the one
+          // the textual scan below deliberately skips — that scan avoids
+          // anything the parser has already claimed — so it gets its mark here.
+          if (name === 'URL') {
+            const href = normalizeUri(state.doc.sliceString(node.from, node.to))
+            if (href) {
+              out.push(
+                Decoration.mark({
+                  class: 'cm-uri',
+                  attributes: { 'data-href': href, title: href },
+                }).range(node.from, node.to),
+              )
+            }
           }
           return
         }
@@ -482,6 +525,31 @@ function buildDecorations(view: EditorView): DecorationSet {
           out.push(deco.range(innerFrom, innerFrom + m[1].length))
           out.push(hidden.range(innerFrom + m[1].length, to))
         }
+      }
+      if (line.to >= vTo) break
+      p = line.to + 1
+    }
+
+    /*
+     * Bare URLs, mailto:, tel:, ssh: — anything the platform can open.
+     *
+     * Textual for the same reason hashtags are: the markdown parser autolinks
+     * only a subset of what turns up in a note, and every one of them is worth
+     * a tap.
+     */
+    for (let p = vFrom; p <= vTo; ) {
+      const line = state.doc.lineAt(p)
+      for (const u of scanUris(line.text, line.from)) {
+        const node = tree.resolveInner(u.from + 1, 1)
+        if (isInsideCodeOrLink(node)) continue
+        const href = normalizeUri(u.url)
+        if (!href) continue
+        out.push(
+          Decoration.mark({
+            class: 'cm-uri',
+            attributes: { 'data-href': href, title: href },
+          }).range(u.from, u.to),
+        )
       }
       if (line.to >= vTo) break
       p = line.to + 1
@@ -669,18 +737,25 @@ function countCells(line: string): number {
 function buildTableDecorations(state: EditorState): DecorationSet {
   const out: Array<Range<Decoration>> = []
   const notePath = state.facet(noteContext).path
+  const rich = state.facet(previewMode) === 'rich'
 
   for (const t of findTables(state)) {
     const first = state.doc.line(t.fromLine)
     const last = state.doc.line(t.toLine)
-    // Caret inside the table means the user is editing it: show the source.
-    if (touched(state, first.from, last.to)) continue
+    /*
+     * In live preview the caret inside a table means the user is editing it,
+     * and the source is what they came for. Rich text never shows the pipes at
+     * all: the rendered cells are the editor there, so the table stays a table
+     * and typing happens inside it.
+     */
+    if (!rich && touched(state, first.from, last.to)) continue
     out.push(
       Decoration.replace({
         widget: new TableWidget(
           state.doc.sliceString(first.from, last.to),
           first.from,
           notePath,
+          rich,
         ),
         block: true,
       }).range(first.from, last.to),
@@ -703,10 +778,24 @@ export const tableField = StateField.define<DecorationSet>({
   ],
 })
 
-/** Click handling for wikilinks and hashtags rendered by the plugin. */
+/** Click handling for wikilinks, hashtags and external links. */
 export const linkClicks = EditorView.domEventHandlers({
-  mousedown(event) {
+  mousedown(event, view) {
     const target = event.target as HTMLElement | null
+    const uri = target?.closest?.('[data-href]') as HTMLElement | null
+    if (uri) {
+      // Left button only: the right one belongs to the menu handler below,
+      // and the middle one to whatever the platform does with it.
+      if (event.button !== 0) return false
+      event.preventDefault()
+      requestUri(uri.dataset.href ?? '', {
+        x: event.clientX,
+        y: event.clientY,
+        pos: view.posAtDOM(uri),
+        via: 'click',
+      })
+      return true
+    }
     const link = target?.closest?.('[data-wikilink]') as HTMLElement | null
     if (link) {
       event.preventDefault()
@@ -720,5 +809,21 @@ export const linkClicks = EditorView.domEventHandlers({
       return true
     }
     return false
+  },
+  /**
+   * Right-click on a link is the desktop way to reach its text: opening is one
+   * plain click, so the menu is where "edit this link" has to live.
+   */
+  contextmenu(event, view) {
+    const uri = (event.target as HTMLElement | null)?.closest?.('[data-href]') as HTMLElement | null
+    if (!uri) return false
+    event.preventDefault()
+    requestUri(uri.dataset.href ?? '', {
+      x: event.clientX,
+      y: event.clientY,
+      pos: view.posAtDOM(uri),
+      via: 'menu',
+    })
+    return true
   },
 })

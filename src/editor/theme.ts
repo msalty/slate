@@ -135,10 +135,27 @@ export const editorTheme = EditorView.theme({
     padding: '5px 11px',
     textAlign: 'left',
     verticalAlign: 'top',
+    /*
+     * A cell you have not typed into yet still has to be a target you can hit.
+     * Without a floor, a freshly inserted table collapses to a few pixels of
+     * grid and there is nowhere to click.
+     */
+    minWidth: '64px',
+    height: '1.9em',
   },
   '.cm-table-render th': {
     fontWeight: '650',
     backgroundColor: 'var(--surface-2)',
+  },
+  /* Cells you type in — rich text only; live preview edits the pipes. */
+  '&.cm-rich .cm-table-cell': {
+    cursor: 'text',
+    caretColor: 'var(--accent)',
+    outline: 'none',
+  },
+  '&.cm-rich .cm-table-cell:focus': {
+    backgroundColor: 'var(--accent-soft)',
+    boxShadow: 'inset 0 0 0 1.5px var(--accent)',
   },
   /* Inline markdown rendered into cells by the inline renderer. These need
      their own rules: they are widget DOM, so the editor's own syntax
@@ -216,6 +233,15 @@ export const editorTheme = EditorView.theme({
     borderBottom: '1px solid color-mix(in srgb, var(--accent) 35%, transparent)',
   },
   '.cm-wikilink:hover': { borderBottomColor: 'var(--accent)' },
+  /* External links — http, mailto, tel, ssh, whatever the machine handles. */
+  '.cm-uri': {
+    color: 'var(--accent)',
+    cursor: 'pointer',
+    textDecoration: 'underline',
+    textDecorationColor: 'color-mix(in srgb, var(--accent) 40%, transparent)',
+    textUnderlineOffset: '2px',
+  },
+  '.cm-uri:hover': { textDecorationColor: 'var(--accent)' },
   '.cm-wikilink-broken': {
     color: 'var(--text-muted)',
     borderBottom: '1px dashed var(--text-faint)',
@@ -262,12 +288,26 @@ export const editorTheme = EditorView.theme({
   '.cm-task-done': { color: 'var(--text-faint)', textDecoration: 'line-through' },
 
   '.cm-embed': {
-    display: 'block',
+    /*
+     * Inline-block, bottom-aligned, and this is the whole reason there is no
+     * space around a picture.
+     *
+     * A `display: block` widget inside CodeMirror's inline wrapper splits the
+     * line into anonymous blocks, and the empty inline boxes either side of it
+     * — CodeMirror's own widget buffers — each take a full line box. That was
+     * a 24px band above the image and another below it, from a rule nobody
+     * wrote. As an inline-level box the widget shares the line's box instead,
+     * and aligning it to the bottom keeps the line's strut from hanging below
+     * it as descender space.
+     *
+     * So an image sits exactly where its line sits: a line of text immediately
+     * above or below it is immediately above or below it, and anyone who wants
+     * air around a picture writes a blank line, which is what a blank line is
+     * for.
+     */
+    display: 'inline-block',
+    verticalAlign: 'bottom',
     position: 'relative',
-    // A border rather than padding: the resize handle is positioned against
-    // this element's padding box and would grow with it.
-    borderTop: '10px solid transparent',
-    borderBottom: '10px solid transparent',
     maxWidth: '100%',
   },
   '.cm-embed img, .cm-embed video': {

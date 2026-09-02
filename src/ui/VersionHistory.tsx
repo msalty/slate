@@ -5,6 +5,9 @@
  * It is device-local and not synced — it is the safety net for "I pasted over
  * three paragraphs an hour ago", which is the failure mode a sync engine cannot
  * protect you from because it faithfully replicated the mistake.
+ *
+ * Each entry says which device the text came from, so "who changed this, and
+ * where were they" is answerable without opening the note on every machine.
  */
 
 import { useEffect, useState } from 'preact/hooks'
@@ -94,7 +97,14 @@ export function VersionHistory() {
                   minute: '2-digit',
                 })}
                 <small>
-                  {REASON[v.reason]} · {formatBytes(v.text.length)}
+                  {/*
+                    * Which machine this text came from. Absent on versions
+                    * recorded before attribution existed, and on a pull whose
+                    * author this device has not heard of yet — so it is shown
+                    * when it is known and quietly skipped when it isn't.
+                    */}
+                  {REASON[v.reason]}
+                  {v.device ? ` · ${v.device}` : ''} · {formatBytes(v.text.length)}
                 </small>
               </button>
             ))}

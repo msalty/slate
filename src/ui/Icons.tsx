@@ -296,6 +296,19 @@ export const IconHighlight = (p: P) => (
   </Svg>
 )
 
+export const IconTable = (p: P) => (
+  <Svg {...p}>
+    <rect x="3" y="4.5" width="18" height="15" rx="2" />
+    <path d="M3 9.5h18M3 14.5h18M9.5 9.5V19.5M15 9.5V19.5" />
+  </Svg>
+)
+
+export const IconPencil = (p: P) => (
+  <Svg {...p}>
+    <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7.5 18.5l-4 1 1-4z" />
+  </Svg>
+)
+
 export const IconRichText = (p: P) => (
   <Svg {...p}>
     <path d="M4 6h16M4 12h11M4 18h7" />

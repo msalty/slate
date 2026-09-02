@@ -85,6 +85,13 @@ describe('block styles', () => {
     expect(out(s, setBlockStyle(s, 'heading'))).toBe('## Trip‸')
   })
 
+  it('keeps the caret in the text when the marker goes in front of it', () => {
+    const s = st('‸Trip')
+    expect(out(s, setBlockStyle(s, 'heading'))).toBe('## ‸Trip')
+    const q = st('‸thought')
+    expect(out(q, toggleQuote(q))).toBe('> ‸thought')
+  })
+
   it('keeps indent and quote, and drops a list marker', () => {
     const q = st('> note‸')
     expect(text(q, setBlockStyle(q, 'heading'))).toBe('> ## note')
@@ -128,6 +135,21 @@ describe('lists', () => {
   it('continues the numbering of the list it joins', () => {
     const s = st('1. milk\n2. eggs\nbread‸')
     expect(text(s, toggleList(s, 'number'))).toBe('1. milk\n2. eggs\n3. bread')
+  })
+
+  it('leaves the caret after the marker, ready to type', () => {
+    // The reason this matters: on an empty line the caret sits exactly where
+    // the marker is inserted, and the default mapping would leave it in front
+    // of the checkbox — so the first word typed lands before it.
+    const empty = st('‸')
+    expect(out(empty, toggleList(empty, 'check'))).toBe('- [ ] ‸')
+    const start = st('‸milk')
+    expect(out(start, toggleList(start, 'check'))).toBe('- [ ] ‸milk')
+    const bullet = st('‸milk')
+    expect(out(bullet, toggleList(bullet, 'bullet'))).toBe('- ‸milk')
+    // And back out again, with the caret still against the text.
+    const done = st('- [ ] ‸milk')
+    expect(out(done, toggleList(done, 'check'))).toBe('‸milk')
   })
 
   it('quotes and unquotes', () => {

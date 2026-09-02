@@ -15,6 +15,8 @@
 import { signal } from '@preact/signals'
 import { EditorSelection, type EditorState, type TransactionSpec } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
+import { bareUriAt, linkAt } from './links'
+import { tableAt } from './table'
 
 /** Paragraph styles, named as Apple Notes names them. */
 export type BlockStyle = 'title' | 'heading' | 'subheading' | 'body'
@@ -209,6 +211,26 @@ function spanAround(
 
 /* ------------------------------------------------------------ block styles */
 
+/**
+ * Package prefix edits — the ones that rewrite the markers at the head of a
+ * line — into a transaction that leaves the caret in the *content*.
+ *
+ * CodeMirror's default mapping keeps a position on the left of anything
+ * inserted at that exact position, so turning an empty line into a checklist
+ * item leaves the caret in front of `- [ ] ` and the first thing typed lands
+ * before the checkbox. Mapping the selection forward instead puts the caret
+ * where the text goes. It matters most in rich mode, where the marker is
+ * hidden: a caret on the wrong side of it looks identical and behaves nothing
+ * alike.
+ */
+function prefixEdit(
+  state: EditorState,
+  changes: Array<{ from: number; to: number; insert: string }>,
+): TransactionSpec {
+  const set = state.changes(changes)
+  return { changes: set, selection: state.selection.map(set, 1), userEvent: 'input.format' }
+}
+
 /** Lines the selection touches, as line numbers. */
 function selectedLines(state: EditorState): number[] {
   const out = new Set<number>()
@@ -239,7 +261,7 @@ export function setBlockStyle(state: EditorState, style: BlockStyle): Transactio
     const prefix = p.indent + p.quote + keep + (level ? `${'#'.repeat(level)} ` : '')
     changes.push({ from: line.from, to: line.from + p.contentFrom, insert: prefix })
   }
-  return changes.length ? { changes, userEvent: 'input.format' } : null
+  return changes.length ? prefixEdit(state, changes) : null
 }
 
 /* ------------------------------------------------------------------- lists */
@@ -297,7 +319,7 @@ export function toggleList(state: EditorState, kind: ListKind): TransactionSpec 
     if (state.doc.sliceString(line.from, to) === insert) continue
     changes.push({ from: line.from, to, insert })
   }
-  return changes.length ? { changes, userEvent: 'input.format' } : null
+  return changes.length ? prefixEdit(state, changes) : null
 }
 
 /** Toggle `> ` on the selected lines. */
@@ -314,7 +336,7 @@ export function toggleQuote(state: EditorState): TransactionSpec | null {
     if (remove) changes.push({ from, to: from + p.quote.length, insert: '' })
     else changes.push({ from, to: from, insert: '> ' })
   }
-  return changes.length ? { changes, userEvent: 'input.format' } : null
+  return changes.length ? prefixEdit(state, changes) : null
 }
 
 /**
@@ -418,6 +440,10 @@ export interface FormatSnapshot {
   marks: Record<InlineMark, boolean>
   canIndent: boolean
   canOutdent: boolean
+  /** True when the caret sits in a link — the Link button then edits it. */
+  link: boolean
+  /** Where in a table the caret is, so the table controls know what to act on. */
+  table: { row: number; col: number; rows: number; cols: number } | null
 }
 
 const NO_MARKS: Record<InlineMark, boolean> = {
@@ -437,6 +463,8 @@ export const EMPTY_SNAPSHOT: FormatSnapshot = {
   marks: NO_MARKS,
   canIndent: false,
   canOutdent: false,
+  link: false,
+  table: null,
 }
 
 function styleForLevel(level: number): BlockStyle {
@@ -452,6 +480,7 @@ export function inspect(state: EditorState): FormatSnapshot {
   for (const m of Object.keys(DELIMS) as InlineMark[]) {
     marks[m] = !!spanAround(state, m, head.from, head.to)
   }
+  const t = tableAt(state, head.head)
   return {
     active: true,
     block: styleForLevel(p.level),
@@ -460,6 +489,10 @@ export function inspect(state: EditorState): FormatSnapshot {
     marks,
     canIndent: canIndent(state, 1),
     canOutdent: canIndent(state, -1),
+    link: !!(linkAt(state, head.head) ?? bareUriAt(state, head.head)),
+    table: t
+      ? { row: t.row, col: t.col, rows: t.model.rows.length, cols: t.model.align.length }
+      : null,
   }
 }
 

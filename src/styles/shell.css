@@ -69,23 +69,33 @@
   position: relative;
 }
 
-/* --- wide: sidebar | list | editor | rail ------------------------------- */
+/*
+ * --- wide: sidebar | list | editor | rail -------------------------------
+ *
+ * The two resizable columns are minmax(0, …): they are exactly as wide as
+ * their variable says while there is room, and give way when there is not.
+ * Without the 0 minimum, dragging both to their maximums on a 1180px screen
+ * would push the editor past the right edge instead of taking the space back
+ * from the panels — which is rule 1 of this layout, inverted.
+ */
 .shell[data-mode='wide'] {
-  grid-template-columns: var(--sidebar-w) var(--list-w) minmax(460px, 1fr);
+  grid-template-columns: minmax(0, var(--sidebar-w)) minmax(0, var(--list-w)) minmax(460px, 1fr);
 }
 .shell[data-mode='wide'][data-sidebar='hidden'] {
-  grid-template-columns: var(--list-w) minmax(460px, 1fr);
+  grid-template-columns: minmax(0, var(--list-w)) minmax(460px, 1fr);
 }
 .shell[data-mode='wide'][data-rail='inline'] {
-  grid-template-columns: var(--sidebar-w) var(--list-w) minmax(460px, 1fr) var(--rail-w);
+  grid-template-columns:
+    minmax(0, var(--sidebar-w)) minmax(0, var(--list-w)) minmax(460px, 1fr)
+    minmax(0, var(--rail-w));
 }
 .shell[data-mode='wide'][data-sidebar='hidden'][data-rail='inline'] {
-  grid-template-columns: var(--list-w) minmax(460px, 1fr) var(--rail-w);
+  grid-template-columns: minmax(0, var(--list-w)) minmax(460px, 1fr) minmax(0, var(--rail-w));
 }
 
 /* --- medium: list | editor, side panels float -------------------------- */
 .shell[data-mode='medium'] {
-  grid-template-columns: var(--list-w) minmax(420px, 1fr);
+  grid-template-columns: minmax(0, var(--list-w)) minmax(420px, 1fr);
 }
 
 /* --- compact: one full-bleed column ------------------------------------ */
@@ -99,6 +109,8 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  /* The resize handle on the trailing edge is positioned against this. */
+  position: relative;
 }
 
 /* --- floating panels ---------------------------------------------------- */

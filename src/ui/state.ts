@@ -55,6 +55,12 @@ export function nextEditorMode(id: EditorModeId): EditorModeId {
   return EDITOR_MODES[(i + 1) % EDITOR_MODES.length].id
 }
 
+/**
+ * The Files browser, narrowed to files no note references. Off by default —
+ * it is a way to work through the orphans, not a permanent view of the vault.
+ */
+export const orphansOnly = signal(false)
+
 export const paletteOpen = signal(false)
 export const settingsOpen = signal(false)
 export const historyOpen = signal(false)
@@ -186,10 +192,22 @@ export const sections = computed<Section[]>(() => {
   const list = visibleNotes.value
   const sortBy = settings.value.sortBy
   if (query.value.trim()) return [{ title: `${list.length} found`, items: list }]
-  if (sortBy === 'title') return [{ title: '', items: list }]
 
+  /*
+   * Pinned notes are their own section in every sort order, sorted among
+   * themselves the same way everything else is. Sorting by title used to skip
+   * the split entirely, which quietly un-pinned the whole list.
+   */
   const pinned = list.filter((n) => n.pinned)
   const rest = list.filter((n) => !n.pinned)
+
+  if (sortBy === 'title') {
+    const out: Section[] = []
+    if (pinned.length) out.push({ title: 'Pinned', items: pinned })
+    if (rest.length) out.push({ title: pinned.length ? 'Notes' : '', items: rest })
+    return out
+  }
+
   const now = startOfDay(Date.now())
   const day = 86_400_000
   const buckets: Section[] = [

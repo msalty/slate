@@ -30,6 +30,7 @@ import {
 } from './db'
 import {
   calendarDateFor,
+  codeRegions,
   excerptOf,
   parseFrontmatter,
   resolveTarget,
@@ -41,8 +42,15 @@ import {
   stripInline,
 } from './markdown'
 import {
+  loadDeviceRecords,
+  localDeviceName,
+  pendingDeviceRecord,
+  writerFor,
+} from './devices'
+import {
   basename,
   dirname,
+  extname,
   hashBlob,
   hashText,
 
@@ -248,6 +256,63 @@ export const unresolvedLinks = computed(() => {
   return m
 })
 
+/**
+ * Attachments no note points at.
+ *
+ * A file nothing references is dead weight: it syncs to every device, it takes
+ * space, and no screen will ever show it again — and it is invisible, because
+ * the only way to notice is to check every note by hand. So the Files browser
+ * marks them, and the vault stays something you could hand to someone else and
+ * have it all make sense.
+ *
+ * References resolve the way `resolveEmbed` resolves them — exact path, then
+ * relative to the linking note, then by bare filename — but against a prepared
+ * index instead, because the shared-name fallback is a scan of the whole vault
+ * and this runs over every link in every note.
+ */
+export const orphanFiles = computed<Set<string>>(() => {
+  const unused = new Set<string>()
+  const byName = new Map<string, string[]>()
+  for (const f of attachments.value) {
+    unused.add(f.path)
+    const key = basename(f.path).toLowerCase()
+    const same = byName.get(key)
+    if (same) same.push(f.path)
+    else byName.set(key, [f.path])
+  }
+  if (!unused.size) return unused
+
+  const claim = (ref: string, from: string) => {
+    let clean = ref.trim()
+    if (!clean || /^[a-z]+:/i.test(clean)) return
+    try {
+      clean = decodeURI(clean)
+    } catch {
+      // A half-encoded link is still a link; match it as written.
+    }
+    ;[clean] = splitSizeFragment(clean)
+    for (const c of [normPath(clean), joinPath(dirname(from), clean)]) {
+      if (unused.delete(c)) return
+      // Resolved, but to a note or to a file already accounted for. Either way
+      // the filename fallback below must not fire and claim a different file.
+      if (exists(c)) return
+    }
+    for (const p of byName.get(basename(clean).toLowerCase()) ?? []) unused.delete(p)
+  }
+
+  for (const e of notes.value) {
+    if (!unused.size) break
+    const text = files.get(e.path)?.text
+    if (!text) continue
+    const regions = codeRegions(text)
+    // Embeds and plain links alike: `[[logo.png]]` and `[the spec](spec.pdf)`
+    // are both a note using a file, whether or not it renders inline.
+    for (const l of scanWikiLinks(text, regions)) claim(l.target, e.path)
+    for (const l of scanMdLinks(text, regions)) claim(l.url, e.path)
+  }
+  return unused
+})
+
 /* ------------------------------------------------------------------ lookup */
 
 export function getEntry(path: string): NoteIndexEntry | undefined {
@@ -293,6 +358,7 @@ export async function initVault(): Promise<void> {
   const rows = await allFiles()
   files.clear()
   for (const f of rows) files.set(f.path, f)
+  loadDeviceRecords(rows)
   reindexAll()
   ready.value = true
   bump()
@@ -303,15 +369,40 @@ export async function initVault(): Promise<void> {
  * these are not marked dirty because the remote already has them.
  */
 export async function installFromRemote(list: VaultFile[]): Promise<void> {
+  // Device files first: a note pulled in the same batch can then be credited to
+  // whoever pushed it, rather than to "somewhere else".
+  loadDeviceRecords(list)
   for (const f of list) {
     if (f.kind === 'note') {
-      await pushVersion({ path: f.path, at: f.mtime, text: f.text ?? '', hash: f.hash, reason: 'sync-pull' })
+      await pushVersion({
+        path: f.path,
+        at: f.mtime,
+        text: f.text ?? '',
+        hash: f.hash,
+        reason: 'sync-pull',
+        device: writerFor(f.path),
+      })
     }
     files.set(f.path, f)
   }
   await putFiles(list)
   for (const f of list) reindex(f.path)
   bump()
+}
+
+/**
+ * Write this device's entry in the write registry, if it has anything new to
+ * say, and return the path it wrote. Called by the sync engine either side of a
+ * run: once so anything left over goes up with this run, once so this run's
+ * writes are durable — and the second call hands the path back so the engine
+ * can push it immediately rather than leaving attribution a run behind.
+ */
+export async function persistDeviceRegistry(): Promise<string | undefined> {
+  const rec = pendingDeviceRecord()
+  if (!rec) return undefined
+  const name = `devices/${rec.id}.json`
+  await writeBackstage(name, rec)
+  return joinPath(BACKSTAGE, name)
 }
 
 /** Sync-engine hook: record that a file is now in agreement with the remote. */
@@ -397,7 +488,14 @@ export async function saveNote(path: string, text: string): Promise<void> {
   if (f.text === text) return
   const hash = await hashText(text)
   if (hash === f.hash) return
-  await pushVersion({ path, at: Date.now(), text: f.text ?? '', hash: f.hash, reason: 'edit' })
+  await pushVersion({
+    path,
+    at: Date.now(),
+    text: f.text ?? '',
+    hash: f.hash,
+    reason: 'edit',
+    device: localDeviceName(),
+  })
   const next: VaultFile = {
     ...f,
     text,
@@ -481,6 +579,117 @@ async function rewriteLinksTo(oldTitle: string, newTitle: string): Promise<void>
 }
 
 /**
+ * Rename an attachment, repointing every note that used it.
+ *
+ * A file's name is part of how a note reads — `![[receipt-2026-08.pdf]]` says
+ * something `![[IMG_0421.pdf]]` does not — so renaming has to be as safe as
+ * renaming a note is. Every reference is rewritten in the shape it was written
+ * in: a bare filename stays a bare filename, a path relative to the note stays
+ * relative, and a full vault path stays full. Anything else would work but
+ * would quietly rewrite how someone had chosen to link.
+ */
+export async function renameAttachment(path: string, newName: string): Promise<string> {
+  const f = files.get(path)
+  if (!f || f.kind !== 'attachment') return path
+  const dir = dirname(path)
+  const ext = extname(path)
+  let name = safeSegment(newName.trim())
+  if (!name) return path
+  // Typing a name without its extension is the normal case; keep the old one
+  // rather than producing a file the OS no longer knows how to open.
+  if (!extname(name) && ext) name = `${name}${ext}`
+
+  let dest = joinPath(dir, name)
+  let n = 2
+  while (files.has(dest) && dest !== path) {
+    const dot = name.lastIndexOf('.')
+    dest = joinPath(dir, dot > 0 ? `${name.slice(0, dot)} ${n++}${name.slice(dot)}` : `${name} ${n++}`)
+  }
+  if (dest === path) return path
+
+  // Rewrite while the old file is still in place, so references still resolve.
+  await repointReferences(path, dest)
+  await movePath(path, dest)
+  return dest
+}
+
+/** Rewrite every reference to `from` so it points at `to`. */
+async function repointReferences(from: string, to: string): Promise<void> {
+  const touched: VaultFile[] = []
+
+  for (const e of notes.value) {
+    const f = files.get(e.path)
+    if (!f?.text) continue
+    const regions = codeRegions(f.text)
+    interface Rewrite {
+      from: number
+      to: number
+      insert: string
+    }
+    const edits: Rewrite[] = []
+
+    /** The new reference, written the way the old one was. */
+    const reshape = (ref: string): string | undefined => {
+      let clean = ref.trim()
+      if (!clean || /^[a-z]+:/i.test(clean)) return undefined
+      let decoded = clean
+      try {
+        decoded = decodeURI(clean)
+      } catch {
+        /* a half-encoded link is matched as written */
+      }
+      const [bare] = splitSizeFragment(decoded)
+      if (normPath(bare) === from) return to
+      const noteDir = dirname(e.path)
+      if (noteDir && joinPath(noteDir, bare) === from) {
+        return to.startsWith(`${noteDir}/`) ? to.slice(noteDir.length + 1) : to
+      }
+      if (basename(bare).toLowerCase() === basename(from).toLowerCase() && resolveEmbed(bare, e.path) === from)
+        return basename(to)
+      return undefined
+    }
+
+    for (const l of scanWikiLinks(f.text, regions)) {
+      const next = reshape(l.target)
+      if (next === undefined) continue
+      const inner = [next, l.anchor ? `#${l.anchor}` : '', l.alias !== undefined ? `|${l.alias}` : ''].join('')
+      edits.push({ from: l.from, to: l.to, insert: `${l.embed ? '!' : ''}[[${inner}]]` })
+    }
+    for (const l of scanMdLinks(f.text, regions)) {
+      const [, width] = splitSizeFragment(l.url)
+      const next = reshape(l.url)
+      if (next === undefined) continue
+      // Spaces have to be encoded or the parens close the link early.
+      const url = encodeURI(next) + (width ? `#w=${width}` : '')
+      edits.push({ from: l.urlFrom, to: l.urlTo, insert: url })
+    }
+    if (!edits.length) continue
+
+    // Right to left, so earlier offsets stay valid.
+    let text = f.text
+    for (const ed of edits.sort((a, b) => b.from - a.from)) {
+      text = `${text.slice(0, ed.from)}${ed.insert}${text.slice(ed.to)}`
+    }
+    const next: VaultFile = {
+      ...f,
+      text,
+      hash: await hashText(text),
+      size: text.length,
+      mtime: Date.now(),
+      dirty: true,
+    }
+    files.set(f.path, next)
+    touched.push(next)
+  }
+
+  if (touched.length) {
+    await putFiles(touched)
+    for (const f of touched) reindex(f.path)
+    bump()
+  }
+}
+
+/**
  * Soft-delete. The file is moved to backstage/trash rather than removed, so a
  * delete is always recoverable and never races a concurrent edit on another
  * device into data loss.
@@ -489,7 +698,14 @@ export async function deleteNote(path: string): Promise<void> {
   const f = files.get(path)
   if (!f) return
   if (f.kind === 'note') {
-    await pushVersion({ path, at: Date.now(), text: f.text ?? '', hash: f.hash, reason: 'delete' })
+    await pushVersion({
+      path,
+      at: Date.now(),
+      text: f.text ?? '',
+      hash: f.hash,
+      reason: 'delete',
+      device: localDeviceName(),
+    })
   }
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
   let dest = joinPath(TRASH, `${stamp}--${basename(path)}`)
@@ -499,7 +715,7 @@ export async function deleteNote(path: string): Promise<void> {
 }
 
 export async function restoreFromTrash(trashPath: string, to?: string): Promise<string> {
-  const name = basename(trashPath).replace(/^\d{4}-\d{2}-\d{2}T[\d-]+--(?:\d+--)?/, '')
+  const name = trashDisplayName(trashPath)
   let dest = to ?? name
   let n = 2
   while (files.has(dest)) {
@@ -508,6 +724,27 @@ export async function restoreFromTrash(trashPath: string, to?: string): Promise<
   }
   await movePath(trashPath, dest)
   return dest
+}
+
+/**
+ * Soft-delete any vault file. Attachments go the same way notes do — into
+ * `backstage/trash/`, recoverable, and only really gone once you say so.
+ */
+export async function deleteFile(path: string): Promise<void> {
+  return deleteNote(path)
+}
+
+/** True for anything sitting in Recently Deleted. */
+export function isTrashed(path: string): boolean {
+  return path.startsWith(`${TRASH}/`)
+}
+
+/**
+ * What a trashed file was called. The timestamp that makes its trash path
+ * unique is bookkeeping, not part of the name anyone gave it.
+ */
+export function trashDisplayName(path: string): string {
+  return basename(path).replace(/^\d{4}-\d{2}-\d{2}T[\d-]+--(?:\d+--)?/, '')
 }
 
 export function trashItems(): VaultFile[] {

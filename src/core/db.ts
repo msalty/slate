@@ -19,6 +19,12 @@ export interface Version {
   hash: string
   /** What produced this version, shown in the history list. */
   reason: 'edit' | 'sync-pull' | 'conflict-merge' | 'delete' | 'import'
+  /**
+   * Name of the device this text came from — this one for a local edit, the
+   * device that pushed it for anything pulled. Absent on versions recorded
+   * before attribution existed, and on a pull whose author is not yet known.
+   */
+  device?: string
 }
 
 interface SlateDB extends DBSchema {

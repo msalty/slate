@@ -8,7 +8,13 @@
  */
 
 import { attachments, createNote, notes, tasks, trashItems, unresolvedLinks } from '../core/vault'
-import { smartFolderList, smartFolderCounts, folderTree, type FolderNode } from '../core/folders'
+import {
+  smartFolderById,
+  smartFolderList,
+  smartFolderCounts,
+  folderTree,
+  type FolderNode,
+} from '../core/folders'
 import { settings } from '../core/settings'
 import { status, sync } from '../core/sync'
 import {
@@ -277,9 +283,17 @@ export function MobileMore() {
 export function MobileScopeBar() {
   const s = scope.value
   if (s.kind === 'all') return null
+  // A Tag Folder is a saved rule, and the phone had nowhere to see or change
+  // that rule: the sidebar it lives in on a desktop isn't on screen here.
+  const folder = s.kind === 'smart' ? smartFolderById(s.id) : undefined
   return (
     <div class="scope-bar">
       <span>{scopeLabel(s)}</span>
+      {folder && (
+        <button onClick={() => openTagFolderDialog(folder)} aria-label={`Edit ${folder.name}`}>
+          Edit
+        </button>
+      )}
       <button
         onClick={() => {
           scope.value = { kind: 'all' }

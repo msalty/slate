@@ -23,15 +23,20 @@ import {
   formatSnapshot,
 } from '../editor/format'
 import type { EditorView } from '@codemirror/view'
+import { applyTableOp, insertTable, tableContext } from '../editor/table'
+import { editLinkAtCaret } from './linkActions'
+import { openMenu, type MenuItem } from './Menu'
 import {
   IconCode,
   IconHighlight,
   IconIndent,
+  IconLink,
   IconListBullet,
   IconListCheck,
   IconListNumber,
   IconOutdent,
   IconQuote,
+  IconTable,
 } from './Icons'
 
 const STYLES: Array<{ id: BlockStyle; label: string; hint: string }> = [
@@ -64,6 +69,9 @@ export interface FormatBarProps {
 
 export function FormatBar({ getView, variant }: FormatBarProps) {
   const f = formatSnapshot.value
+  // Where the table buttons would act: the caret's table in live preview, or
+  // the cell being typed in when the table is rendered.
+  const table = f.table ?? tableContext.value
 
   /**
    * Wire a button to a command without stealing the selection.
@@ -74,6 +82,28 @@ export function FormatBar({ getView, variant }: FormatBarProps) {
    * `touchstart` also stops the browser synthesising the mouse events after it,
    * which is what keeps a single tap from running the command twice.
    */
+  /**
+   * Wire a button that *opens* something — a dialog, a menu — rather than
+   * acting at once.
+   *
+   * It has to happen on the click, not the press. These overlays put a scrim
+   * over the screen the moment they open, and a scrim that appears between a
+   * mousedown and its click swallows that click and closes itself again. The
+   * press is still cancelled, so the editor keeps its selection and a table
+   * cell keeps its focus while the menu decides what it is acting on.
+   */
+  const opens = (fn: (at: { clientX: number; clientY: number }) => void) => ({
+    onMouseDown: (e: MouseEvent) => e.preventDefault(),
+    onClick: (e: MouseEvent) => fn(e),
+    onTouchStart: (e: TouchEvent) => {
+      // Cancelling touchstart also cancels the click the browser would
+      // synthesise from it, so this is the only handler that runs on touch.
+      e.preventDefault()
+      const t = e.touches[0]
+      fn({ clientX: t?.clientX ?? 0, clientY: t?.clientY ?? 0 })
+    },
+  })
+
   const act = (cmd: (view: EditorView) => boolean) => {
     const handler = (e: Event) => {
       e.preventDefault()
@@ -121,6 +151,44 @@ export function FormatBar({ getView, variant }: FormatBarProps) {
     </div>
   )
 
+  /**
+   * Table controls.
+   *
+   * Outside a table the button inserts one. Inside, it opens the operations as
+   * a menu — which is a popover with a pointer and a bottom sheet on a phone,
+   * so "add a column" is the same two taps on either, and the bar does not have
+   * to find room for seven more targets it only sometimes needs.
+   */
+  const tableMenu = (e: { clientX: number; clientY: number }) => {
+    const view = getView()
+    if (!view) return
+    if (!table) {
+      insertTable(view)
+      return
+    }
+    const op = (label: string, id: Parameters<typeof applyTableOp>[1], danger = false): MenuItem => ({
+      label,
+      danger,
+      onSelect: () => {
+        const v = getView()
+        if (v) applyTableOp(v, id)
+      },
+    })
+    openMenu(
+      e,
+      [
+        op('Insert row above', 'row-above'),
+        op('Insert row below', 'row-below'),
+        op('Insert column left', 'col-left'),
+        op('Insert column right', 'col-right'),
+        op('Delete row', 'row-delete', true),
+        op('Delete column', 'col-delete', true),
+        op('Delete table', 'delete', true),
+      ].map((item, i) => (i === 4 ? { ...item, separated: true } : item)),
+      `Table · row ${table.row + 1} of ${table.rows}, column ${table.col + 1} of ${table.cols}`,
+    )
+  }
+
   const listRow = (
     <div class="fmt-row" role="group" aria-label="Lists and indentation">
       {LISTS.map((l) => (
@@ -167,6 +235,34 @@ export function FormatBar({ getView, variant }: FormatBarProps) {
     </div>
   )
 
+  /*
+   * Link and table sit together: both are things you *insert* rather than
+   * styling you toggle, and both open something rather than acting at once.
+   * They keep the editor's selection the same way every other button does.
+   */
+  const insertRow = (
+    <div class="fmt-row" role="group" aria-label="Insert">
+      <button
+        class="fmt-btn"
+        title="Link (⌘⇧L)"
+        aria-label={f.link ? 'Edit link' : 'Add link'}
+        aria-pressed={f.link}
+        {...opens(() => editLinkAtCaret(getView()))}
+      >
+        <IconLink size={18} />
+      </button>
+      <button
+        class="fmt-btn"
+        title={table ? 'Table rows and columns' : 'Insert table'}
+        aria-label={table ? 'Table rows and columns' : 'Insert table'}
+        aria-pressed={!!table}
+        {...opens(tableMenu)}
+      >
+        <IconTable size={18} />
+      </button>
+    </div>
+  )
+
   if (variant === 'sheet') {
     /*
      * No title bar: the sheet is three rows of controls that explain
@@ -178,7 +274,10 @@ export function FormatBar({ getView, variant }: FormatBarProps) {
       <div class="fmt-sheet" role="group" aria-label="Format">
         {styleRow}
         {markRow}
-        {listRow}
+        <div class="fmt-row fmt-row-split">
+          {listRow}
+          {insertRow}
+        </div>
       </div>
     )
   }
@@ -190,6 +289,8 @@ export function FormatBar({ getView, variant }: FormatBarProps) {
       {markRow}
       <span class="fmt-sep" />
       {listRow}
+      <span class="fmt-sep" />
+      {insertRow}
     </div>
   )
 }

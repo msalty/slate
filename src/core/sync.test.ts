@@ -15,6 +15,7 @@ type Device = {
   name: string
   vault: typeof import('./vault')
   sync: typeof import('./sync')
+  db: typeof import('./db')
 }
 
 let seq = 0
@@ -24,10 +25,15 @@ async function makeDevice(server: MemoryServer, name: string): Promise<Device> {
   ;(globalThis as { __SLATE_DB__?: string }).__SLATE_DB__ = `slate-test-${name}-${seq}`
   const vault = await import('./vault')
   const syncMod = await import('./sync')
+  const devices = await import('./devices')
+  const db = await import('./db')
+  // Real boot order: identity first, so the vault's device records land in the
+  // right place.
+  devices.setLocalDevice(`id-${name}`, name)
   await vault.initVault()
   syncMod.setAdapter(new MemoryAdapter(server))
   syncMod.setDeviceLabel(name)
-  return { name, vault, sync: syncMod }
+  return { name, vault, sync: syncMod, db }
 }
 
 /** Re-enter a device's modules (each device keeps its own module instances). */
@@ -374,5 +380,64 @@ describe('sync round trips', () => {
     const remote = (await server.readText(p))!
     expect(remote).toContain('remote addition')
     expect(remote).toContain('local addition')
+  })
+})
+
+describe('device attribution', () => {
+  it('credits a pulled change to the device that pushed it', async () => {
+    const server = new MemoryServer()
+    const a = await makeDevice(server, 'mac')
+    const p = await a.vault.createNote('', 'Trip', 'Flights booked.\n')
+    // One run: the note and the record of who pushed it go up together.
+    await run(a)
+    expect(a.vault.getRaw('backstage/devices/id-mac.json')?.dirty).toBe(false)
+
+    const b = await makeDevice(server, 'phone')
+    await run(b)
+
+    const pulled = (await b.db.versionsFor(p)).find((v) => v.reason === 'sync-pull')
+    expect(pulled?.device).toBe('mac')
+  })
+
+  it('names this device on a local edit', async () => {
+    const server = new MemoryServer()
+    const a = await makeDevice(server, 'mac')
+    const p = await a.vault.createNote('', 'Trip', 'one\n')
+    await a.vault.saveNote(p, 'two\n')
+
+    const edit = (await a.db.versionsFor(p)).find((v) => v.reason === 'edit')
+    expect(edit?.device).toBe('mac')
+  })
+
+  it('keeps one registry file per device, so two devices never collide', async () => {
+    const server = new MemoryServer()
+    const a = await makeDevice(server, 'mac')
+    const b = await makeDevice(server, 'phone')
+    await a.vault.createNote('', 'From the mac', 'a\n')
+    await run(a)
+    await b.vault.createNote('', 'From the phone', 'b\n')
+    await run(b)
+
+    const registries = [...server.files.keys()].filter((k) => k.startsWith('backstage/devices/'))
+    expect(registries.sort()).toEqual([
+      'backstage/devices/id-mac.json',
+      'backstage/devices/id-phone.json',
+    ])
+
+    // And neither device's file is ever marked dirty on the other one.
+    await run(a)
+    expect(a.vault.getRaw('backstage/devices/id-phone.json')?.dirty).toBe(false)
+  })
+
+  it('says nothing rather than guessing when the writer is unknown', async () => {
+    const server = new MemoryServer()
+    const b = await makeDevice(server, 'phone')
+    // Straight onto the server, by nobody in particular.
+    server.writeText('Orphan.md', 'who wrote this\n')
+    await run(b)
+
+    const pulled = (await b.db.versionsFor('Orphan.md')).find((v) => v.reason === 'sync-pull')
+    expect(pulled).toBeDefined()
+    expect(pulled?.device).toBeUndefined()
   })
 })
