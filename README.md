@@ -76,7 +76,10 @@ there is no right-click and the address is hidden behind the label, a tap
 offers the same three. That tap is handled as a tap rather than as the mouse
 events a phone invents from one afterwards — they arrive too late to keep the
 caret out of the text, and the click trailing them would land on the menu the
-tap just opened. `javascript:` and `data:` are never opened: a note that syncs
+tap just opened. Installed on an iOS Home Screen, a web link is handed to the
+system rather than opened in a window of its own: there is no tab to put one in,
+so `window.open` there opens an empty view inside the app and leaves it behind
+for you to dismiss. `javascript:` and `data:` are never opened: a note that syncs
 from a shared vault is untrusted input.
 
 **Linking.** `[[Note Title]]` links notes to each other. Typing `[[` opens an

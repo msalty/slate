@@ -554,6 +554,66 @@ try {
     check(`clicking "${word}" puts the caret in that word`, landed.ok, landed.detail)
   }
 
+  /* ---- following a link with a pointer -----------------------------------
+   * The desktop half of the phone tests further down. One plain click opens
+   * the link and the caret stays out of the text — a click that lands in the
+   * middle of a link's own markdown instead of following it is the failure
+   * this guards, and it is invisible to every other check here because the
+   * note still renders perfectly while it happens.
+   *
+   * `window.open` is stubbed rather than let through: a real new tab would
+   * take focus away from the page and strand the rest of the suite.
+   */
+  const armLinkTrap = () =>
+    page.evaluate(() => {
+      window.__opened = []
+      window.open = (url) => {
+        window.__opened.push(url)
+        return null
+      }
+      // A link in a rendered table cell is a real anchor. One that reaches the
+      // document still unprevented is one the browser would follow itself, on
+      // top of whatever the app already did with it.
+      window.__followed = []
+      window.__linkTrap = (e) => {
+        const a = e.target?.closest?.('a[href]')
+        if (!a) return
+        if (!e.defaultPrevented) window.__followed.push(a.href)
+        e.preventDefault()
+      }
+      document.addEventListener('click', window.__linkTrap)
+    })
+  const linkTrapResult = () => page.evaluate(() => ({ opened: window.__opened, followed: window.__followed }))
+
+  await armLinkTrap()
+  const bodyLink = page.locator('.cm-uri').first()
+  await bodyLink.scrollIntoViewIfNeeded()
+  const beforeLinkClick = await page.locator('.cm-content').innerText()
+  await bodyLink.click()
+  await page.waitForTimeout(250)
+  const clicked = await linkTrapResult()
+  check(
+    'clicking a link with a pointer opens it',
+    clicked.opened.length === 1 && clicked.opened[0] === 'https://example.com',
+    clicked.opened.join(',') || 'nothing opened',
+  )
+  check(
+    'and leaves the caret out of the link text',
+    (await page.locator('.cm-content').innerText()) === beforeLinkClick,
+  )
+
+  // Right-click is the desktop way to reach a link's own text, since one plain
+  // click is spent on opening it.
+  await bodyLink.click({ button: 'right' })
+  await page.waitForTimeout(300)
+  check('right-click on a link offers what to do with it', (await page.locator('.menu').count()) === 1)
+  check(
+    'including editing it',
+    (await page.locator('.menu-item:has-text("Edit link")').count()) === 1,
+  )
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(200)
+
   /*
    * Clicking a table in rich text puts the caret in the cell, not in the
    * pipes: the rendered table *is* the editor there. (Live preview's
@@ -744,6 +804,26 @@ try {
   const cellText = (await page.locator('.cm-table-render').innerText()).replace(/\s+/g, ' ')
   check('no raw markdown leaks into cells', !/\*\*|~~|`/.test(cellText), cellText.slice(0, 70))
   check('an escaped pipe stays one cell', cellText.includes('a | b'), cellText.slice(0, 70))
+
+  /*
+   * A link in a cell is the one link in a note that is a real anchor, so it is
+   * the one that can be opened twice: once by the app, and once by the browser
+   * following it afterwards.
+   */
+  await armLinkTrap()
+  await page.locator('.cm-table-render a[href^="https"]').first().click()
+  await page.waitForTimeout(250)
+  const cellClicked = await linkTrapResult()
+  check(
+    'a link in a table cell opens',
+    cellClicked.opened.length === 1,
+    `${cellClicked.opened.length} opened`,
+  )
+  check(
+    'and the browser is not left to open it a second time',
+    cellClicked.followed.length === 0,
+    cellClicked.followed.join(','),
+  )
 
   /* ---- typing straight into a rendered table ---------------------------
    * Rich text never shows the pipes, so the cells have to be the editor: each
@@ -1376,6 +1456,55 @@ try {
   check('the choice includes opening it', (await page.locator('.menu-item:has-text("Open link")').count()) === 1)
   check('and editing it', (await page.locator('.menu-item:has-text("Edit link")').count()) === 1)
   await page.screenshot({ path: join(SHOTS, '20-phone-link-tap.png') })
+
+  /* ---- opening it from a Home Screen app ---------------------------------
+   * A web app installed on iOS has no tab to open a link in, so `window.open`
+   * there opens an empty view *inside the app*, hands the URL to Safari, and
+   * leaves that blank page behind for you to dismiss when you come back.
+   * Navigating instead hands the address straight to the platform, which opens
+   * it in the browser because it is outside the app's scope — and leaves
+   * nothing behind, because nothing was opened.
+   *
+   * iOS reports itself through `navigator.standalone`, faked here; the
+   * navigation is caught at the network layer so the suite is not carried off
+   * to example.com.
+   */
+  const navigations = []
+  await page.route(
+    (url) => url.hostname === 'example.com',
+    (route) => {
+      navigations.push(route.request().url())
+      // 204 rather than abort: a No Content reply leaves the page exactly where
+      // it was, which is the closest a desktop browser gets to what iOS does
+      // here — hand the address off and carry on. An aborted navigation would
+      // replace the app with an error page and take the rest of the run with it.
+      route.fulfill({ status: 204 })
+    },
+  )
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'standalone', { value: true, configurable: true })
+    window.__opened = []
+    window.open = (url) => {
+      window.__opened.push(url)
+      return null
+    }
+  })
+  await page.locator('.menu-item:has-text("Open link")').click()
+  await page.waitForTimeout(600)
+  const homeScreen = await page.evaluate(() => window.__opened ?? [])
+  check(
+    'an installed iOS app opens a link by navigating to it',
+    navigations.length === 1,
+    navigations.join(',') || 'no navigation attempted',
+  )
+  check(
+    'and never through the blank page window.open leaves behind',
+    homeScreen.length === 0,
+    homeScreen.join(','),
+  )
+  check('the app itself is still up', (await page.locator('.cm-content').count()) === 1)
+  await page.unroute((url) => url.hostname === 'example.com')
+
   if (await page.locator('.menu-cancel').count()) {
     await page.locator('.menu-cancel').click()
     await page.waitForTimeout(250)
