@@ -65,9 +65,16 @@ export default defineConfig({
          * them, and Android will too once it can. This is only about the one
          * value Android freezes at install.
          *
-         * Changing anything in this manifest needs a PWA reinstall to take
-         * effect; Chrome's own manifest-update path is lazy (it waits for every
-         * window to close, plus power and Wi-Fi).
+         * Changing anything in this manifest needs the app *uninstalled from
+         * the launcher and installed again*. Nothing short of that does it:
+         * Chrome bakes these values into the WebAPK when the package is
+         * minted, and that package sits underneath everything the web layer
+         * can reach — the app's own Settings → Reinstall clears service
+         * workers and Cache Storage and does not touch it, and Chrome's
+         * background manifest-update path is lazy (it waits for every window
+         * to close, plus power and Wi-Fi). A manifest edit verified as live on
+         * the server can therefore be invisible on the phone indefinitely,
+         * which is exactly how this one wasted several rounds of debugging.
          *
          * `undefined` rather than simply leaving the key out, and it has to
          * stay that way: vite-plugin-pwa merges what it is given over its own
@@ -85,18 +92,21 @@ export default defineConfig({
          * Undefined for the same reason, and by the same mechanism — the
          * plugin's default here is '#ffffff'.
          *
-         * Removing theme_color alone did not free the status bar: it stayed
-         * #1c1c1e in every theme, which is exactly the value that was still
-         * sitting in background_color. The nav bar at the other end of the
-         * screen provably follows the page's own background (that is what
-         * fixed it), so the guess this encodes is that Chrome's fallback for
-         * the strip at the top runs theme_color → background_color → the page,
-         * and that clearing both hands it to the page like the bottom.
+         * Honest history, because the comment that used to sit here was wrong
+         * and someone will otherwise build on it: this was removed on the
+         * theory that Chrome's status bar falls back theme_color →
+         * background_color → the page, because dropping theme_color alone
+         * appeared to change nothing and #1c1c1e was the one colour left. That
+         * theory was never actually tested. The device was reading a stale
+         * WebAPK the whole time (see the note below), so *no* manifest change
+         * had reached it — including the one that eventually fixed this.
          *
-         * The cost if that guess is right is the splash: with no colour of its
-         * own it takes Chrome's default rather than the app's dark. That is a
-         * flash at launch, against a seam that is on screen the whole time the
-         * app is open.
+         * What is known: with both cleared and the package genuinely
+         * reinstalled, the status bar follows the theme. Whether restoring
+         * background_color alone would keep that is untested. It only paints
+         * the splash, so restoring it would buy back the dark launch screen —
+         * at the price of another uninstall/reinstall to find out, and a
+         * regression if the fallback theory turns out to be right after all.
          */
         background_color: undefined,
         display: 'standalone',
