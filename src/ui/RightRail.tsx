@@ -7,9 +7,10 @@
  */
 
 import { getEntry, notesByDay, notesOnDay, tasks, toggleTask } from '../core/vault'
+import { dailyNoteFor } from '../core/daily'
 import { startOfDay, ymd } from '../core/util'
-import { calendarMonth, openNote, scope, selectedDay } from './state'
-import { IconCalendar, IconCheck, IconChevronLeft, IconChevronRight } from './Icons'
+import { calendarMonth, openDailyNote, openNote, scope, selectedDay } from './state'
+import { IconCalendar, IconCheck, IconChevronLeft, IconChevronRight, IconPlus } from './Icons'
 
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
@@ -110,6 +111,12 @@ export function CalendarPanel({ big = false }: { big?: boolean }) {
 export function DayNotesPanel() {
   const day = scope.value.kind === 'day' ? startOfDay(scope.value.date) : selectedDay.value
   const list = notesOnDay(day)
+  /*
+   * The offer is only made when the day hasn't got one. Once it has, the note
+   * is already sitting in the list above, and a second way in from the same
+   * panel would either open it twice or, worse, make a "2" copy.
+   */
+  const hasDaily = dailyNoteFor(day) !== undefined
   return (
     <div class="rail-section">
       <h3>
@@ -126,6 +133,16 @@ export function DayNotesPanel() {
             {n.title}
           </button>
         ))
+      )}
+      {!hasDaily && (
+        <button
+          class="day-create-row"
+          onClick={() => void openDailyNote(day)}
+          title={`Create ${ymd(day)}.md in the Daily folder`}
+        >
+          <IconPlus size={12} />
+          Create daily note
+        </button>
       )}
     </div>
   )

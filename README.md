@@ -18,8 +18,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 92 unit and two-device sync tests
-node scripts/smoke.mjs # 139-check browser smoke test against dist/
+npm test               # 165 unit and two-device sync tests
+node scripts/smoke.mjs # 150-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -153,9 +153,13 @@ device.
 
 **Calendar and tasks.** An optional right column (⌘⇧R) shows a month calendar
 with a dot per note, filed by frontmatter `date:`, a `YYYY-MM-DD` filename, or
-creation time. Click a day to filter the list. Below it, every `- [ ]` in the
-vault is rolled up into one task list, with due dates from `📅 2026-09-04`,
-`@due(...)` or `due:...`. Ticking a box there edits the source note.
+creation time. Click a day to filter the list. Any day without a daily note
+offers to make one — **Create daily note**, at the top of that day's list and
+under the day in the rail — which writes `Daily/YYYY-MM-DD.md` and opens it, so
+Thursday's note can be started on Saturday and still lands on Thursday. Below
+it, every `- [ ]` in the vault is rolled up into one task list, with due dates
+from `📅 2026-09-04`, `@due(...)` or `due:...`. Ticking a box there edits the
+source note.
 
 **One layout that doesn't jump.** Three modes — phone, mid-size, wide — chosen
 explicitly rather than by CSS reacting to width on its own. The editor holds a
@@ -597,8 +601,9 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 
 ## Ideas worth considering next
 
-- **Daily notes with a template.** The palette already has "Open today's note";
-  a configurable template and a keyboard shortcut would make it a habit.
+- **A daily note template.** Any day can be given one now, from the calendar or
+  the palette, but every one of them starts as an empty `# 2026-09-04`; a
+  configurable template and a keyboard shortcut would make it a habit.
 - **A graph or "related notes" view**, built on the backlink map that already
   exists.
 - **Publish a note** as a read-only shared link, straight from the adapter.
@@ -614,8 +619,8 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 92 unit + two-device sync tests
-node scripts/smoke.mjs  # 139 checks in headless Chromium against dist/
+npm test                # 165 unit + two-device sync tests
+node scripts/smoke.mjs  # 150 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

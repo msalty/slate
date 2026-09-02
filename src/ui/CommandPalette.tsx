@@ -8,18 +8,20 @@
 
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { createNote, notes, search } from '../core/vault'
+import { dailyNoteFor } from '../core/daily'
 import { sync } from '../core/sync'
 import { settings, update } from '../core/settings'
 import {
   editorModeLabel,
   nextEditorMode,
   notify,
+  openDailyNote,
   openNote,
   paletteOpen,
   scope,
   settingsOpen,
 } from './state'
-import { relativeTime } from '../core/util'
+import { relativeTime, startOfDay } from '../core/util'
 
 interface Cmd {
   id: string
@@ -42,6 +44,9 @@ export function CommandPalette() {
     }
   }, [open])
 
+  // The day the calendar is filtered to, if it is filtered to one at all.
+  const day = scope.value.kind === 'day' ? startOfDay(scope.value.date) : undefined
+
   const commands = useMemo<Cmd[]>(
     () => [
       {
@@ -55,12 +60,20 @@ export function CommandPalette() {
       {
         id: 'daily',
         label: "Open today's note",
-        run: async () => {
-          const title = new Date().toISOString().slice(0, 10)
-          const hit = notes.value.find((n) => n.title === title)
-          openNote(hit ? hit.path : await createNote('Daily', title, `# ${title}\n\n`))
-        },
+        run: () => openDailyNote(startOfDay(Date.now())),
       },
+      // Any other day is reachable too, once the calendar is on it.
+      ...(day !== undefined && day !== startOfDay(Date.now())
+        ? [
+            {
+              id: 'daily-day',
+              label: `${dailyNoteFor(day) ? 'Open' : 'Create'} the daily note for ${new Date(
+                day,
+              ).toLocaleDateString(undefined, { month: 'long', day: 'numeric' })}`,
+              run: () => openDailyNote(day),
+            },
+          ]
+        : []),
       { id: 'sync', label: 'Sync now', hint: '⌘S', run: () => void sync().then(() => notify('Sync finished')) },
       { id: 'settings', label: 'Open settings', hint: '⌘,', run: () => (settingsOpen.value = true) },
       {
@@ -93,7 +106,7 @@ export function CommandPalette() {
       { id: 'trash', label: 'Show Recently Deleted', run: () => (scope.value = { kind: 'trash' }) },
       { id: 'files', label: 'Show all files', run: () => (scope.value = { kind: 'files' }) },
     ],
-    [settings.value],
+    [settings.value, day, notes.value],
   )
 
   const results = useMemo(() => {

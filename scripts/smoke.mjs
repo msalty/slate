@@ -273,6 +273,42 @@ try {
   await todayCell.click() // toggle back off
   await page.waitForTimeout(200)
 
+  /* ---- daily note for any day ------------------------------------------
+   * The palette has always been able to open today's note. This is the same
+   * note for any day you can point at, so it is checked on a day that is not
+   * today: pick an empty cell in this month, take the offer, and the note has
+   * to come back filed under that day rather than under the day it was made.
+   */
+  const otherDay = page.locator('.cal-day[data-outside="0"][data-today="0"]').first()
+  const otherLabel = await otherDay.getAttribute('aria-label')
+  await otherDay.click()
+  await page.waitForTimeout(300)
+  check('an empty day offers a daily note', (await page.locator('.list-pane .daily-row').count()) === 1, otherLabel)
+  check('the rail offers it too', (await page.locator('.rail .day-create-row').count()) === 1)
+  const dailyName = await page.locator('.list-pane .daily-row-name').innerText()
+  await page.locator('.list-pane .daily-row').click()
+  await page.waitForTimeout(500)
+  const dailyTitle = await page.locator('.editor-title-input').inputValue()
+  check(
+    'creating it opens a note named for that day',
+    `${dailyTitle}.md` === dailyName,
+    `${dailyTitle} vs ${dailyName}`,
+  )
+  check(
+    'the note is filed under the day it is named for',
+    (await page.locator('.list-pane .note-row').count()) === 1,
+    `${await page.locator('.list-pane .note-row').count()} notes on that day`,
+  )
+  check('the offer goes away once the day has one', (await page.locator('.daily-row, .day-create-row').count()) === 0)
+  await otherDay.click() // clear the day filter again
+  await page.waitForTimeout(200)
+  // Put the note the rest of the run works on back in the editor, and take
+  // focus back out of it — ⌘K is deliberately inert inside CodeMirror.
+  await page.locator('.note-row').filter({ hasText: 'Lisbon Trip' }).first().click()
+  await page.waitForTimeout(300)
+  await page.locator('.list-pane .pane-title').click()
+  await page.waitForTimeout(150)
+
   /* ---- command palette ----------------------------------------------- */
   await page.keyboard.press('Control+k')
   await page.waitForTimeout(300)

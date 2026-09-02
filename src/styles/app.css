@@ -1219,6 +1219,47 @@ body.resizing .pane-resizer::after {
   background: var(--row-hover);
 }
 
+/*
+ * "Create daily note", in the rail's day panel and at the top of a day's list.
+ * Both are the accent colour and neither is a note row: an action that makes a
+ * file should not look like a file that already exists.
+ */
+.day-create-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  margin-top: 2px;
+  padding: 5px 6px;
+  border-radius: 7px;
+  font-size: 13px;
+  color: var(--accent);
+}
+.day-create-row:hover {
+  background: var(--row-hover);
+}
+
+.daily-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 10px;
+  font-size: 13.5px;
+  color: var(--accent);
+  -webkit-tap-highlight-color: transparent;
+}
+.daily-row:hover {
+  background: var(--row-hover);
+}
+.daily-row-name {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
 /* ==========================================================================
    Status bar
    ========================================================================== */

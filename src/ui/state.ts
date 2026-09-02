@@ -9,6 +9,7 @@ import {
   attachments,
   unresolvedLinks,
 } from '../core/vault'
+import { dailyNoteFor, dailyNotePath } from '../core/daily'
 import { notesForSmartFolder, smartFolderById } from '../core/folders'
 import { settings } from '../core/settings'
 import type { NoteIndexEntry } from '../core/types'
@@ -83,6 +84,21 @@ export const mobileEditorOpen = signal(false)
 export function openNote(path: string) {
   activePath.value = path
   if (layoutMode.value === 'compact') mobileEditorOpen.value = true
+}
+
+/**
+ * Open a day's daily note, creating it if that day doesn't have one yet.
+ *
+ * The toast only appears on creation, and names the file: the note lands in
+ * `Daily/`, which is rarely the folder you were looking at when you asked for
+ * it, and a note that appears in a folder you cannot see is a note you think
+ * you have lost.
+ */
+export async function openDailyNote(day: number) {
+  const existed = dailyNoteFor(day) !== undefined
+  const path = await dailyNotePath(day)
+  openNote(path)
+  if (!existed) notify(`Created ${path}`)
 }
 
 export function closeMobileEditor() {

@@ -14,15 +14,17 @@ import {
   getEntry,
   trashDisplayName,
 } from '../core/vault'
+import { dailyNoteFor } from '../core/daily'
 import { setFrontmatterKey } from '../core/markdown'
 import { getRaw, saveNote } from '../core/vault'
 import type { NoteIndexEntry, VaultFile } from '../core/types'
-import { basename, formatBytes, mediaClass, relativeTime } from '../core/util'
+import { basename, formatBytes, mediaClass, relativeTime, startOfDay, ymd } from '../core/util'
 import {
   activePath,
   fileList,
   lightboxPath,
   notify,
+  openDailyNote,
   openNote,
   orphansOnly,
   query,
@@ -39,7 +41,7 @@ import { SwipeRow, type SwipeAction } from './SwipeRow'
 import { openPrompt } from './PromptDialog'
 import { layoutMode, toggleSidebar } from './layout'
 import { MobileScopeBar } from './Mobile'
-import { IconImage, IconNewNote, IconPin, IconSearch, IconSidebar, IconClose, IconDots } from './Icons'
+import { IconImage, IconNewNote, IconPin, IconPlus, IconSearch, IconSidebar, IconClose, IconDots } from './Icons'
 import { settings, update } from '../core/settings'
 
 /** First image embed in a note, used as the row thumbnail. */
@@ -176,6 +178,24 @@ function noteMenu(entry: NoteIndexEntry): MenuItem[] {
   ]
 }
 
+/**
+ * The one thing a day filter is missing: a way to write *about* that day.
+ *
+ * The palette has had "open today's note" all along, but only for today, and
+ * only if you know the palette. Sitting at the top of a day's list it reads as
+ * what it is — the note this day doesn't have yet — and it disappears the
+ * moment the day has one.
+ */
+function DailyNoteRow({ day }: { day: number }) {
+  return (
+    <button class="daily-row" onClick={() => void openDailyNote(day)}>
+      <IconPlus size={14} />
+      <span>Create daily note</span>
+      <span class="daily-row-name">{ymd(day)}.md</span>
+    </button>
+  )
+}
+
 export function NoteList({ children }: { children?: preact.ComponentChildren }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const s = scope.value
@@ -194,6 +214,12 @@ export function NoteList({ children }: { children?: preact.ComponentChildren }) 
     if (s.kind === 'tag') body = `#${s.tag}\n\n`
     openNote(await createNote(folder, 'Untitled', body))
   }
+
+  // The day a "create daily note" row would be for, when there isn't one yet.
+  const dayNeedingDaily =
+    s.kind === 'day' && !query.value && !dailyNoteFor(startOfDay(s.date))
+      ? startOfDay(s.date)
+      : undefined
 
   return (
     <div class="pane list-pane">
@@ -272,26 +298,34 @@ export function NoteList({ children }: { children?: preact.ComponentChildren }) 
         ) : s.kind === 'unlinked' && !query.value ? (
           <UnlinkedView />
         ) : visibleNotes.value.length === 0 ? (
-          <div class="empty">
-            {query.value ? (
-              <>No notes match “{query.value}”.</>
-            ) : (
-              <>
-                Nothing here yet.
-                <br />
-                Press ⌘N to start a note.
-              </>
-            )}
-          </div>
-        ) : (
-          sections.value.map((sec) => (
-            <div key={sec.title}>
-              {sec.title && <div class="section-label">{sec.title}</div>}
-              {sec.items.map((n) => (
-                <NoteRow key={n.path} entry={n} />
-              ))}
+          <>
+            {dayNeedingDaily !== undefined && <DailyNoteRow day={dayNeedingDaily} />}
+            <div class="empty">
+              {query.value ? (
+                <>No notes match “{query.value}”.</>
+              ) : s.kind === 'day' ? (
+                <>Nothing filed under this day yet.</>
+              ) : (
+                <>
+                  Nothing here yet.
+                  <br />
+                  Press ⌘N to start a note.
+                </>
+              )}
             </div>
-          ))
+          </>
+        ) : (
+          <>
+            {dayNeedingDaily !== undefined && <DailyNoteRow day={dayNeedingDaily} />}
+            {sections.value.map((sec) => (
+              <div key={sec.title}>
+                {sec.title && <div class="section-label">{sec.title}</div>}
+                {sec.items.map((n) => (
+                  <NoteRow key={n.path} entry={n} />
+                ))}
+              </div>
+            ))}
+          </>
         )}
       </div>
       {/* The pane's own resize handle, mounted by the shell. */}
