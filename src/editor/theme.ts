@@ -157,6 +157,19 @@ export const editorTheme = EditorView.theme({
     backgroundColor: 'var(--accent-soft)',
     boxShadow: 'inset 0 0 0 1.5px var(--accent)',
   },
+  /*
+   * The cell the toolbar is aimed at, while nothing is focused.
+   *
+   * On a phone the Format sheet only opens once the keyboard is down, so the
+   * cell being formatted has necessarily lost its focus ring — and a table you
+   * are adding a row to with no idea which row you are beside is a guess. The
+   * class is only on the editor while a cell really is the target, so this mark
+   * disappears the moment the note takes focus back.
+   */
+  '&.cm-rich.cm-cell-editing .cm-table-cell[data-armed="1"]': {
+    backgroundColor: 'var(--accent-soft)',
+    boxShadow: 'inset 0 0 0 1.5px var(--accent)',
+  },
   /* Inline markdown rendered into cells by the inline renderer. These need
      their own rules: they are widget DOM, so the editor's own syntax
      highlighting never reaches them. */

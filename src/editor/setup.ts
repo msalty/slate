@@ -43,7 +43,6 @@ import { codeLanguages } from './languages'
 import { editorTheme, highlighting } from './theme'
 import {
   livePreview,
-  linkClicks,
   previewMode,
   tableField,
   focusedField,
@@ -51,6 +50,7 @@ import {
   focusSeeder,
   interactedField,
 } from './livePreview'
+import { linkClicks } from './linkClicks'
 import {
   applyBlockStyle,
   applyIndent,
@@ -165,6 +165,31 @@ const formatWatcher = ViewPlugin.fromClass(
 )
 
 /**
+ * Mirrors "a table cell is what the toolbar acts on" onto the editor's DOM.
+ *
+ * Two pieces of CSS hang off the class: the editor's own caret is hidden, since
+ * it would be drawn at the edge of the table block where it means nothing, and
+ * the marked cell is shown. Driving it from the signal rather than from the
+ * cell's focus events is what keeps it right while the cell is *blurred* but
+ * still the target — which is the whole of formatting a table on a phone, where
+ * the Format sheet only opens once the keyboard has gone.
+ */
+const cellTargetWatcher = ViewPlugin.fromClass(
+  class {
+    private dispose: () => void
+    constructor(view: EditorView) {
+      this.dispose = focusedCell.subscribe((cell) =>
+        view.dom.classList.toggle('cm-cell-editing', !!cell),
+      )
+    }
+    destroy() {
+      this.dispose()
+      focusedCell.value = null
+    }
+  },
+)
+
+/**
  * The rendering extensions for a mode. Source mode gets none of them: the
  * buffer is the file, shown exactly as it will be written.
  */
@@ -184,6 +209,7 @@ export function previewExtensions(mode: EditorMode): Extension {
         previewMode.of('rich'),
         ...shared,
         formatWatcher,
+        cellTargetWatcher,
         /*
          * Typing in the note means you are no longer typing in a table cell.
          * The cell is its own editing host, so the editor taking focus is the

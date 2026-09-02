@@ -45,7 +45,7 @@ import {
   TableWidget,
   isDelimiterRow,
 } from './widgets'
-import { noteContext, requestOpenLink, requestUri } from './context'
+import { noteContext } from './context'
 import { normalizeUri, scanUris } from './links'
 import { resolveEmbed, resolveLink } from '../core/vault'
 import { revision } from '../core/vault'
@@ -776,54 +776,4 @@ export const tableField = StateField.define<DecorationSet>({
     EditorView.decorations.from(f),
     EditorView.atomicRanges.of((view) => view.state.field(f, false) ?? Decoration.none),
   ],
-})
-
-/** Click handling for wikilinks, hashtags and external links. */
-export const linkClicks = EditorView.domEventHandlers({
-  mousedown(event, view) {
-    const target = event.target as HTMLElement | null
-    const uri = target?.closest?.('[data-href]') as HTMLElement | null
-    if (uri) {
-      // Left button only: the right one belongs to the menu handler below,
-      // and the middle one to whatever the platform does with it.
-      if (event.button !== 0) return false
-      event.preventDefault()
-      requestUri(uri.dataset.href ?? '', {
-        x: event.clientX,
-        y: event.clientY,
-        pos: view.posAtDOM(uri),
-        via: 'click',
-      })
-      return true
-    }
-    const link = target?.closest?.('[data-wikilink]') as HTMLElement | null
-    if (link) {
-      event.preventDefault()
-      requestOpenLink(link.dataset.wikilink ?? '', link.dataset.exists === '1')
-      return true
-    }
-    const tag = target?.closest?.('[data-tag]') as HTMLElement | null
-    if (tag) {
-      event.preventDefault()
-      dispatchEvent(new CustomEvent('slate:open-tag', { detail: { tag: tag.dataset.tag } }))
-      return true
-    }
-    return false
-  },
-  /**
-   * Right-click on a link is the desktop way to reach its text: opening is one
-   * plain click, so the menu is where "edit this link" has to live.
-   */
-  contextmenu(event, view) {
-    const uri = (event.target as HTMLElement | null)?.closest?.('[data-href]') as HTMLElement | null
-    if (!uri) return false
-    event.preventDefault()
-    requestUri(uri.dataset.href ?? '', {
-      x: event.clientX,
-      y: event.clientY,
-      pos: view.posAtDOM(uri),
-      via: 'menu',
-    })
-    return true
-  },
 })

@@ -19,7 +19,7 @@ npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
 npm test               # 165 unit and two-device sync tests
-node scripts/smoke.mjs # 150-check browser smoke test against dist/
+node scripts/smoke.mjs # 172-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -45,7 +45,11 @@ so nothing is ever silently rewritten:
   to be typed into rather than in front of its own checkbox. The bar also
   inserts the two things markdown makes tedious by hand: a **link**, through a
   dialog with the words and the address as separate fields, and a **table**,
-  which then offers add/remove row and column from the same button.
+  which then offers add/remove row and column from the same button. A table cell
+  is typed into directly, and on a phone it stays outlined while the Format
+  sheet is up — the sheet only opens once the keyboard is down, so the cell has
+  necessarily lost its focus, and "add a row below" has to be beside a row you
+  can still see.
 - **Live preview** — formatting renders as you type, and the raw syntax
   reappears the moment your caret enters it.
 - **Markdown source** — the file, exactly as it is written.
@@ -64,8 +68,11 @@ note was created.
 renders as a link and opens in whatever program handles it. With a pointer a
 click opens and a right-click offers *Open · Copy · Edit*; on a phone, where
 there is no right-click and the address is hidden behind the label, a tap
-offers the same three. `javascript:` and `data:` are never opened: a note that
-syncs from a shared vault is untrusted input.
+offers the same three. That tap is handled as a tap rather than as the mouse
+events a phone invents from one afterwards — they arrive too late to keep the
+caret out of the text, and the click trailing them would land on the menu the
+tap just opened. `javascript:` and `data:` are never opened: a note that syncs
+from a shared vault is untrusted input.
 
 **Linking.** `[[Note Title]]` links notes to each other. Typing `[[` opens an
 autocomplete over every note; picking one that doesn't exist yet offers to create
@@ -545,6 +552,7 @@ src/
 ├─ editor/        CodeMirror 6: live preview, widgets, completion, paste
 │  ├─ format.ts     the formatting commands behind the rich-text bar
 │  ├─ links.ts      external URI recognition, opening and editing
+│  ├─ linkClicks.ts following a link from the text — clicks and taps alike
 │  ├─ table.ts      the pipe-table grid: parse, edit rows/columns, print
 │  ├─ inline.ts      inline markdown for text inside widgets (table cells)
 │  └─ pickImage.ts   camera / photo library / file insertion
@@ -620,7 +628,7 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 
 ```bash
 npm test                # 165 unit + two-device sync tests
-node scripts/smoke.mjs  # 150 checks in headless Chromium against dist/
+node scripts/smoke.mjs  # 172 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 
@@ -635,7 +643,10 @@ nothing else's content contained one. The table section asserts inline elements
 inside cells one by one — `strong`, `em`, `code`, `del`, a wikilink, a link, a
 tag — rather than eyeballing text, and the photo-insert section drives the real
 native file picker and checks the result was re-encoded, named and made
-resizable exactly like a paste.
+resizable exactly like a paste. The phone section formats a table from the
+Format sheet with real taps — the cell stays marked, the note stays put, and the
+keyboard stays down — and taps a link in both rendered modes, because a tap that
+only summons the keyboard is exactly what a synthesised click looks like.
 
 If Chromium isn't on the default path:
 

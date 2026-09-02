@@ -69,9 +69,16 @@ export interface FormatBarProps {
 
 export function FormatBar({ getView, variant }: FormatBarProps) {
   const f = formatSnapshot.value
-  // Where the table buttons would act: the caret's table in live preview, or
-  // the cell being typed in when the table is rendered.
-  const table = f.table ?? tableContext.value
+  /*
+   * Where the table buttons would act: the cell being worked in, and only
+   * otherwise the caret's table.
+   *
+   * The cell comes first for the same reason the commands themselves prefer it.
+   * Rich text never shows a table's source, so once an operation has run the
+   * caret is sitting wherever that rewrite parked it — inside the table, which
+   * would have this describing the header while the buttons act on row four.
+   */
+  const table = tableContext.value ?? f.table
 
   /**
    * Wire a button to a command without stealing the selection.
@@ -162,8 +169,15 @@ export function FormatBar({ getView, variant }: FormatBarProps) {
   const tableMenu = (e: { clientX: number; clientY: number }) => {
     const view = getView()
     if (!view) return
+    /*
+     * The sheet runs with the keyboard down, and every one of these edits
+     * rebuilds the table's DOM. Focusing a cell in the new one would bring the
+     * keyboard back up over the sheet, so on a phone the cell is marked instead
+     * and the next operation still lands on it.
+     */
+    const opts = { refocus: variant === 'bar' }
     if (!table) {
-      insertTable(view)
+      insertTable(view, opts)
       return
     }
     const op = (label: string, id: Parameters<typeof applyTableOp>[1], danger = false): MenuItem => ({
@@ -171,7 +185,7 @@ export function FormatBar({ getView, variant }: FormatBarProps) {
       danger,
       onSelect: () => {
         const v = getView()
-        if (v) applyTableOp(v, id)
+        if (v) applyTableOp(v, id, opts)
       },
     })
     openMenu(

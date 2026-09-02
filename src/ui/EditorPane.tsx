@@ -25,6 +25,7 @@ import {
   trashDisplayName,
 } from '../core/vault'
 import { activeEditor } from '../editor/context'
+import { focusedCell } from '../editor/table'
 import { rebaseBuffer } from '../core/rebase'
 import { settings, update } from '../core/settings'
 import { syncSoon } from '../core/sync'
@@ -177,21 +178,38 @@ export function EditorPane() {
   useEffect(() => {
     const view = viewRef.current
     if (!view || !compact || !formatSheetOpen.value) return
-    view.contentDOM.blur()
+    /*
+     * Whatever is being typed into has to give the keyboard up, and in a table
+     * that is a cell rather than the editor: a cell is its own editing host, so
+     * `contentDOM.blur()` does nothing to it and the keyboard would stay up
+     * under the sheet. The cell remains what the buttons act on after it
+     * blurs — it is marked, not forgotten.
+     */
+    const active = document.activeElement
+    if (active instanceof HTMLElement && view.dom.contains(active)) active.blur()
+    else view.contentDOM.blur()
     // The pane is shorter now the sheet is in it; put the caret back in sight.
     const settle = setTimeout(() => {
-      if (!viewRef.current) return
-      viewRef.current.dispatch({
-        effects: EditorView.scrollIntoView(viewRef.current.state.selection.main.head, {
-          y: 'center',
-        }),
-      })
+      const v = viewRef.current
+      if (!v) return
+      /*
+       * A table cell is nowhere near the editor's own caret, which in a note
+       * opened straight into a table is still sitting at position 0 — scrolling
+       * to that is what used to throw the table off the top of the screen.
+       */
+      const cell = focusedCell.value
+      const pos = cell
+        ? Math.min(cell.from, v.state.doc.length)
+        : v.state.selection.main.head
+      v.dispatch({ effects: EditorView.scrollIntoView(pos, { y: 'center' }) })
     }, 60)
     const close = () => (formatSheetOpen.value = false)
-    view.contentDOM.addEventListener('focus', close)
+    // `focusin`, not `focus` on the content: focus does not bubble, and a table
+    // cell taking it is just as much "I want to type again" as the note is.
+    view.dom.addEventListener('focusin', close)
     return () => {
       clearTimeout(settle)
-      view.contentDOM.removeEventListener('focus', close)
+      view.dom.removeEventListener('focusin', close)
     }
   }, [formatSheetOpen.value, compact, path])
 

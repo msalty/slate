@@ -215,23 +215,30 @@ export const focusedCell = signal<{
 } | null>(null)
 
 /**
- * Which cell the next render of a table should focus.
+ * Which cell the next render of a table should carry on in.
  *
  * Every edit rewrites the whole table block, which throws the widget's DOM away
  * and builds a new one — so "keep typing in the next cell" has to be a request
  * the new DOM picks up, not a DOM reference held across the change.
+ *
+ * `focus` is what separates typing from formatting. Tab and Enter want the cell
+ * focused so the next character lands in it; the phone's Format sheet wants it
+ * *marked* and nothing focused, because focus there means the keyboard sliding
+ * back up over the sheet the user is still working in.
  */
-let pendingFocus: { from: number; row: number; col: number } | null = null
+let pendingFocus: { from: number; row: number; col: number; focus: boolean } | null = null
 
-export function requestCellFocus(from: number, row: number, col: number): void {
-  pendingFocus = { from, row, col }
+export function requestCellFocus(from: number, row: number, col: number, focus = true): void {
+  pendingFocus = { from, row, col, focus }
 }
 
-export function takeCellFocus(from: number): { row: number; col: number } | null {
+export function takeCellFocus(
+  from: number,
+): { row: number; col: number; focus: boolean } | null {
   if (!pendingFocus || pendingFocus.from !== from) return null
-  const { row, col } = pendingFocus
+  const taken = pendingFocus
   pendingFocus = null
-  return { row, col }
+  return { row: taken.row, col: taken.col, focus: taken.focus }
 }
 
 export interface TableCursor {
@@ -341,8 +348,7 @@ export const tableContext = computed(() => {
 })
 
 /** Replace the table under the caret with a transformed one. */
-function rewrite(next: TableModel, cur: TableCursor): TransactionSpec {
-  const insert = renderTable(next)
+function rewrite(insert: string, cur: TableCursor): TransactionSpec {
   return {
     changes: { from: cur.from, to: cur.to, insert },
     // Land the caret in the first cell so typing continues in the table
@@ -361,11 +367,36 @@ export type TableOp =
   | 'col-delete'
   | 'delete'
 
-export function applyTableOp(view: EditorView, op: TableOp): boolean {
-  // The caret first, then the cell the user is typing in: in rich text the
-  // table never shows its source, so the caret is never inside it.
+export interface TableEditOptions {
+  /**
+   * Put focus back where typing would continue once the edit is made.
+   *
+   * The phone's Format sheet passes false. It runs with the editor blurred on
+   * purpose — the sheet and the keyboard never share a phone screen — so
+   * focusing a cell here would bring the keyboard straight back up over the
+   * buttons the user is still pressing. The cell stays *marked* instead, which
+   * is what the next button press acts on.
+   */
+  refocus?: boolean
+}
+
+export function applyTableOp(
+  view: EditorView,
+  op: TableOp,
+  { refocus = true }: TableEditOptions = {},
+): boolean {
+  /*
+   * Which cell is this acting on?
+   *
+   * The cell being worked in wins whenever there is one. Rich text never shows
+   * a table's source, so the caret there is not the user's — it is wherever the
+   * last rewrite parked it, which is inside the table and therefore looks like
+   * a perfectly good answer. That is how a second operation in a row used to
+   * land on the header instead of the row you were standing in.
+   */
   const inCell = !!focusedCell.value
-  const cur = tableAt(view.state, view.state.selection.main.head) ?? focusedCellCursor(view.state)
+  const caret = () => tableAt(view.state, view.state.selection.main.head)
+  const cur = inCell ? (focusedCellCursor(view.state) ?? caret()) : (caret() ?? focusedCellCursor(view.state))
   if (!cur) return false
 
   /*
@@ -390,7 +421,8 @@ export function applyTableOp(view: EditorView, op: TableOp): boolean {
       selection: EditorSelection.cursor(cur.from),
       userEvent: 'delete',
     })
-    view.focus()
+    focusedCell.value = null
+    if (refocus) view.focus()
     return true
   }
 
@@ -407,6 +439,8 @@ export function applyTableOp(view: EditorView, op: TableOp): boolean {
               ? insertColumn(cur.model, cur.col + 1)
               : deleteColumn(cur.model, cur.col)
 
+  const insert = renderTable(next)
+
   // Where typing should carry on once the table is rewritten.
   if (inCell) {
     const rows = next.rows.length
@@ -419,12 +453,22 @@ export function applyTableOp(view: EditorView, op: TableOp): boolean {
       'col-right': [cur.row, cur.col + 1],
       'col-delete': [cur.row, Math.min(cur.col, cols - 1)],
     }
-    const [row, col] = at[op]
-    requestCellFocus(cur.from, Math.min(row, rows - 1), Math.min(col, cols - 1))
+    const row = Math.min(at[op][0], rows - 1)
+    const col = Math.min(at[op][1], cols - 1)
+    requestCellFocus(cur.from, row, col, refocus)
+    view.dispatch(rewrite(insert, cur))
+    /*
+     * Keep the published cell describing the table as it now reads. Focusing
+     * the new cell would have republished it, but a cell that is only marked
+     * never fires a focus event — and the next button press has to find a
+     * source that still matches the note or it would refuse to act at all.
+     */
+    focusedCell.value = { from: cur.from, source: insert, row, col }
+    return true
   }
 
-  view.dispatch(rewrite(next, cur))
-  if (!inCell) view.focus()
+  view.dispatch(rewrite(insert, cur))
+  if (refocus) view.focus()
   return true
 }
 
@@ -434,7 +478,12 @@ export function applyTableOp(view: EditorView, op: TableOp): boolean {
  * It goes on its own lines: a pipe table inside a paragraph is not a table in
  * any renderer, so inserting one mid-line would produce literal pipes.
  */
-export function insertTable(view: EditorView, columns = 3, bodyRows = 2): boolean {
+export function insertTable(
+  view: EditorView,
+  { refocus = true }: TableEditOptions = {},
+  columns = 3,
+  bodyRows = 2,
+): boolean {
   const { state } = view
   const range = state.selection.main
   const line = state.doc.lineAt(range.from)
@@ -454,6 +503,6 @@ export function insertTable(view: EditorView, columns = 3, bodyRows = 2): boolea
     userEvent: 'input.format',
     scrollIntoView: true,
   })
-  view.focus()
+  if (refocus) view.focus()
   return true
 }
