@@ -19,7 +19,6 @@
     Arial, sans-serif;
   --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', 'Cascadia Code', Menlo, Consolas, monospace;
 
-  --editor-measure: 760px;
   --editor-font-size: 15px;
 
   --sidebar-w: 232px;
@@ -962,9 +961,8 @@ body.resizing .pane-resizer::after {
   max-height: 30vh;
   overflow-y: auto;
 }
+/* Flush left and full width, so it tracks the note body above it. */
 .backlinks-inner {
-  max-width: var(--editor-measure);
-  margin: 0 auto;
   padding: 0 4px;
 }
 .backlinks h3 {
@@ -1818,9 +1816,6 @@ body.resizing .pane-resizer::after {
 }
 
 @media (max-width: 760px) {
-  :root {
-    --editor-measure: 100%;
-  }
   .editor-host .cm-content {
     padding-left: 14px;
     padding-right: 14px;
