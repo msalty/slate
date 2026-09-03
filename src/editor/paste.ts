@@ -123,17 +123,34 @@ function insertTableBlock(view: EditorView, table: string) {
 
 export const pasteHandler = EditorView.domEventHandlers({
   paste(event, view) {
-    const images = imagesFromDataTransfer(event.clipboardData)
-    if (images.length) {
-      event.preventDefault()
-      insertFiles(view, images)
-      return true
-    }
-
+    /*
+     * The table is looked for FIRST, and that ordering is the whole feature.
+     *
+     * A spreadsheet does not put cells on the clipboard and stop: Excel also
+     * puts a *picture* of the copied range there, beside the html and the
+     * tab-separated text, and the browser hands it over as an ordinary
+     * `image/png` file. So an image-first handler — which this was — turns
+     * every spreadsheet paste into a screenshot of a spreadsheet, and the
+     * table branch below it can never be reached from the app it was written
+     * for.
+     *
+     * Nothing is lost by preferring the table, because the check that finds
+     * one is far narrower than the check that finds an image: it needs a
+     * `<table>` in the html flavour AND text that parses as a grid at least
+     * two columns wide. A copied image, or a copied web page whose html has
+     * an <img> but no table, matches neither and falls straight through.
+     */
     const table = tableFromClipboard(event.clipboardData)
     if (table) {
       event.preventDefault()
       insertTableBlock(view, table)
+      return true
+    }
+
+    const images = imagesFromDataTransfer(event.clipboardData)
+    if (images.length) {
+      event.preventDefault()
+      insertFiles(view, images)
       return true
     }
     return false

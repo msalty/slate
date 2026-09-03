@@ -19,7 +19,7 @@ npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
 npm test               # 254 unit and two-device sync tests
-node scripts/smoke.mjs # 258-check browser smoke test against dist/
+node scripts/smoke.mjs # 260-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -165,9 +165,15 @@ in.
 
 **A spreadsheet range pastes as a table.** Copy cells in Excel, Numbers, Sheets
 or Calc and paste: you get a GFM table with the columns lined up, not a wall of
-tabs. Excel puts two things on the clipboard — a `<table>` under `text/html` and
-the same cells tab-separated under `text/plain` — and both are used, for
-different jobs. The HTML is only ever a *discriminator*: its presence is what
+tabs. Excel puts *three* things on the clipboard — a `<table>` under
+`text/html`, the same cells tab-separated under `text/plain`, and a **picture**
+of the range as an ordinary PNG. The picture is the trap: an image-first paste
+handler files that instead, and a spreadsheet paste becomes a screenshot of a
+spreadsheet. So the table is looked for first, and nothing is lost by it —
+finding a table needs a `<table>` in the html *and* text that parses as a grid
+at least two columns wide, which a copied image matches neither of.
+
+The two text flavours are both used, for different jobs. The HTML is only ever a *discriminator*: its presence is what
 says this came out of a grid rather than out of a terminal, which nothing in the
 plain text can tell you, so tab-separated text pasted from anywhere else stays
 text. The cells themselves are read from the plain-text flavour, because Excel's
@@ -752,7 +758,7 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 
 ```bash
 npm test                # 254 unit + two-device sync tests
-node scripts/smoke.mjs  # 258 checks in headless Chromium against dist/
+node scripts/smoke.mjs  # 260 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 
@@ -777,10 +783,13 @@ it has no typeable cells, and the tap that ends that is the one that puts the
 caret in the word it landed on.
 
 Three of its sections are there because the browser is the only place the answer
-exists. The spreadsheet paste is driven through a real `ClipboardEvent` carrying
-both flavours, and asserts the negative case too — tab-separated text with no
-table behind it has to stay text, or every indented paste in the app silently
-becomes a table. The copy button is clicked and the clipboard read back, which
+exists. The spreadsheet paste is driven through a real `ClipboardEvent` carrying every
+flavour Excel sends, the picture of the range included — the first version of
+that test built a clipboard from the two text flavours alone, which no
+spreadsheet on earth produces, and so it passed against a handler that checked
+images first and turned every real paste into a screenshot. It asserts the
+negative case too: tab-separated text with no table behind it has to stay text,
+or every indented paste in the app silently becomes a table. The copy button is clicked and the clipboard read back, which
 is also what caught it starting an edit on the note it was pressed in: it swallows
 the mouse events, but tap-to-edit watches pointer events, which arrive first.
 And the callout section writes one the way a person would — type `> [!`, pick

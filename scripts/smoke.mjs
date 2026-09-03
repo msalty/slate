@@ -2237,20 +2237,57 @@ try {
   await page.locator('.cm-content').click()
   await page.locator('.cm-content').press('Control+End')
 
-  const pasteGrid = (html, plain) =>
+  /*
+   * `withPicture` is not a detail — it is the shape of a real Excel clipboard,
+   * and the reason this test exists in this form.
+   *
+   * Excel does not put cells on the clipboard and stop: it also puts a picture
+   * of the copied range there. The first version of this test built a
+   * clipboard out of the two text flavours alone, which no spreadsheet on
+   * earth produces, and so it passed against a handler that checked images
+   * first and turned every real paste into a screenshot of a spreadsheet.
+   */
+  const pasteGrid = (html, plain, withPicture = true) =>
     page.evaluate(
-      ([h, p]) => {
+      async ([h, p, pic]) => {
         const dt = new DataTransfer()
         if (h) dt.setData('text/html', h)
         dt.setData('text/plain', p)
+        if (pic) {
+          const c = document.createElement('canvas')
+          c.width = 220
+          c.height = 60
+          const x = c.getContext('2d')
+          x.fillStyle = '#fff'
+          x.fillRect(0, 0, 220, 60)
+          x.fillStyle = '#333'
+          x.font = '14px sans-serif'
+          x.fillText('a picture of the cells', 10, 34)
+          const blob = await new Promise((r) => c.toBlob(r, 'image/png'))
+          dt.items.add(new File([blob], 'image.png', { type: 'image/png' }))
+        }
         document
           .querySelector('.cm-content')
           .dispatchEvent(
             new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }),
           )
       },
-      [html, plain],
+      [html, plain, withPicture],
     )
+
+  const countAttachments = () =>
+    page.evaluate(async () => {
+      const req = indexedDB.open('slate')
+      return new Promise((r) => {
+        req.onsuccess = () => {
+          const tx = req.result.transaction('files', 'readonly')
+          const all = tx.objectStore('files').getAll()
+          all.onsuccess = () =>
+            r(all.result.filter((f) => f.kind === 'attachment' && !f.deleted).length)
+        }
+      })
+    })
+  const attachmentsBeforeGrid = await countAttachments()
 
   // A quoted cell with a line break in it and a cell holding a pipe: both are
   // ordinary in a spreadsheet and neither can survive in a pipe table as-is.
@@ -2297,6 +2334,21 @@ try {
     'and it renders as a real table straight away',
     (await page.locator('.cm-table-render td').count()) >= 4,
   )
+  /*
+   * The picture Excel sent along with the cells has to lose, and lose
+   * silently: not embedded in the note, and not filed in the vault either,
+   * where it would sit as an orphaned attachment syncing to every device.
+   */
+  check(
+    'the picture a spreadsheet sends with its cells does not win',
+    !grid.includes('![['),
+    JSON.stringify(grid.slice(-160)),
+  )
+  check(
+    'and is not filed in the vault behind your back',
+    (await countAttachments()) === attachmentsBeforeGrid,
+    `${attachmentsBeforeGrid} → ${await countAttachments()} attachments`,
+  )
 
   /*
    * The discriminator, from the other side. Tab-separated text pasted out of a
@@ -2305,7 +2357,7 @@ try {
    */
   await page.locator('.cm-content').click()
   await page.locator('.cm-content').press('Control+End')
-  await pasteGrid(null, 'alpha\tbeta\ngamma\tdelta')
+  await pasteGrid(null, 'alpha\tbeta\ngamma\tdelta', false)
   await page.waitForTimeout(900)
   const plain = await pastedNote()
   check(
