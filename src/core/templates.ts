@@ -20,17 +20,23 @@
 
 import { computed, signal } from '@preact/signals'
 import type { NoteIndexEntry } from './types'
-import { getRaw, notes, readBackstage, UNTITLED, writeBackstage } from './vault'
+import {
+  getRaw,
+  isTemplatePath,
+  notes,
+  readBackstage,
+  TEMPLATES_FOLDER,
+  UNTITLED,
+  writeBackstage,
+} from './vault'
 import { dirname, normPath, startOfDay } from './util'
 
-/** The one folder templates are read from. Not created by anything here. */
-export const TEMPLATES_FOLDER = 'Templates'
-
-/** Is a path inside the templates folder? */
-export function isTemplatePath(path: string): boolean {
-  const p = normPath(path)
-  return p === TEMPLATES_FOLDER || p.startsWith(`${TEMPLATES_FOLDER}/`)
-}
+/*
+ * The folder and the path test live in vault.ts, because the roll-ups there
+ * have to recognise a template and this module already imports that one.
+ * Re-exported so everything about templates is still reachable from here.
+ */
+export { TEMPLATES_FOLDER, isTemplatePath } from './vault'
 
 /**
  * The templates on offer: every note in `Templates/`, nested ones included.

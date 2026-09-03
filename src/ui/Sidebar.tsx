@@ -1,7 +1,7 @@
 /** Smart lists, the folder tree, Tag Folders, and tags. */
 
 import { useState } from 'preact/hooks'
-import { allTags, attachments, notes, tasks, trashItems, unresolvedLinks } from '../core/vault'
+import { allTags, attachments, contentNotes, tasks, trashItems, unresolvedLinks } from '../core/vault'
 import {
   createFolder,
   deleteFolder,
@@ -415,7 +415,7 @@ export function Sidebar() {
           target={{ kind: 'all' }}
           icon={<IconNotes size={15} />}
           name="All Notes"
-          count={notes.value.length}
+          count={contentNotes.value.length}
         />
         <Row target={{ kind: 'tasks' }} icon={<IconCheck size={15} />} name="Tasks" count={openTasks} />
         <Row

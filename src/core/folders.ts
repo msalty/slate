@@ -17,6 +17,7 @@
 
 import { computed, signal } from '@preact/signals'
 import {
+  contentNotes,
   deleteNote,
   getRaw,
   isHidden,
@@ -390,7 +391,7 @@ export function smartFolderAncestors(id: string): SmartFolder[] {
 
 /** Notes matching a parsed rule. */
 export function notesMatching(node: QueryNode): NoteIndexEntry[] {
-  return notes.value.filter((n) => evaluateQuery(node, contextFor(n)))
+  return contentNotes.value.filter((n) => evaluateQuery(node, contextFor(n)))
 }
 
 /* ------------------------------------------------------- effective rules */

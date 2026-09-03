@@ -310,6 +310,123 @@ describe('notes outside any folder', () => {
   })
 })
 
+/**
+ * Templates are real notes in a real folder, which is what makes them editable
+ * — and is also why every roll-up in the app would otherwise count them. A
+ * template is boilerplate for a note that does not exist yet: its `- [ ]` is a
+ * blank to fill in rather than a task anyone owes, and its `#work` describes
+ * the notes it will make rather than itself.
+ *
+ * The fixture is what a real meeting template looks like, and every case below
+ * failed before `contentNotes` existed.
+ */
+describe('what a template is kept out of', () => {
+  const MEETING = [
+    '# {{title}}',
+    '',
+    '#meeting #work',
+    '',
+    '## Actions',
+    '- [ ] ',
+    '',
+    'See [[Team Directory]]',
+    '',
+  ].join('\n')
+
+  async function withTemplate() {
+    const { vault, t } = await fresh()
+    await vault.createNote('Work', 'Real note', '#work\n\n- [ ] An actual task\n')
+    await vault.createNote('Templates', 'Meeting', MEETING)
+    return { vault, t }
+  }
+
+  it('the task list, where its blank checkbox is not a task', async () => {
+    const { vault } = await withTemplate()
+    expect(vault.tasks.value.map((x) => x.text)).toEqual(['An actual task'])
+  })
+
+  it('the tag counts, which it would both inflate and invent', async () => {
+    const { vault } = await withTemplate()
+    expect(vault.allTags.value).toEqual([{ tag: 'work', count: 1 }])
+  })
+
+  it('a Tag Folder that gathers everything with the tag it mentions', async () => {
+    await withTemplate()
+    const folders = await import('./folders')
+    const q = await import('./tagquery')
+    const node = q.parseQuery('#work').node!
+    expect(folders.notesMatching(node).map((n) => n.path)).toEqual(['Work/Real note.md'])
+  })
+
+  it('the calendar, which would dot the day it was written', async () => {
+    const { vault } = await withTemplate()
+    expect([...vault.notesByDay.value.values()].flat()).toEqual(['Work/Real note.md'])
+  })
+
+  it('the broken links it is the only thing to mention', async () => {
+    const { vault } = await withTemplate()
+    expect([...vault.unresolvedLinks.value.keys()]).toEqual([])
+  })
+
+  it('the backlinks of whatever it links to', async () => {
+    const { vault } = await withTemplate()
+    await vault.createNote('', 'Team Directory', 'names\n')
+    expect(vault.backlinkMap.value.get('Team Directory.md')).toBeUndefined()
+  })
+
+  it('and the All Notes count', async () => {
+    const { vault } = await withTemplate()
+    expect(vault.notes.value).toHaveLength(2)
+    expect(vault.contentNotes.value).toHaveLength(1)
+  })
+})
+
+describe('what a template is still part of', () => {
+  /*
+   * Not hidden the way `backstage/` is. The whole premise is that a template
+   * is an ordinary note you edit in the ordinary editor, and hiding the folder
+   * would leave no way to open one.
+   */
+  it('the folder listing, which is how a template gets edited', async () => {
+    const { vault } = await fresh()
+    await vault.createNote('Templates', 'Meeting', 'M\n')
+    expect(vault.notes.value.map((n) => n.path)).toContain('Templates/Meeting.md')
+  })
+
+  it('search, because looking for the template is a real thing to want', async () => {
+    const { vault } = await fresh()
+    await vault.createNote('Templates', 'Meeting', 'Attendees and apologies\n')
+    expect(vault.search('apologies').map((h) => h.entry.path)).toEqual(['Templates/Meeting.md'])
+  })
+
+  it('wikilink targets, so [[Meeting]] can point at one on purpose', async () => {
+    const { vault } = await fresh()
+    await vault.createNote('Templates', 'Meeting', 'M\n')
+    expect(vault.titleIndex.value.get('meeting')).toBe('Templates/Meeting.md')
+  })
+
+  /*
+   * The one that would cost data. The Files browser flags attachments nothing
+   * references so they can be deleted; a picture used only by a template is
+   * used, and calling it orphaned invites someone to delete it.
+   */
+  it('the orphan scan, or a picture only a template uses looks unused', async () => {
+    const { vault } = await fresh()
+    await vault.addAttachment(new Blob(['x']), 'attachments/letterhead.png')
+    await vault.createNote('Templates', 'Memo', '![[letterhead.png]]\n')
+    expect([...vault.orphanFiles.value]).toEqual([])
+  })
+})
+
+/** A vault that never made the folder must pay nothing for any of the above. */
+describe('a vault with no templates', () => {
+  it('gets the identical list back, not a copy of it', async () => {
+    const { vault } = await fresh()
+    await vault.createNote('Work', 'One', 'a\n')
+    expect(vault.contentNotes.value).toBe(vault.notes.value)
+  })
+})
+
 describe('the daily note', () => {
   it('starts from the Daily folder’s template when there is one', async () => {
     const { vault, t } = await fresh()

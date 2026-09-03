@@ -2278,6 +2278,33 @@ try {
     (await page.locator('.editor-title-input').inputValue()) === 'Example',
   )
 
+  /*
+   * The pair that matters. A template is a real note in a real folder — which
+   * is how it gets edited — but it is boilerplate for a note that does not
+   * exist yet, so it has no business in the list of what you have written.
+   */
+  const allNotesRow = page.locator('.side-row:has-text("All Notes")').first()
+  const countBefore = (await allNotesRow.innerText()).match(/(\d+)\s*$/)?.[1]
+  await allNotesRow.click()
+  await page.waitForTimeout(500)
+  const listed = await page.locator('.note-row-title').allInnerTexts()
+  check(
+    'a template stays out of the default notes view',
+    !listed.includes('Example'),
+    JSON.stringify(listed),
+  )
+  check(
+    'and out of the count beside it',
+    countBefore === String(listed.length),
+    `badge ${countBefore}, ${listed.length} rows`,
+  )
+  await page.locator('.side-row:has-text("Templates")').first().click()
+  await page.waitForTimeout(500)
+  check(
+    'but browsing the folder still shows it, which is how one is edited',
+    (await page.locator('.note-row-title').allInnerTexts()).includes('Example'),
+  )
+
   // Point a folder at it.
   await clients.click({ button: 'right' })
   await page.waitForTimeout(300)

@@ -18,8 +18,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 284 unit and two-device sync tests
-node scripts/smoke.mjs # 274-check browser smoke test against dist/
+npm test               # 296 unit and two-device sync tests
+node scripts/smoke.mjs # 277-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -309,6 +309,29 @@ because it is the one folder with no row in the sidebar to right-click. It
 covers ⌘N with no folder selected, and **a note created from a broken
 `[[link]]`** — which always lands there, and is named for the link text. That
 is the case `{{title}}` is really for.
+
+**Templates stay out of the roll-ups.** They are real notes, so without care
+every view that adds your notes up would count them — and a template is
+boilerplate for a note that does not exist yet. Its `- [ ]` is a blank to fill
+in rather than a task you owe anybody; its `#work` describes the notes it will
+make rather than itself. One meeting template was enough to put a permanent
+empty task in the task list, invent a `#meeting` tag, count `#work` twice,
+place a dot on the calendar, report a broken link only it mentioned, and land
+in the Tag Folder that gathers everything tagged `#work`.
+
+So the roll-ups — the note list, its count, tasks, tag counts, the calendar,
+Tag Folder matches, backlinks and broken links — read your notes without the
+templates. Everything that looks at one named thing still sees them: browsing
+`Templates/` (which is the only way a template gets edited, so hiding the
+folder the way `backstage/` is hidden was never an option), search, wikilink
+targets, version history and sync. Two of those are not preferences but
+correctness — **the orphan scan** has to see templates or a picture used only
+by one is reported unused and invited to be deleted, and **rename repointing**
+has to, or a template's links break when a note it mentions is renamed.
+
+A vault with no `Templates/` folder gets the identical list back rather than a
+filtered copy of it, so none of this costs anything to anyone who never made
+one.
 
 The **daily note** is the case this was built for. Point `Daily/` at a template
 and every day's note starts from it, dated for *the day it is filed under* rather
@@ -819,8 +842,8 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 284 unit + two-device sync tests
-node scripts/smoke.mjs  # 274 checks in headless Chromium against dist/
+npm test                # 296 unit + two-device sync tests
+node scripts/smoke.mjs  # 277 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

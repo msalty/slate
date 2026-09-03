@@ -2,6 +2,7 @@
 
 import { computed, signal } from '@preact/signals'
 import {
+  contentNotes,
   notes,
   notesByDay,
   search,
@@ -232,15 +233,17 @@ export const visibleNotes = computed<NoteIndexEntry[]>(() => {
       list = smartFolderById(s.id) ? notesForSmartFolder(s.id) : []
       break
     case 'tag':
-      list = notes.value.filter((n) => n.tags.some((t) => t === s.tag || t.startsWith(`${s.tag}/`)))
+      list = contentNotes.value.filter((n) =>
+        n.tags.some((t) => t === s.tag || t.startsWith(`${s.tag}/`)),
+      )
       break
     case 'day': {
       const paths = new Set(notesByDay.value.get(startOfDay(s.date)) ?? [])
-      list = notes.value.filter((n) => paths.has(n.path))
+      list = contentNotes.value.filter((n) => paths.has(n.path))
       break
     }
     case 'tasks':
-      list = notes.value.filter((n) => n.hasTasks)
+      list = contentNotes.value.filter((n) => n.hasTasks)
       break
     case 'trash':
       return []
@@ -249,7 +252,12 @@ export const visibleNotes = computed<NoteIndexEntry[]>(() => {
     case 'unlinked':
       return []
     default:
-      list = notes.value
+      /*
+       * All Notes, and every other roll-up above it. The `folder` case above
+       * is deliberately not one of these: browsing `Templates/` has to show
+       * what is in it, which is the whole way a template gets edited.
+       */
+      list = contentNotes.value
   }
 
   const cmp =

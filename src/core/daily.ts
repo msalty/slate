@@ -12,7 +12,7 @@
 
 import type { NoteIndexEntry } from './types'
 import { startOfDay, ymd } from './util'
-import { createNote, notes } from './vault'
+import { contentNotes, createNote } from './vault'
 import { templateBodyForDay } from './templates'
 
 /** Where a daily note is created when there isn't one yet. */
@@ -26,7 +26,7 @@ export function dailyNoteName(day: number): string {
 /** A day's daily note, if the vault already has one. */
 export function dailyNoteFor(day: number): NoteIndexEntry | undefined {
   const name = dailyNoteName(day)
-  const hits = notes.value.filter((n) => n.title === name)
+  const hits = contentNotes.value.filter((n) => n.title === name)
   // A note in the daily folder wins over a same-named one elsewhere.
   return hits.find((n) => n.folder === DAILY_FOLDER) ?? hits[0]
 }
