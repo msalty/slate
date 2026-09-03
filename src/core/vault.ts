@@ -450,9 +450,18 @@ async function writeFile(f: VaultFile): Promise<void> {
 }
 
 /** Create a note. Returns its path. Guarantees a unique filename. */
+/**
+ * The name a note gets when it has not been given one.
+ *
+ * Worth a constant rather than a literal in six places, because it is not
+ * really a title: it is the absence of one, and a template asked to fill in
+ * `{{title}}` needs to be able to tell the difference.
+ */
+export const UNTITLED = 'Untitled'
+
 export async function createNote(
   folder = '',
-  title = 'Untitled',
+  title: string = UNTITLED,
   body = '',
 ): Promise<string> {
   const dir = normPath(folder)

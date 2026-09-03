@@ -2343,6 +2343,60 @@ try {
     JSON.stringify(fromTemplate),
   )
 
+  /*
+   * The vault root, which has no row in the sidebar to right-click and so is
+   * set from Settings. It is where a note created from a broken [[link]] goes,
+   * and that note is named for the link — the one place `{{title}}` is worth
+   * writing, and unreachable until this existed.
+   */
+  await page.click('.pane-head .icon-btn[title^="Settings"]')
+  await page.waitForSelector('.dialog')
+  await page.click('.tab:has-text("Editor")')
+  await page.waitForTimeout(300)
+  const rootPick = page.locator('.field:has-text("Notes outside any folder") select')
+  check('Settings can give the root a template too', (await rootPick.count()) === 1)
+  await rootPick.selectOption({ label: 'Example' })
+  await page.waitForTimeout(400)
+  await page.click('.dialog-foot .btn-primary')
+  await page.waitForTimeout(300)
+
+  // Follow a broken wikilink and let it create the note.
+  await page.click('[title^="New note"]')
+  await page.waitForTimeout(600)
+  await page.locator('.cm-content').click()
+  await page.locator('.cm-content').pressSequentially('See [[Highway 9]] for the outage.', {
+    delay: 12,
+  })
+  await page.waitForTimeout(700)
+  await page.locator('.cm-wikilink-broken').first().click()
+  await page.waitForTimeout(900)
+
+  const fromLink = await page.evaluate(async () => {
+    const req = indexedDB.open('slate')
+    return new Promise((r) => {
+      req.onsuccess = () => {
+        const tx = req.result.transaction('files', 'readonly')
+        const all = tx.objectStore('files').getAll()
+        all.onsuccess = () => r(all.result.find((f) => f.path === 'Highway 9.md')?.text ?? '')
+      }
+    })
+  })
+  check(
+    'a note created from a broken link starts from the root template',
+    fromLink.includes(String(new Date().getFullYear())) && !fromLink.includes('{{'),
+    JSON.stringify(fromLink),
+  )
+  /*
+   * And it is named for the link, which is the whole case `{{title}}` exists
+   * for. The same template leaves the heading empty for a note made with
+   * *New note here*, which has no name yet — checked above.
+   */
+  check(
+    'and {{title}} is the link text, not the word Untitled',
+    fromLink.startsWith('# Highway 9\n'),
+    JSON.stringify(fromLink),
+  )
+
   /* ---- pasting a spreadsheet range -------------------------------------
    * Excel, Numbers, Sheets and Calc all put two flavours on the clipboard: a
    * `<table>` under text/html and the same cells tab-separated under

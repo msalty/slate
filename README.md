@@ -18,8 +18,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 280 unit and two-device sync tests
-node scripts/smoke.mjs # 271-check browser smoke test against dist/
+npm test               # 284 unit and two-device sync tests
+node scripts/smoke.mjs # 274-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -291,16 +291,24 @@ rather than disappearing into it. The line between "a few fields filled in" and
 "a template language with conditionals in it" is one that gets crossed a token
 at a time, and this is the side of it the app stays on.
 
-`{{title}}` is the note's name **at the moment it is created** — which is the
-date for a daily note and the link text for a note made from a `[[wikilink]]`,
-and the literal word "Untitled" for one made with *New note here*. Templates for
-folders you name notes in yourself are better off leaving the heading open and
-putting `{{cursor}}` in it, which is what the example template does.
+`{{title}}` is the note's name **at the moment it is created**, and it is empty
+when the note has not got one yet — "Untitled" is the absence of a title rather
+than a title, and a template that wrote that word into a heading would be worse
+than one that left the heading blank. So `# {{title}}{{cursor}}`, which is what
+the example template is, is right in every case: a daily note or one made from
+a `[[wikilink]]` is named already and gets its heading filled in, and one made
+with *New note here* gets an empty heading with the caret sitting in it.
 
 A template applies to **the folder it is attached to and no other**: one on
 `Work` does not reach `Work/Projects`. Inheritance would be a second rule to
 hold in your head, and a template on the vault root would then silently apply to
 every note anywhere — which is how an optional feature stops feeling optional.
+
+The vault root can have one too, set in Settings rather than from a menu,
+because it is the one folder with no row in the sidebar to right-click. It
+covers ⌘N with no folder selected, and **a note created from a broken
+`[[link]]`** — which always lands there, and is named for the link text. That
+is the case `{{title}}` is really for.
 
 The **daily note** is the case this was built for. Point `Daily/` at a template
 and every day's note starts from it, dated for *the day it is filed under* rather
@@ -811,8 +819,8 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 280 unit + two-device sync tests
-node scripts/smoke.mjs  # 271 checks in headless Chromium against dist/
+npm test                # 284 unit + two-device sync tests
+node scripts/smoke.mjs  # 274 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

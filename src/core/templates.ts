@@ -20,7 +20,7 @@
 
 import { computed, signal } from '@preact/signals'
 import type { NoteIndexEntry } from './types'
-import { getRaw, notes, readBackstage, writeBackstage } from './vault'
+import { getRaw, notes, readBackstage, UNTITLED, writeBackstage } from './vault'
 import { dirname, normPath, startOfDay } from './util'
 
 /** The one folder templates are read from. Not created by anything here. */
@@ -299,7 +299,17 @@ export function templateBodyFor(
   if (!path) return undefined
   const file = getRaw(path)
   if (!file || file.deleted || !file.text?.trim()) return undefined
-  return expandTemplate(file.text, { title, when })
+  /*
+   * A note that has not been named yet has no title to give, and "Untitled" is
+   * the absence of one rather than one of its own. Writing that word into a
+   * heading would be worse than leaving the heading empty, so `{{title}}` comes
+   * out as nothing and a `{{cursor}}` beside it lands in the gap.
+   *
+   * That is what lets one `# {{title}}{{cursor}}` be right everywhere: a daily
+   * note or one made from a `[[link]]` is named already and gets its heading,
+   * and one made with *New note here* gets an empty heading to type into.
+   */
+  return expandTemplate(file.text, { title: title === UNTITLED ? '' : title, when })
 }
 
 /** The same, for a note being filed under a particular day. */
@@ -327,16 +337,15 @@ export function templatableFolder(path: string): boolean {
  * contain. It is an ordinary note: rename it, rewrite it, delete it.
  */
 /*
- * It leads with the caret inside an empty heading rather than with
- * `{{title}}`, and that is a deliberate choice about first impressions.
- * `{{title}}` is the note's file name at the moment it is made, which is
- * exactly right for a daily note or one created from a `[[link]]` — and is the
- * literal word "Untitled" for a note made with *New note here*, which is the
- * path someone trying templates for the first time will take. A starter that
- * writes `# Untitled` and leaves the caret below it teaches the wrong lesson
- * about a feature that works well.
+ * `{{title}}` and `{{cursor}}` together, which is the pairing worth teaching.
+ *
+ * A note that already has a name — a daily note, or one created from a
+ * `[[link]]`, which is named for the link — gets its heading filled in and the
+ * caret after it. A note made with *New note here* has no name yet, so
+ * `{{title}}` comes out empty and the caret lands in the heading for you to
+ * type one. One template, right in both cases.
  */
-export const STARTER_TEMPLATE = ['# {{cursor}}', '', '{{date:DDDD, D MMMM YYYY}}', ''].join('\n')
+export const STARTER_TEMPLATE = ['# {{title}}{{cursor}}', '', '{{date:DDDD, D MMMM YYYY}}', ''].join('\n')
 
 /** Where a template note lives, for showing it in a picker. */
 export function templateLabel(path: string): string {

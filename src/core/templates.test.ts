@@ -254,6 +254,62 @@ describe('following the folder it is attached to', () => {
   })
 })
 
+/*
+ * The vault root is where ⌘N puts a note with no folder selected, and where a
+ * note created from a broken [[link]] always goes. The link case is the one
+ * `{{title}}` exists for — the note is named for the link text — so a root
+ * template is what makes that field reachable at all.
+ */
+describe('a note that has not been named yet', () => {
+  /*
+   * The pairing this feature turns on. "Untitled" is the absence of a title,
+   * not a title, so one template can serve both: a note that has a name gets
+   * its heading, and one that does not gets an empty heading to type into.
+   */
+  it('leaves {{title}} empty rather than writing the word Untitled', async () => {
+    const { vault, t } = await fresh()
+    await vault.createNote('Templates', 'Any', '# {{title}}{{cursor}}\n\nbody\n')
+    await t.setFolderTemplate('Work', 'Templates/Any.md')
+
+    const unnamed = t.templateBodyFor('Work', 'Untitled')!
+    expect(unnamed.text).toBe('# \n\nbody\n')
+    // ...and the caret is sitting in the heading, ready for a name.
+    expect(unnamed.caret).toBe(2)
+  })
+
+  it('uses the name when it has one, from the same template', async () => {
+    const { vault, t } = await fresh()
+    await vault.createNote('Templates', 'Any', '# {{title}}{{cursor}}\n\nbody\n')
+    await t.setFolderTemplate('Work', 'Templates/Any.md')
+
+    const named = t.templateBodyFor('Work', 'Highway 9')!
+    expect(named.text).toBe('# Highway 9\n\nbody\n')
+    expect(named.caret).toBe('# Highway 9'.length)
+  })
+})
+
+describe('notes outside any folder', () => {
+  it('can have a template of their own', async () => {
+    const { vault, t } = await fresh()
+    await vault.createNote('Templates', 'Stub', '# {{title}}\n\nFrom a link.\n')
+    await t.setFolderTemplate('', 'Templates/Stub.md')
+    expect(t.templateBodyFor('', 'Highway 9')?.text).toBe('# Highway 9\n\nFrom a link.\n')
+  })
+
+  /*
+   * And it stays outside them. Without this a root template would apply to
+   * every note anywhere, which is the whole reason folder matching is exact.
+   */
+  it('does not become a template for the whole vault', async () => {
+    const { vault, t } = await fresh()
+    await vault.createNote('Templates', 'Stub', 'S\n')
+    await vault.createNote('Work', 'Existing', 'x\n')
+    await t.setFolderTemplate('', 'Templates/Stub.md')
+    expect(t.templateBodyFor('Work', 'Kickoff')).toBeUndefined()
+    expect(t.templateBodyFor('Work/Deep', 'Kickoff')).toBeUndefined()
+  })
+})
+
 describe('the daily note', () => {
   it('starts from the Daily folder’s template when there is one', async () => {
     const { vault, t } = await fresh()

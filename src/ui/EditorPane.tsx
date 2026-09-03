@@ -43,6 +43,7 @@ import {
 } from './state'
 import { beginEditing, endEditing, installTapToEdit } from '../editor/reading'
 import { templateBodyFor } from '../core/templates'
+import { UNTITLED } from '../core/vault'
 import { layoutMode, railState, toggleRail } from './layout'
 import { debounce, longDateTime } from '../core/util'
 import {
@@ -625,7 +626,7 @@ export function EditorPane() {
  */
 export async function newNoteInFolder(
   folder: string,
-  title = 'Untitled',
+  title: string = UNTITLED,
   opts: { seed?: string; fallback?: string } = {},
 ) {
   const t = templateBodyFor(folder, title)

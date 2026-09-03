@@ -12,7 +12,14 @@ import { apply, BUILD_ID, check, reinstall, updateReady } from '../app/update'
 import { IconClose, IconWarn } from './Icons'
 import { createFolder } from '../core/folders'
 import { createNote } from '../core/vault'
-import { hasTemplates, STARTER_TEMPLATE, TEMPLATES_FOLDER, templateNotes } from '../core/templates'
+import {
+  assignedTemplate,
+  hasTemplates,
+  setFolderTemplate,
+  STARTER_TEMPLATE,
+  TEMPLATES_FOLDER,
+  templateNotes,
+} from '../core/templates'
 import { openNote } from './state'
 
 type Tab = 'sync' | 'editor' | 'files' | 'about'
@@ -336,6 +343,36 @@ export function Settings() {
                       Right-click a folder in the sidebar and choose <b>Template…</b> to say
                       which one its new notes start from.
                     </small>
+                    {/*
+                      * The vault root is the one folder with no row in the
+                      * sidebar and so no menu to right-click, and it is where
+                      * ⌘N puts a note when no folder is selected — and where a
+                      * note created from a broken [[link]] always goes. That
+                      * last one is the case `{{title}}` exists for, so without
+                      * this control the field had nowhere it could be used.
+                      */}
+                    <label class="field">
+                      <span>Notes outside any folder</span>
+                      <select
+                        value={assignedTemplate('') ?? ''}
+                        onChange={(e) =>
+                          void setFolderTemplate('', (e.target as HTMLSelectElement).value || undefined)
+                        }
+                      >
+                        <option value="">No template</option>
+                        {templateNotes.value.map((t) => (
+                          <option key={t.path} value={t.path}>
+                            {t.title}
+                          </option>
+                        ))}
+                      </select>
+                      <small>
+                        Used by ⌘N with no folder selected, and by a note created from a broken{' '}
+                        <code>[[link]]</code> — which is named for the link, so this is where{' '}
+                        <code>{'{{title}}'}</code> earns its keep. It does not reach notes inside
+                        folders; those follow their own folder, or no template at all.
+                      </small>
+                    </label>
                     <small>
                       Fields a template can fill in: <code>{'{{title}}'}</code>{' '}
                       <code>{'{{date}}'}</code> <code>{'{{time}}'}</code>{' '}
@@ -345,6 +382,13 @@ export function Settings() {
                       pattern — <code>{'{{date:DDDD, D MMMM YYYY}}'}</code> — built from{' '}
                       <code>YYYY MM DD HH mm ss</code>, with <code>MMM</code>/<code>MMMM</code>{' '}
                       for the month by name and <code>DDD</code>/<code>DDDD</code> for the day.
+                    </small>
+                    <small>
+                      <code>{'{{title}}'}</code> is the note's name when it is made — the date
+                      for a daily note, the link text for one created from a broken{' '}
+                      <code>[[link]]</code>, and the literal word "Untitled" for one made with{' '}
+                      <b>New note here</b>. For folders where you name notes yourself, leave the
+                      heading empty and put <code>{'{{cursor}}'}</code> in it instead.
                     </small>
                   </>
                 ) : (
