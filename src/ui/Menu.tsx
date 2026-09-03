@@ -25,12 +25,32 @@ interface MenuState {
   y: number
   title?: string
   items: MenuItem[]
+  /** A body of its own, in place of the item list. */
+  render?: (close: () => void) => preact.ComponentChildren
+  /** Extra class on the menu box, for a body that needs different room. */
+  cls?: string
 }
 
 const menu = signal<MenuState | null>(null)
 
 export function openMenu(e: { clientX: number; clientY: number }, items: MenuItem[], title?: string) {
   menu.value = { x: e.clientX, y: e.clientY, items, title }
+}
+
+/**
+ * The same menu, hosting something that isn't a list of items.
+ *
+ * Everything that makes a menu behave like one — the scrim, popover-here or
+ * sheet-from-the-bottom, flipping back on screen, Escape, dismiss-on-scroll —
+ * is worth having exactly once. A picker that needs a grid rather than rows
+ * borrows all of it and supplies only the middle.
+ */
+export function openMenuWith(
+  e: { clientX: number; clientY: number },
+  render: (close: () => void) => preact.ComponentChildren,
+  opts: { title?: string; cls?: string } = {},
+) {
+  menu.value = { x: e.clientX, y: e.clientY, items: [], render, ...opts }
 }
 
 export function closeMenu() {
@@ -97,9 +117,16 @@ export function ContextMenu() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') closeMenu()
     }
-    // A menu is anchored to a point on screen, so anything scrolling out from
-    // under it should dismiss it.
-    const onScroll = () => closeMenu()
+    /*
+     * A menu is anchored to a point on screen, so anything scrolling out from
+     * under it should dismiss it — but not the menu's own contents. A body tall
+     * enough to scroll (the due-date picker on a short phone) would otherwise
+     * shut itself the moment you dragged it.
+     */
+    const onScroll = (e: Event) => {
+      if (e.target instanceof Node && ref.current?.contains(e.target)) return
+      closeMenu()
+    }
     addEventListener('keydown', onKey)
     /*
      * ...but not the scroll the opening click itself caused. A toolbar that
@@ -123,12 +150,16 @@ export function ContextMenu() {
   const body = (
     <div
       ref={ref}
-      class={sheet ? 'menu menu-sheet' : 'menu'}
+      class={`${sheet ? 'menu menu-sheet' : 'menu'}${state.cls ? ` ${state.cls}` : ''}`}
       style={sheet ? undefined : { left: `${pos?.left ?? state.x}px`, top: `${pos?.top ?? state.y}px`, visibility: pos ? 'visible' : 'hidden' }}
-      role="menu"
+      // A custom body is not a list of commands, and calling it one would
+      // promise a screen reader menu semantics its contents don't have.
+      role={state.render ? 'group' : 'menu'}
+      aria-label={state.render ? state.title : undefined}
       onClick={(e) => e.stopPropagation()}
     >
       {state.title && <div class="menu-title">{state.title}</div>}
+      {state.render?.(closeMenu)}
       {state.items.map((item, i) => (
         <button
           key={i}

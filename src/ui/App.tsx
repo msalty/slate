@@ -13,6 +13,8 @@ import { LinkDialog } from './LinkDialog'
 import { PromptDialog } from './PromptDialog'
 import { PaneResizer } from './PaneResizer'
 import { editLinkAtCaret, handleUriClick } from './linkActions'
+import { openDueMenu } from './DueMenu'
+import { applyDue } from '../editor/due'
 import { MobileCalendar, MobileMore, MobileNav, MobileTasks } from './Mobile'
 import { settings, update } from '../core/settings'
 import { connectBackend } from '../app/backend'
@@ -132,6 +134,12 @@ export function App() {
       )
     }
     const onLinkDialog = () => editLinkAtCaret()
+    const onDue = (e: Event) => {
+      const { x, y, pos, current } = (
+        e as CustomEvent<{ x: number; y: number; pos: number; current?: number }>
+      ).detail
+      openDueMenu({ clientX: x, clientY: y }, current, (date) => applyDue(pos, date))
+    }
     const onTag = (e: Event) => {
       scope.value = { kind: 'tag', tag: (e as CustomEvent<{ tag: string }>).detail.tag }
       if (layoutMode.value === 'compact') {
@@ -144,12 +152,14 @@ export function App() {
     addEventListener('slate:open-tag', onTag)
     addEventListener('slate:uri', onUri)
     addEventListener('slate:link-dialog', onLinkDialog)
+    addEventListener('slate:due', onDue)
     return () => {
       removeEventListener('slate:open-link', onLink)
       removeEventListener('slate:lightbox', onLightbox)
       removeEventListener('slate:open-tag', onTag)
       removeEventListener('slate:uri', onUri)
       removeEventListener('slate:link-dialog', onLinkDialog)
+      removeEventListener('slate:due', onDue)
     }
   }, [])
 

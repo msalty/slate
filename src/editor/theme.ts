@@ -302,6 +302,57 @@ export const editorTheme = EditorView.theme({
   },
   '.cm-task-done': { color: 'var(--text-faint)', textDecoration: 'line-through' },
 
+  /*
+   * The due chip, in the note itself. Same control as the task list's
+   * `.due-chip`, sized to sit in a line of prose rather than in a list — so
+   * everything is in `em` and it rides the text's own baseline.
+   */
+  '.cm-due-chip': {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: '0.4em',
+    padding: '0.05em 0.5em',
+    borderRadius: '999px',
+    border: '1px solid transparent',
+    fontSize: '0.78em',
+    fontWeight: '600',
+    fontFamily: 'var(--font-body)',
+    lineHeight: '1.5',
+    whiteSpace: 'nowrap',
+    verticalAlign: '0.06em',
+    cursor: 'pointer',
+    color: 'var(--text-faint)',
+    backgroundColor: 'var(--surface-2)',
+    textDecoration: 'none',
+  },
+  /* Unset: an outline the width of a small calendar glyph, on the caret's line only. */
+  '.cm-due-chip[data-set="0"]': {
+    backgroundColor: 'transparent',
+    borderStyle: 'dashed',
+    borderColor: 'var(--border-strong)',
+    opacity: '0.6',
+    minWidth: '1.9em',
+    minHeight: '1.35em',
+    backgroundImage:
+      'url("data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'%238e8e93\' stroke-width=\'2\' stroke-linecap=\'round\'><rect x=\'3.5\' y=\'5\' width=\'17\' height=\'15.5\' rx=\'2.5\'/><path d=\'M3.5 9.5h17M8 3v4M16 3v4\'/></svg>")',
+    backgroundRepeat: 'no-repeat',
+    backgroundPosition: 'center',
+    backgroundSize: '0.85em',
+  },
+  '.cm-due-chip[data-set="0"]:hover': { opacity: '1' },
+  '.cm-due-chip[data-tone="over"]': {
+    color: 'var(--danger)',
+    backgroundColor: 'color-mix(in srgb, var(--danger) 14%, transparent)',
+  },
+  '.cm-due-chip[data-tone="today"], .cm-due-chip[data-tone="soon"]': {
+    color: 'var(--accent)',
+    backgroundColor: 'color-mix(in srgb, var(--accent) 14%, transparent)',
+  },
+  '.cm-due-chip:hover': { borderColor: 'var(--border-strong)' },
+  /* A finished task's date is history; it shouldn't shout. */
+  '.cm-task-done .cm-due-chip': { opacity: '0.55', textDecoration: 'none' },
+
   '.cm-embed': {
     /*
      * Inline-block, bottom-aligned, and this is the whole reason there is no

@@ -588,3 +588,138 @@
   display: flex;
   color: var(--text-faint);
 }
+
+/* ==========================================================================
+   Due-date picker
+
+   A body inside the menu above rather than a dialog of its own, so it is a
+   popover on a pointer device and a sheet on a phone for free.
+   ========================================================================== */
+
+/*
+ * Presets, a month and a Clear is a tall body. On a short phone it can exceed
+ * the screen, so it scrolls rather than running off the bottom — the menu
+ * ignores scrolls that start inside itself, so this doesn't dismiss it.
+ */
+.menu-due {
+  min-width: 264px;
+  max-height: 88vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.due-preset {
+  gap: 8px;
+}
+.due-preset .spacer {
+  flex: 1 1 auto;
+}
+.due-preset-when {
+  color: var(--text-faint);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.menu-sheet .due-preset-when {
+  font-size: 14px;
+}
+.due-preset[aria-current='true'] {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.due-cal {
+  margin: 6px 2px 2px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+.due-cal-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 2px 4px;
+}
+.due-cal-title {
+  flex: 1 1 auto;
+  text-align: center;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.menu-sheet .due-cal-title {
+  font-size: 15px;
+}
+
+.due-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 1px;
+  /*
+   * Six rows' worth, always. A short month draws five and the box would
+   * otherwise change height when you page into one — which, for a popover
+   * positioned once when it opened, means it drifts off the bottom of the
+   * screen halfway through choosing a date.
+   */
+  min-height: 186px;
+  align-content: start;
+}
+.menu-sheet .due-grid {
+  min-height: 270px;
+}
+
+.due-dow {
+  text-align: center;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-faint);
+  padding-bottom: 2px;
+}
+.menu-sheet .due-dow {
+  font-size: 11.5px;
+}
+
+.due-day {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1;
+  min-height: 28px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  -webkit-tap-highlight-color: transparent;
+}
+.menu-sheet .due-day {
+  min-height: 42px;
+  font-size: 15px;
+  border-radius: 10px;
+}
+.due-day[data-outside='1'] {
+  color: var(--text-faint);
+  opacity: 0.65;
+}
+/* Dates behind you stay reachable — a task can be overdue on purpose — but
+   they shouldn't compete with the ones you are most likely to want. */
+.due-day[data-past='1'] {
+  opacity: 0.5;
+}
+.due-day[data-today='1'] {
+  font-weight: 700;
+  color: var(--accent);
+}
+.due-day:hover {
+  background: var(--row-hover);
+}
+.due-day[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--text-on-accent);
+  font-weight: 700;
+}
+
+.due-clear {
+  margin-top: 6px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  border-radius: 0 0 8px 8px;
+  color: var(--text-muted);
+}

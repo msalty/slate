@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   calendarDateFor,
   excerptOf,
+  findDue,
+  isTaskLine,
   parseDue,
   parseFrontmatter,
   scanTags,
@@ -9,6 +11,8 @@ import {
   scanWikiLinks,
   setFrontmatterKey,
   splitSizeFragment,
+  stripInline,
+  withDue,
 } from './markdown'
 import { safeSegment, startOfDay } from './util'
 
@@ -104,6 +108,75 @@ describe('tasks', () => {
     const t = parseDue('📅 2026-03-01')!
     expect(new Date(t).getDate()).toBe(1)
     expect(new Date(t).getMonth()).toBe(2)
+  })
+
+  it('reads the Dataview form too', () => {
+    expect(parseDue('do it [due:: 2026-01-05]')).toBe(startOfDay(new Date(2026, 0, 5)))
+  })
+
+  it('reports where the marker sits, so the editor can replace just that', () => {
+    const line = '- [ ] Book flights 📅 2026-09-04'
+    const m = findDue(line)!
+    expect(line.slice(m.from, m.to)).toBe('📅 2026-09-04')
+    expect(m.date).toBe(startOfDay(new Date(2026, 8, 4)))
+  })
+
+  it('recognizes task lines and nothing else', () => {
+    expect(isTaskLine('- [ ] a')).toBe(true)
+    expect(isTaskLine('  1. [x] a')).toBe(true)
+    expect(isTaskLine('- a')).toBe(false)
+    expect(isTaskLine('[ ] a')).toBe(false)
+  })
+})
+
+describe('withDue', () => {
+  const sep = startOfDay(new Date(2026, 8, 4))
+
+  it('appends a date to a task that has none', () => {
+    expect(withDue('- [ ] Book flights', sep)).toBe('- [ ] Book flights 📅 2026-09-04')
+  })
+
+  it('replaces a date rather than accumulating one', () => {
+    expect(withDue('- [ ] Book flights 📅 2026-01-01', sep)).toBe(
+      '- [ ] Book flights 📅 2026-09-04',
+    )
+  })
+
+  it('replaces a date written in any of the other syntaxes', () => {
+    expect(withDue('- [ ] Renew @due(2026-01-01)', sep)).toBe('- [ ] Renew 📅 2026-09-04')
+    expect(withDue('- [ ] Renew due:2026-01-01', sep)).toBe('- [ ] Renew 📅 2026-09-04')
+    expect(withDue('- [ ] Renew [due:: 2026-01-01]', sep)).toBe('- [ ] Renew 📅 2026-09-04')
+  })
+
+  it('clears a date, and the space it was sitting on', () => {
+    expect(withDue('- [ ] Book flights 📅 2026-09-04', undefined)).toBe('- [ ] Book flights')
+    expect(withDue('- [ ] Book flights', undefined)).toBe('- [ ] Book flights')
+  })
+
+  it('leaves the rest of the line — indent, marker, tags — alone', () => {
+    expect(withDue('  - [x] Ship it #work', sep)).toBe('  - [x] Ship it #work 📅 2026-09-04')
+  })
+
+  it('collapses a second stray marker instead of leaving it behind', () => {
+    expect(withDue('- [ ] Odd 📅 2026-01-01 @due(2026-02-02)', sep)).toBe(
+      '- [ ] Odd 📅 2026-09-04',
+    )
+  })
+
+  it('handles a task with no text at all', () => {
+    expect(withDue('- [ ] ', sep)).toBe('- [ ] 📅 2026-09-04')
+    expect(withDue('- [ ]', sep)).toBe('- [ ] 📅 2026-09-04')
+  })
+
+  it('round-trips: what it writes, parseDue reads back', () => {
+    expect(parseDue(withDue('- [ ] Anything', sep))).toBe(sep)
+  })
+})
+
+describe('stripInline', () => {
+  it('drops every due syntax from display text', () => {
+    expect(stripInline('Book flights 📅 2026-09-04')).toBe('Book flights')
+    expect(stripInline('Book flights [due:: 2026-09-04]')).toBe('Book flights')
   })
 })
 

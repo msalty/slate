@@ -9,8 +9,8 @@
 import { EditorView, WidgetType } from '@codemirror/view'
 import { attachmentUrl, getRaw } from '../core/vault'
 import { renderInline } from './inline'
-import { formatBytes, mediaClass } from '../core/util'
-import { requestLightbox } from './context'
+import { dueLabel, dueTone, formatBytes, mediaClass, startOfDay } from '../core/util'
+import { requestDueMenu, requestLightbox } from './context'
 import { wireLinkTaps } from './linkClicks'
 import {
   cellSource,
@@ -95,6 +95,53 @@ export class CheckboxWidget extends WidgetType {
       })
     })
     return box
+  }
+  ignoreEvent() {
+    return false
+  }
+}
+
+/* -------------------------------------------------------------- due chip */
+
+/**
+ * A task's due date, as the same chip the task list shows.
+ *
+ * Two shapes, one widget. With a date it *replaces* the `📅 2026-09-04` in the
+ * source, so the note reads as a sentence with a date on the end instead of a
+ * sentence with syntax in it. Without one it is a ghost outline appended to the
+ * line — and only to the line the caret is on, which is the same rule the rest
+ * of live preview follows for revealing what a line is really made of. A
+ * checklist of twenty items doesn't sprout twenty grey buttons; the one you are
+ * working on offers you a date.
+ */
+export class DueChipWidget extends WidgetType {
+  constructor(readonly date: number | undefined) {
+    super()
+  }
+  eq(other: DueChipWidget) {
+    return other.date === this.date
+  }
+  toDOM(view: EditorView) {
+    const today = startOfDay(Date.now())
+    const el = document.createElement('span')
+    el.className = 'cm-due-chip'
+    el.setAttribute('role', 'button')
+    el.setAttribute('tabindex', '-1')
+    el.dataset.set = this.date === undefined ? '0' : '1'
+    if (this.date !== undefined) el.dataset.tone = dueTone(this.date, today)
+    el.textContent = this.date === undefined ? '' : dueLabel(this.date, today)
+    el.title = this.date === undefined ? 'Set a due date' : `Due ${dueLabel(this.date, today)}`
+    el.setAttribute('aria-label', el.title)
+    // Same trick as the checkbox: act on mousedown so the press never also
+    // lands as a caret placement inside the widget.
+    const open = (e: Event) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const r = el.getBoundingClientRect()
+      requestDueMenu({ x: r.left, y: r.bottom + 4 }, view.posAtDOM(el), this.date)
+    }
+    el.addEventListener('mousedown', open)
+    return el
   }
   ignoreEvent() {
     return false

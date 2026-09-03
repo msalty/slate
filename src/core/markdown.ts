@@ -7,7 +7,7 @@
  * broken feature, but a note it refuses is lost work.
  */
 
-import { normPath, parseYmd, startOfDay, titleFromPath } from './util'
+import { normPath, parseYmd, startOfDay, titleFromPath, ymd } from './util'
 
 export interface Frontmatter {
   data: Record<string, string | string[] | boolean | number>
@@ -219,6 +219,11 @@ export interface RawTask {
 
 const TASK = /^(\s*)(?:[-*+]|\d+[.)])\s+\[([ xX])\]\s?(.*)$/
 
+/** Is this line a `- [ ]` / `1. [x]` task? */
+export function isTaskLine(line: string): boolean {
+  return TASK.test(line)
+}
+
 export function scanTasks(text: string): RawTask[] {
   const out: RawTask[] = []
   const regions = codeRegions(text)
@@ -242,12 +247,59 @@ export function scanTasks(text: string): RawTask[] {
   return out
 }
 
-/** Recognizes `📅 2026-09-01`, `@due(2026-09-01)`, and `due:2026-09-01`. */
+/* -------------------------------------------------------------- due dates */
+
+/**
+ * Every due-date syntax the app understands, in one pattern.
+ *
+ * Reading stays deliberately permissive — a vault may have been written by
+ * Obsidian's Tasks plugin (`📅`), Dataview (`[due:: ]`), or by hand — while
+ * `withDue` only ever *writes* the emoji form. That asymmetry is the point: a
+ * date someone else's tool wrote keeps working, and a date this app writes
+ * looks like the one the docs describe.
+ */
+// The \uFE0F is optional because a 📅 pasted from some keyboards carries a
+// variation selector, and without it the marker parses but never fully strips.
+const DUE_SRC = String.raw`(?:📅\uFE0F?|@due\(|due:)\s*(\d{4}-\d{2}-\d{2})\)?|\[due::\s*(\d{4}-\d{2}-\d{2})\]`
+const DUE = new RegExp(DUE_SRC)
+/** The same, plus any whitespace in front, for cutting a marker back out. */
+const DUE_CUT = new RegExp(String.raw`[ \t]*(?:${DUE_SRC})`, 'g')
+
+export interface DueMarker {
+  /** Character offsets of the marker within the string it was found in. */
+  from: number
+  to: number
+  /** ms epoch, local midnight. */
+  date: number
+}
+
+/** Locate the due marker in a line, offsets included — the editor needs both. */
+export function findDue(s: string): DueMarker | undefined {
+  const m = DUE.exec(s)
+  if (!m) return undefined
+  const date = parseYmd(m[1] ?? m[2])
+  if (date === undefined) return undefined
+  return { from: m.index, to: m.index + m[0].length, date }
+}
+
+/** Recognizes `📅 2026-09-01`, `@due(2026-09-01)`, `due:2026-09-01`, `[due:: 2026-09-01]`. */
 export function parseDue(s: string): number | undefined {
-  const m =
-    /(?:📅|@due\(|due:)\s*(\d{4}-\d{2}-\d{2})\)?/.exec(s) ??
-    /\[due::\s*(\d{4}-\d{2}-\d{2})\]/.exec(s)
-  return m ? parseYmd(m[1]) : undefined
+  return findDue(s)?.date
+}
+
+/**
+ * Rewrite a line to carry exactly one due date, or none.
+ *
+ * Every existing marker goes first — including one this app didn't write, and
+ * including a second one someone left behind — so setting a date twice can't
+ * accumulate. The new marker is appended at the end of the line rather than
+ * inserted where the old one sat: end-of-line is where the parser, the chip and
+ * every other tool expect it, and it keeps the sentence you wrote intact.
+ */
+export function withDue(line: string, date: number | undefined): string {
+  const bare = line.replace(DUE_CUT, '').replace(/[ \t]+$/, '')
+  if (date === undefined) return bare
+  return `${bare} 📅 ${ymd(date)}`
 }
 
 /* ----------------------------------------------------------------- summary */
@@ -262,7 +314,7 @@ export function stripInline(s: string): string {
     .replace(/!?\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/g, (_, t, a) => a || t)
     .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/(\*\*|__|~~|\*|_|`)/g, '')
-    .replace(/(?:📅|@due\(|due:)\s*\d{4}-\d{2}-\d{2}\)?/g, '')
+    .replace(DUE_CUT, '')
     .replace(/\s+/g, ' ')
     .trim()
 }

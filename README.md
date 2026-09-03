@@ -18,8 +18,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 187 unit and two-device sync tests
-node scripts/smoke.mjs # 199-check browser smoke test against dist/
+npm test               # 218 unit and two-device sync tests
+node scripts/smoke.mjs # 227-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -194,9 +194,28 @@ creation time. Click a day to filter the list. Any day without a daily note
 offers to make one — **Create daily note**, at the top of that day's list and
 under the day in the rail — which writes `Daily/YYYY-MM-DD.md` and opens it, so
 Thursday's note can be started on Saturday and still lands on Thursday. Below
-it, every `- [ ]` in the vault is rolled up into one task list, with due dates
-from `📅 2026-09-04`, `@due(...)` or `due:...`. Ticking a box there edits the
-source note.
+it, every `- [ ]` in the vault is rolled up into one task list. Ticking a box
+there edits the source note.
+
+**Due dates you don't have to type.** A task line has two controls, one at each
+end: the checkbox that says whether it's done, and a chip that says when it's
+for. The chip shows the date in words where there are words for it — *Today*,
+*Tomorrow*, *Fri* — and turns red once it's past. Tapping one opens a picker
+with four one-tap presets (today, tomorrow, this weekend, next week) over a
+month grid; on a phone the same picker arrives as a bottom sheet with
+thumb-sized day cells, rather than a popover pinned to a fingertip.
+
+The chip is in both places a task appears. In the task list every row has one,
+filled or a faint outline waiting to be given a date. In a note it replaces the
+`📅 2026-09-04` in the source, so the line reads as a sentence with a date on
+the end instead of a sentence with syntax in it — and a task with no date shows
+the outline on the line the caret is in, so a twenty-item checklist doesn't
+sprout twenty buttons. ⌘⌥D does the same from the keyboard.
+
+Dates are still just markdown. Reading stays permissive — `📅 2026-09-04`,
+`@due(...)`, `due:...` and Dataview's `[due:: ...]` all parse, so a vault
+written by another tool works unchanged — and the picker only ever *writes* the
+`📅` form.
 
 **One layout that doesn't jump.** Three modes — phone, mid-size, wide — chosen
 explicitly rather than by CSS reacting to width on its own. The editor holds a
@@ -260,6 +279,7 @@ bar above the list carries an **Edit** next to the **Close**.
 | ⌘K *(with a selection)* | Wrap in a wikilink |
 | ⌘⇧L | Add or edit an external link |
 | ⌘⇧7 / ⌘⇧8 / ⌘⇧0 | Checklist / bullets / numbers |
+| ⌘⌥D *(on a task line)* | Set a due date |
 | ⌘⇧9 | Block quote |
 | ⌘] / ⌘[ | Indent / outdent a list item |
 
@@ -572,7 +592,7 @@ src/
 │  ├─ sync.ts         the reconcile engine
 │  ├─ merge.ts        three-way merge (diff3)
 │  ├─ rebase.ts       folding a synced change into the buffer being typed in
-│  ├─ markdown.ts     frontmatter, links, tags, tasks
+│  ├─ markdown.ts     frontmatter, links, tags, tasks, due dates
 │  ├─ tagquery.ts     the Tag Folder rule language (tokenizer, parser, eval)
 │  ├─ folders.ts      nested folders + the Tag Folder tree and inheritance
 │  ├─ devices.ts      per-device write registry, for version attribution
@@ -584,10 +604,14 @@ src/
 │  ├─ links.ts      external URI recognition, opening and editing
 │  ├─ linkClicks.ts following a link from the text — clicks and taps alike
 │  ├─ table.ts      the pipe-table grid: parse, edit rows/columns, print
+│  ├─ due.ts        writing a task's due date into the buffer being typed in
 │  ├─ inline.ts      inline markdown for text inside widgets (table cells)
 │  └─ pickImage.ts   camera / photo library / file insertion
 └─ ui/            Preact components
    ├─ layout.ts      the three layout modes and panel visibility
+   ├─ Menu.tsx       popover on a pointer, bottom sheet on a phone
+   ├─ DueMenu.tsx    the due-date picker that rides on it
+   ├─ DueChip.tsx    a task's date, as a control rather than a caption
    └─ Mobile.tsx     phone tab bar and full-screen tab views
 ```
 
@@ -657,8 +681,8 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 187 unit + two-device sync tests
-node scripts/smoke.mjs  # 199 checks in headless Chromium against dist/
+npm test                # 218 unit + two-device sync tests
+node scripts/smoke.mjs  # 227 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 
