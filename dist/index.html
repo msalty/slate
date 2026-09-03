@@ -18,7 +18,30 @@
       is exactly the kind of harmless-looking edit that brings the bands back.
     -->
     <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
-    <meta name="theme-color" content="#1c1c1e" />
+    <!--
+      Two tags, not one, and both carry a `media`.
+
+      This is the colour a browser paints the surrounding UI with — a tab's
+      toolbar, a desktop install's title bar, the status bar on iOS — and a
+      single unconditional #1c1c1e is why those came out dark above a white app.
+
+      One correction to what this comment used to claim, because a device
+      disproved it: an *installed* PWA on Android does not read these tags at
+      all. Chrome bakes the manifest's theme_color into the WebAPK at install
+      and paints the status bar from that, ignoring the page. The manifest
+      therefore drops theme_color entirely (see vite.config.ts, which explains
+      why) — these tags stay because every other surface does honour them, and
+      Android will too once installed PWAs can draw behind the status bar.
+
+      Chrome takes the FIRST tag whose media matches, so ordering them
+      light-then-dark is not cosmetic. Keep both values equal to --bg in
+      app.css for the corresponding scheme; App.tsx overwrites the content of
+      every one of these from the resolved root background as soon as it
+      mounts, so these two only have to be right for the moments before that,
+      and for the case JS never gets there at all.
+    -->
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#1c1c1e" />
     <meta name="description" content="Local-first markdown notes that sync everywhere." />
     <!-- The standard tag; Chrome deprecated the apple-prefixed one. -->
     <meta name="mobile-web-app-capable" content="yes" />
@@ -52,8 +75,23 @@
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
     <title>Slate</title>
     <style>
-      /* Paint the shell colour before the CSS bundle lands, so a cold start on
-         a slow connection doesn't flash white in dark mode. */
+      /*
+        Paint the shell colour before the CSS bundle lands, so a cold start on
+        a slow connection doesn't flash white in dark mode.
+
+        Both halves are needed, and the [data-theme] rules have to come last.
+        `prefers-color-scheme` only knows what the *phone* is set to; the in-app
+        theme override is stamped onto <html> as data-theme, and when the two
+        disagree — phone in light mode, app set to Dark — a media-query-only
+        rule leaves the root element white underneath a dark app.
+
+        On Android that is not a flash, it is permanent: Chrome colours the
+        system navigation bar from the *root* element's background, not the
+        body's, so a white <html> paints a white band across the bottom of the
+        screen for as long as the PWA is open. app.css carries the durable
+        version of this rule (html { background: var(--bg) }) once the bundle
+        has landed; this block only has to survive the moments before it does.
+      */
       html {
         background: #fff;
       }
@@ -62,10 +100,16 @@
           background: #1c1c1e;
         }
       }
+      html[data-theme='light'] {
+        background: #fff;
+      }
+      html[data-theme='dark'] {
+        background: #1c1c1e;
+      }
     </style>
-    <script type="module" crossorigin src="./assets/index-n4g6BzsK.js"></script>
+    <script type="module" crossorigin src="./assets/index-BkHLEtk1.js"></script>
     <link rel="modulepreload" crossorigin href="./assets/codemirror-Bo7Wx4zb.js">
-    <link rel="stylesheet" crossorigin href="./assets/index-bH980lWz.css">
+    <link rel="stylesheet" crossorigin href="./assets/index-DS8BHyE0.css">
   <link rel="manifest" href="./manifest.webmanifest"></head>
   <body>
     <div id="app"></div>

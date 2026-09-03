@@ -605,7 +605,10 @@ function UpdatePanel() {
       <small style={{ display: 'block', marginTop: 8, color: 'var(--text-faint)' }}>
         Reinstall throws away the cached copy of the app and downloads it again — the same effect as
         clearing the browser cache, without touching anything else the browser holds for this site.
-        Your notes live in a separate database and are not affected. Needs a connection.
+        Your notes live in a separate database and are not affected. Needs a connection.{' '}
+        <strong>On an installed app this does not refresh the icon, name, colours or how it fills
+        the screen</strong> — those come from the manifest, which Android only re-reads when the app
+        is removed from the launcher and installed again.
       </small>
     </div>
   )

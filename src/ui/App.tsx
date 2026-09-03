@@ -61,8 +61,36 @@ export function App() {
     const root = document.documentElement
     if (s.theme === 'system') root.removeAttribute('data-theme')
     else root.setAttribute('data-theme', s.theme)
-    const meta = document.querySelector('meta[name="theme-color"]')
-    meta?.setAttribute('content', getComputedStyle(document.body).backgroundColor)
+    /*
+     * Read the colour off the root element, which is where the theme tokens
+     * resolve for the system chrome: Android colours the navigation bar from
+     * the root background and the status bar from this meta tag, so taking
+     * both from the same element is what keeps the two ends of the screen
+     * agreeing with the app between them.
+     *
+     * Every tag, not the first one: index.html ships a light and a dark
+     * theme-color, and the browser honours whichever one's media matches. An
+     * in-app override is not a media query and cannot be expressed as one, so
+     * the only way to be sure the tag that wins is the one carrying the theme
+     * the user actually chose is for all of them to agree.
+     */
+    const apply = () => {
+      const c = getComputedStyle(root).backgroundColor
+      for (const m of document.querySelectorAll('meta[name="theme-color"]')) {
+        m.setAttribute('content', c)
+      }
+    }
+    apply()
+    /*
+     * On 'system' the colour is the phone's to decide, and the phone can
+     * change its mind while the app is open — sunset, or a scheduled dark
+     * mode. The tokens follow that on their own through the media query; the
+     * meta tag is a manual copy of them, so it has to be told.
+     */
+    if (s.theme !== 'system') return
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    mq.addEventListener('change', apply)
+    return () => mq.removeEventListener('change', apply)
   }, [s.theme])
 
   /* ---- backend ----------------------------------------------------- */

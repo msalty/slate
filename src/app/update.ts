@@ -14,6 +14,20 @@
  *
  * Everything here is careful to touch only the *code* caches. Notes live in
  * IndexedDB and are never involved in an update.
+ *
+ * What none of this reaches, on Android: the installed package itself. Chrome
+ * bakes the web app manifest into a WebAPK when it mints it, and that layer
+ * sits below every cache in here — `reinstall()` unregisters the workers and
+ * empties Cache Storage, and the manifest values Chrome installed with are
+ * still whatever they were on the day it was installed. So a manifest change
+ * (theme_color, background_color, display, icons, name) can be live on the
+ * server, past every check in this file, and still not be on the phone. The
+ * only thing that picks it up is uninstalling the app from the launcher and
+ * installing it again; Chrome's own update path exists but waits for every
+ * window to close, plus power and Wi-Fi.
+ *
+ * Worth knowing before debugging one: a stale WebAPK looks exactly like a
+ * setting that has no effect.
  */
 
 import { signal } from '@preact/signals'
