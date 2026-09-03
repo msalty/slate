@@ -18,8 +18,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 254 unit and two-device sync tests
-node scripts/smoke.mjs # 260-check browser smoke test against dist/
+npm test               # 280 unit and two-device sync tests
+node scripts/smoke.mjs # 271-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -253,6 +253,58 @@ than taking them with it; "delete with everything inside" is a separate item.
 
 Both kinds of folder are defined in `backstage/`, so they follow you to every
 device.
+
+**Folder templates, if you want them.** A folder can start its new notes from
+boilerplate — a meeting note with the fields you always fill in, a person note
+with the same four headings, a daily note that already knows its date.
+
+A template is **an ordinary note in an ordinary folder**. `Templates/` is a real
+directory holding real `.md` files, so a template is written, edited, searched,
+linked and synced exactly like everything else: there is no template format, no
+template editor, and nothing to export. Open one, change it, and the next note
+made from it picks the change up.
+
+**And nothing about it happens until you ask.** `Templates/` is never created
+for you — not at boot, not by the first note, not by looking at the feature.
+A vault without one behaves in every respect as though none of this existed: no
+folder in the sidebar, no item in any menu, nothing to turn off. Settings →
+Editor offers to make it, and that button is the only thing in the app that
+does; it writes one example template so there is something to look at rather
+than an empty folder. Once templates exist, a folder's context menu gains
+**Use a template…**, and names the one it is using afterwards — or says
+*missing* if that note has since been renamed or deleted, rather than looking
+configured while quietly applying nothing.
+
+```
+Templates/
+├─ Meeting.md          ← ordinary notes, edited like any other
+└─ Person.md
+```
+
+The fields a template can fill in are deliberately few: `{{title}}`, `{{date}}`,
+`{{time}}`, `{{year}}`, `{{month}}`, `{{day}}`, `{{weekday}}`, and `{{cursor}}`
+for where writing should start. `{{date}}` and `{{time}}` take a pattern —
+`{{date:DDDD, D MMMM YYYY}}` — built from `YYYY MM DD HH mm ss`, with `MMM` /
+`MMMM` for the month by name and `DDD` / `DDDD` for the day. A field nobody
+recognises is left exactly as written, so a typo looks like a typo in the note
+rather than disappearing into it. The line between "a few fields filled in" and
+"a template language with conditionals in it" is one that gets crossed a token
+at a time, and this is the side of it the app stays on.
+
+`{{title}}` is the note's name **at the moment it is created** — which is the
+date for a daily note and the link text for a note made from a `[[wikilink]]`,
+and the literal word "Untitled" for one made with *New note here*. Templates for
+folders you name notes in yourself are better off leaving the heading open and
+putting `{{cursor}}` in it, which is what the example template does.
+
+A template applies to **the folder it is attached to and no other**: one on
+`Work` does not reach `Work/Projects`. Inheritance would be a second rule to
+hold in your head, and a template on the vault root would then silently apply to
+every note anywhere — which is how an optional feature stops feeling optional.
+
+The **daily note** is the case this was built for. Point `Daily/` at a template
+and every day's note starts from it, dated for *the day it is filed under* rather
+than for today — so Thursday's note, started on Saturday, still says Thursday.
 
 **Calendar and tasks.** An optional right column (⌘⇧R) shows a month calendar
 with a dot per note, filed by frontmatter `date:`, a `YYYY-MM-DD` filename, or
@@ -661,6 +713,7 @@ src/
 │  ├─ markdown.ts     frontmatter, links, tags, tasks, due dates
 │  ├─ tagquery.ts     the Tag Folder rule language (tokenizer, parser, eval)
 │  ├─ folders.ts      nested folders + the Tag Folder tree and inheritance
+│  ├─ templates.ts   folder templates: the fields, and which folder uses what
 │  ├─ devices.ts      per-device write registry, for version attribution
 │  ├─ images.ts       paste- and capture-time re-encoding
 │  └─ settings.ts     device-local vs vault-wide preferences
@@ -716,6 +769,10 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
   underlying `reorderSmartFolders` exists but nothing calls it yet.
 - **A Tag Folder can't live inside a real folder.** The two hierarchies are
   separate — use `folder:Work` in the rule to pin one to a folder.
+- **Renaming a template breaks the folders pointing at it.** Renaming or moving
+  the *folder* is followed correctly; renaming the template note itself is not,
+  and the folder's menu then reads *Template: missing*. Re-picking it takes two
+  clicks, and the failure is at least visible rather than silent.
 - **A table can't be copied back out to Excel yet.** Pasting a spreadsheet range
   in works; the return trip — selecting a table and having it land in cells
   rather than as pipes — needs a `copy` handler that puts a `text/html` flavour
@@ -739,9 +796,6 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 
 ## Ideas worth considering next
 
-- **A daily note template.** Any day can be given one now, from the calendar or
-  the palette, but every one of them starts as an empty `# 2026-09-04`; a
-  configurable template and a keyboard shortcut would make it a habit.
 - **A graph or "related notes" view**, built on the backlink map that already
   exists.
 - **Publish a note** as a read-only shared link, straight from the adapter.
@@ -757,8 +811,8 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 254 unit + two-device sync tests
-node scripts/smoke.mjs  # 260 checks in headless Chromium against dist/
+npm test                # 280 unit + two-device sync tests
+node scripts/smoke.mjs  # 271 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 
@@ -796,6 +850,12 @@ And the callout section writes one the way a person would — type `> [!`, pick
 from the list — because the marker doubles as a CommonMark shortcut link
 reference, so the brackets get hidden as link syntax unless the callout claims
 them first.
+
+The templates section starts by asserting the *absence* of the feature — a
+vault that has never made a `Templates/` folder must show no sign of it in any
+menu, and no folder must appear on its own — then drives the whole opt-in from
+the Settings button through to typing into a note that started from a template,
+checking the caret landed where `{{cursor}}` said rather than at position 0.
 
 The formatting bar's overflow is asserted as a property rather than a button
 count, because the count is a function of the window: at every width the bar

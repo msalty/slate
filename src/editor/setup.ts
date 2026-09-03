@@ -162,6 +162,13 @@ export interface EditorOptions {
    * until a tap in it asks for an editing surface. See editor/reading.ts.
    */
   editable?: boolean
+  /**
+   * Where the caret starts, for a note opened to be written in. Without one it
+   * is position 0, which is right for an empty note and wrong for one that
+   * opened with a template already in it — the first keystroke would land
+   * inside the heading.
+   */
+  caret?: number
 }
 
 /**
@@ -302,7 +309,14 @@ export function createEditorState(opts: EditorOptions): EditorState {
   // at all, and a deleted note is opened for reading, so it already has it off.
   if (opts.readOnly) extensions.push(EditorState.readOnly.of(true))
 
-  return EditorState.create({ doc: opts.doc, extensions })
+  return EditorState.create({
+    doc: opts.doc,
+    selection:
+      opts.caret === undefined
+        ? undefined
+        : { anchor: Math.max(0, Math.min(opts.caret, opts.doc.length)) },
+    extensions,
+  })
 }
 
 /**

@@ -43,6 +43,7 @@ import { layoutMode, toggleSidebar } from './layout'
 import { MobileScopeBar } from './Mobile'
 import { IconImage, IconNewNote, IconPin, IconPlus, IconSearch, IconSidebar, IconClose, IconDots } from './Icons'
 import { settings, update } from '../core/settings'
+import { newNoteInFolder } from './EditorPane'
 
 /** First image embed in a note, used as the row thumbnail. */
 function thumbFor(entry: NoteIndexEntry): string | undefined {
@@ -212,7 +213,7 @@ export function NoteList({ children }: { children?: preact.ComponentChildren }) 
     const folder = s.kind === 'folder' ? s.path : ''
     let body = ''
     if (s.kind === 'tag') body = `#${s.tag}\n\n`
-    openNote(await createNote(folder, 'Untitled', body), { editing: true })
+    await newNoteInFolder(folder, 'Untitled', { seed: body })
   }
 
   // The day a "create daily note" row would be for, when there isn't one yet.
@@ -591,8 +592,7 @@ function UnlinkedView() {
             <button
               class="status-btn"
               onClick={async () => {
-                const p = await createNote('', target, `# ${target}\n\n`)
-                openNote(p, { editing: true })
+                await newNoteInFolder('', target, { fallback: `# ${target}\n\n` })
               }}
             >
               Create

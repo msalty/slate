@@ -2,6 +2,7 @@
 
 import { initVault as loadVault, ready } from '../core/vault'
 import { loadFolders, loadSmartFolders } from '../core/folders'
+import { loadTemplates } from '../core/templates'
 import { applySharedSettings, loadSettings, settings } from '../core/settings'
 import { requestPersistence } from '../core/db'
 import { setDeviceLabel } from '../core/sync'
@@ -17,6 +18,7 @@ export async function initVault(): Promise<void> {
   // as soon as it is loaded — no extra round trip before the UI can render.
   await loadFolders()
   await loadSmartFolders()
+  await loadTemplates()
   setDeviceLabel(settings.value.deviceName)
   ready.value = true
 }
@@ -32,6 +34,7 @@ export async function applySharedSettingsSafe(): Promise<void> {
     // A first sync may have brought these in after boot.
     await loadFolders()
     await loadSmartFolders()
+  await loadTemplates()
   } catch (e) {
     console.warn('[slate] could not read shared settings', e)
   }

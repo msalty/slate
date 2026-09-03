@@ -13,6 +13,7 @@
 import type { NoteIndexEntry } from './types'
 import { startOfDay, ymd } from './util'
 import { createNote, notes } from './vault'
+import { templateBodyForDay } from './templates'
 
 /** Where a daily note is created when there isn't one yet. */
 export const DAILY_FOLDER = 'Daily'
@@ -31,13 +32,32 @@ export function dailyNoteFor(day: number): NoteIndexEntry | undefined {
 }
 
 /**
- * The path of a day's daily note, creating the note if it doesn't exist yet.
- * Callers that need to know which of the two happened should check
- * `dailyNoteFor` first.
+ * The path of a day's daily note, creating the note if it doesn't exist yet,
+ * and where the caret belongs in a note that was just created.
+ *
+ * A template on `Daily/` is what this is really for. Every daily note used to
+ * start life as a bare `# 2026-09-04` and nothing else, which the README has
+ * had on its list of gaps since the calendar was written. The date handed to
+ * the template is *the day the note is for*, not today: a note written on
+ * Saturday about Thursday is Thursday's, and its `{{date}}` has to agree with
+ * the name on the file.
  */
-export async function dailyNotePath(day: number): Promise<string> {
+export async function dailyNotePath(day: number): Promise<DailyNote> {
   const existing = dailyNoteFor(day)
-  if (existing) return existing.path
+  if (existing) return { path: existing.path, created: false }
   const name = dailyNoteName(day)
-  return createNote(DAILY_FOLDER, name, `# ${name}\n\n`)
+  const t = templateBodyForDay(DAILY_FOLDER, name, day)
+  return {
+    path: await createNote(DAILY_FOLDER, name, t?.text ?? `# ${name}\n\n`),
+    created: true,
+    caret: t?.caret,
+  }
+}
+
+export interface DailyNote {
+  path: string
+  /** False when the day already had one, so nothing was written. */
+  created: boolean
+  /** Where a template asked the caret to go, if it did. */
+  caret?: number
 }

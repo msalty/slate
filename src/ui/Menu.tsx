@@ -40,7 +40,22 @@ interface MenuState {
 
 const menu = signal<MenuState | null>(null)
 
+/**
+ * Where the last menu was anchored.
+ *
+ * An item whose job is to open a *second* menu has no event of its own to open
+ * it at — `onSelect` is called after the first has closed. Opening the second
+ * one where the first was is both the obvious place and a stable one, so a
+ * submenu does not appear under wherever the pointer happened to drift.
+ */
+let anchor = { clientX: 0, clientY: 0 }
+
+export function menuAnchor(): { clientX: number; clientY: number } {
+  return anchor
+}
+
 export function openMenu(e: { clientX: number; clientY: number }, items: MenuItem[], title?: string) {
+  anchor = { clientX: e.clientX, clientY: e.clientY }
   menu.value = { x: e.clientX, y: e.clientY, items, title }
 }
 
@@ -57,6 +72,7 @@ export function openMenuWith(
   render: (close: () => void) => preact.ComponentChildren,
   opts: { title?: string; cls?: string } = {},
 ) {
+  anchor = { clientX: e.clientX, clientY: e.clientY }
   menu.value = { x: e.clientX, y: e.clientY, items: [], render, ...opts }
 }
 

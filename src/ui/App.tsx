@@ -1,7 +1,7 @@
 import { useEffect } from 'preact/hooks'
 import { Sidebar } from './Sidebar'
 import { NoteList } from './NoteList'
-import { EditorPane } from './EditorPane'
+import { EditorPane, newNoteInFolder } from './EditorPane'
 import { RightRail } from './RightRail'
 import { CommandPalette } from './CommandPalette'
 import { Settings } from './Settings'
@@ -19,7 +19,7 @@ import { MobileCalendar, MobileMore, MobileNav, MobileTasks } from './Mobile'
 import { settings, update } from '../core/settings'
 import { connectBackend } from '../app/backend'
 import { recentConflicts, status, sync } from '../core/sync'
-import { createNote, ready, resolveLink } from '../core/vault'
+import { ready, resolveLink } from '../core/vault'
 import {
   activePath,
   closeMobileEditor,
@@ -120,8 +120,7 @@ export function App() {
         return
       }
       if (!exists) {
-        const p = await createNote('', target, `# ${target}\n\n`)
-        openNote(p, { editing: true })
+        await newNoteInFolder('', target, { fallback: `# ${target}\n\n` })
         notify(`Created "${target}"`)
       }
     }
@@ -179,9 +178,7 @@ export function App() {
         paletteOpen.value = !paletteOpen.value
       } else if (k === 'n' && !e.shiftKey) {
         e.preventDefault()
-        void createNote(scope.value.kind === 'folder' ? scope.value.path : '').then((p) =>
-          openNote(p, { editing: true }),
-        )
+        void newNoteInFolder(scope.value.kind === 'folder' ? scope.value.path : '')
       } else if (k === 's' && !e.shiftKey) {
         e.preventDefault()
         void sync()

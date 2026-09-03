@@ -9,7 +9,7 @@ import {
   attachments,
   unresolvedLinks,
 } from '../core/vault'
-import { dailyNoteFor, dailyNotePath } from '../core/daily'
+import { dailyNotePath } from '../core/daily'
 import { notesForSmartFolder, smartFolderById } from '../core/folders'
 import { settings } from '../core/settings'
 import type { NoteIndexEntry } from '../core/types'
@@ -94,6 +94,8 @@ export const mobileEditorOpen = signal(false)
  * read back later.
  */
 let openForWriting: string | undefined
+let openCaret: number | undefined
+let takenCaret: number | undefined
 
 /**
  * Open a note from anywhere. On a phone this also pushes the editor over the
@@ -103,8 +105,9 @@ let openForWriting: string | undefined
  * `editing` is for a note that was just created to be typed into: it opens with
  * the caret in it, because there is nothing in it to read yet.
  */
-export function openNote(path: string, opts?: { editing?: boolean }) {
+export function openNote(path: string, opts?: { editing?: boolean; caret?: number }) {
   openForWriting = opts?.editing ? path : undefined
+  openCaret = opts?.editing ? opts.caret : undefined
   activePath.value = path
   if (layoutMode.value === 'compact') mobileEditorOpen.value = true
 }
@@ -112,8 +115,24 @@ export function openNote(path: string, opts?: { editing?: boolean }) {
 /** True once, for a note that was opened to be written in rather than read. */
 function takeEditRequest(path: string): boolean {
   const asked = openForWriting === path
+  takenCaret = asked ? openCaret : undefined
   openForWriting = undefined
+  openCaret = undefined
   return asked
+}
+
+/**
+ * Where the caret goes in a note that was just opened for writing.
+ *
+ * Consumed with the request above and only meaningful straight after it: a
+ * template can say where writing should start with `{{cursor}}`, and without
+ * one the caret goes to the end of what the template put there rather than to
+ * position 0, where the first thing typed would land inside the heading.
+ */
+export function takeOpenCaret(): number | undefined {
+  const caret = takenCaret
+  takenCaret = undefined
+  return caret
 }
 
 /**
@@ -144,12 +163,11 @@ export function opensForWriting(path: string, text: string, trashed: boolean): b
  * you have lost.
  */
 export async function openDailyNote(day: number) {
-  const existed = dailyNoteFor(day) !== undefined
-  const path = await dailyNotePath(day)
-  // A day that had no note has one now, holding nothing but its own date:
-  // it was created to be written in, so it opens ready for that.
-  openNote(path, { editing: !existed })
-  if (!existed) notify(`Created ${path}`)
+  const { path, created, caret } = await dailyNotePath(day)
+  // A day that had no note has one now — its own date, or whatever template
+  // `Daily/` carries. It was created to be written in, so it opens for that.
+  openNote(path, { editing: created, caret })
+  if (created) notify(`Created ${path}`)
 }
 
 export function closeMobileEditor() {

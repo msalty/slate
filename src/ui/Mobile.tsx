@@ -7,7 +7,7 @@
  * were, and the editor is a layer above it.
  */
 
-import { attachments, createNote, notes, tasks, trashItems, unresolvedLinks } from '../core/vault'
+import { attachments, notes, tasks, trashItems, unresolvedLinks } from '../core/vault'
 import {
   smartFolderById,
   smartFolderList,
@@ -21,7 +21,6 @@ import {
   activePath,
   mobileEditorOpen,
   mobileTab,
-  openNote,
   scope,
   scopeLabel,
   settingsOpen,
@@ -46,6 +45,7 @@ import {
   IconTag,
   IconTrash,
 } from './Icons'
+import { newNoteInFolder } from './EditorPane'
 
 const TABS: Array<{ id: MobileTab; label: string; icon: preact.ComponentChildren }> = [
   { id: 'notes', label: 'Notes', icon: <IconNotes size={21} /> },
@@ -94,7 +94,7 @@ export function MobileTasks() {
         <span class="spacer" />
         <button
           class="icon-btn"
-          onClick={async () => openNote(await createNote('', 'Untitled', '- [ ] '), { editing: true })}
+          onClick={() => void newNoteInFolder('', 'Untitled', { seed: '- [ ] ' })}
           aria-label="New task note"
         >
           <IconNewNote size={19} />

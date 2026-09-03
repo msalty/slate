@@ -35,6 +35,7 @@ import {
   type QueryNode,
 } from './tagquery'
 import type { NoteIndexEntry } from './types'
+import { clearTemplateFolders, repointTemplateFolders } from './templates'
 import { mediaClass } from './util'
 import { resolveEmbed } from './vault'
 
@@ -173,6 +174,10 @@ export async function renameFolder(from: string, name: string): Promise<string> 
     p === src || p.startsWith(`${src}/`) ? `${dest}${p.slice(src.length)}` : p,
   )
   await persistFolders()
+  // A template assignment is keyed by folder path, so it has to come along
+  // too — otherwise the folder is still there, still looks the same, and has
+  // quietly stopped applying its template.
+  await repointTemplateFolders(src, dest)
   return dest
 }
 
@@ -192,6 +197,7 @@ export async function deleteFolder(path: string): Promise<number> {
     (p) => p !== src && !p.startsWith(`${src}/`),
   )
   await persistFolders()
+  await clearTemplateFolders(src)
   return inside.length
 }
 

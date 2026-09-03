@@ -2225,6 +2225,124 @@ try {
     (await page.locator('.cm-line.cm-callout-warning').count()) === 2,
   )
 
+  /* ---- folder templates -------------------------------------------------
+   * The feature is opt-in, and the first assertion is the one that says so: a
+   * vault that has never made a `Templates/` folder must show no sign of any
+   * of this. Nothing creates that folder except the button in Settings.
+   */
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.waitForTimeout(400)
+  const clients = page.locator('.side-row:has-text("Clients")').first()
+  await clients.click({ button: 'right' })
+  await page.waitForTimeout(300)
+  const menuBefore = await page.locator('.menu-item').allInnerTexts()
+  check(
+    'a vault with no Templates folder is never told about templates',
+    !menuBefore.join(' ').toLowerCase().includes('template'),
+    JSON.stringify(menuBefore),
+  )
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(250)
+
+  const templateFiles = () =>
+    page.evaluate(async () => {
+      const req = indexedDB.open('slate')
+      return new Promise((r) => {
+        req.onsuccess = () => {
+          const tx = req.result.transaction('files', 'readonly')
+          const all = tx.objectStore('files').getAll()
+          all.onsuccess = () =>
+            r(all.result.filter((f) => !f.deleted && f.path.startsWith('Templates/')).map((f) => f.path))
+        }
+      })
+    })
+  check('and no Templates folder has appeared by itself', (await templateFiles()).length === 0)
+
+  // The one action in the app that creates it.
+  await page.click('.pane-head .icon-btn[title^="Settings"]')
+  await page.waitForSelector('.dialog')
+  await page.click('.tab:has-text("Editor")')
+  await page.waitForTimeout(300)
+  const optIn = page.locator('.dialog .btn:has-text("Create the Templates folder")')
+  check('Settings offers to start using templates', (await optIn.count()) === 1)
+  await optIn.click()
+  await page.waitForTimeout(800)
+  const seeded = await templateFiles()
+  check(
+    'and creating it writes one template to start from',
+    seeded.length === 1 && seeded[0] === 'Templates/Example.md',
+    JSON.stringify(seeded),
+  )
+  check(
+    'which opens so you can see what a template is',
+    (await page.locator('.editor-title-input').inputValue()) === 'Example',
+  )
+
+  // Point a folder at it.
+  await clients.click({ button: 'right' })
+  await page.waitForTimeout(300)
+  const pick = page.locator('.menu-item:has-text("Use a template")')
+  check('now a folder can be given one', (await pick.count()) === 1)
+  await pick.click()
+  await page.waitForTimeout(300)
+  check(
+    'the picker lists the templates and an off switch',
+    (await page.locator('.menu-item:has-text("No template")').count()) === 1 &&
+      (await page.locator('.menu-item:has-text("Example")').count()) === 1,
+  )
+  await page.locator('.menu-item:has-text("Example")').click()
+  await page.waitForTimeout(500)
+
+  // A new note in that folder starts from it.
+  await clients.click({ button: 'right' })
+  await page.waitForTimeout(300)
+  check(
+    'and the folder menu then names the template it is using',
+    (await page.locator('.menu-item:has-text("Template: Example")').count()) === 1,
+    JSON.stringify(await page.locator('.menu-item').allInnerTexts()),
+  )
+  await page.locator('.menu-item:has-text("New note here")').click()
+  await page.waitForTimeout(700)
+  await page.keyboard.type('Agenda')
+  await page.waitForTimeout(900)
+
+  const fromTemplate = await page.evaluate(async () => {
+    const req = indexedDB.open('slate')
+    return new Promise((r) => {
+      req.onsuccess = () => {
+        const tx = req.result.transaction('files', 'readonly')
+        const all = tx.objectStore('files').getAll()
+        all.onsuccess = () => {
+          const hit = all.result
+            .filter((f) => !f.deleted && f.path.startsWith('Clients/'))
+            .sort((a, b) => b.mtime - a.mtime)[0]
+          r(hit?.text ?? '')
+        }
+      }
+    })
+  })
+  check(
+    'a note made in that folder starts from the template',
+    /^# .*\n/.test(fromTemplate) && fromTemplate.includes(String(new Date().getFullYear())),
+    JSON.stringify(fromTemplate),
+  )
+  check(
+    'with its fields filled in rather than left as tokens',
+    !fromTemplate.includes('{{'),
+    JSON.stringify(fromTemplate),
+  )
+  /*
+   * `{{cursor}}` is the point of the exercise. Typing lands in the heading the
+   * starter template leaves open — not at position 0, which is where the caret
+   * sits without this and would have written "Agenda# ", and not at the end
+   * under the date, which is where it would go if the marker were ignored.
+   */
+  check(
+    'and typing starts where {{cursor}} said',
+    fromTemplate.startsWith('# Agenda\n'),
+    JSON.stringify(fromTemplate),
+  )
+
   /* ---- pasting a spreadsheet range -------------------------------------
    * Excel, Numbers, Sheets and Calc all put two flavours on the clipboard: a
    * `<table>` under text/html and the same cells tab-separated under
