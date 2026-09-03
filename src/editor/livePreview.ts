@@ -738,6 +738,13 @@ function buildTableDecorations(state: EditorState): DecorationSet {
   const out: Array<Range<Decoration>> = []
   const notePath = state.facet(noteContext).path
   const rich = state.facet(previewMode) === 'rich'
+  /*
+   * A cell is typed into directly in rich text — but only once the note has an
+   * editing surface at all. A cell is its own editing host, so it would happily
+   * take a tap and raise the keyboard in a note that is only being read, which
+   * is the one thing reading mode promises will not happen.
+   */
+  const typeable = rich && state.facet(EditorView.editable)
 
   for (const t of findTables(state)) {
     const first = state.doc.line(t.fromLine)
@@ -755,7 +762,7 @@ function buildTableDecorations(state: EditorState): DecorationSet {
           state.doc.sliceString(first.from, last.to),
           first.from,
           notePath,
-          rich,
+          typeable,
         ),
         block: true,
       }).range(first.from, last.to),

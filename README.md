@@ -18,8 +18,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 165 unit and two-device sync tests
-node scripts/smoke.mjs # 172-check browser smoke test against dist/
+npm test               # 187 unit and two-device sync tests
+node scripts/smoke.mjs # 199-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -58,6 +58,20 @@ Underline has no markdown syntax, so it is written as `<u>…</u>`, which every
 renderer passes through; highlight uses `==text==`. Everything else is ordinary
 CommonMark, and a note written in rich text opens as plain markdown anywhere
 else.
+
+**A note opens as a page to read.** No caret anywhere in it, which on a phone is
+the difference between opening a note and opening a note with a keyboard across
+the bottom half of it before you have read a word. Tap the text and that is
+where the caret lands — the tap that starts the edit is the tap that says where
+— or press the pencil in the header, which starts you at the top of whatever is
+on screen rather than scrolling the note out from under you. Escape hands the
+note back. Links, checkboxes and images all still answer a tap while reading, so
+you can work through a note without falling into the editor, and a checkbox
+ticked in passing still saves: reading is not read-only. A brand new note is the
+one exception — there is nothing in it to read, so it opens with the caret
+already in it, and so do the notes the app seeds for you, like a new daily note.
+While a note is being read the formatting bar, the phone's **Aa** button and
+Insert are not on screen; all three act on a caret, and there is not one yet.
 
 Above every note, in all three modes, sits the date it was last edited — faint,
 centred and out of the way, the way Apple Notes does it. Hover it for when the
@@ -643,8 +657,8 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 165 unit + two-device sync tests
-node scripts/smoke.mjs  # 172 checks in headless Chromium against dist/
+npm test                # 187 unit + two-device sync tests
+node scripts/smoke.mjs  # 199 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 
@@ -662,7 +676,11 @@ native file picker and checks the result was re-encoded, named and made
 resizable exactly like a paste. The phone section formats a table from the
 Format sheet with real taps — the cell stays marked, the note stays put, and the
 keyboard stays down — and taps a link in both rendered modes, because a tap that
-only summons the keyboard is exactly what a synthesised click looks like.
+only summons the keyboard is exactly what a synthesised click looks like. It
+also holds the reading mode to its promise on both layouts: a note opened from
+the list has no `contenteditable` anywhere in it and nothing focused, a table in
+it has no typeable cells, and the tap that ends that is the one that puts the
+caret in the word it landed on.
 
 If Chromium isn't on the default path:
 

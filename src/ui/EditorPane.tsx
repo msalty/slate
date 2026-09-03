@@ -36,7 +36,11 @@ import {
   formatSheetOpen,
   historyOpen,
   notify,
+  openNote,
+  opensForWriting,
+  readingMode,
 } from './state'
+import { beginEditing, endEditing, installTapToEdit } from '../editor/reading'
 import { layoutMode, railState, toggleRail } from './layout'
 import { debounce, longDateTime } from '../core/util'
 import {
@@ -49,6 +53,7 @@ import {
   IconHistory,
   IconImagePlus,
   IconPaperclip,
+  IconPencil,
   IconRail,
   IconRichText,
   IconTrash,
@@ -112,13 +117,29 @@ export function EditorPane() {
     if (!path) return
 
     const f = getRaw(path)
-    baseRef.current = f?.text ?? ''
+    const text = f?.text ?? ''
+    baseRef.current = text
+
+    /*
+     * A note opens as a page to read: no caret in it, so a phone has no reason
+     * to raise its keyboard over a note nobody has read yet, and the whole pane
+     * is the note. Tapping the text is what starts editing, with the caret
+     * where the tap landed. A brand new note is the exception — see
+     * `opensForWriting`, which is the whole of the rule.
+     */
+    const writing = opensForWriting(path, text, isTrashed(path))
+    readingMode.value = !writing
+    // The Format sheet belongs to the note that was being formatted, and the
+    // note that has just opened is being read.
+    formatSheetOpen.value = false
+
     const state = createEditorState({
-      doc: f?.text ?? '',
+      doc: text,
       path,
       mode: settings.value.editorMode,
       fontSize: settings.value.fontSize,
       readOnly: isTrashed(path),
+      editable: writing,
       onChange: (text) => saveRef.current(path, text),
     })
     const view = new EditorView({ state, parent: hostRef.current })
@@ -130,13 +151,33 @@ export function EditorPane() {
     const onScroll = () => setScrolled(view.scrollDOM.scrollTop > 4)
     view.scrollDOM.addEventListener('scroll', onScroll, { passive: true })
 
-    // Focus the body, unless the note is brand new and still called Untitled —
-    // then the title is what the user wants to type first. A deleted note is
-    // never focused: there is nothing to type into it.
-    if (!isTrashed(path) && getEntry(path)?.title !== 'Untitled') view.focus()
+    // Only a note opened to be written in takes focus. Everything else is a
+    // page, and the one thing a page must not have is a caret.
+    if (writing) view.focus()
+
+    const stopTaps = installTapToEdit(view, (at, keepCaret) => {
+      if (!readingMode.peek()) return
+      readingMode.value = false
+      beginEditing(view, at, keepCaret)
+    })
+
+    /*
+     * Escape hands the note back: the caret goes, and on a desktop that is the
+     * whole gesture — read, click to fix a line, Escape, keep reading.
+     * `defaultPrevented` keeps it out of the way of the Escapes CodeMirror has
+     * already answered: closing the autocomplete, the search panel, a cell.
+     */
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented || readingMode.peek()) return
+      readingMode.value = true
+      endEditing(view)
+    }
+    view.dom.addEventListener('keydown', onKeyDown)
 
     return () => {
       view.scrollDOM.removeEventListener('scroll', onScroll)
+      view.dom.removeEventListener('keydown', onKeyDown)
+      stopTaps()
     }
   }, [path])
 
@@ -269,6 +310,17 @@ export function EditorPane() {
   const links = backlinkMap.value.get(path) ?? []
   const mode = settings.value.editorMode
   const rich = mode === 'rich'
+  // Reading: the note is a page. Nothing that needs a caret to mean anything —
+  // the formatting bar, the phone's Aa sheet, Insert — is on screen for it.
+  const reading = readingMode.value
+
+  /** Start editing from the header, for a pointer that would rather not tap. */
+  const startEditing = () => {
+    const view = viewRef.current
+    if (!view) return
+    readingMode.value = false
+    beginEditing(view)
+  }
 
   /** The three presentations, as a menu with the active one ticked. */
   const modeItems: MenuItem[] = EDITOR_MODES.map((m) => ({
@@ -310,6 +362,7 @@ export function EditorPane() {
       class="pane editor-pane"
       data-width={settings.value.editorWidth}
       data-scrolled={scrolled ? '1' : '0'}
+      data-reading={reading ? '1' : '0'}
       data-format-open={rich && compact && formatSheetOpen.value ? '1' : '0'}
     >
       <div class="pane-head editor-head">
@@ -332,7 +385,11 @@ export function EditorPane() {
             if (!next || next === entry.title) return
             flush()
             const p = await renameNote(path, next)
-            activePath.value = p
+            // The note reopens under its new path, which would otherwise put
+            // it back to being read: naming a note you are writing in should
+            // not take the pen out of your hand, and naming one you are
+            // reading should not put one in it.
+            openNote(p, { editing: !readingMode.peek() })
             notify('Renamed — links updated')
           }}
           onKeyDown={(e) => {
@@ -345,7 +402,17 @@ export function EditorPane() {
         />
         )}
         <span class="spacer" />
-        {!trashed && compact && rich && (
+        {reading && !trashed && (
+          <button
+            class="icon-btn"
+            aria-label="Edit note"
+            title="Edit this note (or just tap it)"
+            onClick={startEditing}
+          >
+            <IconPencil />
+          </button>
+        )}
+        {!reading && !trashed && compact && rich && (
           <button
             class="icon-btn fmt-open"
             aria-label="Format"
@@ -361,7 +428,7 @@ export function EditorPane() {
             Aa
           </button>
         )}
-        {!trashed && (
+        {!reading && !trashed && (
           <button
             class="icon-btn"
             onClick={insertMenu}
@@ -488,7 +555,7 @@ export function EditorPane() {
         </div>
       )}
 
-      {rich && !compact && !trashed && (
+      {rich && !compact && !trashed && !reading && (
         <FormatBar variant="bar" getView={() => viewRef.current} />
       )}
 
@@ -506,7 +573,7 @@ export function EditorPane() {
         <div class="editor-host" ref={hostRef} />
       </div>
 
-      {rich && compact && !trashed && formatSheetOpen.value && (
+      {rich && compact && !trashed && !reading && formatSheetOpen.value && (
         <FormatBar variant="sheet" getView={() => viewRef.current} />
       )}
 
@@ -536,6 +603,6 @@ export function EditorPane() {
 /** Exposed so the shell's command palette can create-and-open in one step. */
 export async function newNoteInFolder(folder: string, title = 'Untitled') {
   const p = await createNote(folder, title)
-  activePath.value = p
+  openNote(p, { editing: true })
   return p
 }

@@ -94,7 +94,7 @@ export function MobileTasks() {
         <span class="spacer" />
         <button
           class="icon-btn"
-          onClick={async () => openNote(await createNote('', 'Untitled', '- [ ] '))}
+          onClick={async () => openNote(await createNote('', 'Untitled', '- [ ] '), { editing: true })}
           aria-label="New task note"
         >
           <IconNewNote size={19} />

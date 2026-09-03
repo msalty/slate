@@ -93,7 +93,7 @@ function folderMenu(node: FolderNode) {
     {
       label: 'New note here',
       onSelect: async () => {
-        openNote(await createNote(node.path, 'Untitled'))
+        openNote(await createNote(node.path, 'Untitled'), { editing: true })
       },
     },
     {
@@ -221,7 +221,9 @@ function SmartFolderRow({ node }: { node: SmartNode }) {
           })
         const tags = [...new Set([...inherited, ...tagsInQuery(parsed.node)])]
         const body = tags.length ? `${tags.map((t) => `#${t}`).join(' ')}\n\n` : ''
-        openNote(await createNote(folderInQuery(parsed.node) ?? '', 'Untitled', body))
+        openNote(await createNote(folderInQuery(parsed.node) ?? '', 'Untitled', body), {
+          editing: true,
+        })
       },
     },
     {

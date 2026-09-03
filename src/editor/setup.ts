@@ -62,6 +62,7 @@ import {
   inspect,
 } from './format'
 import { pasteHandler } from './paste'
+import { editableCompartment, editableFacet } from './reading'
 import { WikiLink } from './wikilink-syntax'
 import { noteContext, requestLinkDialog } from './context'
 import { focusedCell } from './table'
@@ -144,6 +145,11 @@ export interface EditorOptions {
   onSelectionIdle?: () => void
   /** Deleted notes are shown, not edited: restore one to change it. */
   readOnly?: boolean
+  /**
+   * False opens the note as a page to read — no caret, and so no keyboard —
+   * until a tap in it asks for an editing surface. See editor/reading.ts.
+   */
+  editable?: boolean
 }
 
 /**
@@ -258,6 +264,7 @@ export function createEditorState(opts: EditorOptions): EditorState {
     editorTheme,
     highlighting,
     contextCompartment.of(noteContext.of({ path: opts.path })),
+    editableCompartment.of(editableFacet(opts.editable !== false)),
     previewCompartment.of(previewExtensions(opts.mode)),
     fontCompartment.of(
       EditorView.theme({ '&': { '--editor-font-size': `${opts.fontSize}px` } } as never),
@@ -277,11 +284,10 @@ export function createEditorState(opts: EditorOptions): EditorState {
     }),
   ]
 
-  if (opts.readOnly) {
-    // Both: `readOnly` stops commands, `editable` stops the browser's own
-    // editing affordances (and the phone keyboard) from appearing at all.
-    extensions.push(EditorState.readOnly.of(true), EditorView.editable.of(false))
-  }
+  // `readOnly` stops commands; the editable compartment above stops the
+  // browser's own editing affordances (and the phone keyboard) from appearing
+  // at all, and a deleted note is opened for reading, so it already has it off.
+  if (opts.readOnly) extensions.push(EditorState.readOnly.of(true))
 
   return EditorState.create({ doc: opts.doc, extensions })
 }
