@@ -107,6 +107,21 @@ const startEditing = async () => {
   }
 }
 
+/** The markdown of whichever note holds a given string. */
+const noteContaining = (needle) =>
+  page.evaluate(async (n) => {
+    const db = await new Promise((res, rej) => {
+      const r = indexedDB.open('slate')
+      r.onsuccess = () => res(r.result)
+      r.onerror = () => rej(r.error)
+    })
+    const all = await new Promise((res) => {
+      const q = db.transaction('files', 'readonly').objectStore('files').getAll()
+      q.onsuccess = () => res(q.result)
+    })
+    return all.find((f) => (f.text ?? '').includes(n))?.text ?? ''
+  }, needle)
+
 /** What the note is right now: a page being read, or something being typed in. */
 const readingState = () =>
   page.evaluate(() => ({
@@ -182,6 +197,109 @@ try {
 
   const railTasks = await page.locator('.rail .task-row').count()
   check('task appears in the right rail', railTasks > 0, `${railTasks} in rail`)
+
+  /* ---- due dates ------------------------------------------------------
+   * The chip is the whole feature: a date is a control at the end of the task
+   * line, in the note and in the rail, rather than something you hand-type.
+   */
+  const dated = page.locator('.cm-due-chip[data-set="1"]')
+  check('a due date renders as a chip, not as syntax', (await dated.count()) === 1)
+  check(
+    'and the raw marker is gone from the rendered line',
+    !(await page.locator('.cm-content').innerText()).includes('📅 2026-09-04'),
+  )
+  check('the chip says something a person would say', ((await dated.innerText()) || '').length > 0, await dated.innerText())
+
+  /*
+   * The ghost only ever appears on the line the caret is in — the same rule
+   * the rest of live preview follows. A checklist does not sprout a button
+   * per row.
+   */
+  const ghosts = () => page.locator('.cm-due-chip[data-set="0"]').count()
+  check('an undated task offers a ghost chip on the caret’s line', (await ghosts()) === 1)
+  await page.locator('.cm-line.cm-h1').click()
+  await page.waitForTimeout(200)
+  check('and nowhere else once the caret leaves', (await ghosts()) === 0)
+  check('while a real date stays visible regardless', (await dated.count()) === 1)
+
+  // Open the picker on the date that exists.
+  await dated.click()
+  await page.waitForTimeout(250)
+  const picker = await page.evaluate(() => ({
+    open: document.querySelectorAll('.due-pick').length,
+    presets: [...document.querySelectorAll('.due-preset')].map((b) => b.textContent.trim()),
+    days: document.querySelectorAll('.due-day').length,
+    clear: document.querySelectorAll('.due-clear').length,
+  }))
+  check('clicking a chip opens the picker', picker.open === 1)
+  check('it leads with one-tap presets', picker.presets.length >= 3, picker.presets.join(' · '))
+  check('Today and Tomorrow are always among them', /^Today/.test(picker.presets[0]) && /^Tomorrow/.test(picker.presets[1]))
+  check('a full month grid sits under them', picker.days >= 28, `${picker.days} cells`)
+  check('and a date already set can be cleared', picker.clear === 1)
+  await page.screenshot({ path: join(SHOTS, '01b-due-picker.png') })
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(200)
+  check('Escape dismisses it', (await page.locator('.due-pick').count()) === 0)
+
+  // The keyboard route to the same picker, for a task being written rather
+  // than one being reviewed.
+  await page.locator('.cm-line:has-text("Book the tram tickets")').click()
+  await page.waitForTimeout(200)
+  await page.keyboard.press('Control+Alt+d')
+  await page.waitForTimeout(300)
+  check('⌘⌥D opens it for the task the caret is on', (await page.locator('.due-pick').count()) === 1)
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(200)
+  await page.locator('.cm-line.cm-h1').click()
+  await page.waitForTimeout(200)
+  await page.keyboard.press('Control+Alt+d')
+  await page.waitForTimeout(300)
+  check('and stays out of the way on a line that is not a task', (await page.locator('.due-pick').count()) === 0)
+
+  /*
+   * The round trip that matters: date a task that had none, entirely from the
+   * UI, and find it in the markdown afterwards.
+   */
+  await page.locator('.cm-line:has-text("Renew passport")').click()
+  await page.waitForTimeout(250)
+
+  /*
+   * The ghost is a zero-width widget pinned to the end of the line, and it is
+   * atomic like every other widget here. Typing at the end of that line is the
+   * thing that would break if "atomic" meant the caret could not get past it,
+   * so it is checked rather than assumed.
+   */
+  await page.keyboard.press('End')
+  await page.keyboard.type('!')
+  await page.waitForTimeout(700) // past the editor's 400ms save debounce
+  check(
+    'typing at the end of a task line still lands in the line',
+    (await noteContaining('Renew passport')).includes('- [ ] Renew passport!'),
+  )
+  await page.keyboard.press('Backspace')
+  await page.waitForTimeout(700)
+  check(
+    'and backspace takes the character, not the chip',
+    (await noteContaining('Renew passport')).includes('- [ ] Renew passport\n') &&
+      (await page.locator('.cm-due-chip[data-set="0"]').count()) === 1,
+  )
+
+  await page.locator('.cm-due-chip[data-set="0"]').first().click()
+  await page.waitForTimeout(250)
+  await page.locator('.due-preset:has-text("Tomorrow")').click()
+  await page.waitForTimeout(500)
+  const trip = await noteContaining('Renew passport')
+  check(
+    'picking a preset writes a real date into the markdown',
+    /- \[ \] Renew passport 📅 \d{4}-\d{2}-\d{2}/.test(trip),
+    (trip.split('\n').find((l) => l.includes('Renew passport')) ?? '').trim(),
+  )
+  check('and the note now carries two dated tasks', (trip.match(/📅/g) ?? []).length === 2)
+  check(
+    'the rail gives every task a date button, set or not',
+    (await page.locator('.rail .task-row .due-chip').count()) ===
+      (await page.locator('.rail .task-row').count()),
+  )
 
   /* ---- second note + wikilink autocomplete --------------------------- */
   await page.click('[title^="New note"]')
@@ -468,21 +586,6 @@ try {
   await page.waitForTimeout(400)
   const sourceText = await page.locator('.cm-content').innerText()
   check('source mode reveals raw markdown', sourceText.includes('![['), sourceText.slice(0, 50))
-
-  /** The markdown of whichever note holds a given string. */
-  const noteContaining = (needle) =>
-    page.evaluate(async (n) => {
-      const db = await new Promise((res, rej) => {
-        const r = indexedDB.open('slate')
-        r.onsuccess = () => res(r.result)
-        r.onerror = () => rej(r.error)
-      })
-      const all = await new Promise((res) => {
-        const q = db.transaction('files', 'readonly').objectStore('files').getAll()
-        q.onsuccess = () => res(q.result)
-      })
-      return all.find((f) => (f.text ?? '').includes(n))?.text ?? ''
-    }, needle)
 
   /**
    * Wait for the Tag Folder dialog to be usable, not merely present.
@@ -1450,6 +1553,50 @@ try {
   await page.waitForTimeout(350)
   check('Tasks tab shows tasks', (await page.locator('.task-row').count()) > 0)
   await page.screenshot({ path: join(SHOTS, '11-phone-tasks.png') })
+
+  /*
+   * The same chip, the same picker — as a sheet. This is the half of the
+   * feature a popover under the cursor cannot serve: a menu pinned to a
+   * fingertip is half off-screen, and day cells sized for a mouse are not
+   * targets a thumb can hit.
+   */
+  const phoneChip = page.locator('.task-row .due-chip').first()
+  check('every task row carries a date button on a phone too', (await phoneChip.count()) === 1)
+  const chipBox = await phoneChip.boundingBox()
+  check(
+    'the chip is a real touch target',
+    chipBox.height >= 32 && chipBox.width >= 40,
+    `${Math.round(chipBox.width)}×${Math.round(chipBox.height)}`,
+  )
+  await phoneChip.tap()
+  await page.waitForTimeout(400)
+  const dueSheet = await page.evaluate(() => {
+    const box = document.querySelector('.menu-due')
+    const day = document.querySelector('.due-day')
+    return {
+      isSheet: !!box?.classList.contains('menu-sheet'),
+      atBottom: box ? Math.round(window.innerHeight - box.getBoundingClientRect().bottom) : -1,
+      width: box ? Math.round(box.getBoundingClientRect().width / window.innerWidth * 100) : 0,
+      dayHeight: day ? Math.round(day.getBoundingClientRect().height) : 0,
+      presets: document.querySelectorAll('.due-preset').length,
+    }
+  })
+  check('the picker arrives as a bottom sheet, not a popover', dueSheet.isSheet)
+  check('flush to the bottom edge', dueSheet.atBottom === 0, `${dueSheet.atBottom}px off`)
+  check('and full width', dueSheet.width >= 99, `${dueSheet.width}%`)
+  check('its day cells are thumb-sized', dueSheet.dayHeight >= 40, `${dueSheet.dayHeight}px`)
+  check('with the same presets on top', dueSheet.presets >= 3, `${dueSheet.presets}`)
+  await page.screenshot({ path: join(SHOTS, '11b-phone-due.png') })
+
+  const beforePick = await page.locator('.task-row .due-chip').first().innerText()
+  await page.locator('.due-preset:has-text("Today")').tap()
+  await page.waitForTimeout(500)
+  check('the sheet closes on a choice', (await page.locator('.due-pick').count()) === 0)
+  check(
+    'and the row shows the date it was given',
+    (await page.locator('.task-row .due-chip').first().innerText()).trim() === 'Today',
+    `was "${beforePick.trim()}"`,
+  )
 
   await page.locator('.tabbar-item:has-text("Calendar")').click()
   await page.waitForTimeout(350)

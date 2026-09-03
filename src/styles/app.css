@@ -1233,13 +1233,78 @@ body.resizing .pane-resizer::after {
   color: var(--text-faint);
   margin-top: 1px;
 }
-.task-due-over {
-  color: var(--danger);
+
+/* --------------------------------------------------------------------------
+   The due chip.
+
+   Sibling of the checkbox at the other end of the row, and the same control
+   the editor draws as `.cm-due-chip` — the two are styled apart because one
+   sits in a list and one sits in a sentence, but they say the same things with
+   the same colours.
+   -------------------------------------------------------------------------- */
+
+.due-chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 30px;
+  min-height: 22px;
+  padding: 2px 7px;
+  margin-top: 1px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 11.5px;
   font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+  color: var(--text-faint);
+  -webkit-tap-highlight-color: transparent;
+  cursor: pointer;
 }
-.task-due-soon {
+.due-chip[data-set='1'] {
+  background: var(--surface-2);
+}
+/* Unset: an outline that stays quiet until the row is under the pointer. */
+.due-chip[data-set='0'] {
+  border-style: dashed;
+  border-color: var(--border);
+  opacity: 0.45;
+}
+.task-row:hover .due-chip[data-set='0'],
+.due-chip[data-set='0']:focus-visible {
+  opacity: 1;
+}
+.due-chip[data-tone='over'] {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+.due-chip[data-tone='today'],
+.due-chip[data-tone='soon'] {
   color: var(--accent);
-  font-weight: 600;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.due-chip:hover {
+  border-color: var(--border-strong);
+}
+.task-row[data-done='1'] .due-chip {
+  opacity: 0.5;
+  font-weight: 500;
+}
+
+/*
+ * A finger needs more than eleven pixels of chip. The label stays the size it
+ * is — this is padding around it, not a bigger badge.
+ */
+.shell[data-mode='compact'] .due-chip {
+  min-width: 44px;
+  min-height: 32px;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+.shell[data-mode='compact'] .due-chip[data-set='0'] {
+  opacity: 0.6;
 }
 
 .day-note-row {

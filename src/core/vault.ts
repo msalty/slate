@@ -32,6 +32,7 @@ import {
   calendarDateFor,
   codeRegions,
   excerptOf,
+  isTaskLine,
   parseFrontmatter,
   resolveTarget,
   scanMdLinks,
@@ -40,6 +41,7 @@ import {
   scanWikiLinks,
   splitSizeFragment,
   stripInline,
+  withDue,
 } from './markdown'
 import {
   loadDeviceRecords,
@@ -947,6 +949,27 @@ export async function toggleTask(path: string, line: number): Promise<void> {
   const m = /^(\s*(?:[-*+]|\d+[.)])\s+\[)([ xX])(\].*)$/.exec(l)
   if (!m) return
   lines[line] = `${m[1]}${m[2] === ' ' ? 'x' : ' '}${m[3]}`
+  await saveNote(path, lines.join('\n'))
+}
+
+/**
+ * Give a task a due date, or take it away when `date` is undefined.
+ *
+ * The sibling of `toggleTask`, and for the same reason: the task list is a view
+ * over other notes' source, so acting on a row here has to go back and edit the
+ * line it came from. Nothing is written when the rewrite would be a no-op —
+ * picking the date a task already has shouldn't cost a save, a sync and a
+ * version-history snapshot.
+ */
+export async function setDue(path: string, line: number, date: number | undefined): Promise<void> {
+  const f = files.get(path)
+  if (!f?.text) return
+  const lines = f.text.split('\n')
+  const l = lines[line]
+  if (l === undefined || !isTaskLine(l)) return
+  const next = withDue(l, date)
+  if (next === l) return
+  lines[line] = next
   await saveNote(path, lines.join('\n'))
 }
 

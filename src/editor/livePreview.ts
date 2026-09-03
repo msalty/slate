@@ -40,11 +40,13 @@ import type { SyntaxNodeRef } from '@lezer/common'
 import {
   BulletWidget,
   CheckboxWidget,
+  DueChipWidget,
   EmbedWidget,
   HrWidget,
   TableWidget,
   isDelimiterRow,
 } from './widgets'
+import { findDue, isTaskLine } from '../core/markdown'
 import { noteContext } from './context'
 import { normalizeUri, scanUris } from './links'
 import { resolveEmbed, resolveLink } from '../core/vault'
@@ -550,6 +552,41 @@ function buildDecorations(view: EditorView): DecorationSet {
             attributes: { 'data-href': href, title: href },
           }).range(u.from, u.to),
         )
+      }
+      if (line.to >= vTo) break
+      p = line.to + 1
+    }
+
+    /*
+     * Task due dates.
+     *
+     * Textual, like the tags below: `📅 2026-09-04` is a convention, not
+     * markdown, so the parser has no node for it.
+     *
+     * The marker reveals its source only when the caret is inside the marker
+     * itself, rather than anywhere on the line. Line-level reveal is right for
+     * syntax you edit by typing, and wrong here — it would take the chip away
+     * the moment you put the caret in the task you wanted to date. The chip is
+     * atomic, so getting the caret inside one takes deliberate aim, which is
+     * the correct amount of effort for hand-editing a date that has a picker.
+     */
+    for (let p = vFrom; p <= vTo; ) {
+      const line = state.doc.lineAt(p)
+      if (isTaskLine(line.text)) {
+        const due = findDue(line.text)
+        if (due) {
+          const from = line.from + due.from
+          const to = line.from + due.to
+          if (!touched(state, from, to)) {
+            out.push(
+              Decoration.replace({ widget: new DueChipWidget(due.date) }).range(from, to),
+            )
+          }
+        } else if (lineTouched(state, line.from, line.to)) {
+          out.push(
+            Decoration.widget({ widget: new DueChipWidget(undefined), side: 1 }).range(line.to),
+          )
+        }
       }
       if (line.to >= vTo) break
       p = line.to + 1

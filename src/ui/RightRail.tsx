@@ -6,28 +6,14 @@
  * a phone. Same components, same behaviour, no second implementation to drift.
  */
 
-import { getEntry, notesByDay, notesOnDay, tasks, toggleTask } from '../core/vault'
+import { getEntry, notesByDay, notesOnDay, setDue, tasks, toggleTask } from '../core/vault'
 import { dailyNoteFor } from '../core/daily'
-import { startOfDay, ymd } from '../core/util'
+import { monthGrid, startOfDay, ymd } from '../core/util'
 import { calendarMonth, openDailyNote, openNote, scope, selectedDay } from './state'
+import { DueChip } from './DueChip'
 import { IconCalendar, IconCheck, IconChevronLeft, IconChevronRight, IconPlus } from './Icons'
 
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-
-function monthGrid(anchor: number): number[] {
-  const d = new Date(anchor)
-  const first = new Date(d.getFullYear(), d.getMonth(), 1)
-  const start = new Date(first)
-  start.setDate(1 - first.getDay())
-  const days: number[] = []
-  for (let i = 0; i < 42; i++) {
-    const day = new Date(start)
-    day.setDate(start.getDate() + i)
-    days.push(startOfDay(day))
-  }
-  // Trim a trailing all-next-month week so short months don't show six rows.
-  return days.slice(0, days[35] && new Date(days[35]).getMonth() !== d.getMonth() ? 35 : 42)
-}
 
 export function CalendarPanel({ big = false }: { big?: boolean }) {
   const anchor = calendarMonth.value
@@ -152,8 +138,6 @@ export function TasksPanel({ showDone = false }: { showDone?: boolean }) {
   const all = tasks.value
   const open = all.filter((t) => !t.done)
   const done = all.filter((t) => t.done)
-  const today = startOfDay(Date.now())
-  const soon = today + 2 * 86_400_000
   const shown = showDone ? [...open, ...done] : open
 
   return (
@@ -169,8 +153,8 @@ export function TasksPanel({ showDone = false }: { showDone?: boolean }) {
 
       {all.length === 0 ? (
         <p class="rail-empty">
-          Type <code>- [ ]</code> in any note to add a task. Add <code>📅 {ymd(today)}</code> to give
-          it a due date.
+          Type <code>- [ ]</code> in any note to add a task. Each one gets a date button here and in
+          the note.
         </p>
       ) : shown.length === 0 ? (
         <p class="rail-empty">All clear.</p>
@@ -196,21 +180,13 @@ export function TasksPanel({ showDone = false }: { showDone?: boolean }) {
               {t.text || <em class="dim">Untitled task</em>}
               <span class="task-meta">
                 <span>{getEntry(t.path)?.title ?? t.noteTitle}</span>
-                {t.due !== undefined && (
-                  <span
-                    class={
-                      t.due < today ? 'task-due-over' : t.due <= soon ? 'task-due-soon' : undefined
-                    }
-                  >
-                    {t.due < today ? 'Overdue · ' : ''}
-                    {new Date(t.due).toLocaleDateString(undefined, {
-                      month: 'short',
-                      day: 'numeric',
-                    })}
-                  </span>
-                )}
               </span>
             </span>
+            <DueChip
+              due={t.due}
+              label={t.text || 'this task'}
+              onPick={(date) => void setDue(t.path, t.line, date)}
+            />
           </div>
         ))
       )}

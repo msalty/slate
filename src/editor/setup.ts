@@ -65,6 +65,7 @@ import { pasteHandler } from './paste'
 import { editableCompartment, editableFacet } from './reading'
 import { WikiLink } from './wikilink-syntax'
 import { noteContext, requestLinkDialog } from './context'
+import { setDueAtCaret } from './due'
 import { focusedCell } from './table'
 import { minimalEdit } from '../core/rebase'
 import { tagCompletion, wikiCompletion } from './completion'
@@ -118,6 +119,17 @@ const formattingKeymap = [
   { key: 'Mod-Shift-0', run: applyList('number') },
   { key: 'Mod-Shift-9', run: applyQuote },
   { key: 'Mod-Shift-7', run: applyList('check') },
+  /*
+   * A date for the task the caret is on. Falls through on any other line.
+   *
+   * ⌘⌥D and not ⌘⇧D, for the reason spelled out at Mod-Shift-l above: search
+   * binds ⌘D to selectNextOccurrence, and CodeMirror resolves the unshifted
+   * name first, so ⌘⇧D was answered by that and never reached this. Precedence
+   * cannot fix it — the unshifted lookup happens across every keymap before the
+   * shifted one is tried at all. ⌘⌥D matches on the first lookup instead, and
+   * sits with the other ⌘⌥ bindings just above.
+   */
+  { key: 'Mod-Alt-d', run: setDueAtCaret },
   { key: 'Mod-]', run: applyIndent(1) },
   { key: 'Mod-[', run: applyIndent(-1) },
   { key: 'Mod-/', run: toggleComment },

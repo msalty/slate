@@ -49,3 +49,16 @@ export function requestUri(
 export function requestLinkDialog() {
   dispatchEvent(new CustomEvent('slate:link-dialog'))
 }
+
+/**
+ * Ask the shell to open the due-date picker for a task line.
+ *
+ * The picker is a Preact component and this file is imported by the editor,
+ * which never imports UI — so the chip widget asks for one the same way an
+ * image asks for the lightbox. `line` is a document position on the task,
+ * resolved to a line when the answer comes back, so an edit elsewhere in the
+ * note while the picker is open can't land the date on the wrong task.
+ */
+export function requestDueMenu(at: { x: number; y: number }, pos: number, current?: number) {
+  dispatchEvent(new CustomEvent('slate:due', { detail: { ...at, pos, current } }))
+}
