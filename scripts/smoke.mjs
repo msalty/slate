@@ -91,6 +91,30 @@ page.on('console', (m) => {
 })
 page.on('pageerror', (e) => consoleErrors.push(`pageerror: ${e.message}`))
 
+/**
+ * Ask the open note for an editing surface, the way a person does.
+ *
+ * A note opens as a page to read — no caret, and so no keyboard — and only a
+ * tap in it, or this button, gives it one. The button rather than a tap on the
+ * text, because a note whose first lines are a table or an image would be
+ * answering a click aimed at those instead.
+ */
+const startEditing = async () => {
+  const edit = page.locator('.editor-pane [aria-label="Edit note"]')
+  if (await edit.count()) {
+    await edit.click()
+    await page.waitForTimeout(200)
+  }
+}
+
+/** What the note is right now: a page being read, or something being typed in. */
+const readingState = () =>
+  page.evaluate(() => ({
+    flag: document.querySelector('.editor-pane')?.dataset.reading ?? '',
+    editable: document.querySelector('.cm-content')?.getAttribute('contenteditable') ?? '',
+    focused: document.activeElement?.className ?? '',
+  }))
+
 try {
   await page.goto(`http://localhost:${PORT}${BASE}`, { waitUntil: 'networkidle' })
   await page.waitForSelector('.shell', { timeout: 10_000 })
@@ -116,6 +140,18 @@ try {
   await page.click('[title^="New note"]')
   await page.waitForSelector('.cm-editor')
   check('editor mounts', true)
+
+  /*
+   * A brand new note is the one note that opens with a caret in it. There is
+   * nothing in it to read, and the tap that would ask for the caret is the one
+   * that just made the note.
+   */
+  const fresh = await readingState()
+  check(
+    'a brand new note opens ready to type',
+    fresh.flag === '0' && fresh.editable === 'true' && fresh.focused.includes('cm-content'),
+    `reading=${fresh.flag}, focused ${fresh.focused || 'nothing'}`,
+  )
 
   const title = page.locator('.editor-title-input')
   await title.fill('Lisbon Trip')
@@ -462,6 +498,8 @@ try {
 
   await page.keyboard.press('Control+Shift+m')
   await page.waitForTimeout(400)
+  check('a note being read shows no formatting bar', (await page.locator('.fmt-bar').count()) === 0)
+  await startEditing()
   check('rich text mode shows a formatting bar', (await page.locator('.fmt-bar').count()) === 1)
   const richText = await page.locator('.cm-content').innerText()
   check(
@@ -592,6 +630,29 @@ try {
   check('a missing embed reports itself', (await page.locator('.cm-embed-missing').count()) === 1)
   await page.screenshot({ path: join(SHOTS, '07-kitchen-sink.png') })
 
+  /* ---- a note opens as a page, not as a caret ----------------------------
+   * The phone keyboard is the whole reason. A note that opens focused covers
+   * half of itself with a keyboard nobody asked for, before a word of it has
+   * been read — so a note opened from the list has no editing surface at all
+   * until someone asks for one. `contenteditable` is the thing that matters:
+   * it is all a phone consults before raising the keyboard.
+   */
+  const asOpened = await readingState()
+  check(
+    'a note opens as a page with no editing surface',
+    asOpened.flag === '1' && asOpened.editable === 'false',
+    `reading=${asOpened.flag}, contenteditable=${asOpened.editable}`,
+  )
+  check(
+    'and nothing in it holds focus, so a phone leaves its keyboard down',
+    !asOpened.focused.includes('cm-content'),
+    asOpened.focused || 'nothing focused',
+  )
+  check(
+    'reading offers a way in that is not a guess',
+    (await page.locator('.editor-pane [aria-label="Edit note"]').count()) === 1,
+  )
+
   /* ---- clicks land where they are aimed ---------------------------------
    * Vertical space around a heading or a code block has to be padding or a
    * transparent border, never margin: CodeMirror turns a click into a document
@@ -641,10 +702,21 @@ try {
     }, word)
   }
 
+  /*
+   * The first of these is also the click that starts the editing: the gesture
+   * that asks for a caret is the same one that says where it goes, which is
+   * the only way tapping to edit can feel like no mode change at all.
+   */
   for (const word of ['blockquote', 'numbered', 'Final']) {
     const landed = await clickWord(word)
     check(`clicking "${word}" puts the caret in that word`, landed.ok, landed.detail)
   }
+  const afterTap = await readingState()
+  check(
+    'the click that placed the caret also started the editing',
+    afterTap.flag === '0' && afterTap.editable === 'true' && afterTap.focused.includes('cm-content'),
+    `reading=${afterTap.flag}, focused ${afterTap.focused || 'nothing'}`,
+  )
 
   /* ---- following a link with a pointer -----------------------------------
    * The desktop half of the phone tests further down. One plain click opens
@@ -711,6 +783,7 @@ try {
    * pipes: the rendered table *is* the editor there. (Live preview's
    * click-to-reveal is checked in the table section further down.)
    */
+  await startEditing()
   await page.locator('.cm-table-render td').first().click()
   await page.waitForTimeout(400)
   check(
@@ -926,6 +999,25 @@ try {
   // Padded on every rewrite, so the needle has to be something outside it.
   const tableSource = () => noteContaining('# Tables')
 
+  /*
+   * A cell is its own editing host, and would happily take a tap and raise the
+   * keyboard in a note that is only being read. So while a note is a page, its
+   * table is a picture of a table: the cells are not typing surfaces until the
+   * note has one of its own.
+   */
+  check(
+    'a table in a note being read has no typeable cells',
+    (await page.locator('.cm-table-render').count()) === 1 &&
+      (await page.locator('.cm-table-cell[contenteditable]').count()) === 0,
+    `${await page.locator('.cm-table-cell[contenteditable]').count()} of ${await page.locator('.cm-table-cell').count()} cells typeable`,
+  )
+  await startEditing()
+  check(
+    'and gets them the moment the note is being written in',
+    (await page.locator('.cm-table-cell[contenteditable]').count()) > 0,
+    `${await page.locator('.cm-table-cell[contenteditable]').count()} typeable`,
+  )
+
   await page.locator('.cm-table-cell[data-row="1"][data-col="1"]').click()
   await page.waitForTimeout(200)
   await page.keyboard.press('Control+a')
@@ -1006,6 +1098,13 @@ try {
   /* ---- insert a photo ---------------------------------------------------- */
   await page.locator('.note-row').filter({ hasText: 'Table formatting' }).first().click()
   await page.waitForTimeout(400)
+  // Insert puts something where the caret is, so it belongs to a note being
+  // written in — a note being read has no caret for it to aim at.
+  check(
+    'a note being read offers no Insert button',
+    (await page.locator('[aria-label="Insert photo or file"]').count()) === 0,
+  )
+  await startEditing()
   await page.locator('[aria-label="Insert photo or file"]').click()
   await page.waitForTimeout(300)
   const insertItems = await page.locator('.menu-item').allInnerTexts()
@@ -1374,6 +1473,30 @@ try {
   check('no horizontal overflow in the phone editor', !(await overflows()))
   await page.screenshot({ path: join(SHOTS, '14-phone-editor.png') })
 
+  /*
+   * The whole point of the reading mode, on the device it was written for: the
+   * note fills the screen and the keyboard is nowhere, until a tap in the text
+   * asks for it.
+   */
+  const phoneOpened = await readingState()
+  check(
+    'a note opened on a phone raises no keyboard',
+    phoneOpened.flag === '1' &&
+      phoneOpened.editable === 'false' &&
+      !phoneOpened.focused.includes('cm-content'),
+    `reading=${phoneOpened.flag}, contenteditable=${phoneOpened.editable}, focused ${phoneOpened.focused || 'nothing'}`,
+  )
+  await page.locator('.editor-overlay .cm-line').first().tap()
+  await page.waitForTimeout(300)
+  const phoneTapped = await readingState()
+  check(
+    'tapping the note is what starts editing it',
+    phoneTapped.flag === '0' &&
+      phoneTapped.editable === 'true' &&
+      phoneTapped.focused.includes('cm-content'),
+    `reading=${phoneTapped.flag}, focused ${phoneTapped.focused || 'nothing'}`,
+  )
+
   /* ---- the phone's Format sheet -----------------------------------------
    * Rich text on a phone has one rule: the keyboard and the Format sheet never
    * share the screen. Between them they leave almost no note visible, and
@@ -1387,6 +1510,7 @@ try {
     await page.waitForTimeout(400)
   }
   await chooseMode('Rich text')
+  await startEditing()
   check('the phone can switch to rich text', (await page.locator('.fmt-open').count()) === 1)
   await page.locator('.cm-line').first().click()
   await page.waitForTimeout(250)
@@ -1458,6 +1582,7 @@ try {
   await page.waitForTimeout(350)
   await page.locator('.note-row', { hasText: 'Kitchen Sink' }).first().tap()
   await page.waitForTimeout(600)
+  await startEditing()
   const cell = page.locator('.cm-table-cell[data-row="1"][data-col="1"]')
   await cell.scrollIntoViewIfNeeded()
   await cell.tap()

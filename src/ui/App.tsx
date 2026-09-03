@@ -119,7 +119,7 @@ export function App() {
       }
       if (!exists) {
         const p = await createNote('', target, `# ${target}\n\n`)
-        openNote(p)
+        openNote(p, { editing: true })
         notify(`Created "${target}"`)
       }
     }
@@ -169,7 +169,9 @@ export function App() {
         paletteOpen.value = !paletteOpen.value
       } else if (k === 'n' && !e.shiftKey) {
         e.preventDefault()
-        void createNote(scope.value.kind === 'folder' ? scope.value.path : '').then(openNote)
+        void createNote(scope.value.kind === 'folder' ? scope.value.path : '').then((p) =>
+          openNote(p, { editing: true }),
+        )
       } else if (k === 's' && !e.shiftKey) {
         e.preventDefault()
         void sync()

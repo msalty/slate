@@ -212,7 +212,7 @@ export function NoteList({ children }: { children?: preact.ComponentChildren }) 
     const folder = s.kind === 'folder' ? s.path : ''
     let body = ''
     if (s.kind === 'tag') body = `#${s.tag}\n\n`
-    openNote(await createNote(folder, 'Untitled', body))
+    openNote(await createNote(folder, 'Untitled', body), { editing: true })
   }
 
   // The day a "create daily note" row would be for, when there isn't one yet.
@@ -592,7 +592,7 @@ function UnlinkedView() {
               class="status-btn"
               onClick={async () => {
                 const p = await createNote('', target, `# ${target}\n\n`)
-                activePath.value = p
+                openNote(p, { editing: true })
               }}
             >
               Create

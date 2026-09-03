@@ -36,6 +36,16 @@ export const calendarMonth = signal<number>(startOfDay(Date.now()))
 /** Open state of the phone's Format sheet (rich mode). */
 export const formatSheetOpen = signal(false)
 
+/**
+ * Whether the open note is being read rather than written in.
+ *
+ * A note opens as a page — the whole pane given to the text, no caret in it and
+ * so no keyboard covering half of it before you have read a word. Tapping the
+ * note is what asks for an editing surface; the editor pane owns the switch and
+ * decides which way a note opens. See editor/reading.ts for the mechanism.
+ */
+export const readingMode = signal(true)
+
 /* ------------------------------------------------------------ editor mode */
 
 export const EDITOR_MODES = [
@@ -77,13 +87,52 @@ export const mobileTab = signal<MobileTab>('notes')
 export const mobileEditorOpen = signal(false)
 
 /**
- * Open a note from anywhere. On a phone this also pushes the editor over the
- * current tab, so tapping a note in Tasks or the calendar goes straight to
- * writing rather than silently changing something off-screen.
+ * The note that asked to be opened for writing rather than reading.
+ *
+ * Module-level and consumed once, by the editor as it opens that note: it is a
+ * message about a single opening, not a state anything else should be able to
+ * read back later.
  */
-export function openNote(path: string) {
+let openForWriting: string | undefined
+
+/**
+ * Open a note from anywhere. On a phone this also pushes the editor over the
+ * current tab, so tapping a note in Tasks or the calendar goes straight to the
+ * note rather than silently changing something off-screen.
+ *
+ * `editing` is for a note that was just created to be typed into: it opens with
+ * the caret in it, because there is nothing in it to read yet.
+ */
+export function openNote(path: string, opts?: { editing?: boolean }) {
+  openForWriting = opts?.editing ? path : undefined
   activePath.value = path
   if (layoutMode.value === 'compact') mobileEditorOpen.value = true
+}
+
+/** True once, for a note that was opened to be written in rather than read. */
+function takeEditRequest(path: string): boolean {
+  const asked = openForWriting === path
+  openForWriting = undefined
+  return asked
+}
+
+/**
+ * Which way a note opens: as a page to read, or with the caret already in it.
+ *
+ * Emptiness is the honest test for "brand new". There is nothing in it to read,
+ * so opening it as a page would be a blank screen asking to be tapped. The
+ * request covers the rest of the same case: notes the shell seeds with a
+ * template — a daily note, a note created inside a Tag Folder — which are as
+ * new as an empty one even though the file is not empty.
+ *
+ * A note in Recently Deleted always opens as a page. There is nothing to be
+ * done to it until it is restored.
+ */
+export function opensForWriting(path: string, text: string, trashed: boolean): boolean {
+  // Consumed either way: a request left lying around would answer for whichever
+  // note happened to be opened next.
+  const asked = takeEditRequest(path)
+  return !trashed && (asked || text.trim() === '')
 }
 
 /**
@@ -97,7 +146,9 @@ export function openNote(path: string) {
 export async function openDailyNote(day: number) {
   const existed = dailyNoteFor(day) !== undefined
   const path = await dailyNotePath(day)
-  openNote(path)
+  // A day that had no note has one now, holding nothing but its own date:
+  // it was created to be written in, so it opens ready for that.
+  openNote(path, { editing: !existed })
   if (!existed) notify(`Created ${path}`)
 }
 

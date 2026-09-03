@@ -54,7 +54,9 @@ export function CommandPalette() {
         label: 'New note',
         hint: '⌘N',
         run: async () => {
-          openNote(await createNote(scope.value.kind === 'folder' ? scope.value.path : ''))
+          openNote(await createNote(scope.value.kind === 'folder' ? scope.value.path : ''), {
+            editing: true,
+          })
         },
       },
       {
