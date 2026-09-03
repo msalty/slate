@@ -9,6 +9,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks'
 import { signal } from '@preact/signals'
 import { layoutMode } from './layout'
+import { IconCheck } from './Icons'
 
 export interface MenuItem {
   label: string
@@ -18,6 +19,12 @@ export interface MenuItem {
   /** Renders a separator above this item. */
   separated?: boolean
   disabled?: boolean
+  /**
+   * A toggle that is currently on — bold text under the caret, say. Drawn as a
+   * tick and in the accent colour, matching how the same control looks when it
+   * is a pressed button rather than a menu row.
+   */
+  checked?: boolean
 }
 
 interface MenuState {
@@ -164,9 +171,11 @@ export function ContextMenu() {
         <button
           key={i}
           class="menu-item"
-          role="menuitem"
+          role={item.checked === undefined ? 'menuitem' : 'menuitemcheckbox'}
           data-danger={item.danger ? '1' : '0'}
           data-sep={item.separated ? '1' : '0'}
+          data-checked={item.checked ? '1' : undefined}
+          aria-checked={item.checked === undefined ? undefined : item.checked}
           disabled={item.disabled}
           onClick={async () => {
             closeMenu()
@@ -175,6 +184,11 @@ export function ContextMenu() {
         >
           {item.icon && <span class="menu-icon">{item.icon}</span>}
           <span>{item.label}</span>
+          {item.checked && (
+            <span class="menu-check">
+              <IconCheck size={15} />
+            </span>
+          )}
         </button>
       ))}
       {sheet && (

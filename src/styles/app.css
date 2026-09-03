@@ -845,6 +845,24 @@ body.resizing .pane-resizer::after {
 .fmt-bar::-webkit-scrollbar {
   display: none;
 }
+/*
+ * A group the bar had no room for. Hidden rather than dropped from the DOM so
+ * its natural width can still be measured when the pane widens again — see the
+ * measuring pass in FormatBar.tsx, which clears these before it reads anything.
+ *
+ * Two classes deep so it beats the `display` each control sets for itself.
+ */
+.fmt-bar [data-overflow='1'] {
+  display: none;
+}
+/*
+ * The overflow button sits hard right, so it is in the same place whether one
+ * group is hidden or three, rather than shuffling along the bar as the pane is
+ * resized.
+ */
+.fmt-more {
+  margin-left: auto;
+}
 .fmt-row {
   display: flex;
   align-items: center;

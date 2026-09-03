@@ -588,6 +588,19 @@
   display: flex;
   color: var(--text-faint);
 }
+/* A toggle that is on, drawn the way the same control looks as a button. */
+.menu-item[data-checked='1'] {
+  color: var(--accent);
+}
+.menu-item[data-checked='1'] .menu-icon {
+  color: var(--accent);
+}
+.menu-check {
+  display: flex;
+  margin-left: auto;
+  padding-left: 10px;
+  color: var(--accent);
+}
 
 /* ==========================================================================
    Due-date picker

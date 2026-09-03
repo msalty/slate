@@ -122,6 +122,26 @@ const noteContaining = (needle) =>
     return all.find((f) => (f.text ?? '').includes(n))?.text ?? ''
   }, needle)
 
+/**
+ * The same, but waiting for a save that may not have landed yet.
+ *
+ * Saves are debounced, so a fixed sleep after a toolbar press is a race: the
+ * read finds the *previous* text, which still contains the needle, and the
+ * check fails for timing rather than for behaviour. Polling for what the edit
+ * should have produced fails just as loudly when the edit never happens, and
+ * only costs time when it is genuinely slow.
+ */
+const noteAfterEdit = async (needle, expected, timeout = 4000) => {
+  const until = Date.now() + timeout
+  let text = ''
+  do {
+    text = await noteContaining(needle)
+    if (text.includes(expected)) return text
+    await page.waitForTimeout(100)
+  } while (Date.now() < until)
+  return text
+}
+
 /** What the note is right now: a page being read, or something being typed in. */
 const readingState = () =>
   page.evaluate(() => ({
@@ -604,6 +624,26 @@ try {
   check('a note being read shows no formatting bar', (await page.locator('.fmt-bar').count()) === 0)
   await startEditing()
   check('rich text mode shows a formatting bar', (await page.locator('.fmt-bar').count()) === 1)
+
+  /*
+   * Reach a bar control the way a person has to.
+   *
+   * The bar overflows into a "…" menu when the pane is too narrow for every
+   * group — which at this viewport, with the calendar inline, it is. So a
+   * control is either a button on the bar or a row in that menu, and a test
+   * that only knew about the first would be testing the window size.
+   */
+  const clickFormat = async (label) => {
+    const onBar = page.locator(`.fmt-bar .fmt-btn[aria-label="${label}"]:not([data-overflow])`)
+    if ((await onBar.count()) && (await onBar.first().isVisible())) {
+      await onBar.first().click()
+      return 'bar'
+    }
+    await page.locator('.fmt-more').click()
+    await page.waitForTimeout(250)
+    await page.locator('.menu-item', { hasText: label }).first().click()
+    return 'menu'
+  }
   const richText = await page.locator('.cm-content').innerText()
   check(
     'rich text mode shows no markdown syntax at all',
@@ -622,7 +662,7 @@ try {
   await page.waitForTimeout(400)
   check(
     'the Heading button writes "## " into the markdown',
-    (await noteContaining('Toolbar line')).includes('## Toolbar line'),
+    (await noteAfterEdit('Toolbar line', '## Toolbar line')).includes('## Toolbar line'),
   )
   check(
     'the bar reports Heading as the active style',
@@ -633,9 +673,9 @@ try {
     !(await page.locator('.cm-content').innerText()).includes('## Toolbar'),
   )
 
-  await page.locator('.fmt-bar .fmt-btn[aria-label^="Underline"]').click()
+  await clickFormat('Underline (⌘U)')
   await page.waitForTimeout(400)
-  const underlined = await noteContaining('Toolbar')
+  const underlined = await noteAfterEdit('Toolbar', '<u>')
   check('underline is written as HTML, which markdown has no syntax for', underlined.includes('<u>'))
   check(
     'the <u> tags are not shown to the reader',
@@ -644,6 +684,101 @@ try {
   check(
     'formatting is applied on the line the caret is on',
     (await page.locator('.cm-underline').count()) > 0,
+  )
+
+  /* ---- the bar runs out of room ----------------------------------------
+   * The editor pane is the one that never yields width, so with the calendar
+   * inline there can be less than half the bar's natural width to put it in.
+   * It used to be clipped at the pane's edge against the calendar — and it
+   * scrolls sideways, but with the scrollbar hidden nothing said so, which made
+   * Link and Table look like features that did not exist.
+   *
+   * What is asserted is the property, not a group count: whatever the width,
+   * the bar never has content it cannot show, and everything it cannot show is
+   * in the menu.
+   */
+  const barState = () =>
+    page.evaluate(() => {
+      const bar = document.querySelector('.fmt-bar')
+      if (!bar) return null
+      const groups = [...bar.querySelectorAll('[data-fmt-part="group"]')]
+      const more = bar.querySelector('[data-fmt-more]')
+      return {
+        clipped: bar.scrollWidth - bar.clientWidth,
+        shown: groups.filter((g) => !g.hasAttribute('data-overflow')).length,
+        hidden: groups.filter((g) => g.hasAttribute('data-overflow')).length,
+        moreShown: !more.hasAttribute('data-overflow'),
+      }
+    })
+
+  const narrow = await barState()
+  check(
+    'a bar too wide for the pane is never left clipped',
+    narrow.clipped === 0,
+    `${narrow.clipped}px past the edge`,
+  )
+  check(
+    'what it cannot fit goes behind a "…" instead',
+    narrow.hidden > 0 && narrow.moreShown,
+    `${narrow.shown} shown, ${narrow.hidden} hidden`,
+  )
+
+  await page.locator('.fmt-more').click()
+  await page.waitForTimeout(300)
+  const overflowRows = await page.locator('.menu-item').allInnerTexts()
+  check(
+    'and the menu holds exactly what the bar dropped',
+    overflowRows.includes('Insert table') && overflowRows.includes('Add link'),
+    JSON.stringify(overflowRows),
+  )
+  check(
+    'a control the caret is already in reports itself as on',
+    (await page.locator('.menu-item[data-checked="1"], .menu-item:not([data-checked])').count()) > 0,
+  )
+
+  // A command from the menu has to reach the note and hand focus back, or the
+  // next keystroke goes nowhere.
+  await page.locator('.menu-item', { hasText: 'Block quote' }).first().click()
+  await page.waitForTimeout(500)
+  const quoted = await noteAfterEdit('Toolbar', '> ## Toolbar')
+  check(
+    'running one from the menu edits the note',
+    quoted.includes('> ## Toolbar'),
+    quoted.split('\n').filter((l) => l.includes('Toolbar'))[0],
+  )
+  check(
+    'and gives the editor its caret back',
+    await page.evaluate(() => (document.activeElement?.className ?? '').includes('cm-content')),
+  )
+  await page.locator('.fmt-more').click()
+  await page.waitForTimeout(300)
+  check(
+    'the menu shows that toggle as on next time it opens',
+    (await page.locator('.menu-item[data-checked="1"]', { hasText: 'Block quote' }).count()) === 1,
+  )
+  await page.locator('.menu-item', { hasText: 'Block quote' }).first().click()
+  await page.waitForTimeout(400)
+  await page.screenshot({ path: join(SHOTS, '21-format-overflow.png') })
+
+  /*
+   * Give the bar room and it takes its groups back — the measuring pass has to
+   * un-hide before it measures, or a group once dropped could never return.
+   */
+  await page.setViewportSize({ width: 1800, height: 900 })
+  await page.waitForTimeout(600)
+  const wide = await barState()
+  check(
+    'widening the pane brings the groups back',
+    wide.shown > narrow.shown && wide.clipped === 0,
+    `${narrow.shown} → ${wide.shown} groups`,
+  )
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.waitForTimeout(500)
+  const backAgain = await barState()
+  check(
+    'and narrowing it hides them again',
+    backAgain.shown === narrow.shown && backAgain.clipped === 0,
+    `${wide.shown} → ${backAgain.shown} groups`,
   )
 
   await page.keyboard.press('Control+Shift+m')
@@ -1003,11 +1138,13 @@ try {
       (await page.locator('.cm-line.cm-table').count()) === 0,
   )
 
-  // The same operation the phone runs from its sheet, from the bar with a
-  // pointer: here typing *should* carry straight on, so the new cell takes
-  // focus rather than only being marked.
+  // The same operation the phone runs from its sheet, run with a pointer:
+  // here typing *should* carry straight on, so the new cell takes focus rather
+  // than only being marked. `clickFormat` reaches the control wherever it is —
+  // and at this width that is the overflow menu, so this doubles as the check
+  // that a menu opened from a menu row still opens.
   const barRows = await page.locator('.cm-table-render tr').count()
-  await page.locator('.fmt-bar .fmt-btn[aria-label="Table rows and columns"]').click()
+  await clickFormat('Table rows and columns')
   await page.waitForTimeout(300)
   await page.locator('.menu-item', { hasText: 'Insert row below' }).click()
   await page.waitForTimeout(400)
@@ -1017,7 +1154,7 @@ try {
       (await page.evaluate(() => document.activeElement?.className)) === 'cm-table-cell',
     `${barRows} → ${await page.locator('.cm-table-render tr').count()}`,
   )
-  await page.locator('.fmt-bar .fmt-btn[aria-label="Table rows and columns"]').click()
+  await clickFormat('Table rows and columns')
   await page.waitForTimeout(300)
   check(
     'the menu names the cell the buttons act on, not the caret',

@@ -19,7 +19,7 @@ npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
 npm test               # 254 unit and two-device sync tests
-node scripts/smoke.mjs # 249-check browser smoke test against dist/
+node scripts/smoke.mjs # 258-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -50,6 +50,17 @@ so nothing is ever silently rewritten:
   sheet is up — the sheet only opens once the keyboard is down, so the cell has
   necessarily lost its focus, and "add a row below" has to be beside a row you
   can still see.
+
+  **The bar never runs off the edge of the pane.** The editor is the panel that
+  never yields width, so with the calendar inline and both left panels open
+  there can be less than half the bar's natural width to put it in. What does
+  not fit collapses into a **…** at the right-hand end, which opens the rest as
+  a menu — with each control's full name, whether it is currently on, and
+  greyed out when it does not apply, the same as the button would be. Groups go
+  whole rather than button by button, so the bar never strands one orphaned
+  control from a group whose siblings are all in the menu, and they come back as
+  soon as there is room. It is a bar-only affordance: the phone's Format sheet
+  is as wide as the screen and lays the same controls out over three rows.
 - **Live preview** — formatting renders as you type, and the raw syntax
   reappears the moment your caret enters it.
 - **Markdown source** — the file, exactly as it is written.
@@ -741,7 +752,7 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 
 ```bash
 npm test                # 254 unit + two-device sync tests
-node scripts/smoke.mjs  # 249 checks in headless Chromium against dist/
+node scripts/smoke.mjs  # 258 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 
@@ -776,6 +787,13 @@ And the callout section writes one the way a person would — type `> [!`, pick
 from the list — because the marker doubles as a CommonMark shortcut link
 reference, so the brackets get hidden as link syntax unless the callout claims
 them first.
+
+The formatting bar's overflow is asserted as a property rather than a button
+count, because the count is a function of the window: at every width the bar
+must have no content it cannot show, and everything it cannot show must be in
+the **…** menu. It is checked in both directions — widening the pane has to
+bring the groups back, which is the failure mode of measuring a bar whose parts
+are already hidden and therefore measure zero.
 
 If Chromium isn't on the default path:
 
