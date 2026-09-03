@@ -18,8 +18,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 218 unit and two-device sync tests
-node scripts/smoke.mjs # 227-check browser smoke test against dist/
+npm test               # 254 unit and two-device sync tests
+node scripts/smoke.mjs # 249-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -151,6 +151,55 @@ ordinary GFM table, printed with its columns lined up so it still reads as text.
 Live preview keeps its own contract: clicking a table there puts the caret in
 the pipe source, the same way the caret reveals every other construct it sits
 in.
+
+**A spreadsheet range pastes as a table.** Copy cells in Excel, Numbers, Sheets
+or Calc and paste: you get a GFM table with the columns lined up, not a wall of
+tabs. Excel puts two things on the clipboard — a `<table>` under `text/html` and
+the same cells tab-separated under `text/plain` — and both are used, for
+different jobs. The HTML is only ever a *discriminator*: its presence is what
+says this came out of a grid rather than out of a terminal, which nothing in the
+plain text can tell you, so tab-separated text pasted from anywhere else stays
+text. The cells themselves are read from the plain-text flavour, because Excel's
+HTML is a wall of `mso-` styles and parsing it would mean trusting markup from
+outside the app.
+
+The two things a spreadsheet holds that a pipe table cannot are handled on the
+way in rather than dropped: a cell containing a `|` is escaped so it can't end
+its column, and a multi-line cell is flattened onto its row.
+
+**Block quotes can say what kind of aside they are.**
+
+```markdown
+> [!WARNING] Friday deploys
+> The window closes at 16:00.
+```
+
+renders as a titled, coloured callout with an icon. The syntax is **GitHub's**,
+which is the reason to like it: GitHub renders these, every other markdown tool
+falls back to an ordinary blockquote, and the file on disk stays plain
+CommonMark — a note with callouts in it loses the tint somewhere else and
+nothing more.
+
+Five colours, because five is what GitHub defines — `note`, `tip`, `important`,
+`warning`, `caution` — and every extra one is a hue that has to stay legible in
+both themes forever. The longer vocabulary people actually type is aliased onto
+those five and keeps its own glyph where the glyph says something the colour
+does not: `[!bug]` is a bug in caution red, `[!question]` a question mark in
+important purple, `[!success]` a tick in tip green. A name nobody defined is not
+a broken callout — it stays the blockquote it is, exactly as GitHub treats an
+unknown alert.
+
+Type `> [!` and the list of types appears, with the colour family each alias
+lands in beside it; there is no toolbar button, because the formatting bar
+exists only in rich text while the syntax works in all three modes. Omit the
+title and the callout announces its own type instead. Put the caret on that
+line and the raw `[!warning]` comes back to be edited, the same way a link's URL
+does.
+
+**Code blocks have a copy button** in the top right corner — on hover with a
+pointer, always visible on a touch screen, and it works while a note is being
+read, which is where it is wanted most. It copies the code without its fences,
+and without the indentation of a block nested in a list.
 
 **Pinned notes** sit in their own section at the top of the list — sorted the
 same way everything else is, by date edited, date created or title — and stay
@@ -604,6 +653,9 @@ src/
 │  ├─ links.ts      external URI recognition, opening and editing
 │  ├─ linkClicks.ts following a link from the text — clicks and taps alike
 │  ├─ table.ts      the pipe-table grid: parse, edit rows/columns, print
+│  ├─ tsv.ts       a spreadsheet range off the clipboard, as a table
+│  ├─ callout.ts   the callout vocabulary: five colours, and what aliases to them
+│  ├─ codeblock.ts reading a fenced block back out, for the copy button
 │  ├─ due.ts        writing a task's due date into the buffer being typed in
 │  ├─ inline.ts      inline markdown for text inside widgets (table cells)
 │  └─ pickImage.ts   camera / photo library / file insertion
@@ -647,6 +699,13 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
   underlying `reorderSmartFolders` exists but nothing calls it yet.
 - **A Tag Folder can't live inside a real folder.** The two hierarchies are
   separate — use `folder:Work` in the rule to pin one to a folder.
+- **A table can't be copied back out to Excel yet.** Pasting a spreadsheet range
+  in works; the return trip — selecting a table and having it land in cells
+  rather than as pipes — needs a `copy` handler that puts a `text/html` flavour
+  on the clipboard, and isn't written.
+- **Callouts can't be folded.** Obsidian's `[!note]-` and `[!note]+` are parsed
+  and their fold character is hidden rather than left on screen as a stray
+  dash, but nothing collapses yet.
 - **Table columns can't be aligned from the UI.** Cells are edited in place and
   rows and columns come and go from the toolbar, but `:--:` alignment still has
   to be typed into the delimiter row by hand, in live preview or source.
@@ -681,8 +740,8 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 218 unit + two-device sync tests
-node scripts/smoke.mjs  # 227 checks in headless Chromium against dist/
+npm test                # 254 unit + two-device sync tests
+node scripts/smoke.mjs  # 249 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 
@@ -705,6 +764,18 @@ also holds the reading mode to its promise on both layouts: a note opened from
 the list has no `contenteditable` anywhere in it and nothing focused, a table in
 it has no typeable cells, and the tap that ends that is the one that puts the
 caret in the word it landed on.
+
+Three of its sections are there because the browser is the only place the answer
+exists. The spreadsheet paste is driven through a real `ClipboardEvent` carrying
+both flavours, and asserts the negative case too — tab-separated text with no
+table behind it has to stay text, or every indented paste in the app silently
+becomes a table. The copy button is clicked and the clipboard read back, which
+is also what caught it starting an edit on the note it was pressed in: it swallows
+the mouse events, but tap-to-edit watches pointer events, which arrive first.
+And the callout section writes one the way a person would — type `> [!`, pick
+from the list — because the marker doubles as a CommonMark shortcut link
+reference, so the brackets get hidden as link syntax unless the callout claims
+them first.
 
 If Chromium isn't on the default path:
 

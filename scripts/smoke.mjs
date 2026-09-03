@@ -673,6 +673,15 @@ try {
       '> A blockquote',
       '> spanning two lines.',
       '',
+      '> [!WARNING] Friday deploys',
+      '> The window closes at 16:00.',
+      '',
+      '> [!bug]',
+      '> An alias: caution\'s colour, its own glyph, and its own name as the title.',
+      '',
+      '> [!nonsense] Not a type anyone defined',
+      '> so this has to stay an ordinary quote.',
+      '',
       '---',
       '',
       '| Left | Center | Right |',
@@ -690,6 +699,10 @@ try {
       '',
       '```js',
       'const x = { a: 1 } // not a #tag and not a [[link]]',
+      '```',
+      '',
+      '```',
+      'a fence with no language, whose whole first line is the hidden marker',
       '```',
       '',
       'Final paragraph.',
@@ -727,11 +740,106 @@ try {
   check('table renders as a real table', (await page.locator('.cm-table-render td').count()) >= 6)
   check('escaped pipe stays inside its cell', (await page.locator('.cm-table-render').innerText()).includes('d|e'))
   check('frontmatter is not rendered as a heading', (await page.locator('.cm-line.cm-frontmatter').count()) >= 4)
-  check('code block gets its own styling', (await page.locator('.cm-line.cm-codeblock').count()) >= 3)
   check('blockquote is styled', (await page.locator('.cm-line.cm-quote').count()) >= 2)
   check('tags in code are not linkified', (await page.locator('.cm-tag').count()) === 1)
   check('a missing embed reports itself', (await page.locator('.cm-embed-missing').count()) === 1)
+
+  /* ---- callouts --------------------------------------------------------
+   * A callout is a blockquote wearing a colour, so what is asserted is that
+   * the right lines got the right class, the marker became an icon, and — the
+   * one that keeps the format honest — that a type nobody defined is still
+   * rendered as the plain quote it is, exactly as GitHub renders it.
+   */
+  check(
+    'a callout colours its own lines',
+    (await page.locator('.cm-line.cm-callout-warning').count()) === 2,
+    `${await page.locator('.cm-line.cm-callout-warning').count()} warning lines`,
+  )
+  check(
+    'an alias lands in the colour it was aliased to',
+    (await page.locator('.cm-line.cm-callout-caution').count()) === 2,
+  )
+  check(
+    'the marker is replaced by an icon rather than shown',
+    (await page.locator('.cm-callout-mark svg').count()) === 2 &&
+      !(await page.locator('.cm-content').innerText()).includes('[!WARNING]'),
+  )
+  check(
+    'an author\'s own title is kept',
+    (await page.locator('.cm-callout-title').innerText()).includes('Friday deploys'),
+  )
+  check(
+    'an untitled callout announces its own type instead',
+    (await page.locator('.cm-callout-label').innerText()).trim() === 'Bug',
+    await page.locator('.cm-callout-label').innerText(),
+  )
+  /*
+   * Three blockquotes in the note, two of them callouts. Four lines still
+   * carrying the plain quote class is the whole proof that the third — a type
+   * nobody defined — was left alone, which is what GitHub does with an unknown
+   * alert and what keeps the syntax safe to write.
+   */
+  check(
+    'an unknown type stays an ordinary blockquote',
+    (await page.locator('.cm-line.cm-quote').count()) === 4 &&
+      (await page.locator('.cm-callout-mark').count()) === 2,
+    `${await page.locator('.cm-line.cm-quote').count()} plain quote lines`,
+  )
   await page.screenshot({ path: join(SHOTS, '07-kitchen-sink.png') })
+
+  /* ---- the copy button on a code block ---------------------------------
+   * Both fences get one, and the second is the case worth having: with no
+   * language, the whole of its opening line is the hidden fence marker, so the
+   * button is a point widget sitting at the end of a fully replaced range.
+   *
+   * The blocks are near the end of a long note, and CodeMirror only builds the
+   * lines that are on screen — so they have to be scrolled to before any of
+   * this is true.
+   */
+  await page.locator('.cm-content').evaluate((el) => {
+    el.closest('.cm-scroller').scrollTop = el.closest('.cm-scroller').scrollHeight
+  })
+  await page.waitForTimeout(400)
+  check('code block gets its own styling', (await page.locator('.cm-line.cm-codeblock').count()) >= 3)
+  check(
+    'a #tag inside a code block is still not linkified',
+    (await page.locator('.cm-tag').count()) === 0,
+  )
+  check(
+    'every fenced block gets a copy button',
+    (await page.locator('.cm-code-copy').count()) === 2,
+    `${await page.locator('.cm-code-copy').count()} buttons`,
+  )
+
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+  await page.locator('.cm-code-copy').first().click()
+  await page.waitForTimeout(250)
+  const copied = await page.evaluate(() => navigator.clipboard.readText())
+  check(
+    'the copy button copies the code without its fences',
+    copied === 'const x = { a: 1 } // not a #tag and not a [[link]]',
+    JSON.stringify(copied),
+  )
+  check(
+    'and says so',
+    (await page.locator('.cm-code-copy[data-copied]').count()) === 1,
+  )
+  check(
+    'copying does not put a caret in the note',
+    (await page.evaluate(() => document.activeElement?.className ?? '')).indexOf('cm-content') < 0,
+  )
+  check(
+    'copying changed nothing in the note',
+    consoleErrors.length === sinkErrorsBefore,
+    consoleErrors.slice(sinkErrorsBefore).join(' | '),
+  )
+
+  // Back to the top: everything below reads this same note, and CodeMirror
+  // only builds the lines that are on screen.
+  await page.locator('.cm-content').evaluate((el) => {
+    el.closest('.cm-scroller').scrollTop = 0
+  })
+  await page.waitForTimeout(400)
 
   /* ---- a note opens as a page, not as a caret ----------------------------
    * The phone keyboard is the whole reason. A note that opens focused covers
@@ -1939,6 +2047,135 @@ try {
 
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.waitForTimeout(350)
+
+  /* ---- writing a callout ------------------------------------------------
+   * The completion is the whole discovery story for callouts — there is no
+   * button, because the formatting bar exists only in rich text while the
+   * syntax works in all three modes. So the path that has to work is: type
+   * `> [!`, pick from a list, get a callout.
+   */
+  await page.click('[title^="New note"]')
+  await page.waitForTimeout(500)
+  await page.locator('.cm-content').click()
+  await page.locator('.cm-content').pressSequentially('> [!warn', { delay: 40 })
+  await page.waitForTimeout(500)
+  const calloutSuggestions = await page.locator('.cm-tooltip-autocomplete li').count()
+  check('typing "[!" in a quote offers the callout types', calloutSuggestions > 0, `${calloutSuggestions} options`)
+  await page.keyboard.press('Enter')
+  await page.waitForTimeout(300)
+  await page.locator('.cm-content').pressSequentially('Friday deploys', { delay: 20 })
+  await page.waitForTimeout(300)
+  check(
+    'accepting one writes the marker and leaves the caret in the title',
+    (await page.locator('.cm-content').textContent()).includes('[!warning] Friday deploys'),
+    await page.locator('.cm-content').textContent(),
+  )
+  check(
+    'and the line is already a callout while it is being typed',
+    (await page.locator('.cm-line.cm-callout-warning').count()) === 1,
+  )
+  // Off the line, and the marker becomes the icon it stands for.
+  await page.keyboard.press('Enter')
+  await page.locator('.cm-content').pressSequentially('The window closes at 16:00.', { delay: 10 })
+  await page.waitForTimeout(400)
+  check(
+    'moving off the line turns the marker into its icon',
+    (await page.locator('.cm-callout-mark svg').count()) === 1 &&
+      !(await page.locator('.cm-content').innerText()).includes('[!warning]'),
+  )
+  check(
+    'and the callout carries on over the lines below it',
+    (await page.locator('.cm-line.cm-callout-warning').count()) === 2,
+  )
+
+  /* ---- pasting a spreadsheet range -------------------------------------
+   * Excel, Numbers, Sheets and Calc all put two flavours on the clipboard: a
+   * `<table>` under text/html and the same cells tab-separated under
+   * text/plain. Only a real ClipboardEvent carrying both exercises the branch,
+   * and the negative case below is the one that keeps it honest — tab-separated
+   * text with no table behind it has to stay text.
+   */
+  await page.click('[title^="New note"]')
+  await page.waitForTimeout(500)
+  await page.locator('.cm-content').click()
+  await page.locator('.cm-content').press('Control+End')
+
+  const pasteGrid = (html, plain) =>
+    page.evaluate(
+      ([h, p]) => {
+        const dt = new DataTransfer()
+        if (h) dt.setData('text/html', h)
+        dt.setData('text/plain', p)
+        document
+          .querySelector('.cm-content')
+          .dispatchEvent(
+            new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }),
+          )
+      },
+      [html, plain],
+    )
+
+  // A quoted cell with a line break in it and a cell holding a pipe: both are
+  // ordinary in a spreadsheet and neither can survive in a pipe table as-is.
+  await pasteGrid(
+    '<table><tr><td>Region</td><td>Q3</td></tr><tr><td>EMEA</td><td>1200</td></tr></table>',
+    'Region\tQ3\r\nEMEA\t1200\r\n"North\nSouth"\ta|b\r\n',
+  )
+  await page.waitForTimeout(900)
+
+  const pastedNote = async () =>
+    page.evaluate(async () => {
+      const req = indexedDB.open('slate')
+      return new Promise((resolve) => {
+        req.onsuccess = () => {
+          const tx = req.result.transaction('files', 'readonly')
+          const all = tx.objectStore('files').getAll()
+          all.onsuccess = () => {
+            const notes = all.result
+              .filter((f) => f.kind === 'note' && !f.deleted)
+              .sort((a, b) => b.mtime - a.mtime)
+            resolve(notes[0]?.text ?? '')
+          }
+        }
+      })
+    })
+
+  const grid = await pastedNote()
+  check(
+    'a spreadsheet range pastes as a GFM table',
+    /\| Region +\| Q3 +\|/.test(grid) && /\| -+ \| -+ \|/.test(grid),
+    JSON.stringify(grid.slice(-160)),
+  )
+  check(
+    'a pipe inside a cell is escaped rather than ending it',
+    grid.includes('a\\|b'),
+    JSON.stringify(grid.slice(-160)),
+  )
+  check(
+    'a multi-line cell is flattened onto its row',
+    grid.includes('North South'),
+    JSON.stringify(grid.slice(-160)),
+  )
+  check(
+    'and it renders as a real table straight away',
+    (await page.locator('.cm-table-render td').count()) >= 4,
+  )
+
+  /*
+   * The discriminator, from the other side. Tab-separated text pasted out of a
+   * terminal has no `<table>` behind it and must arrive as the text it is —
+   * otherwise every indented paste in the app silently becomes a table.
+   */
+  await page.locator('.cm-content').click()
+  await page.locator('.cm-content').press('Control+End')
+  await pasteGrid(null, 'alpha\tbeta\ngamma\tdelta')
+  await page.waitForTimeout(900)
+  const plain = await pastedNote()
+  check(
+    'tab-separated text with no table behind it stays text',
+    plain.includes('alpha\tbeta') && !/\| alpha +\| beta/.test(plain),
+    JSON.stringify(plain.slice(-120)),
+  )
 
   /* ---- persistence across a reload ------------------------------------ */
   const beforeCount = await page.evaluate(

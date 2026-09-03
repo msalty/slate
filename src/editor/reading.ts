@@ -82,11 +82,18 @@ const TAP_MS = 600
 
 /**
  * The parts of a note that answer a tap themselves: a link goes somewhere, a
- * checkbox ticks, an image opens full screen. None of them is a request to
- * start writing, and a note you cannot read through without falling into the
- * editor is not a reading mode.
+ * checkbox ticks, an image opens full screen, a code block's copy button puts
+ * the code on the clipboard. None of them is a request to start writing, and a
+ * note you cannot read through without falling into the editor is not a reading
+ * mode.
+ *
+ * Preventing the mouse events is not enough to stay off this list. The tap is
+ * watched as a pointerdown/pointerup pair — that is what a phone actually
+ * sends, and what arrives before the mouse events it synthesises afterwards —
+ * so a control that swallows `mousedown` is still, as far as this is
+ * concerned, a tap on the note.
  */
-const SELF_HANDLED = '.cm-task-checkbox, .cm-embed'
+const SELF_HANDLED = '.cm-task-checkbox, .cm-embed, .cm-code-copy'
 
 /** A table is content, not a control — but it places its own caret. */
 const TABLE = '.cm-table-wrap'

@@ -14,6 +14,8 @@ import { addAttachment } from '../core/vault'
 import { attachmentPath, imagesFromDataTransfer, optimizeImage } from '../core/images'
 import { settings } from '../core/settings'
 import { uid } from '../core/util'
+import { renderTable } from './table'
+import { looksLikeGrid, parseDelimited, tableFromGrid } from './tsv'
 
 async function ingest(file: File): Promise<string> {
   const s = settings.value
@@ -72,13 +74,69 @@ export function insertFiles(view: EditorView, files: File[]) {
   })
 }
 
+/**
+ * A spreadsheet range on the clipboard, as GFM.
+ *
+ * The `<table>` in the HTML flavour is the discriminator and nothing more — see
+ * tsv.ts for why the cells themselves come from the plain-text flavour. Without
+ * that check, every tab-separated paste from a terminal would silently become a
+ * table; with it, a paste is only a table when it came out of something that
+ * thinks in cells.
+ */
+function tableFromClipboard(dt: DataTransfer | null): string | undefined {
+  if (!dt) return undefined
+  if (!/<table[\s>]/i.test(dt.getData('text/html') || '')) return undefined
+  const text = dt.getData('text/plain')
+  if (!text?.trim()) return undefined
+  const grid = parseDelimited(text)
+  if (!looksLikeGrid(grid)) return undefined
+  return renderTable(tableFromGrid(grid))
+}
+
+/**
+ * Drop a table into the note as its own block.
+ *
+ * A pipe table has to start a line, and a table butted straight up against a
+ * paragraph is read as more of that paragraph by stricter renderers than this
+ * one — so whatever is around the caret decides how many newlines go in front
+ * of it and behind it.
+ */
+function insertTableBlock(view: EditorView, table: string) {
+  const { state } = view
+  const range = state.selection.main
+  const line = state.doc.lineAt(range.from)
+  const before = state.doc.sliceString(line.from, range.from)
+  const after = state.doc.sliceString(range.to, line.to)
+
+  let lead = ''
+  if (before.trim()) lead = '\n\n'
+  else if (line.number > 1 && state.doc.line(line.number - 1).text.trim()) lead = '\n'
+
+  const insert = `${lead}${table}\n${after.trim() ? '\n' : ''}`
+  view.dispatch({
+    changes: { from: range.from, to: range.to, insert },
+    selection: { anchor: range.from + insert.length },
+    scrollIntoView: true,
+    userEvent: 'input.paste',
+  })
+}
+
 export const pasteHandler = EditorView.domEventHandlers({
   paste(event, view) {
     const images = imagesFromDataTransfer(event.clipboardData)
-    if (!images.length) return false
-    event.preventDefault()
-    insertFiles(view, images)
-    return true
+    if (images.length) {
+      event.preventDefault()
+      insertFiles(view, images)
+      return true
+    }
+
+    const table = tableFromClipboard(event.clipboardData)
+    if (table) {
+      event.preventDefault()
+      insertTableBlock(view, table)
+      return true
+    }
+    return false
   },
 
   drop(event, view) {

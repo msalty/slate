@@ -68,7 +68,7 @@ import { noteContext, requestLinkDialog } from './context'
 import { setDueAtCaret } from './due'
 import { focusedCell } from './table'
 import { minimalEdit } from '../core/rebase'
-import { tagCompletion, wikiCompletion } from './completion'
+import { calloutCompletion, tagCompletion, wikiCompletion } from './completion'
 
 export const previewCompartment = new Compartment()
 export const contextCompartment = new Compartment()
@@ -266,6 +266,7 @@ export function createEditorState(opts: EditorOptions): EditorState {
     md,
     markdownLanguage.data.of({ autocomplete: wikiCompletion }),
     markdownLanguage.data.of({ autocomplete: tagCompletion }),
+    markdownLanguage.data.of({ autocomplete: calloutCompletion }),
     autocompletion({
       activateOnTyping: true,
       closeOnBlur: true,

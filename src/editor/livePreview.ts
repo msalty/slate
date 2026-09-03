@@ -39,13 +39,16 @@ import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate
 import type { SyntaxNodeRef } from '@lezer/common'
 import {
   BulletWidget,
+  CalloutWidget,
   CheckboxWidget,
+  CopyCodeWidget,
   DueChipWidget,
   EmbedWidget,
   HrWidget,
   TableWidget,
   isDelimiterRow,
 } from './widgets'
+import { parseCallout } from './callout'
 import { findDue, isTaskLine } from '../core/markdown'
 import { noteContext } from './context'
 import { normalizeUri, scanUris } from './links'
@@ -67,6 +70,7 @@ const lineDeco = (cls: string) => Decoration.line({ class: cls })
 
 const H = [1, 2, 3, 4, 5, 6].map((n) => lineDeco(`cm-h${n}`))
 const quoteLine = lineDeco('cm-quote')
+const calloutTitle = Decoration.mark({ class: 'cm-callout-title' })
 const codeLine = lineDeco('cm-codeblock')
 const codeFirst = lineDeco('cm-codeblock cm-codeblock-first')
 const codeLast = lineDeco('cm-codeblock cm-codeblock-last')
@@ -218,6 +222,17 @@ function buildDecorations(view: EditorView): DecorationSet {
   const tree = syntaxTree(state)
   // Lines already given a block decoration, so nested nodes don't double up.
   const seenLines = new Set<number>()
+  /*
+   * Character ranges holding a callout's `[!type]` marker.
+   *
+   * CommonMark reads `[!warning]` as a shortcut link reference, so the generic
+   * mark handling below would hide its brackets as link syntax — leaving a bare
+   * `!warning` where the raw marker was meant to be revealed, and, worse,
+   * putting a replace decoration *inside* the one that swaps the marker for its
+   * icon. The marker is claimed here and skipped there.
+   */
+  const calloutMarks: Array<[number, number]> = []
+  const inCalloutMark = (at: number) => calloutMarks.some(([a, b]) => at >= a && at < b)
 
   /*
    * Frontmatter, before anything else.
@@ -276,16 +291,67 @@ function buildDecorations(view: EditorView): DecorationSet {
           return
         }
 
-        /* ---- blockquote ---------------------------------------------- */
+        /* ---- blockquote, and the callout it may be --------------------- */
         if (name === 'Blockquote') {
+          const starts: number[] = []
           for (let p = node.from; p <= node.to; ) {
             const line = state.doc.lineAt(p)
-            if (!seenLines.has(line.from)) {
-              seenLines.add(line.from)
-              out.push(quoteLine.range(line.from))
-            }
+            starts.push(line.from)
             if (line.to >= node.to) break
             p = line.to + 1
+          }
+
+          const first = state.doc.lineAt(node.from)
+          const callout = parseCallout(first.text)
+
+          if (!callout) {
+            for (const at of starts) {
+              if (seenLines.has(at)) continue
+              seenLines.add(at)
+              out.push(quoteLine.range(at))
+            }
+            return
+          }
+
+          /*
+           * A callout is a blockquote wearing a colour, so it is decorated as
+           * one — same line-by-line walk, a different class. Nothing about the
+           * text changes, which is what keeps the file a plain blockquote that
+           * any other renderer will still show.
+           */
+          const base = `cm-callout cm-callout-${callout.spec.kind}`
+          starts.forEach((at, i) => {
+            if (seenLines.has(at)) return
+            seenLines.add(at)
+            const edges =
+              (i === 0 ? ' cm-callout-first' : '') +
+              (i === starts.length - 1 ? ' cm-callout-last' : '')
+            out.push(lineDeco(base + edges).range(at))
+          })
+
+          /*
+           * The marker becomes the icon — but only while the caret is
+           * elsewhere. The type is structure, not formatting: it is data with
+           * nowhere else to be edited (there is no picker for it), so both
+           * modes hand back the raw `[!warning]` when you put the caret on its
+           * line, exactly as they do for a link's URL.
+           */
+          const markFrom = first.from + callout.markerFrom
+          const markTo = Math.min(first.from + callout.markerTo, first.to)
+          calloutMarks.push([markFrom, markTo])
+
+          if (!lineTouched(state, first.from, first.to)) {
+            const from = markFrom
+            const to = markTo
+            out.push(
+              Decoration.replace({
+                widget: new CalloutWidget(
+                  callout.spec.icon,
+                  callout.title ? '' : callout.spec.label,
+                ),
+              }).range(from, to),
+            )
+            if (callout.title && to < first.to) out.push(calloutTitle.range(to, first.to))
           }
           return
         }
@@ -294,12 +360,34 @@ function buildDecorations(view: EditorView): DecorationSet {
         if (name === 'FencedCode' || name === 'CodeBlock') {
           const firstLine = state.doc.lineAt(node.from).number
           const lastLine = state.doc.lineAt(Math.max(node.from, node.to - 1)).number
+          let styledFirst = false
           for (let n = firstLine; n <= lastLine; n++) {
             const line = state.doc.line(n)
             if (seenLines.has(line.from)) continue
             seenLines.add(line.from)
             const deco = n === firstLine ? codeFirst : n === lastLine ? codeLast : codeLine
+            if (n === firstLine) styledFirst = true
             out.push(deco.range(line.from))
+          }
+          /*
+           * The copy button, at the end of the opening fence — which is where
+           * the top right corner of the block is, since the fence itself is
+           * hidden and the line is left holding only the language name.
+           *
+           * A point widget rather than a replacement, the same shape as the due
+           * chip appended to a task line, so it adds nothing to the document
+           * and CodeMirror's height map is untouched (the CSS floats it out of
+           * flow). Only for a *fenced* block that got its own styling: an
+           * indented code block has no fence line to hang it on, and a block
+           * already claimed by an enclosing callout has no positioned corner
+           * for it to sit in.
+           */
+          if (styledFirst && name === 'FencedCode' && lastLine > firstLine) {
+            out.push(
+              Decoration.widget({ widget: new CopyCodeWidget(), side: 1 }).range(
+                state.doc.line(firstLine).to,
+              ),
+            )
           }
           return
         }
@@ -481,6 +569,8 @@ function buildDecorations(view: EditorView): DecorationSet {
 
         /* ---- generic syntax marks -------------------------------------- */
         if (MARK_NODES.has(name)) {
+          // A callout's marker is not link syntax, however much it looks it.
+          if (inCalloutMark(node.from)) return
           const parent = node.node.parent
           const scopeFrom = parent ? parent.from : node.from
           const scopeTo = parent ? parent.to : node.to
