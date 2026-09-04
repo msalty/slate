@@ -2225,6 +2225,86 @@ try {
     (await page.locator('.cm-line.cm-callout-warning').count()) === 2,
   )
 
+  /* ---- copying a table back out -----------------------------------------
+   * The return trip. Only the HTML flavour is added: spreadsheets read it in
+   * preference to plain text, so Excel gets cells while the plain flavour
+   * stays the markdown that was selected and another markdown editor still
+   * gets the pipe table. Both halves are asserted, because writing tab
+   * separated text over the plain flavour would pass a check for the first and
+   * silently lose the second.
+   *
+   * "Table at start" is the fixture because its table is the first three lines
+   * of the note, so the selection can be made with the keyboard and end
+   * exactly where the table does — which is the thing being tested.
+   */
+  await page.locator('.note-row', { hasText: 'Table at start' }).first().click()
+  await page.waitForTimeout(500)
+  await page.locator('.cm-content').click()
+  await page.waitForTimeout(250)
+  // Source mode: no widgets, so the selection is over the pipes themselves.
+  let modeSteps = 0
+  for (let i = 0; i < 3 && (await page.locator('.cm-table-render').count()) > 0; i++) {
+    await page.keyboard.press('Control+Shift+m')
+    modeSteps++
+    await page.waitForTimeout(350)
+  }
+  await page.keyboard.press('Control+Home')
+  await page.keyboard.press('Shift+ArrowDown')
+  await page.keyboard.press('Shift+ArrowDown')
+  await page.keyboard.press('Shift+End')
+  await page.waitForTimeout(250)
+
+  const flavours = await page.evaluate(() => {
+    const dt = new DataTransfer()
+    document
+      .querySelector('.cm-content')
+      .dispatchEvent(
+        new ClipboardEvent('copy', { clipboardData: dt, bubbles: true, cancelable: true }),
+      )
+    return { html: dt.getData('text/html'), plain: dt.getData('text/plain') }
+  })
+  check(
+    'copying a table adds a real <table> for a spreadsheet to read',
+    flavours.html === '<table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>',
+    JSON.stringify(flavours.html),
+  )
+  check(
+    'and leaves the plain text as the markdown it was',
+    flavours.plain.includes('| A | B |') && !flavours.plain.includes('<table'),
+    JSON.stringify(flavours.plain),
+  )
+
+  /*
+   * And a selection that is not rows of one table is left entirely alone —
+   * otherwise ordinary copying inside a note would start rewriting itself.
+   */
+  await page.keyboard.press('Control+a')
+  await page.waitForTimeout(200)
+  const wholeNote = await page.evaluate(() => {
+    const dt = new DataTransfer()
+    document
+      .querySelector('.cm-content')
+      .dispatchEvent(
+        new ClipboardEvent('copy', { clipboardData: dt, bubbles: true, cancelable: true }),
+      )
+    return dt.getData('text/html')
+  })
+  check(
+    'a selection running past the table is left to copy normally',
+    !wholeNote.startsWith('<table'),
+    JSON.stringify(wholeNote.slice(0, 60)),
+  )
+
+  /*
+   * Put the mode back. The three modes cycle, so completing the loop returns
+   * whatever this borrowed — everything below reads the same editor, and
+   * leaving it in source mode means no live-preview decorations for any of it.
+   */
+  for (let i = (3 - (modeSteps % 3)) % 3; i > 0; i--) {
+    await page.keyboard.press('Control+Shift+m')
+    await page.waitForTimeout(350)
+  }
+
   /* ---- exporting a note -------------------------------------------------
    * Nothing is converted: the bytes that leave are the bytes on disk, which is
    * the whole reason this is not a renderer. Headless Chromium has no share

@@ -1,5 +1,5 @@
 /**
- * Clipboard and drag-and-drop handling.
+ * Clipboard and drag-and-drop handling, in both directions.
  *
  * Pasting a screenshot is the single most-used path in a notes app, so it has
  * to feel instantaneous. It does not wait for optimization: a placeholder goes
@@ -14,8 +14,8 @@ import { addAttachment } from '../core/vault'
 import { attachmentPath, imagesFromDataTransfer, optimizeImage } from '../core/images'
 import { settings } from '../core/settings'
 import { uid } from '../core/util'
-import { renderTable } from './table'
-import { looksLikeGrid, parseDelimited, tableFromGrid } from './tsv'
+import { renderTable, tableRowsInSelection } from './table'
+import { gridToHtml, looksLikeGrid, parseDelimited, tableFromGrid } from './tsv'
 
 async function ingest(file: File): Promise<string> {
   const s = settings.value
@@ -121,7 +121,37 @@ function insertTableBlock(view: EditorView, table: string) {
   })
 }
 
-export const pasteHandler = EditorView.domEventHandlers({
+export const clipboardHandler = EditorView.domEventHandlers({
+  /**
+   * Copying a table puts it on the clipboard as a table as well as as markdown.
+   *
+   * Purely additive: the plain-text flavour stays exactly the markdown that was
+   * selected, and an HTML `<table>` is added beside it. Every spreadsheet reads
+   * HTML in preference to plain text — it is how a table copied from a web page
+   * lands in cells — so Excel gets cells while another markdown editor still
+   * gets the pipe table. Writing tab-separated text over the plain flavour
+   * would have bought the first and lost the second.
+   */
+  copy(event, view) {
+    /*
+     * A copy made inside a rendered cell is the browser copying that cell's own
+     * DOM, and the editor's selection is somewhere else entirely — quite
+     * possibly stale. Leave it alone.
+     */
+    if ((event.target as HTMLElement | null)?.closest?.('.cm-table-cell')) return false
+
+    const selected = tableRowsInSelection(view.state)
+    if (!selected) return false
+    const dt = event.clipboardData
+    if (!dt) return false
+
+    event.preventDefault()
+    const { main } = view.state.selection
+    dt.setData('text/plain', view.state.sliceDoc(main.from, main.to))
+    dt.setData('text/html', gridToHtml(selected.rows, selected.hasHeader))
+    return true
+  },
+
   paste(event, view) {
     /*
      * The table is looked for FIRST, and that ordering is the whole feature.

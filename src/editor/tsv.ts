@@ -1,5 +1,6 @@
 /**
- * Spreadsheet cells on the clipboard, turned into a markdown table.
+ * Spreadsheet cells and markdown tables, in both directions across the
+ * clipboard.
  *
  * Copying a range in Excel, Numbers, Google Sheets or LibreOffice Calc puts two
  * flavours on the clipboard: a full `<table>` under `text/html`, and the same
@@ -109,6 +110,40 @@ export function looksLikeGrid(grid: string[][]): boolean {
  * and flattens the newlines a multi-line Excel cell carries — neither can
  * survive in a pipe table, and both turn up in real spreadsheets.
  */
+/* ------------------------------------------------------------- going back */
+
+/**
+ * A grid as an HTML table, for the return trip into a spreadsheet.
+ *
+ * Only the `text/html` flavour is written, and that is the whole trick. Every
+ * spreadsheet reads HTML in preference to plain text — it is how a table copied
+ * from a web page lands in cells, and it is the same flavour Excel *emits*,
+ * which is what the paste in the other direction keys off. So the plain-text
+ * flavour is left as the markdown that was selected: paste into Excel and you
+ * get cells, paste into another markdown editor and you get the pipe table you
+ * copied. Writing tab-separated text over the top would have bought the first
+ * and lost the second.
+ *
+ * The header row is marked up as one when the selection included it, which
+ * costs nothing and gives Word and Google Docs something to bold.
+ */
+export function gridToHtml(grid: string[][], hasHeader: boolean): string {
+  const row = (cells: string[], tag: 'th' | 'td') =>
+    `<tr>${cells.map((c) => `<${tag}>${escapeHtml(c)}</${tag}>`).join('')}</tr>`
+  const body = grid.map((cells, i) =>
+    row(cells, hasHeader && i === 0 ? 'th' : 'td'),
+  )
+  return `<table>${body.join('')}</table>`
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
 export function tableFromGrid(grid: string[][]): TableModel {
   const columns = Math.max(0, ...grid.map((r) => r.length))
   const rows = grid.map((r) => {

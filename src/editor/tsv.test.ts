@@ -6,8 +6,9 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { looksLikeGrid, parseDelimited, tableFromGrid } from './tsv'
-import { renderTable } from './table'
+import { gridToHtml, looksLikeGrid, parseDelimited, tableFromGrid } from './tsv'
+import { renderTable, tableRowsInSelection } from './table'
+import { EditorState } from '@codemirror/state'
 
 const md = (clipboard: string) => renderTable(tableFromGrid(parseDelimited(clipboard)))
 
@@ -102,5 +103,95 @@ describe('the markdown it produces', () => {
 
   it('survives a header-only paste', () => {
     expect(md('a\tb')).toBe(['| a   | b   |', '| --- | --- |'].join('\n'))
+  })
+})
+
+/* ------------------------------------------------------------ going back */
+
+const TABLE = [
+  '| Region | Q3   |',
+  '| ------ | ---- |',
+  '| EMEA   | 1200 |',
+  '| APAC   | 980  |',
+].join('\n')
+
+/** A selection over `doc`, given the offsets of the text to select. */
+function select(doc: string, from: number, to: number) {
+  return EditorState.create({ doc, selection: { anchor: from, head: to } })
+}
+
+describe('what counts as copying a table', () => {
+  const wholeTable = () => select(TABLE, 0, TABLE.length)
+
+  it('reads the rows, and drops the delimiter markdown needs but Excel does not', () => {
+    expect(tableRowsInSelection(wholeTable())?.rows).toEqual([
+      ['Region', 'Q3'],
+      ['EMEA', '1200'],
+      ['APAC', '980'],
+    ])
+  })
+
+  it('knows whether the header came with it', () => {
+    expect(tableRowsInSelection(wholeTable())?.hasHeader).toBe(true)
+    // From the start of the third line to the end: body rows only.
+    const bodyOnly = select(TABLE, TABLE.indexOf('| EMEA'), TABLE.length)
+    expect(tableRowsInSelection(bodyOnly)?.hasHeader).toBe(false)
+    expect(tableRowsInSelection(bodyOnly)?.rows).toEqual([
+      ['EMEA', '1200'],
+      ['APAC', '980'],
+    ])
+  })
+
+  /*
+   * Selecting a word in a cell is a request for that word. Turning it into a
+   * row of cells would make ordinary copying inside a table unpredictable.
+   */
+  it('leaves a word inside a cell alone', () => {
+    const at = TABLE.indexOf('EMEA')
+    expect(tableRowsInSelection(select(TABLE, at, at + 4))).toBeUndefined()
+  })
+
+  it('but takes a whole line, even on its own', () => {
+    const line = TABLE.indexOf('| EMEA')
+    const end = TABLE.indexOf('\n', line)
+    expect(tableRowsInSelection(select(TABLE, line, end))?.rows).toEqual([['EMEA', '1200']])
+  })
+
+  it('refuses a selection that runs out of the table', () => {
+    const doc = `${TABLE}\n\nA paragraph after it.\n`
+    expect(tableRowsInSelection(select(doc, 0, doc.length))).toBeUndefined()
+  })
+
+  it('refuses text that is not a table at all', () => {
+    const doc = 'just | some | prose\nwith pipes in it\n'
+    expect(tableRowsInSelection(select(doc, 0, doc.length))).toBeUndefined()
+  })
+
+  it('unescapes a pipe that was escaped to survive the markdown', () => {
+    const doc = ['| a    | b |', '| ---- | - |', '| x\\|y | z |'].join('\n')
+    expect(tableRowsInSelection(select(doc, 0, doc.length))?.rows[1]).toEqual(['x|y', 'z'])
+  })
+
+  it('pads a ragged row rather than emitting a lopsided table', () => {
+    const doc = ['| a | b |', '| - | - |', '| x |'].join('\n')
+    expect(tableRowsInSelection(select(doc, 0, doc.length))?.rows[1]).toEqual(['x', ''])
+  })
+})
+
+describe('the HTML a spreadsheet reads', () => {
+  it('marks the header row up as one when it was included', () => {
+    expect(gridToHtml([['A', 'B'], ['1', '2']], true)).toBe(
+      '<table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>',
+    )
+  })
+
+  it('uses plain cells when it was not', () => {
+    expect(gridToHtml([['1', '2']], false)).toBe('<table><tr><td>1</td><td>2</td></tr></table>')
+  })
+
+  it('escapes cell text so a note cannot write markup into the clipboard', () => {
+    expect(gridToHtml([['<b>&"x"</b>']], false)).toBe(
+      '<table><tr><td>&lt;b&gt;&amp;&quot;x&quot;&lt;/b&gt;</td></tr></table>',
+    )
   })
 })

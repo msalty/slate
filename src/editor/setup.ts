@@ -61,7 +61,7 @@ import {
   formatSnapshot,
   inspect,
 } from './format'
-import { pasteHandler } from './paste'
+import { clipboardHandler } from './paste'
 import { editableCompartment, editableFacet } from './reading'
 import { WikiLink } from './wikilink-syntax'
 import { noteContext, requestLinkDialog } from './context'
@@ -289,7 +289,7 @@ export function createEditorState(opts: EditorOptions): EditorState {
     fontCompartment.of(
       EditorView.theme({ '&': { '--editor-font-size': `${opts.fontSize}px` } } as never),
     ),
-    pasteHandler,
+    clipboardHandler,
     Prec.high(keymap.of(formattingKeymap)),
     keymap.of([
       ...closeBracketsKeymap,

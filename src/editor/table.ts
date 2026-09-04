@@ -307,6 +307,57 @@ export function tableAt(state: EditorState, pos: number): TableCursor | undefine
   }
 }
 
+/** Rows of cells lifted out of a selection, for putting on the clipboard. */
+export interface TableSelection {
+  rows: string[][]
+  /** True when the table's header row was part of the selection. */
+  hasHeader: boolean
+}
+
+/**
+ * The rows a selection covers, if it covers rows of one table and nothing else.
+ *
+ * Deliberately strict about what counts. Selecting a word inside a cell is a
+ * request for that word, not for the row it sits in, so a selection has to
+ * either cover a whole line or run across more than one before it is read as a
+ * table at all — and every line it touches has to belong to the same table, or
+ * a selection running from the last row into the paragraph below would quietly
+ * drop the paragraph.
+ *
+ * The delimiter row is skipped rather than emitted: `| --- | --- |` is markdown
+ * bookkeeping, not a row of data, and a spreadsheet has no use for it.
+ */
+export function tableRowsInSelection(state: EditorState): TableSelection | undefined {
+  const sel = state.selection.main
+  if (sel.empty) return undefined
+
+  const first = state.doc.lineAt(sel.from)
+  // A selection ending exactly at the start of a line has not reached into it.
+  const lastPos = sel.to > first.to && sel.to === state.doc.lineAt(sel.to).from ? sel.to - 1 : sel.to
+  const last = state.doc.lineAt(lastPos)
+
+  const wholeLine = sel.from <= first.from && sel.to >= first.to
+  if (last.number === first.number && !wholeLine) return undefined
+
+  const t = tableAt(state, sel.from)
+  if (!t) return undefined
+  if (first.number < t.fromLine || last.number > t.toLine) return undefined
+
+  const rows: string[][] = []
+  for (let n = first.number; n <= last.number; n++) {
+    const text = state.doc.line(n).text
+    if (isDelimiterRow(text)) continue
+    rows.push(splitRow(text).map((c) => cellText(c.trim())))
+  }
+  if (!rows.length) return undefined
+
+  // Ragged rows are legal markdown and awkward HTML; pad to the widest.
+  const width = Math.max(...rows.map((r) => r.length))
+  for (const r of rows) while (r.length < width) r.push('')
+
+  return { rows, hasHeader: first.number === t.fromLine }
+}
+
 /**
  * The same cursor, derived from the focused cell rather than the caret.
  *

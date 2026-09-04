@@ -18,8 +18,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 296 unit and two-device sync tests
-node scripts/smoke.mjs # 280-check browser smoke test against dist/
+npm test               # 307 unit and two-device sync tests
+node scripts/smoke.mjs # 283-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -183,6 +183,22 @@ outside the app.
 The two things a spreadsheet holds that a pipe table cannot are handled on the
 way in rather than dropped: a cell containing a `|` is escaped so it can't end
 its column, and a multi-line cell is flattened onto its row.
+
+**And back out again.** Select rows of a table, copy, and they land in Excel as
+cells. Only the HTML flavour is added, which is the whole trick: every
+spreadsheet reads HTML in preference to plain text — it is how a table copied
+from a web page lands in cells, and it is the same flavour Excel *emits*, which
+is what the paste above keys off. So the plain-text flavour is left as the
+markdown you selected, and the same copy pastes into another markdown editor as
+the pipe table it was. Writing tab-separated text over the top would have
+bought the first and lost the second.
+
+It is deliberately strict about what counts as copying a table. Selecting a word
+inside a cell is a request for that word, so a selection has to cover a whole
+line or run across more than one; and every line it touches has to belong to the
+same table, or a selection running from the last row into the paragraph below
+would quietly drop the paragraph. Anything else copies exactly as it did before.
+The `| --- |` row is left behind — it is markdown bookkeeping, not data.
 
 **Block quotes can say what kind of aside they are.**
 
@@ -811,10 +827,6 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
   the *folder* is followed correctly; renaming the template note itself is not,
   and the folder's menu then reads *Template: missing*. Re-picking it takes two
   clicks, and the failure is at least visible rather than silent.
-- **A table can't be copied back out to Excel yet.** Pasting a spreadsheet range
-  in works; the return trip — selecting a table and having it land in cells
-  rather than as pipes — needs a `copy` handler that puts a `text/html` flavour
-  on the clipboard, and isn't written.
 - **Callouts can't be folded.** Obsidian's `[!note]-` and `[!note]+` are parsed
   and their fold character is hidden rather than left on screen as a stray
   dash, but nothing collapses yet.
@@ -849,8 +861,8 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 296 unit + two-device sync tests
-node scripts/smoke.mjs  # 280 checks in headless Chromium against dist/
+npm test                # 307 unit + two-device sync tests
+node scripts/smoke.mjs  # 283 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 
