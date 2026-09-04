@@ -12,6 +12,7 @@ import { dailyNoteFor } from '../core/daily'
 import { sync } from '../core/sync'
 import { settings, update } from '../core/settings'
 import {
+  activePath,
   editorModeLabel,
   nextEditorMode,
   notify,
@@ -23,6 +24,7 @@ import {
 } from './state'
 import { relativeTime, startOfDay } from '../core/util'
 import { newNoteInFolder } from './EditorPane'
+import { canShareFiles, shareNote } from './shareNote'
 
 interface Cmd {
   id: string
@@ -56,6 +58,18 @@ export function CommandPalette() {
         hint: '⌘N',
         run: async () => {
           await newNoteInFolder(scope.value.kind === 'folder' ? scope.value.path : '')
+        },
+      },
+      {
+        id: 'share',
+        label: canShareFiles() ? 'Share this note' : 'Export this note as Markdown',
+        run: async () => {
+          const path = activePath.value
+          if (!path) {
+            notify('Open a note first.', 'error')
+            return
+          }
+          await shareNote(path)
         },
       },
       {

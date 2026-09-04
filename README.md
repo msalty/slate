@@ -19,7 +19,7 @@ npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
 npm test               # 296 unit and two-device sync tests
-node scripts/smoke.mjs # 277-check browser smoke test against dist/
+node scripts/smoke.mjs # 280-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -217,6 +217,13 @@ does.
 pointer, always visible on a touch screen, and it works while a note is being
 read, which is where it is wanted most. It copies the code without its fences,
 and without the indentation of a block nested in a list.
+
+**A note can leave.** Right-click one (or long-press it) for **Share…** on a
+phone and **Export as Markdown** everywhere else; ⌘K has it too, for the note
+you have open. Nothing is converted — the bytes that leave are the bytes on
+disk, frontmatter and wikilinks included — because the file was already the
+portable thing. Where the platform has a share sheet you get it, which is the
+one route from here into Mail; where it hasn't, the file downloads.
 
 **Pinned notes** sit in their own section at the top of the list — sorted the
 same way everything else is, by date edited, date created or title — and stay
@@ -843,7 +850,7 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 
 ```bash
 npm test                # 296 unit + two-device sync tests
-node scripts/smoke.mjs  # 277 checks in headless Chromium against dist/
+node scripts/smoke.mjs  # 280 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

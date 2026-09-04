@@ -44,6 +44,7 @@ import { MobileScopeBar } from './Mobile'
 import { IconImage, IconNewNote, IconPin, IconPlus, IconSearch, IconSidebar, IconClose, IconDots } from './Icons'
 import { settings, update } from '../core/settings'
 import { newNoteInFolder } from './EditorPane'
+import { canShareFiles, shareNote } from './shareNote'
 
 /** First image embed in a note, used as the row thumbnail. */
 function thumbFor(entry: NoteIndexEntry): string | undefined {
@@ -159,6 +160,16 @@ function noteMenu(entry: NoteIndexEntry): MenuItem[] {
         if (!f) return
         openNote(await createNote(entry.folder, `${entry.title} copy`, f.text ?? ''))
       },
+    },
+    {
+      /*
+       * One item, two behaviours, and the label says which you are getting:
+       * a phone opens the share sheet — the only way from here into Mail —
+       * and everything else saves the file.
+       */
+      label: canShareFiles() ? 'Share…' : 'Export as Markdown',
+      separated: true,
+      onSelect: () => shareNote(entry.path),
     },
     {
       label: folders.length ? 'Move to…' : 'Move to… (no other folders)',

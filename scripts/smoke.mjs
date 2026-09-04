@@ -2225,6 +2225,45 @@ try {
     (await page.locator('.cm-line.cm-callout-warning').count()) === 2,
   )
 
+  /* ---- exporting a note -------------------------------------------------
+   * Nothing is converted: the bytes that leave are the bytes on disk, which is
+   * the whole reason this is not a renderer. Headless Chromium has no share
+   * target, so `canShareFiles()` is false here and this exercises the download
+   * path — which is the desktop path anyway.
+   */
+  await page.locator('.note-row', { hasText: 'Kitchen Sink' }).first().click()
+  await page.waitForTimeout(400)
+  await page.locator('.note-row', { hasText: 'Kitchen Sink' }).first().click({ button: 'right' })
+  await page.waitForTimeout(300)
+  const exportItem = page.locator('.menu-item:has-text("Export as Markdown")')
+  check('a note offers a way out of the app', (await exportItem.count()) === 1)
+
+  const [download] = await Promise.all([
+    page.waitForEvent('download', { timeout: 10_000 }).catch(() => null),
+    exportItem.click(),
+  ])
+  check(
+    'exporting saves the note as a .md file named after it',
+    download?.suggestedFilename() === 'Kitchen Sink.md',
+    download ? download.suggestedFilename() : 'no download fired',
+  )
+  if (download) {
+    const saved = await download.createReadStream()
+    const chunks = []
+    for await (const c of saved) chunks.push(c)
+    const text = Buffer.concat(chunks).toString('utf8')
+    /*
+     * Byte-for-byte the file, frontmatter and wikilinks included — not a
+     * rendering of it. That is what makes the export worth having.
+     */
+    const onDisk = await noteContaining('Kitchen Sink')
+    check(
+      'and what comes out is the file, not a rendering of it',
+      text === onDisk && text.startsWith('---\n') && text.includes('[[Wikilink]]'),
+      JSON.stringify(text.slice(0, 60)),
+    )
+  }
+
   /* ---- folder templates -------------------------------------------------
    * The feature is opt-in, and the first assertion is the one that says so: a
    * vault that has never made a `Templates/` folder must show no sign of any
