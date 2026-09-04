@@ -79,3 +79,42 @@ describe('setDue', () => {
     expect(v.getEntry(p)!.mtime).toBe(before)
   })
 })
+
+/**
+ * The calendar's second signal.
+ *
+ * A day with work owed on it has to look different from an empty one, or the
+ * only way to find it is clicking days at random. Open tasks only: the mark
+ * means this day is still going to ask something of you, so a day whose jobs
+ * are all crossed off has nothing to say — whatever the "show completed"
+ * switch is set to.
+ */
+describe('openTasksByDueDay', () => {
+  it('counts the open tasks due on each day', async () => {
+    const v = await fresh()
+    await v.createNote('', 'A', '- [ ] One\n- [ ] Two\n')
+    const p = v.tasks.value[0].path
+    await v.setDue(p, 0, sep4)
+    await v.setDue(p, 1, sep4)
+    expect(v.openTasksByDueDay.value.get(sep4)).toBe(2)
+  })
+
+  it('ignores the ones already crossed off', async () => {
+    const v = await fresh()
+    const p = await v.createNote('', 'B', '- [x] Done already 📅 2026-09-04\n- [ ] Still to do\n')
+    await v.setDue(p, 1, sep4)
+    expect(v.openTasksByDueDay.value.get(sep4)).toBe(1)
+  })
+
+  it('leaves a day whose work is all finished out of the map entirely', async () => {
+    const v = await fresh()
+    await v.createNote('', 'C', '- [x] Finished 📅 2026-09-04\n')
+    expect(v.openTasksByDueDay.value.has(sep4)).toBe(false)
+  })
+
+  it('says nothing about an undated task', async () => {
+    const v = await fresh()
+    await v.createNote('', 'D', '- [ ] Someday\n')
+    expect(v.openTasksByDueDay.value.size).toBe(0)
+  })
+})

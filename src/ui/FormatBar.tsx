@@ -9,12 +9,16 @@
  * Every button reads its pressed state from `formatSnapshot`, which the editor
  * republishes on each selection change — so the bar always describes the text
  * the caret is actually in, rather than a mode the user has to remember.
+ *
+ * Both presentations are built from one list of groups, so a control is
+ * described once and the bar and the sheet can never drift apart in what they
+ * offer or what they call it.
  */
 
+import { Fragment } from 'preact'
+import { useLayoutEffect, useRef, useState } from 'preact/hooks'
 import {
   type BlockStyle,
-  type InlineMark,
-  type ListKind,
   applyBlockStyle,
   applyIndent,
   applyInline,
@@ -26,6 +30,8 @@ import type { EditorView } from '@codemirror/view'
 import { applyTableOp, insertTable, tableContext } from '../editor/table'
 import { editLinkAtCaret } from './linkActions'
 import { openMenu, type MenuItem } from './Menu'
+import { copyTable } from '../editor/paste'
+import { notify } from './state'
 import {
   IconCode,
   IconHighlight,
@@ -34,32 +40,40 @@ import {
   IconListBullet,
   IconListCheck,
   IconListNumber,
+  IconMore,
   IconOutdent,
   IconQuote,
   IconTable,
 } from './Icons'
 
-const STYLES: Array<{ id: BlockStyle; label: string; hint: string }> = [
-  { id: 'title', label: 'Title', hint: 'Title (⌘⌥1)' },
-  { id: 'heading', label: 'Heading', hint: 'Heading (⌘⌥2)' },
-  { id: 'subheading', label: 'Subheading', hint: 'Subheading (⌘⌥3)' },
-  { id: 'body', label: 'Body', hint: 'Body (⌘⌥0)' },
-]
+/** A point, for the things that open at one. */
+type At = { clientX: number; clientY: number }
 
-const MARKS: Array<{ id: InlineMark; label: preact.ComponentChildren; hint: string }> = [
-  { id: 'bold', label: <b>B</b>, hint: 'Bold (⌘B)' },
-  { id: 'italic', label: <i>I</i>, hint: 'Italic (⌘I)' },
-  { id: 'underline', label: <u>U</u>, hint: 'Underline (⌘U)' },
-  { id: 'strike', label: <s>S</s>, hint: 'Strikethrough (⌘⇧X)' },
-  { id: 'highlight', label: <IconHighlight size={17} />, hint: 'Highlight (⌘⇧H)' },
-  { id: 'code', label: <IconCode size={17} />, hint: 'Monospaced (⌘E)' },
-]
+interface BarItem {
+  id: string
+  /** What the overflow menu calls it — the hint without its shortcut. */
+  label: string
+  /** Tooltip and accessible name, shortcut included. */
+  hint: string
+  /** What the bar shows. The style pills show their own text. */
+  glyph: preact.ComponentChildren
+  /** Set for the paragraph pills, which are text rather than icon buttons. */
+  pill?: BlockStyle
+  pressed?: boolean
+  disabled?: boolean
+  /**
+   * True for the ones that open a dialog or a menu rather than acting at once.
+   * Those have to run on the click; see `wire` below.
+   */
+  opens?: boolean
+  run: (at: At) => void
+}
 
-const LISTS: Array<{ id: ListKind; label: preact.ComponentChildren; hint: string }> = [
-  { id: 'bullet', label: <IconListBullet size={18} />, hint: 'Bulleted list (⌘⇧8)' },
-  { id: 'number', label: <IconListNumber size={18} />, hint: 'Numbered list (⌘⇧0)' },
-  { id: 'check', label: <IconListCheck size={18} />, hint: 'Checklist (⌘⇧7)' },
-]
+interface BarGroup {
+  id: string
+  aria: string
+  items: BarItem[]
+}
 
 export interface FormatBarProps {
   /** Read at click time: the view is rebuilt whenever the open note changes. */
@@ -81,82 +95,18 @@ export function FormatBar({ getView, variant }: FormatBarProps) {
   const table = tableContext.value ?? f.table
 
   /**
-   * Wire a button to a command without stealing the selection.
+   * Run a command against the live view.
    *
-   * Pressing a button is what moves focus out of the editor, and an editor
-   * without focus has no selection to format — so the press default is
-   * suppressed and the command runs from the down event instead. Preventing
-   * `touchstart` also stops the browser synthesising the mouse events after it,
-   * which is what keeps a single tap from running the command twice.
+   * The bar takes focus back afterwards; the sheet deliberately does not,
+   * because it runs with the editor blurred so the phone keyboard stays down
+   * and focusing here would bring it straight back up.
    */
-  /**
-   * Wire a button that *opens* something — a dialog, a menu — rather than
-   * acting at once.
-   *
-   * It has to happen on the click, not the press. These overlays put a scrim
-   * over the screen the moment they open, and a scrim that appears between a
-   * mousedown and its click swallows that click and closes itself again. The
-   * press is still cancelled, so the editor keeps its selection and a table
-   * cell keeps its focus while the menu decides what it is acting on.
-   */
-  const opens = (fn: (at: { clientX: number; clientY: number }) => void) => ({
-    onMouseDown: (e: MouseEvent) => e.preventDefault(),
-    onClick: (e: MouseEvent) => fn(e),
-    onTouchStart: (e: TouchEvent) => {
-      // Cancelling touchstart also cancels the click the browser would
-      // synthesise from it, so this is the only handler that runs on touch.
-      e.preventDefault()
-      const t = e.touches[0]
-      fn({ clientX: t?.clientX ?? 0, clientY: t?.clientY ?? 0 })
-    },
-  })
-
-  const act = (cmd: (view: EditorView) => boolean) => {
-    const handler = (e: Event) => {
-      e.preventDefault()
-      const view = getView()
-      if (!view) return
-      cmd(view)
-      // The sheet deliberately runs with the editor blurred so the keyboard
-      // stays down; focusing it here would bring the keyboard straight back.
-      if (variant === 'bar') view.focus()
-    }
-    return { onMouseDown: handler, onTouchStart: handler }
+  const run = (cmd: (view: EditorView) => unknown) => () => {
+    const view = getView()
+    if (!view) return
+    cmd(view)
+    if (variant === 'bar') view.focus()
   }
-
-  const styleRow = (
-    <div class="fmt-row fmt-styles" role="group" aria-label="Paragraph style">
-      {STYLES.map((s) => (
-        <button
-          key={s.id}
-          class={`fmt-style fmt-style-${s.id}`}
-          title={s.hint}
-          aria-label={s.hint}
-          aria-pressed={f.block === s.id}
-          {...act(applyBlockStyle(s.id))}
-        >
-          {s.label}
-        </button>
-      ))}
-    </div>
-  )
-
-  const markRow = (
-    <div class="fmt-row" role="group" aria-label="Text style">
-      {MARKS.map((m) => (
-        <button
-          key={m.id}
-          class="fmt-btn"
-          title={m.hint}
-          aria-label={m.hint}
-          aria-pressed={f.marks[m.id]}
-          {...act(applyInline(m.id))}
-        >
-          {m.label}
-        </button>
-      ))}
-    </div>
-  )
 
   /**
    * Table controls.
@@ -166,7 +116,7 @@ export function FormatBar({ getView, variant }: FormatBarProps) {
    * so "add a column" is the same two taps on either, and the bar does not have
    * to find room for seven more targets it only sometimes needs.
    */
-  const tableMenu = (e: { clientX: number; clientY: number }) => {
+  const tableMenu = (at: At) => {
     const view = getView()
     if (!view) return
     /*
@@ -189,8 +139,24 @@ export function FormatBar({ getView, variant }: FormatBarProps) {
       },
     })
     openMenu(
-      e,
+      at,
       [
+        /*
+         * First, because it is the only item here that is not an edit — and
+         * because dragging across a table to copy it is a gesture with no
+         * edges, especially on a phone and in the rendered modes where the
+         * table is one widget. From here the caret is the aim.
+         */
+        {
+          label: 'Copy table',
+          onSelect: async () => {
+            const ok = await copyTable(view)
+            notify(
+              ok ? 'Table copied — paste it into a spreadsheet' : 'Could not reach the clipboard',
+              ok ? 'info' : 'error',
+            )
+          },
+        } as MenuItem,
         op('Insert row above', 'row-above'),
         op('Insert row below', 'row-below'),
         op('Insert column left', 'col-left'),
@@ -198,82 +164,236 @@ export function FormatBar({ getView, variant }: FormatBarProps) {
         op('Delete row', 'row-delete', true),
         op('Delete column', 'col-delete', true),
         op('Delete table', 'delete', true),
-      ].map((item, i) => (i === 4 ? { ...item, separated: true } : item)),
+      ].map((item, i) => (i === 1 || i === 5 ? { ...item, separated: true } : item)),
       `Table · row ${table.row + 1} of ${table.rows}, column ${table.col + 1} of ${table.cols}`,
     )
   }
 
-  const listRow = (
-    <div class="fmt-row" role="group" aria-label="Lists and indentation">
-      {LISTS.map((l) => (
-        <button
-          key={l.id}
-          class="fmt-btn"
-          title={l.hint}
-          aria-label={l.hint}
-          aria-pressed={f.list === l.id}
-          {...act(applyList(l.id))}
-        >
-          {l.label}
-        </button>
+  const groups: BarGroup[] = [
+    {
+      id: 'styles',
+      aria: 'Paragraph style',
+      items: (
+        [
+          ['title', 'Title', 'Title (⌘⌥1)'],
+          ['heading', 'Heading', 'Heading (⌘⌥2)'],
+          ['subheading', 'Subheading', 'Subheading (⌘⌥3)'],
+          ['body', 'Body', 'Body (⌘⌥0)'],
+        ] as Array<[BlockStyle, string, string]>
+      ).map(([id, label, hint]) => ({
+        id,
+        label,
+        hint,
+        glyph: label,
+        pill: id,
+        pressed: f.block === id,
+        run: run(applyBlockStyle(id)),
+      })),
+    },
+    {
+      id: 'marks',
+      aria: 'Text style',
+      items: [
+        { id: 'bold', label: 'Bold', hint: 'Bold (⌘B)', glyph: <b>B</b> },
+        { id: 'italic', label: 'Italic', hint: 'Italic (⌘I)', glyph: <i>I</i> },
+        { id: 'underline', label: 'Underline', hint: 'Underline (⌘U)', glyph: <u>U</u> },
+        { id: 'strike', label: 'Strikethrough', hint: 'Strikethrough (⌘⇧X)', glyph: <s>S</s> },
+        {
+          id: 'highlight',
+          label: 'Highlight',
+          hint: 'Highlight (⌘⇧H)',
+          glyph: <IconHighlight size={17} />,
+        },
+        { id: 'code', label: 'Monospaced', hint: 'Monospaced (⌘E)', glyph: <IconCode size={17} /> },
+      ].map((m) => ({
+        ...m,
+        pressed: f.marks[m.id as keyof typeof f.marks],
+        run: run(applyInline(m.id as Parameters<typeof applyInline>[0])),
+      })),
+    },
+    /*
+     * Lists, indentation and the quote are three groups rather than the one
+     * row they read as. They are already drawn with separators between them,
+     * so the bar looks no different — but the bar overflows a group at a time,
+     * and as a single group of six they went to the menu together and left a
+     * third of the bar empty. The sheet merges them back into one row.
+     */
+    {
+      id: 'lists',
+      aria: 'Lists',
+      items: [
+        {
+          id: 'bullet',
+          label: 'Bulleted list',
+          hint: 'Bulleted list (⌘⇧8)',
+          glyph: <IconListBullet size={18} />,
+          pressed: f.list === 'bullet',
+          run: run(applyList('bullet')),
+        },
+        {
+          id: 'number',
+          label: 'Numbered list',
+          hint: 'Numbered list (⌘⇧0)',
+          glyph: <IconListNumber size={18} />,
+          pressed: f.list === 'number',
+          run: run(applyList('number')),
+        },
+        {
+          id: 'check',
+          label: 'Checklist',
+          hint: 'Checklist (⌘⇧7)',
+          glyph: <IconListCheck size={18} />,
+          pressed: f.list === 'check',
+          run: run(applyList('check')),
+        },
+      ],
+    },
+    {
+      id: 'indent',
+      aria: 'Indentation',
+      items: [
+        {
+          id: 'outdent',
+          label: 'Decrease indent',
+          hint: 'Decrease indent (⌘[)',
+          glyph: <IconOutdent size={18} />,
+          disabled: !f.canOutdent,
+          run: run(applyIndent(-1)),
+        },
+        {
+          id: 'indent',
+          label: 'Increase indent',
+          hint: 'Increase indent (⌘])',
+          glyph: <IconIndent size={18} />,
+          disabled: !f.canIndent,
+          run: run(applyIndent(1)),
+        },
+      ],
+    },
+    {
+      id: 'quote',
+      aria: 'Block quote',
+      items: [
+        {
+          id: 'quote',
+          label: 'Block quote',
+          hint: 'Block quote (⌘⇧9)',
+          glyph: <IconQuote size={18} />,
+          pressed: f.quote,
+          run: run(applyQuote),
+        },
+      ],
+    },
+    /*
+     * Link and table sit together: both are things you *insert* rather than
+     * styling you toggle, and both open something rather than acting at once.
+     * They keep the editor's selection the same way every other button does.
+     */
+    {
+      id: 'insert',
+      aria: 'Insert',
+      items: [
+        {
+          id: 'link',
+          label: f.link ? 'Edit link' : 'Add link',
+          hint: 'Link (⌘⇧L)',
+          glyph: <IconLink size={18} />,
+          pressed: f.link,
+          opens: true,
+          run: () => editLinkAtCaret(getView()),
+        },
+        {
+          id: 'table',
+          label: table ? 'Table rows and columns' : 'Insert table',
+          hint: table ? 'Table rows and columns' : 'Insert table',
+          glyph: <IconTable size={18} />,
+          pressed: !!table,
+          opens: true,
+          run: tableMenu,
+        },
+      ],
+    },
+  ]
+
+  /**
+   * Wire a button to its command without stealing the selection.
+   *
+   * Pressing a button is what moves focus out of the editor, and an editor
+   * without focus has no selection to format — so the press default is
+   * suppressed and the command runs from the down event instead. Preventing
+   * `touchstart` also stops the browser synthesising the mouse events after it,
+   * which is what keeps a single tap from running the command twice.
+   *
+   * The ones that *open* something are the exception, and have to run on the
+   * click. These overlays put a scrim over the screen the moment they open, and
+   * a scrim that appears between a mousedown and its click swallows that click
+   * and closes itself again. The press is still cancelled, so the editor keeps
+   * its selection and a table cell keeps its focus while the menu decides what
+   * it is acting on.
+   */
+  const wire = (it: Pick<BarItem, 'opens' | 'run'>) =>
+    it.opens
+      ? {
+          onMouseDown: (e: MouseEvent) => e.preventDefault(),
+          onClick: (e: MouseEvent) => it.run(e),
+          onTouchStart: (e: TouchEvent) => {
+            // Cancelling touchstart also cancels the click the browser would
+            // synthesise from it, so this is the only handler that runs on touch.
+            e.preventDefault()
+            const t = e.touches[0]
+            it.run({ clientX: t?.clientX ?? 0, clientY: t?.clientY ?? 0 })
+          },
+        }
+      : {
+          onMouseDown: (e: Event) => {
+            e.preventDefault()
+            it.run(ORIGIN)
+          },
+          onTouchStart: (e: Event) => {
+            e.preventDefault()
+            it.run(ORIGIN)
+          },
+        }
+
+  const button = (it: BarItem) => (
+    <button
+      key={it.id}
+      class={it.pill ? `fmt-style fmt-style-${it.pill}` : 'fmt-btn'}
+      title={it.hint}
+      aria-label={it.hint}
+      aria-pressed={it.pressed}
+      disabled={it.disabled}
+      {...wire(it)}
+    >
+      {it.glyph}
+    </button>
+  )
+
+  const groupBody = (g: BarGroup) => g.items.map(button)
+
+  const byId = (id: string) => groups.find((g) => g.id === id)!
+
+  /**
+   * Several groups drawn as one row, separators between them.
+   *
+   * The sheet uses this to put lists, indentation and the quote back in the
+   * single row they have always been on a phone — where nothing overflows, so
+   * the finer grouping the bar needs would only cost a row of the note.
+   */
+  const mergedRow = (ids: string[], aria: string) => (
+    <div class="fmt-row" role="group" aria-label={aria}>
+      {ids.map((id, i) => (
+        <Fragment key={id}>
+          {i > 0 && <span class="fmt-sep" />}
+          {groupBody(byId(id))}
+        </Fragment>
       ))}
-      <span class="fmt-sep" />
-      <button
-        class="fmt-btn"
-        title="Decrease indent (⌘[)"
-        aria-label="Decrease indent"
-        disabled={!f.canOutdent}
-        {...act(applyIndent(-1))}
-      >
-        <IconOutdent size={18} />
-      </button>
-      <button
-        class="fmt-btn"
-        title="Increase indent (⌘])"
-        aria-label="Increase indent"
-        disabled={!f.canIndent}
-        {...act(applyIndent(1))}
-      >
-        <IconIndent size={18} />
-      </button>
-      <span class="fmt-sep" />
-      <button
-        class="fmt-btn"
-        title="Block quote (⌘⇧9)"
-        aria-label="Block quote"
-        aria-pressed={f.quote}
-        {...act(applyQuote)}
-      >
-        <IconQuote size={18} />
-      </button>
     </div>
   )
 
-  /*
-   * Link and table sit together: both are things you *insert* rather than
-   * styling you toggle, and both open something rather than acting at once.
-   * They keep the editor's selection the same way every other button does.
-   */
-  const insertRow = (
-    <div class="fmt-row" role="group" aria-label="Insert">
-      <button
-        class="fmt-btn"
-        title="Link (⌘⇧L)"
-        aria-label={f.link ? 'Edit link' : 'Add link'}
-        aria-pressed={f.link}
-        {...opens(() => editLinkAtCaret(getView()))}
-      >
-        <IconLink size={18} />
-      </button>
-      <button
-        class="fmt-btn"
-        title={table ? 'Table rows and columns' : 'Insert table'}
-        aria-label={table ? 'Table rows and columns' : 'Insert table'}
-        aria-pressed={!!table}
-        {...opens(tableMenu)}
-      >
-        <IconTable size={18} />
-      </button>
+  const groupRow = (g: BarGroup, extra = '') => (
+    <div key={g.id} class={`fmt-row${extra}`} role="group" aria-label={g.aria}>
+      {groupBody(g)}
     </div>
   )
 
@@ -283,28 +403,196 @@ export function FormatBar({ getView, variant }: FormatBarProps) {
      * themselves, and on a phone every row it does not have is a row of the
      * note you can still see. It is a flex child of the pane rather than an
      * overlay, so the editor above it shrinks and the caret stays visible.
+     *
+     * Nothing here overflows: the sheet is as wide as the phone and lays its
+     * groups out over three rows, which is the whole reason the bar needs an
+     * overflow menu and this does not.
      */
     return (
       <div class="fmt-sheet" role="group" aria-label="Format">
-        {styleRow}
-        {markRow}
+        {groupRow(byId('styles'), ' fmt-styles')}
+        {groupRow(byId('marks'))}
         <div class="fmt-row fmt-row-split">
-          {listRow}
-          {insertRow}
+          {mergedRow(['lists', 'indent', 'quote'], 'Lists and indentation')}
+          {groupRow(byId('insert'))}
         </div>
       </div>
     )
   }
 
+  return <Bar groups={groups} groupBody={groupBody} />
+}
+
+/** A press that isn't aimed anywhere: the commands that act at once ignore it. */
+const ORIGIN: At = { clientX: 0, clientY: 0 }
+
+/**
+ * The bar, and the "…" that appears when it runs out of room.
+ *
+ * The editor pane is the one that never yields width, so when the calendar is
+ * inline and the sidebar and list are open there can be less than half the
+ * bar's natural width to put it in — and it was simply clipped at the pane's
+ * edge, against the calendar. It scrolls sideways, but with the scrollbar
+ * hidden nothing said so, which made Link and Table look like features that
+ * did not exist rather than controls just out of view.
+ *
+ * Groups overflow whole rather than button by button. It costs a little
+ * packing efficiency — a group moves to the menu while its width would nearly
+ * have fitted — and buys the two things that matter: the `role="group"`
+ * labelling and the separators stay intact, and the bar never strands one
+ * orphaned button from a group whose siblings are all in the menu.
+ */
+function Bar({
+  groups,
+  groupBody,
+}: {
+  groups: BarGroup[]
+  groupBody: (g: BarGroup) => preact.ComponentChildren
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  /** Index of the first group that did not fit; groups.length means all fit. */
+  const [cut, setCut] = useState(groups.length)
+
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+
+    const measure = () => {
+      const more = el.querySelector<HTMLElement>('[data-fmt-more]')
+      const parts = Array.from(el.querySelectorAll<HTMLElement>('[data-fmt-part]'))
+      if (!parts.length) return
+
+      /*
+       * Natural widths first, which means un-hiding everything before reading
+       * anything: a group left hidden from the last pass measures zero and the
+       * bar would then never grow back when the pane widens. Every part is
+       * `flex: 0 0 auto`, so these widths are the same whether or not the bar
+       * is currently too narrow to hold them.
+       */
+      for (const p of parts) p.removeAttribute('data-overflow')
+      more?.removeAttribute('data-overflow')
+
+      const css = getComputedStyle(el)
+      const gap = parseFloat(css.columnGap) || 0
+      const room =
+        el.clientWidth - (parseFloat(css.paddingLeft) || 0) - (parseFloat(css.paddingRight) || 0)
+      /*
+       * Margins included. `offsetWidth` leaves them out, and each separator
+       * carries 5px of it either side — three of them was 30px the bar thought
+       * it had and did not, which is exactly enough to still clip the last
+       * group it decided would fit.
+       */
+      const widths = parts.map((p) => {
+        const m = getComputedStyle(p)
+        return p.offsetWidth + (parseFloat(m.marginLeft) || 0) + (parseFloat(m.marginRight) || 0)
+      })
+      const total = widths.reduce((a, w) => a + w, 0) + gap * (parts.length - 1)
+
+      let next = groups.length
+      if (total > room) {
+        // Room for the "…" has to come out of the budget before deciding what
+        // fits, or the last group in would be pushed straight back out by it.
+        const budget = room - (more?.offsetWidth ?? 0) - gap
+        let used = 0
+        next = 0
+        for (let i = 0; i < parts.length; i++) {
+          const w = widths[i] + (i ? gap : 0)
+          if (used + w > budget) break
+          used += w
+          // Separators are interleaved before every group but the first, so a
+          // part index maps to a group only on the group's own element.
+          if (parts[i].dataset.fmtPart === 'group') next++
+        }
+        /*
+         * Applied here as well as through the state below. The state is what
+         * fills the menu, but a Preact re-render lands a tick later and the
+         * un-hiding above would flash the full-width bar until it did.
+         */
+        let group = 0
+        for (const p of parts) {
+          const isGroup = p.dataset.fmtPart === 'group'
+          // A separator belongs to the group it precedes.
+          if ((isGroup ? group : group + 1) >= next) p.setAttribute('data-overflow', '1')
+          if (isGroup) group++
+        }
+      } else {
+        more?.setAttribute('data-overflow', '1')
+      }
+      setCut(next)
+    }
+
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+    /*
+     * Set up once, not on every render. The bar re-renders on every keystroke
+     * — `formatSnapshot` republishes on each document and selection change —
+     * and building a ResizeObserver per keystroke to answer a question only
+     * the pane's width can change is pure waste. Nothing this measures depends
+     * on the render that triggered it: `measure` reads the DOM, and pressed and
+     * disabled states move no button by a pixel. `groups.length` is a constant
+     * and is listed only so the default is not read from a stale closure.
+     */
+  }, [groups.length])
+
+  const hidden = groups.slice(cut)
+
+  const openOverflow = () => {
+    const box = ref.current?.querySelector('[data-fmt-more]')?.getBoundingClientRect()
+    const at = { clientX: box ? box.left : 0, clientY: box ? box.bottom + 4 : 0 }
+    const items: MenuItem[] = []
+    for (const g of hidden) {
+      for (const [i, it] of g.items.entries()) {
+        items.push({
+          label: it.label,
+          icon: it.glyph,
+          disabled: it.disabled,
+          checked: it.pressed,
+          // A group boundary is worth a rule; the ones a group draws inside
+          // itself are not, in a list where every row is already on its own.
+          separated: i === 0 && items.length > 0,
+          onSelect: () => it.run(at),
+        })
+      }
+    }
+    openMenu(at, items, 'More formatting')
+  }
+
   return (
-    <div class="fmt-bar" role="toolbar" aria-label="Formatting">
-      {styleRow}
-      <span class="fmt-sep" />
-      {markRow}
-      <span class="fmt-sep" />
-      {listRow}
-      <span class="fmt-sep" />
-      {insertRow}
+    <div class="fmt-bar" role="toolbar" aria-label="Formatting" ref={ref}>
+      {groups.map((g, i) => (
+        <Fragment key={g.id}>
+          {i > 0 && (
+            <span
+              class="fmt-sep"
+              data-fmt-part="sep"
+              data-overflow={i >= cut ? '1' : undefined}
+            />
+          )}
+          <div
+            class={`fmt-row${g.id === 'styles' ? ' fmt-styles' : ''}`}
+            role="group"
+            aria-label={g.aria}
+            data-fmt-part="group"
+            data-overflow={i >= cut ? '1' : undefined}
+          >
+            {groupBody(g)}
+          </div>
+        </Fragment>
+      ))}
+      <button
+        class="fmt-btn fmt-more"
+        data-fmt-more="1"
+        data-overflow={cut >= groups.length ? '1' : undefined}
+        title="More formatting"
+        aria-label="More formatting"
+        aria-haspopup="menu"
+        onMouseDown={(e: MouseEvent) => e.preventDefault()}
+        onClick={openOverflow}
+      >
+        <IconMore size={18} />
+      </button>
     </div>
   )
 }

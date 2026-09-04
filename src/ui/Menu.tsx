@@ -9,6 +9,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks'
 import { signal } from '@preact/signals'
 import { layoutMode } from './layout'
+import { IconCheck } from './Icons'
 
 export interface MenuItem {
   label: string
@@ -18,6 +19,12 @@ export interface MenuItem {
   /** Renders a separator above this item. */
   separated?: boolean
   disabled?: boolean
+  /**
+   * A toggle that is currently on — bold text under the caret, say. Drawn as a
+   * tick and in the accent colour, matching how the same control looks when it
+   * is a pressed button rather than a menu row.
+   */
+  checked?: boolean
 }
 
 interface MenuState {
@@ -33,7 +40,22 @@ interface MenuState {
 
 const menu = signal<MenuState | null>(null)
 
+/**
+ * Where the last menu was anchored.
+ *
+ * An item whose job is to open a *second* menu has no event of its own to open
+ * it at — `onSelect` is called after the first has closed. Opening the second
+ * one where the first was is both the obvious place and a stable one, so a
+ * submenu does not appear under wherever the pointer happened to drift.
+ */
+let anchor = { clientX: 0, clientY: 0 }
+
+export function menuAnchor(): { clientX: number; clientY: number } {
+  return anchor
+}
+
 export function openMenu(e: { clientX: number; clientY: number }, items: MenuItem[], title?: string) {
+  anchor = { clientX: e.clientX, clientY: e.clientY }
   menu.value = { x: e.clientX, y: e.clientY, items, title }
 }
 
@@ -50,6 +72,7 @@ export function openMenuWith(
   render: (close: () => void) => preact.ComponentChildren,
   opts: { title?: string; cls?: string } = {},
 ) {
+  anchor = { clientX: e.clientX, clientY: e.clientY }
   menu.value = { x: e.clientX, y: e.clientY, items: [], render, ...opts }
 }
 
@@ -164,9 +187,11 @@ export function ContextMenu() {
         <button
           key={i}
           class="menu-item"
-          role="menuitem"
+          role={item.checked === undefined ? 'menuitem' : 'menuitemcheckbox'}
           data-danger={item.danger ? '1' : '0'}
           data-sep={item.separated ? '1' : '0'}
+          data-checked={item.checked ? '1' : undefined}
+          aria-checked={item.checked === undefined ? undefined : item.checked}
           disabled={item.disabled}
           onClick={async () => {
             closeMenu()
@@ -175,6 +200,11 @@ export function ContextMenu() {
         >
           {item.icon && <span class="menu-icon">{item.icon}</span>}
           <span>{item.label}</span>
+          {item.checked && (
+            <span class="menu-check">
+              <IconCheck size={15} />
+            </span>
+          )}
         </button>
       ))}
       {sheet && (

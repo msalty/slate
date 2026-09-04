@@ -7,7 +7,7 @@
  * were, and the editor is a layer above it.
  */
 
-import { attachments, createNote, notes, tasks, trashItems, unresolvedLinks } from '../core/vault'
+import { attachments, contentNotes, tasks, trashItems, unresolvedLinks } from '../core/vault'
 import {
   smartFolderById,
   smartFolderList,
@@ -21,7 +21,6 @@ import {
   activePath,
   mobileEditorOpen,
   mobileTab,
-  openNote,
   scope,
   scopeLabel,
   settingsOpen,
@@ -46,6 +45,7 @@ import {
   IconTag,
   IconTrash,
 } from './Icons'
+import { newNoteInFolder } from './EditorPane'
 
 const TABS: Array<{ id: MobileTab; label: string; icon: preact.ComponentChildren }> = [
   { id: 'notes', label: 'Notes', icon: <IconNotes size={21} /> },
@@ -94,14 +94,14 @@ export function MobileTasks() {
         <span class="spacer" />
         <button
           class="icon-btn"
-          onClick={async () => openNote(await createNote('', 'Untitled', '- [ ] '), { editing: true })}
+          onClick={() => void newNoteInFolder('', 'Untitled', { seed: '- [ ] ' })}
           aria-label="New task note"
         >
           <IconNewNote size={19} />
         </button>
       </div>
       <div class="rail-scroll">
-        <TasksPanel showDone />
+        <TasksPanel />
       </div>
     </div>
   )
@@ -181,7 +181,7 @@ export function MobileMore() {
           <MoreRow
             icon={<IconNotes size={17} />}
             label="All Notes"
-            count={notes.value.length}
+            count={contentNotes.value.length}
             onClick={() => go({ kind: 'all' })}
           />
           <MoreRow
@@ -245,7 +245,7 @@ export function MobileMore() {
           <div class="more-group">
             <div class="more-group-label">Tags</div>
             <div class="tag-cloud" style={{ padding: '4px 14px 10px' }}>
-              {[...new Set(notes.value.flatMap((n) => n.tags))].sort().map((t) => (
+              {[...new Set(contentNotes.value.flatMap((n) => n.tags))].sort().map((t) => (
                 <button key={t} class="tag-chip" onClick={() => go({ kind: 'tag', tag: t })}>
                   <IconTag size={11} />
                   {t}
@@ -273,7 +273,7 @@ export function MobileMore() {
           />
         </div>
 
-        <p class="more-footer">Slate · {notes.value.length} notes</p>
+        <p class="more-footer">Slate · {contentNotes.value.length} notes</p>
       </div>
     </div>
   )

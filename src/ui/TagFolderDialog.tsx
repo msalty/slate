@@ -16,6 +16,7 @@ import {
   effectiveNode,
   notesForSmartFolder,
   notesMatching,
+  tasksMatching,
   saveSmartFolder,
   smartFolderAncestors,
   smartFolderById,
@@ -32,7 +33,12 @@ export function openTagFolderDialog(existing?: SmartFolder, parentId?: string) {
   editing.value = existing ?? { name: '', query: '', icon: '🏷️', parentId, inherit: true }
 }
 
-const ICONS = ['🏷️', '⭐️', '🔥', '📌', '💼', '🏠', '🧠', '📚', '🧾', '🌱', '⚡️', '🎯']
+/*
+ * The tick is here for a folder that gathers tasks. It is a choice, not a
+ * statement — the row draws its own tick from what the folder actually does,
+ * because an icon anyone can put on anything cannot be trusted to say so.
+ */
+const ICONS = ['🏷️', '✅', '☑️', '⭐️', '🔥', '📌', '💼', '🏠', '🧠', '📚', '🧾', '🌱', '⚡️', '🎯']
 
 export function TagFolderDialog() {
   const draft = editing.value
@@ -41,6 +47,7 @@ export function TagFolderDialog() {
   const [icon, setIcon] = useState('🏷️')
   const [parentId, setParentId] = useState<string>('')
   const [inherit, setInherit] = useState(true)
+  const [shows, setShows] = useState<'notes' | 'tasks'>('notes')
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const nameRef = useRef<HTMLInputElement>(null)
 
@@ -51,6 +58,7 @@ export function TagFolderDialog() {
     setIcon(draft.icon ?? '🏷️')
     setParentId(draft.parentId ?? '')
     setInherit(draft.inherit ?? true)
+    setShows(draft.shows === 'tasks' ? 'tasks' : 'notes')
     requestAnimationFrame(() => (draft.id ? inputRef : nameRef).current?.focus())
   }, [draft])
 
@@ -84,6 +92,11 @@ export function TagFolderDialog() {
     () => (combined ? notesMatching(combined) : []),
     [combined, query],
   )
+  const taskMatches = useMemo(
+    () => (combined && shows === 'tasks' ? tasksMatching(combined) : []),
+    [combined, query, shows],
+  )
+  const hits = shows === 'tasks' ? taskMatches.length : matches.length
 
   if (!draft) return null
 
@@ -127,6 +140,7 @@ export function TagFolderDialog() {
       icon,
       parentId: parentId || undefined,
       inherit,
+      shows,
     })
     editing.value = null
     scope.value = { kind: 'smart', id: saved.id }
@@ -204,6 +218,34 @@ export function TagFolderDialog() {
             </label>
           )}
 
+          {/*
+            * Notes or tasks, on the same rule language and the same folder.
+            * A second tree beside the first would have meant learning "a saved
+            * rule" twice; this way `#home` gathers the notes about home or the
+            * jobs on them, and the only difference is what it hands back.
+            */}
+          <div class="field">
+            <span>Gathers</span>
+            <div class="seg" role="radiogroup" aria-label="What this folder gathers">
+              {(['notes', 'tasks'] as const).map((k) => (
+                <button
+                  key={k}
+                  class="seg-btn"
+                  role="radio"
+                  aria-checked={shows === k}
+                  onClick={() => setShows(k)}
+                >
+                  {k === 'notes' ? 'Notes' : 'Tasks'}
+                </button>
+              ))}
+            </div>
+            <small>
+              {shows === 'tasks'
+                ? 'Every task on a matching note, plus any tagged on its own line — so tagging a note #home gathers the jobs on it without tagging each one.'
+                : 'Notes matching the rule, the way Tag Folders have always worked.'}
+            </small>
+          </div>
+
           <label class="field">
             <span>Rule</span>
             <textarea
@@ -244,8 +286,9 @@ export function TagFolderDialog() {
               </>
             ) : (
               <>
-                Matches <strong>{matches.length}</strong>{' '}
-                {matches.length === 1 ? 'note' : 'notes'} — {describeQuery(combined!)}
+                Matches <strong>{hits}</strong>{' '}
+                {shows === 'tasks' ? (hits === 1 ? 'task' : 'tasks') : hits === 1 ? 'note' : 'notes'} —{' '}
+                {describeQuery(combined!)}
                 {inheritedNode && (
                   <em class="rule-inherited">
                     inherited from {parentName}: {describeQuery(inheritedNode)}
@@ -254,6 +297,27 @@ export function TagFolderDialog() {
               </>
             )}
           </div>
+
+          {shows === 'tasks' && (
+            <div class="chip-group">
+              <div class="chip-group-label">Only these tasks</div>
+              <div class="chips">
+                {[
+                  ['is:open', 'still to do'],
+                  ['is:done', 'finished'],
+                  ['due:overdue', 'past its date'],
+                  ['due:today', 'today'],
+                  ['due:soon', 'this week'],
+                  ['due:none', 'no date'],
+                ].map(([token, gloss]) => (
+                  <button key={token} class="chip" onClick={() => insert(token)}>
+                    {token}
+                    <small>{gloss}</small>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div class="chip-group">
             <div class="chip-group-label">Operators</div>
@@ -309,13 +373,20 @@ export function TagFolderDialog() {
             <div class="chip-group">
               <div class="chip-group-label">Preview</div>
               <div class="rule-preview">
-                {matches.slice(0, 8).map((m) => (
-                  <div key={m.path} class="rule-preview-row">
-                    <strong>{m.title}</strong>
-                    <small>{m.tags.map((t) => `#${t}`).join(' ')}</small>
-                  </div>
-                ))}
-                {matches.length > 8 && <div class="rule-preview-more">+{matches.length - 8} more</div>}
+                {shows === 'tasks'
+                  ? taskMatches.slice(0, 8).map((t) => (
+                      <div key={t.id} class="rule-preview-row">
+                        <strong>{t.text || 'Untitled task'}</strong>
+                        <small>{t.noteTitle}</small>
+                      </div>
+                    ))
+                  : matches.slice(0, 8).map((m) => (
+                      <div key={m.path} class="rule-preview-row">
+                        <strong>{m.title}</strong>
+                        <small>{m.tags.map((t) => `#${t}`).join(' ')}</small>
+                      </div>
+                    ))}
+                {hits > 8 && <div class="rule-preview-more">+{hits - 8} more</div>}
               </div>
             </div>
           )}

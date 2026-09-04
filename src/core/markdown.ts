@@ -215,6 +215,8 @@ export interface RawTask {
   done: boolean
   text: string
   due?: number
+  /** Tags written on the task's own line. */
+  tags: string[]
 }
 
 const TASK = /^(\s*)(?:[-*+]|\d+[.)])\s+\[([ xX])\]\s?(.*)$/
@@ -240,11 +242,36 @@ export function scanTasks(text: string): RawTask[] {
         done: m[2].toLowerCase() === 'x',
         text: m[3].trim(),
         due: parseDue(m[3]),
+        tags: scanTags(m[3]),
       })
     }
     offset += line.length + 1
   }
   return out
+}
+
+/**
+ * The tags the note itself carries, as opposed to the ones written on its
+ * tasks.
+ *
+ * `scanTags` reads the whole file, so a `#urgent` written on one task line
+ * makes the note tagged `#urgent` — which is right for the note (it does
+ * contain urgent work) and wrong as something for *every other task on it* to
+ * inherit. A task inherits what the note says about itself, not what its
+ * siblings say about themselves.
+ *
+ * The task lines are blanked to spaces rather than removed, so every offset in
+ * the text stays where it was and the code-fence regions still line up.
+ */
+export function noteLevelTags(text: string): string[] {
+  const lines = text.split('\n')
+  let blanked = false
+  for (let i = 0; i < lines.length; i++) {
+    if (!TASK.test(lines[i])) continue
+    lines[i] = ' '.repeat(lines[i].length)
+    blanked = true
+  }
+  return blanked ? scanTags(lines.join('\n')) : scanTags(text)
 }
 
 /* -------------------------------------------------------------- due dates */

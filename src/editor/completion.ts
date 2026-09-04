@@ -1,5 +1,5 @@
 /**
- * Autocomplete for `[[wikilinks]]`, `![[embeds]]` and `#tags`.
+ * Autocomplete for `[[wikilinks]]`, `![[embeds]]`, `#tags` and callout types.
  *
  * Linking is only as good as how fast you can reach for it, so the completion
  * fires on the opening `[[` with no keystroke delay and ranks by how the note
@@ -11,6 +11,7 @@ import type { Completion, CompletionContext, CompletionResult } from '@codemirro
 import type { EditorView } from '@codemirror/view'
 import { allTags, attachments, notes } from '../core/vault'
 import { basename, mediaClass, relativeTime } from '../core/util'
+import { CALLOUT_NAMES, calloutSpec } from './callout'
 
 function rank(title: string, q: string, mtime: number): number {
   const t = title.toLowerCase()
@@ -132,6 +133,60 @@ export function tagCompletion(context: CompletionContext): CompletionResult | nu
       .slice(0, 40)
       .map((t) => ({ label: t.tag, detail: `${t.count}` })),
     validFor: /^[A-Za-z0-9/_-]*$/,
+  }
+}
+
+/**
+ * The callout types, offered as soon as `[!` is typed at the head of a quote.
+ *
+ * This is the whole discovery story for callouts, and it is deliberately here
+ * rather than on the formatting bar: the bar exists only in rich text, while
+ * the completion works in all three modes — and it puts the list where the
+ * syntax is being written instead of asking anyone to go looking for a button.
+ *
+ * The `detail` column names the colour family an alias lands in, so the five
+ * colours behind two dozen names are visible rather than a surprise.
+ */
+export function calloutCompletion(context: CompletionContext): CompletionResult | null {
+  const before = context.matchBefore(/\[![A-Za-z]*/)
+  if (!before) return null
+  // Only at the head of a blockquote: quote markers in front of it and nothing
+  // else. Anywhere further into the line it is ordinary text in brackets.
+  const line = context.state.doc.lineAt(before.from)
+  if (!/^(?:[ \t]*>)+[ \t]*$/.test(line.text.slice(0, before.from - line.from))) return null
+
+  const q = before.text.slice(2).toLowerCase()
+  const options: Completion[] = []
+  for (const name of CALLOUT_NAMES) {
+    if (q && !name.startsWith(q)) continue
+    const spec = calloutSpec(name)!
+    options.push({
+      label: name,
+      // Canonical types are their own family; saying so twice is noise.
+      detail: spec.kind === name ? undefined : spec.kind,
+      apply: applyCallout(name),
+    })
+  }
+  if (!options.length) return null
+  return { from: before.from + 2, options, validFor: /^[A-Za-z]*$/ }
+}
+
+/**
+ * Finish the marker and leave the caret where the title goes.
+ *
+ * `closeBrackets` has very likely auto-inserted the `]` already — typing `[`
+ * does that — so the completion has to absorb it or accepting a suggestion
+ * leaves `[!note]]` behind, which is not a callout at all.
+ */
+function applyCallout(name: string) {
+  return (view: EditorView, _c: Completion, from: number, to: number) => {
+    const end = view.state.doc.sliceString(to, to + 1) === ']' ? to + 1 : to
+    const insert = `${name}] `
+    view.dispatch({
+      changes: { from, to: end, insert },
+      selection: { anchor: from + insert.length },
+      userEvent: 'input.complete',
+    })
   }
 }
 

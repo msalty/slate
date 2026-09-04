@@ -35,7 +35,14 @@ import {
   unlinkedList,
   visibleNotes,
 } from './state'
-import { allFolderPaths, moveNoteToFolder } from '../core/folders'
+import {
+  allFolderPaths,
+  moveNoteToFolder,
+  showsTasks,
+  smartFolderById,
+  tasksForSmartFolder,
+} from '../core/folders'
+import { TasksPanel } from './RightRail'
 import { openMenu, useLongPress, type MenuItem } from './Menu'
 import { SwipeRow, type SwipeAction } from './SwipeRow'
 import { openPrompt } from './PromptDialog'
@@ -43,6 +50,8 @@ import { layoutMode, toggleSidebar } from './layout'
 import { MobileScopeBar } from './Mobile'
 import { IconImage, IconNewNote, IconPin, IconPlus, IconSearch, IconSidebar, IconClose, IconDots } from './Icons'
 import { settings, update } from '../core/settings'
+import { newNoteInFolder } from './EditorPane'
+import { canShareFiles, shareNote } from './shareNote'
 
 /** First image embed in a note, used as the row thumbnail. */
 function thumbFor(entry: NoteIndexEntry): string | undefined {
@@ -160,6 +169,16 @@ function noteMenu(entry: NoteIndexEntry): MenuItem[] {
       },
     },
     {
+      /*
+       * One item, two behaviours, and the label says which you are getting:
+       * a phone opens the share sheet — the only way from here into Mail —
+       * and everything else saves the file.
+       */
+      label: canShareFiles() ? 'Share…' : 'Export as Markdown',
+      separated: true,
+      onSelect: () => shareNote(entry.path),
+    },
+    {
       label: folders.length ? 'Move to…' : 'Move to… (no other folders)',
       disabled: !folders.length,
       separated: true,
@@ -212,8 +231,11 @@ export function NoteList({ children }: { children?: preact.ComponentChildren }) 
     const folder = s.kind === 'folder' ? s.path : ''
     let body = ''
     if (s.kind === 'tag') body = `#${s.tag}\n\n`
-    openNote(await createNote(folder, 'Untitled', body), { editing: true })
+    await newNoteInFolder(folder, 'Untitled', { seed: body })
   }
+
+  // A Tag Folder set to gather tasks shows tasks here instead of notes.
+  const taskFolder = s.kind === 'smart' && showsTasks(smartFolderById(s.id))
 
   // The day a "create daily note" row would be for, when there isn't one yet.
   const dayNeedingDaily =
@@ -297,6 +319,31 @@ export function NoteList({ children }: { children?: preact.ComponentChildren }) 
           <FilesView />
         ) : s.kind === 'unlinked' && !query.value ? (
           <UnlinkedView />
+        ) : s.kind === 'tasks' && !query.value ? (
+          /*
+           * The Tasks row lists tasks, not the notes that happen to contain
+           * them: it counts tasks in the sidebar, and a list of note titles is
+           * one click short of what the count promised.
+           */
+          <TasksPanel
+            empty={
+              <>
+                Type <code>- [ ]</code> in any note to add a task. Every one in the vault turns up
+                here.
+              </>
+            }
+          />
+        ) : taskFolder && !query.value ? (
+          /*
+           * A Tag Folder that gathers tasks puts them here, where its notes
+           * would otherwise be. The same rows the rail and the phone's Tasks
+           * tab use, so a task is the same thing to tick and to date wherever
+           * it turns up.
+           */
+          <TasksPanel
+            items={tasksForSmartFolder(s.kind === 'smart' ? s.id : '')}
+            empty={<>No tasks match this folder’s rule yet.</>}
+          />
         ) : visibleNotes.value.length === 0 ? (
           <>
             {dayNeedingDaily !== undefined && <DailyNoteRow day={dayNeedingDaily} />}
@@ -591,8 +638,7 @@ function UnlinkedView() {
             <button
               class="status-btn"
               onClick={async () => {
-                const p = await createNote('', target, `# ${target}\n\n`)
-                openNote(p, { editing: true })
+                await newNoteInFolder('', target, { fallback: `# ${target}\n\n` })
               }}
             >
               Create

@@ -33,6 +33,7 @@ import {
   codeRegions,
   excerptOf,
   isTaskLine,
+  noteLevelTags,
   parseFrontmatter,
   resolveTarget,
   scanMdLinks,
@@ -82,6 +83,17 @@ function bump() {
 /** True for anything under backstage/ — hidden from every UI surface. */
 export function isHidden(path: string): boolean {
   return path === BACKSTAGE || path.startsWith(`${BACKSTAGE}/`)
+}
+
+/**
+ * The folder templates are read from. Defined here rather than in
+ * templates.ts, which imports this module: the roll-ups below need to know a
+ * template when they see one, and a path predicate is all that takes.
+ */
+export const TEMPLATES_FOLDER = 'Templates'
+
+export function isTemplatePath(path: string): boolean {
+  return path === TEMPLATES_FOLDER || path.startsWith(`${TEMPLATES_FOLDER}/`)
 }
 
 /* ------------------------------------------------------------------- index */
@@ -149,6 +161,33 @@ export const notes = computed<NoteIndexEntry[]>(() => {
   return out.sort((a, b) => b.mtime - a.mtime)
 })
 
+/**
+ * The notes that are your own material — `notes` without the templates.
+ *
+ * A template is boilerplate for a note that does not exist yet, so counting it
+ * as one makes the app answer questions about your work with data from a form:
+ * a `- [ ]` waiting to be filled in becomes a task you owe somebody, a `#work`
+ * describing future notes inflates the tag it is written in, and a Tag Folder
+ * of everything tagged `#work` contains the template that says so.
+ *
+ * This is what every *roll-up* reads: tasks, tag counts, the calendar, Tag
+ * Folder matches, backlinks, and the note list outside the Templates folder
+ * itself. Things that look at one named thing keep using `notes` — searching
+ * for `#meeting` and not finding the template that defines it would be worse
+ * than finding it, browsing `Templates/` has to show them, wikilink
+ * autocomplete may legitimately target one, and the orphan scan and rename
+ * repointing MUST see them or an image only a template uses is reported
+ * unused and a template's links break on a rename.
+ *
+ * The same array comes back when there are no templates, so a vault that never
+ * made the folder pays nothing and every downstream memo keeps its identity.
+ */
+export const contentNotes = computed<NoteIndexEntry[]>(() => {
+  const all = notes.value
+  const out = all.filter((e) => !isTemplatePath(e.path))
+  return out.length === all.length ? all : out
+})
+
 /** Non-note files the user can link to: images, PDFs, video, audio, etc. */
 export const attachments = computed(() => {
   revision.value
@@ -160,7 +199,7 @@ export const attachments = computed(() => {
 
 export const allTags = computed<Array<{ tag: string; count: number }>>(() => {
   const counts = new Map<string, number>()
-  for (const e of notes.value) for (const t of e.tags) counts.set(t, (counts.get(t) ?? 0) + 1)
+  for (const e of contentNotes.value) for (const t of e.tags) counts.set(t, (counts.get(t) ?? 0) + 1)
   return [...counts].map(([tag, count]) => ({ tag, count })).sort((a, b) => a.tag.localeCompare(b.tag))
 })
 
@@ -184,19 +223,24 @@ export const pathSet = computed(() => {
 
 export const tasks = computed<TaskItem[]>(() => {
   const out: TaskItem[] = []
-  for (const e of notes.value) {
+  for (const e of contentNotes.value) {
     if (!e.hasTasks) continue
     const f = files.get(e.path)
     if (!f?.text) continue
+    // What the note says about itself, which every task on it inherits.
+    const inherited = noteLevelTags(f.text)
     for (const t of scanTasks(f.text)) {
       out.push({
         id: `${e.path}:${t.line}`,
         path: e.path,
         noteTitle: e.title,
+        folder: e.folder,
         line: t.line,
         text: stripInline(t.text),
         done: t.done,
         due: t.due,
+        tags: [...new Set([...t.tags, ...inherited])],
+        ownTags: t.tags,
       })
     }
   }
@@ -212,10 +256,26 @@ export const tasks = computed<TaskItem[]>(() => {
 /** date (local midnight ms) -> note paths filed under that day. */
 export const notesByDay = computed(() => {
   const m = new Map<number, string[]>()
-  for (const e of notes.value) {
+  for (const e of contentNotes.value) {
     const arr = m.get(e.calendarDate)
     if (arr) arr.push(e.path)
     else m.set(e.calendarDate, [e.path])
+  }
+  return m
+})
+
+/**
+ * date (local midnight ms) -> how many *open* tasks are due that day.
+ *
+ * What the calendar draws its second signal from. Open only, whatever the
+ * "show completed" switch says: the mark means work this day is still going to
+ * ask of you, and a day whose jobs are all done has nothing to say.
+ */
+export const openTasksByDueDay = computed(() => {
+  const m = new Map<number, number>()
+  for (const t of tasks.value) {
+    if (t.done || t.due === undefined) continue
+    m.set(t.due, (m.get(t.due) ?? 0) + 1)
   }
   return m
 })
@@ -225,7 +285,7 @@ export const backlinkMap = computed(() => {
   const titles = titleIndex.value
   const paths = pathSet.value
   const m = new Map<string, string[]>()
-  for (const e of notes.value) {
+  for (const e of contentNotes.value) {
     for (const target of e.links) {
       const resolved = resolveTarget(target, titles, paths)
       if (!resolved || resolved === e.path) continue
@@ -243,7 +303,7 @@ export const unresolvedLinks = computed(() => {
   const titles = titleIndex.value
   const paths = pathSet.value
   const m = new Map<string, string[]>()
-  for (const e of notes.value) {
+  for (const e of contentNotes.value) {
     const f = files.get(e.path)
     if (!f?.text) continue
     for (const l of scanWikiLinks(f.text)) {
@@ -450,9 +510,18 @@ async function writeFile(f: VaultFile): Promise<void> {
 }
 
 /** Create a note. Returns its path. Guarantees a unique filename. */
+/**
+ * The name a note gets when it has not been given one.
+ *
+ * Worth a constant rather than a literal in six places, because it is not
+ * really a title: it is the absence of one, and a template asked to fill in
+ * `{{title}}` needs to be able to tell the difference.
+ */
+export const UNTITLED = 'Untitled'
+
 export async function createNote(
   folder = '',
-  title = 'Untitled',
+  title: string = UNTITLED,
   body = '',
 ): Promise<string> {
   const dir = normPath(folder)

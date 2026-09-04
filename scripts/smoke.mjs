@@ -99,6 +99,40 @@ page.on('pageerror', (e) => consoleErrors.push(`pageerror: ${e.message}`))
  * text, because a note whose first lines are a table or an image would be
  * answering a click aimed at those instead.
  */
+/**
+ * A date as the app writes it into a task line: local, not UTC, so a run near
+ * midnight in a western timezone does not date "today" as tomorrow.
+ */
+const isoDay = (offset = 0) => {
+  const d = new Date()
+  d.setDate(d.getDate() + offset)
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+
+/** The calendar cell for a day, addressed by the label it announces. */
+const calCell = (offset = 0) => {
+  const d = new Date()
+  d.setDate(d.getDate() + offset)
+  return page.locator(`.cal-day[aria-label^="${d.toDateString()}"]`)
+}
+
+/*
+ * The same cell, brought into view first. A month grid runs from the Sunday
+ * before the 1st to the end of the last week, so a day two either side of
+ * today is *usually* on it — and near a month boundary it is not, which would
+ * make these checks fail on a handful of days a year for no reason at all.
+ */
+const showDay = async (offset) => {
+  const cell = calCell(offset)
+  const arrow = offset < 0 ? 'Previous month' : 'Next month'
+  for (let i = 0; i < 2 && (await cell.count()) === 0; i++) {
+    await page.locator(`[aria-label="${arrow}"]`).click()
+    await page.waitForTimeout(250)
+  }
+  return cell
+}
+
 const startEditing = async () => {
   const edit = page.locator('.editor-pane [aria-label="Edit note"]')
   if (await edit.count()) {
@@ -121,6 +155,26 @@ const noteContaining = (needle) =>
     })
     return all.find((f) => (f.text ?? '').includes(n))?.text ?? ''
   }, needle)
+
+/**
+ * The same, but waiting for a save that may not have landed yet.
+ *
+ * Saves are debounced, so a fixed sleep after a toolbar press is a race: the
+ * read finds the *previous* text, which still contains the needle, and the
+ * check fails for timing rather than for behaviour. Polling for what the edit
+ * should have produced fails just as loudly when the edit never happens, and
+ * only costs time when it is genuinely slow.
+ */
+const noteAfterEdit = async (needle, expected, timeout = 4000) => {
+  const until = Date.now() + timeout
+  let text = ''
+  do {
+    text = await noteContaining(needle)
+    if (text.includes(expected)) return text
+    await page.waitForTimeout(100)
+  } while (Date.now() < until)
+  return text
+}
 
 /** What the note is right now: a page being read, or something being typed in. */
 const readingState = () =>
@@ -189,14 +243,28 @@ try {
   check('bold markers hidden in preview', !visibleText.includes('**booked**'), visibleText.slice(0, 60))
 
   /* ---- tasks --------------------------------------------------------- */
-  await editor.pressSequentially('- [ ] Book the tram tickets 📅 2026-09-04\n', { delay: 4 })
+  await editor.pressSequentially(`- [ ] Book the tram tickets 📅 ${isoDay()}\n`, { delay: 4 })
   await editor.pressSequentially('Renew passport\n', { delay: 4 })
   await page.waitForTimeout(500)
   const checkboxes = await page.locator('.cm-task-checkbox').count()
   check('task checkbox renders as a widget', checkboxes > 0, `${checkboxes} found`)
 
-  const railTasks = await page.locator('.rail .task-row').count()
-  check('task appears in the right rail', railTasks > 0, `${railTasks} in rail`)
+  /*
+   * The rail's list is the dated one: what is due today and what is already
+   * late. Everything else lives in the sidebar's Tasks row — beside a calendar,
+   * an undated job is a job for another day.
+   */
+  const railRows = () => page.locator('.rail .task-row')
+  check(
+    'a task due today appears in the right rail',
+    (await railRows().filter({ hasText: 'Book the tram tickets' }).count()) === 1,
+    `${await railRows().count()} in rail`,
+  )
+  check(
+    'and an undated one does not crowd it',
+    (await railRows().filter({ hasText: 'Renew passport' }).count()) === 0,
+    (await railRows().allInnerTexts()).join(' | '),
+  )
 
   /* ---- due dates ------------------------------------------------------
    * The chip is the whole feature: a date is a control at the end of the task
@@ -206,7 +274,7 @@ try {
   check('a due date renders as a chip, not as syntax', (await dated.count()) === 1)
   check(
     'and the raw marker is gone from the rendered line',
-    !(await page.locator('.cm-content').innerText()).includes('📅 2026-09-04'),
+    !(await page.locator('.cm-content').innerText()).includes(`📅 ${isoDay()}`),
   )
   check('the chip says something a person would say', ((await dated.innerText()) || '').length > 0, await dated.innerText())
 
@@ -296,9 +364,15 @@ try {
   )
   check('and the note now carries two dated tasks', (trip.match(/📅/g) ?? []).length === 2)
   check(
-    'the rail gives every task a date button, set or not',
+    'the rail gives every task it shows a date button',
     (await page.locator('.rail .task-row .due-chip').count()) ===
-      (await page.locator('.rail .task-row').count()),
+      (await page.locator('.rail .task-row').count()) &&
+      (await page.locator('.rail .task-row').count()) > 0,
+  )
+  check(
+    'and a task dated tomorrow waits its turn',
+    (await railRows().filter({ hasText: 'Renew passport' }).count()) === 0,
+    (await railRows().allInnerTexts()).join(' | '),
   )
 
   /* ---- second note + wikilink autocomplete --------------------------- */
@@ -604,6 +678,26 @@ try {
   check('a note being read shows no formatting bar', (await page.locator('.fmt-bar').count()) === 0)
   await startEditing()
   check('rich text mode shows a formatting bar', (await page.locator('.fmt-bar').count()) === 1)
+
+  /*
+   * Reach a bar control the way a person has to.
+   *
+   * The bar overflows into a "…" menu when the pane is too narrow for every
+   * group — which at this viewport, with the calendar inline, it is. So a
+   * control is either a button on the bar or a row in that menu, and a test
+   * that only knew about the first would be testing the window size.
+   */
+  const clickFormat = async (label) => {
+    const onBar = page.locator(`.fmt-bar .fmt-btn[aria-label="${label}"]:not([data-overflow])`)
+    if ((await onBar.count()) && (await onBar.first().isVisible())) {
+      await onBar.first().click()
+      return 'bar'
+    }
+    await page.locator('.fmt-more').click()
+    await page.waitForTimeout(250)
+    await page.locator('.menu-item', { hasText: label }).first().click()
+    return 'menu'
+  }
   const richText = await page.locator('.cm-content').innerText()
   check(
     'rich text mode shows no markdown syntax at all',
@@ -622,7 +716,7 @@ try {
   await page.waitForTimeout(400)
   check(
     'the Heading button writes "## " into the markdown',
-    (await noteContaining('Toolbar line')).includes('## Toolbar line'),
+    (await noteAfterEdit('Toolbar line', '## Toolbar line')).includes('## Toolbar line'),
   )
   check(
     'the bar reports Heading as the active style',
@@ -633,9 +727,9 @@ try {
     !(await page.locator('.cm-content').innerText()).includes('## Toolbar'),
   )
 
-  await page.locator('.fmt-bar .fmt-btn[aria-label^="Underline"]').click()
+  await clickFormat('Underline (⌘U)')
   await page.waitForTimeout(400)
-  const underlined = await noteContaining('Toolbar')
+  const underlined = await noteAfterEdit('Toolbar', '<u>')
   check('underline is written as HTML, which markdown has no syntax for', underlined.includes('<u>'))
   check(
     'the <u> tags are not shown to the reader',
@@ -644,6 +738,101 @@ try {
   check(
     'formatting is applied on the line the caret is on',
     (await page.locator('.cm-underline').count()) > 0,
+  )
+
+  /* ---- the bar runs out of room ----------------------------------------
+   * The editor pane is the one that never yields width, so with the calendar
+   * inline there can be less than half the bar's natural width to put it in.
+   * It used to be clipped at the pane's edge against the calendar — and it
+   * scrolls sideways, but with the scrollbar hidden nothing said so, which made
+   * Link and Table look like features that did not exist.
+   *
+   * What is asserted is the property, not a group count: whatever the width,
+   * the bar never has content it cannot show, and everything it cannot show is
+   * in the menu.
+   */
+  const barState = () =>
+    page.evaluate(() => {
+      const bar = document.querySelector('.fmt-bar')
+      if (!bar) return null
+      const groups = [...bar.querySelectorAll('[data-fmt-part="group"]')]
+      const more = bar.querySelector('[data-fmt-more]')
+      return {
+        clipped: bar.scrollWidth - bar.clientWidth,
+        shown: groups.filter((g) => !g.hasAttribute('data-overflow')).length,
+        hidden: groups.filter((g) => g.hasAttribute('data-overflow')).length,
+        moreShown: !more.hasAttribute('data-overflow'),
+      }
+    })
+
+  const narrow = await barState()
+  check(
+    'a bar too wide for the pane is never left clipped',
+    narrow.clipped === 0,
+    `${narrow.clipped}px past the edge`,
+  )
+  check(
+    'what it cannot fit goes behind a "…" instead',
+    narrow.hidden > 0 && narrow.moreShown,
+    `${narrow.shown} shown, ${narrow.hidden} hidden`,
+  )
+
+  await page.locator('.fmt-more').click()
+  await page.waitForTimeout(300)
+  const overflowRows = await page.locator('.menu-item').allInnerTexts()
+  check(
+    'and the menu holds exactly what the bar dropped',
+    overflowRows.includes('Insert table') && overflowRows.includes('Add link'),
+    JSON.stringify(overflowRows),
+  )
+  check(
+    'a control the caret is already in reports itself as on',
+    (await page.locator('.menu-item[data-checked="1"], .menu-item:not([data-checked])').count()) > 0,
+  )
+
+  // A command from the menu has to reach the note and hand focus back, or the
+  // next keystroke goes nowhere.
+  await page.locator('.menu-item', { hasText: 'Block quote' }).first().click()
+  await page.waitForTimeout(500)
+  const quoted = await noteAfterEdit('Toolbar', '> ## Toolbar')
+  check(
+    'running one from the menu edits the note',
+    quoted.includes('> ## Toolbar'),
+    quoted.split('\n').filter((l) => l.includes('Toolbar'))[0],
+  )
+  check(
+    'and gives the editor its caret back',
+    await page.evaluate(() => (document.activeElement?.className ?? '').includes('cm-content')),
+  )
+  await page.locator('.fmt-more').click()
+  await page.waitForTimeout(300)
+  check(
+    'the menu shows that toggle as on next time it opens',
+    (await page.locator('.menu-item[data-checked="1"]', { hasText: 'Block quote' }).count()) === 1,
+  )
+  await page.locator('.menu-item', { hasText: 'Block quote' }).first().click()
+  await page.waitForTimeout(400)
+  await page.screenshot({ path: join(SHOTS, '21-format-overflow.png') })
+
+  /*
+   * Give the bar room and it takes its groups back — the measuring pass has to
+   * un-hide before it measures, or a group once dropped could never return.
+   */
+  await page.setViewportSize({ width: 1800, height: 900 })
+  await page.waitForTimeout(600)
+  const wide = await barState()
+  check(
+    'widening the pane brings the groups back',
+    wide.shown > narrow.shown && wide.clipped === 0,
+    `${narrow.shown} → ${wide.shown} groups`,
+  )
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.waitForTimeout(500)
+  const backAgain = await barState()
+  check(
+    'and narrowing it hides them again',
+    backAgain.shown === narrow.shown && backAgain.clipped === 0,
+    `${wide.shown} → ${backAgain.shown} groups`,
   )
 
   await page.keyboard.press('Control+Shift+m')
@@ -673,6 +862,15 @@ try {
       '> A blockquote',
       '> spanning two lines.',
       '',
+      '> [!WARNING] Friday deploys',
+      '> The window closes at 16:00.',
+      '',
+      '> [!bug]',
+      '> An alias: caution\'s colour, its own glyph, and its own name as the title.',
+      '',
+      '> [!nonsense] Not a type anyone defined',
+      '> so this has to stay an ordinary quote.',
+      '',
       '---',
       '',
       '| Left | Center | Right |',
@@ -690,6 +888,10 @@ try {
       '',
       '```js',
       'const x = { a: 1 } // not a #tag and not a [[link]]',
+      '```',
+      '',
+      '```',
+      'a fence with no language, whose whole first line is the hidden marker',
       '```',
       '',
       'Final paragraph.',
@@ -727,11 +929,106 @@ try {
   check('table renders as a real table', (await page.locator('.cm-table-render td').count()) >= 6)
   check('escaped pipe stays inside its cell', (await page.locator('.cm-table-render').innerText()).includes('d|e'))
   check('frontmatter is not rendered as a heading', (await page.locator('.cm-line.cm-frontmatter').count()) >= 4)
-  check('code block gets its own styling', (await page.locator('.cm-line.cm-codeblock').count()) >= 3)
   check('blockquote is styled', (await page.locator('.cm-line.cm-quote').count()) >= 2)
   check('tags in code are not linkified', (await page.locator('.cm-tag').count()) === 1)
   check('a missing embed reports itself', (await page.locator('.cm-embed-missing').count()) === 1)
+
+  /* ---- callouts --------------------------------------------------------
+   * A callout is a blockquote wearing a colour, so what is asserted is that
+   * the right lines got the right class, the marker became an icon, and — the
+   * one that keeps the format honest — that a type nobody defined is still
+   * rendered as the plain quote it is, exactly as GitHub renders it.
+   */
+  check(
+    'a callout colours its own lines',
+    (await page.locator('.cm-line.cm-callout-warning').count()) === 2,
+    `${await page.locator('.cm-line.cm-callout-warning').count()} warning lines`,
+  )
+  check(
+    'an alias lands in the colour it was aliased to',
+    (await page.locator('.cm-line.cm-callout-caution').count()) === 2,
+  )
+  check(
+    'the marker is replaced by an icon rather than shown',
+    (await page.locator('.cm-callout-mark svg').count()) === 2 &&
+      !(await page.locator('.cm-content').innerText()).includes('[!WARNING]'),
+  )
+  check(
+    'an author\'s own title is kept',
+    (await page.locator('.cm-callout-title').innerText()).includes('Friday deploys'),
+  )
+  check(
+    'an untitled callout announces its own type instead',
+    (await page.locator('.cm-callout-label').innerText()).trim() === 'Bug',
+    await page.locator('.cm-callout-label').innerText(),
+  )
+  /*
+   * Three blockquotes in the note, two of them callouts. Four lines still
+   * carrying the plain quote class is the whole proof that the third — a type
+   * nobody defined — was left alone, which is what GitHub does with an unknown
+   * alert and what keeps the syntax safe to write.
+   */
+  check(
+    'an unknown type stays an ordinary blockquote',
+    (await page.locator('.cm-line.cm-quote').count()) === 4 &&
+      (await page.locator('.cm-callout-mark').count()) === 2,
+    `${await page.locator('.cm-line.cm-quote').count()} plain quote lines`,
+  )
   await page.screenshot({ path: join(SHOTS, '07-kitchen-sink.png') })
+
+  /* ---- the copy button on a code block ---------------------------------
+   * Both fences get one, and the second is the case worth having: with no
+   * language, the whole of its opening line is the hidden fence marker, so the
+   * button is a point widget sitting at the end of a fully replaced range.
+   *
+   * The blocks are near the end of a long note, and CodeMirror only builds the
+   * lines that are on screen — so they have to be scrolled to before any of
+   * this is true.
+   */
+  await page.locator('.cm-content').evaluate((el) => {
+    el.closest('.cm-scroller').scrollTop = el.closest('.cm-scroller').scrollHeight
+  })
+  await page.waitForTimeout(400)
+  check('code block gets its own styling', (await page.locator('.cm-line.cm-codeblock').count()) >= 3)
+  check(
+    'a #tag inside a code block is still not linkified',
+    (await page.locator('.cm-tag').count()) === 0,
+  )
+  check(
+    'every fenced block gets a copy button',
+    (await page.locator('.cm-code-copy').count()) === 2,
+    `${await page.locator('.cm-code-copy').count()} buttons`,
+  )
+
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+  await page.locator('.cm-code-copy').first().click()
+  await page.waitForTimeout(250)
+  const copied = await page.evaluate(() => navigator.clipboard.readText())
+  check(
+    'the copy button copies the code without its fences',
+    copied === 'const x = { a: 1 } // not a #tag and not a [[link]]',
+    JSON.stringify(copied),
+  )
+  check(
+    'and says so',
+    (await page.locator('.cm-code-copy[data-copied]').count()) === 1,
+  )
+  check(
+    'copying does not put a caret in the note',
+    (await page.evaluate(() => document.activeElement?.className ?? '')).indexOf('cm-content') < 0,
+  )
+  check(
+    'copying changed nothing in the note',
+    consoleErrors.length === sinkErrorsBefore,
+    consoleErrors.slice(sinkErrorsBefore).join(' | '),
+  )
+
+  // Back to the top: everything below reads this same note, and CodeMirror
+  // only builds the lines that are on screen.
+  await page.locator('.cm-content').evaluate((el) => {
+    el.closest('.cm-scroller').scrollTop = 0
+  })
+  await page.waitForTimeout(400)
 
   /* ---- a note opens as a page, not as a caret ----------------------------
    * The phone keyboard is the whole reason. A note that opens focused covers
@@ -755,6 +1052,57 @@ try {
     'reading offers a way in that is not a guess',
     (await page.locator('.editor-pane [aria-label="Edit note"]').count()) === 1,
   )
+
+  /*
+   * A task's date chip answers its own tap.
+   *
+   * Same rule as the checkbox beside it: reading is not read-only, and giving a
+   * task a date while reading through a note is the same kind of act as ticking
+   * one off. Before the chip joined that list a single tap did two things —
+   * opened the picker, and put the note into edit — and only one of them was
+   * asked for. It is watched as a pointer event, so swallowing the mouse events
+   * (which the chip does) was never enough on its own.
+   */
+  await page.click('[title^="New note"]')
+  await page.waitForTimeout(500)
+  await page.locator('.cm-content').click()
+  await page.locator('.cm-content').pressSequentially('- [ ] Pay the deposit 📅 2026-09-04', {
+    delay: 6,
+  })
+  await page.waitForTimeout(600)
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(400)
+  const beforeChipTap = await readingState()
+  check(
+    'a note with a dated task can be read without a caret in it',
+    beforeChipTap.flag === '1',
+    `reading=${beforeChipTap.flag}`,
+  )
+  /*
+   * Tapped, not clicked, and that is the whole test. The chip opens its picker
+   * on `mousedown`, and the scrim that appears swallows the mouse-up — so a
+   * pointer never reaches the tap-to-edit watcher and a click reproduces
+   * nothing. A phone sends pointerdown and pointerup first and the synthesised
+   * mousedown afterwards, so there the editing starts before the picker is
+   * even open. That ordering is the bug, and only a real tap has it.
+   */
+  await page.locator('.cm-due-chip[data-set="1"]').first().tap()
+  await page.waitForTimeout(450)
+  check(
+    'tapping a task’s date while reading opens its picker',
+    (await page.locator('.due-preset').count()) > 0,
+  )
+  const afterChipTap = await readingState()
+  check(
+    'and does not also drop a caret into the note',
+    afterChipTap.flag === '1' && afterChipTap.editable === 'false',
+    `reading=${afterChipTap.flag}, contenteditable=${afterChipTap.editable}`,
+  )
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(300)
+  // Back to the note everything below reads.
+  await page.locator('.note-row', { hasText: 'Kitchen Sink' }).first().click()
+  await page.waitForTimeout(600)
 
   /* ---- clicks land where they are aimed ---------------------------------
    * Vertical space around a heading or a code block has to be padding or a
@@ -855,7 +1203,6 @@ try {
   await armLinkTrap()
   const bodyLink = page.locator('.cm-uri').first()
   await bodyLink.scrollIntoViewIfNeeded()
-  const beforeLinkClick = await page.locator('.cm-content').innerText()
   await bodyLink.click()
   await page.waitForTimeout(250)
   const clicked = await linkTrapResult()
@@ -864,9 +1211,21 @@ try {
     clicked.opened.length === 1 && clicked.opened[0] === 'https://example.com',
     clicked.opened.join(',') || 'nothing opened',
   )
+  /*
+   * Asserted on the link rather than on the whole note. Comparing the note's
+   * rendered text before and after looks stricter and is not: CodeMirror only
+   * builds the lines that are on screen, so a click that scrolls the view
+   * changes that text without anything having happened to the link — which is
+   * what this used to catch. The claim is that the caret stayed out, and live
+   * preview reveals a link's URL the moment it goes in, so the URL still being
+   * hidden is the claim itself.
+   */
+  const afterLinkClick = await page.locator('.cm-content').innerText()
   check(
     'and leaves the caret out of the link text',
-    (await page.locator('.cm-content').innerText()) === beforeLinkClick,
+    afterLinkClick.includes('an external link') &&
+      !afterLinkClick.includes('](https://example.com)'),
+    afterLinkClick.split('\n').find((l) => l.includes('external')) ?? 'link line not rendered',
   )
 
   // Right-click is the desktop way to reach a link's own text, since one plain
@@ -885,8 +1244,20 @@ try {
    * Clicking a table in rich text puts the caret in the cell, not in the
    * pipes: the rendered table *is* the editor there. (Live preview's
    * click-to-reveal is checked in the table section further down.)
+   *
+   * The mode is put into rich text here rather than inherited: the editor mode
+   * is a saved preference, so what this note opens in depends on reloads pages
+   * of script away, and a table check failing because the app was in live
+   * preview says nothing about tables.
    */
   await startEditing()
+  for (let i = 0; i < 3 && (await page.locator('.fmt-bar').count()) === 0; i++) {
+    await page.keyboard.press('Control+Shift+m')
+    await page.waitForTimeout(400)
+    await page.locator('.cm-content').click()
+    await page.waitForTimeout(250)
+  }
+  check('rich text is reachable from wherever the mode was left', (await page.locator('.fmt-bar').count()) === 1)
   await page.locator('.cm-table-render td').first().click()
   await page.waitForTimeout(400)
   check(
@@ -895,11 +1266,13 @@ try {
       (await page.locator('.cm-line.cm-table').count()) === 0,
   )
 
-  // The same operation the phone runs from its sheet, from the bar with a
-  // pointer: here typing *should* carry straight on, so the new cell takes
-  // focus rather than only being marked.
+  // The same operation the phone runs from its sheet, run with a pointer:
+  // here typing *should* carry straight on, so the new cell takes focus rather
+  // than only being marked. `clickFormat` reaches the control wherever it is —
+  // and at this width that is the overflow menu, so this doubles as the check
+  // that a menu opened from a menu row still opens.
   const barRows = await page.locator('.cm-table-render tr').count()
-  await page.locator('.fmt-bar .fmt-btn[aria-label="Table rows and columns"]').click()
+  await clickFormat('Table rows and columns')
   await page.waitForTimeout(300)
   await page.locator('.menu-item', { hasText: 'Insert row below' }).click()
   await page.waitForTimeout(400)
@@ -909,7 +1282,7 @@ try {
       (await page.evaluate(() => document.activeElement?.className)) === 'cm-table-cell',
     `${barRows} → ${await page.locator('.cm-table-render tr').count()}`,
   )
-  await page.locator('.fmt-bar .fmt-btn[aria-label="Table rows and columns"]').click()
+  await clickFormat('Table rows and columns')
   await page.waitForTimeout(300)
   check(
     'the menu names the cell the buttons act on, not the caret',
@@ -919,6 +1292,7 @@ try {
   await page.locator('.menu-item', { hasText: 'Delete row' }).click()
   await page.waitForTimeout(400)
   check('and takes it away again', (await page.locator('.cm-table-render tr').count()) === barRows)
+
 
   /* ---- folders and Tag Folders -----------------------------------------
    * Both are new containers with real persistence, so they get exercised end
@@ -1115,6 +1489,13 @@ try {
     `${await page.locator('.cm-table-cell[contenteditable]').count()} of ${await page.locator('.cm-table-cell').count()} cells typeable`,
   )
   await startEditing()
+  // Rich text again, for the same reason: the mode is a saved preference, and
+  // a cell is only an editing surface in the mode that never shows the pipes.
+  for (let i = 0; i < 3 && (await page.locator('.fmt-bar').count()) === 0; i++) {
+    await page.keyboard.press('Control+Shift+m')
+    await page.waitForTimeout(400)
+  }
+  check('the cells belong to rich text, so that is the mode', (await page.locator('.fmt-bar').count()) === 1)
   check(
     'and gets them the moment the note is being written in',
     (await page.locator('.cm-table-cell[contenteditable]').count()) > 0,
@@ -1939,6 +2320,972 @@ try {
 
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.waitForTimeout(350)
+
+  /* ---- writing a callout ------------------------------------------------
+   * The completion is the whole discovery story for callouts — there is no
+   * button, because the formatting bar exists only in rich text while the
+   * syntax works in all three modes. So the path that has to work is: type
+   * `> [!`, pick from a list, get a callout.
+   */
+  await page.click('[title^="New note"]')
+  await page.waitForTimeout(500)
+  await page.locator('.cm-content').click()
+  await page.locator('.cm-content').pressSequentially('> [!warn', { delay: 40 })
+  await page.waitForTimeout(500)
+  const calloutSuggestions = await page.locator('.cm-tooltip-autocomplete li').count()
+  check('typing "[!" in a quote offers the callout types', calloutSuggestions > 0, `${calloutSuggestions} options`)
+  await page.keyboard.press('Enter')
+  await page.waitForTimeout(300)
+  await page.locator('.cm-content').pressSequentially('Friday deploys', { delay: 20 })
+  await page.waitForTimeout(300)
+  check(
+    'accepting one writes the marker and leaves the caret in the title',
+    (await page.locator('.cm-content').textContent()).includes('[!warning] Friday deploys'),
+    await page.locator('.cm-content').textContent(),
+  )
+  check(
+    'and the line is already a callout while it is being typed',
+    (await page.locator('.cm-line.cm-callout-warning').count()) === 1,
+  )
+  // Off the line, and the marker becomes the icon it stands for.
+  await page.keyboard.press('Enter')
+  await page.locator('.cm-content').pressSequentially('The window closes at 16:00.', { delay: 10 })
+  await page.waitForTimeout(400)
+  check(
+    'moving off the line turns the marker into its icon',
+    (await page.locator('.cm-callout-mark svg').count()) === 1 &&
+      !(await page.locator('.cm-content').innerText()).includes('[!warning]'),
+  )
+  check(
+    'and the callout carries on over the lines below it',
+    (await page.locator('.cm-line.cm-callout-warning').count()) === 2,
+  )
+
+  /* ---- a Tag Folder that gathers tasks -----------------------------------
+   * The whole point is inheritance: tag a *note* #home and every job written
+   * on it is a #home task, without any of them being tagged by hand. That is
+   * how people actually keep notes, and tagging each line would be the same
+   * information typed eleven times.
+   */
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.waitForTimeout(400)
+  await page.evaluate(async () => {
+    const iso = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10)
+    const text = [
+      '# Kitchen',
+      '',
+      '#home',
+      '',
+      '- [ ] Fix the dripping tap',
+      `- [ ] Order the tiles 📅 ${iso(-2)}`,
+      '- [x] Measure the worktop',
+      '- [ ] Ring the plumber #urgent',
+      '',
+    ].join('\n')
+    const db = await new Promise((res, rej) => {
+      const r = indexedDB.open('slate')
+      r.onsuccess = () => res(r.result)
+      r.onerror = () => rej(r.error)
+    })
+    const tx = db.transaction('files', 'readwrite')
+    tx.objectStore('files').put({
+      path: 'Kitchen jobs.md', kind: 'note', text, mime: 'text/markdown', size: text.length,
+      hash: 'kj', mtime: Date.now() + 50_000, ctime: Date.now(),
+      dirty: true, dirtyFlag: 1, sync: {},
+    })
+    await new Promise((res) => { tx.oncomplete = res })
+  })
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForSelector('.note-row')
+  await page.waitForTimeout(400)
+
+  await page.click('.side-group-label:has-text("Tag Folders") .side-add')
+  await ruleDialogReady()
+  await page.fill('.dialog input[type="text"]', 'Home jobs')
+  check(
+    'a Tag Folder can be set to gather tasks instead of notes',
+    (await page.locator('.seg-btn:has-text("Tasks")').count()) === 1,
+  )
+  await page.locator('.seg-btn:has-text("Tasks")').click()
+  await page.waitForTimeout(300)
+  /*
+   * A tick is on offer as the folder's icon too. It is a choice rather than a
+   * statement — anyone can put it on a folder that gathers notes — which is
+   * why the row draws its own from what the folder actually does.
+   */
+  check(
+    'a tick is among the icons a folder can wear',
+    (await page.locator('.dialog select option').allInnerTexts()).some((t) => t.includes('✅')),
+    (await page.locator('.dialog select option').allInnerTexts()).join(''),
+  )
+  check(
+    'and offers the questions only a task can answer',
+    (await page.locator('.chip:has-text("is:open")').count()) === 1 &&
+      (await page.locator('.chip:has-text("due:overdue")').count()) === 1,
+  )
+  await page.fill('.rule-input', '#home')
+  await page.waitForTimeout(400)
+  const inherited = await page.locator('.rule-status').innerText()
+  check(
+    'a note tagged #home hands its tag to every task on it',
+    /matches\s*4\b/i.test(inherited.replace(/\s+/g, ' ')) && /tasks/i.test(inherited),
+    inherited.replace(/\s+/g, ' ').slice(0, 90),
+  )
+  const previewed = (await page.locator('.rule-preview-row').allInnerTexts()).join(' | ')
+  check(
+    'and the preview lists the tasks, not the note they are on',
+    ['Fix the dripping tap', 'Order the tiles', 'Measure the worktop', 'Ring the plumber'].every(
+      (t) => previewed.includes(t),
+    ),
+    previewed.replace(/\n/g, ' · '),
+  )
+
+  await page.fill('.rule-input', '#home is:open')
+  await page.waitForTimeout(400)
+  const openOnly = await page.locator('.rule-status').innerText()
+  check(
+    'narrowing to what is still to do drops the finished one',
+    /matches\s*3\b/i.test(openOnly.replace(/\s+/g, ' ')),
+    openOnly.replace(/\s+/g, ' ').slice(0, 90),
+  )
+  await page.fill('.rule-input', '#home due:overdue')
+  await page.waitForTimeout(400)
+  check(
+    'and asking for overdue leaves the one whose date has passed',
+    /matches\s*1\b/i.test((await page.locator('.rule-status').innerText()).replace(/\s+/g, ' ')),
+    (await page.locator('.rule-status').innerText()).replace(/\s+/g, ' ').slice(0, 90),
+  )
+
+  await page.fill('.rule-input', '#home is:open')
+  await page.waitForTimeout(400)
+  await page.click('.dialog-foot .btn-primary')
+  await page.waitForTimeout(600)
+  check(
+    'the folder lists its tasks where its notes would have been',
+    (await page.locator('.list-scroll .task-row').count()) === 3,
+    `${await page.locator('.list-scroll .task-row').count()} rows`,
+  )
+  const folderCount = await page
+    .locator('.side-row:has-text("Home jobs") .side-count')
+    .first()
+    .innerText()
+  check(
+    'and counts tasks beside it, not the one note they sit on',
+    folderCount.trim() === '3',
+    `badge reads ${JSON.stringify(folderCount)}`,
+  )
+
+  /*
+   * Ticking one off in the folder writes to the note it came from — the rows
+   * are the same rows the rail uses, so a task is the same thing everywhere.
+   */
+  await page
+    .locator('.list-scroll .task-row', { hasText: 'Fix the dripping tap' })
+    .locator('.task-check')
+    .click()
+  await page.waitForTimeout(900)
+  check(
+    'ticking one there edits the note it lives on',
+    (await noteContaining('dripping tap')).includes('- [x] Fix the dripping tap'),
+    (await noteContaining('dripping tap')).split('\n').find((l) => l.includes('dripping')) ?? '',
+  )
+  check(
+    'and it leaves the folder, which asked for open ones',
+    (await page.locator('.list-scroll .task-row').count()) === 2,
+    `${await page.locator('.list-scroll .task-row').count()} rows`,
+  )
+  /*
+   * Arranging the list. Grouping by *tag* is deliberately not on offer: a task
+   * carries the tags on its own line and the ones its note carries, so a job
+   * that is both #home and #urgent has no single group. Due date and note are
+   * unambiguous, and by-note is the one that pays off here — the folder's
+   * tasks come from two different notes precisely because the tag was
+   * inherited.
+   */
+  await page.locator('.list-scroll .rail-group-btn').click()
+  await page.waitForTimeout(300)
+  const arrangeRows = await page.locator('.menu-item').allInnerTexts()
+  check(
+    'a task list can be arranged, but never by tag',
+    arrangeRows.some((r) => r.includes('By due date')) &&
+      arrangeRows.some((r) => r.includes('By note')) &&
+      !arrangeRows.join(' ').toLowerCase().includes('tag'),
+    JSON.stringify(arrangeRows),
+  )
+  await page.locator('.menu-item:has-text("By note")').click()
+  await page.waitForTimeout(500)
+  const noteGroups = await page.locator('.list-scroll .task-group').allInnerTexts()
+  check(
+    'grouping by note gathers the tasks under the notes they came from',
+    noteGroups.includes('Kitchen jobs') && noteGroups.length >= 1,
+    JSON.stringify(noteGroups),
+  )
+  check(
+    'and stops repeating the note name down the side of every row',
+    (await page.locator('.list-scroll .task-row .task-meta').count()) === 0,
+  )
+
+  await page.locator('.list-scroll .rail-group-btn').click()
+  await page.waitForTimeout(300)
+  await page.locator('.menu-item:has-text("By due date")').click()
+  await page.waitForTimeout(500)
+  const dueGroups = await page.locator('.list-scroll .task-group').allInnerTexts()
+  check(
+    'grouping by date bands them in the order they are worth reading',
+    dueGroups.join('|') === ['Overdue', 'No date'].join('|'),
+    JSON.stringify(dueGroups),
+  )
+
+  /* One setting, so the rail is arranged the same way as the folder. */
+  check(
+    'and the rail follows, because it is one way of reading a task list',
+    (await page.locator('.rail .task-group').count()) > 0,
+    JSON.stringify(await page.locator('.rail .task-group').allInnerTexts()),
+  )
+  await page.locator('.list-scroll .rail-group-btn').click()
+  await page.waitForTimeout(300)
+  await page.locator('.menu-item:has-text("No grouping")').click()
+  await page.waitForTimeout(400)
+  check(
+    'turning it off leaves the list as it was',
+    (await page.locator('.list-scroll .task-group').count()) === 0,
+  )
+
+  /* ---- what the sidebar's Tasks row is for -------------------------------
+   * It counts tasks, so it lists tasks. Listing the notes that happened to
+   * hold them left the count promising one thing and the click delivering
+   * another — and the check glyph is what tells a task-gathering Tag Folder
+   * apart from the note-gathering one sitting right beside it.
+   */
+  check(
+    'a Tag Folder that gathers tasks says so on its row',
+    (await page.locator('.side-row:has-text("Home jobs") .side-task').count()) === 1,
+  )
+  check(
+    'and one that gathers notes does not',
+    (await page.locator('.side-row:has-text("Active work") .side-task').count()) === 0,
+  )
+
+  await page.locator('.side-row:has-text("Tasks")').first().click()
+  await page.waitForTimeout(500)
+  const taskRowTexts = await page.locator('.list-scroll .task-row').allInnerTexts()
+  const noteRows = await page.locator('.list-scroll .note-row').count()
+  check(
+    'the sidebar Tasks row lists tasks, not the notes holding them',
+    taskRowTexts.length > 0 && noteRows === 0,
+    `${taskRowTexts.length} task rows, ${noteRows} note rows`,
+  )
+  const taskNotes = new Set(
+    (await page.locator('.list-scroll .task-row .task-meta').allInnerTexts()).map((t) => t.trim()),
+  )
+  check(
+    'and gathers them from every note in the vault, not one',
+    taskNotes.size > 1,
+    [...taskNotes].join(' | '),
+  )
+  check(
+    'showing what is still to do',
+    taskRowTexts.join(' | ').includes('Ring the plumber'),
+    taskRowTexts.join(' | ').slice(0, 140),
+  )
+  /*
+   * And not the ones already crossed off. A list whose bottom is a growing
+   * archive of finished work is a list people stop reading — but the heading
+   * still counts them, so nothing is hidden without saying so, and the switch
+   * that brings them back is in the same menu that arranges the list.
+   */
+  check(
+    'but not the ones already crossed off',
+    !taskRowTexts.join(' | ').includes('Measure the worktop'),
+    taskRowTexts.join(' | ').slice(0, 140),
+  )
+  check(
+    'though the heading still counts them, so nothing is hidden silently',
+    /\d+ open · \d+ done/i.test(await page.locator('.list-scroll .rail-section h3').innerText()),
+    (await page.locator('.list-scroll .rail-section h3').innerText()).replace(/\n/g, ' '),
+  )
+
+  await page.locator('.list-scroll .rail-group-btn').click()
+  await page.waitForTimeout(300)
+  await page.locator('.menu-item:has-text("Show completed")').click()
+  await page.waitForTimeout(500)
+  check(
+    'turning them on brings the finished ones back',
+    (await page.locator('.list-scroll .task-row').allInnerTexts())
+      .join(' | ')
+      .includes('Measure the worktop'),
+  )
+  /*
+   * Straight into the reload, inside the timer the vault-wide write sits on:
+   * backstage/config.json is overlaid over this device's own copy at boot, so
+   * a preference changed a moment before a reload used to come back as
+   * whatever it was before the change.
+   */
+  await page.waitForTimeout(250)
+  await page.reload()
+  await page.waitForSelector('.side-row')
+  await page.waitForTimeout(900)
+  await page.locator('.side-row:has-text("Tasks")').first().click()
+  await page.waitForTimeout(500)
+  check(
+    'and the choice survives a reload, like every other way of reading a list',
+    (await page.locator('.list-scroll .task-row').allInnerTexts())
+      .join(' | ')
+      .includes('Measure the worktop'),
+  )
+  await page.locator('.list-scroll .rail-group-btn').click()
+  await page.waitForTimeout(300)
+  await page.locator('.menu-item:has-text("Show completed")').click()
+  await page.waitForTimeout(500)
+  check(
+    'and turning it off hides them again',
+    !(await page.locator('.list-scroll .task-row').allInnerTexts())
+      .join(' | ')
+      .includes('Measure the worktop'),
+  )
+
+  /* ---- the calendar, read the other way round ----------------------------
+   * A day with work owed on it has to look different from an empty one, or the
+   * only way to find it is clicking days at random. The pip is its own channel:
+   * the dots below the number mean notes filed on that day, and overloading
+   * them would make a dot mean two things.
+   */
+  /* "Order the tiles" is due two days ago; nothing is due three days ago. */
+  await page.locator('.cal-today').click()
+  await page.waitForTimeout(400)
+  const overdueDay = await showDay(-2)
+  const overdueLabel = (await overdueDay.getAttribute('aria-label')) ?? ''
+  const overduePips = await overdueDay.locator('.cal-due').count()
+  const overdueLate = await overdueDay.locator('.cal-due[data-late="1"]').count()
+  check('a day with work due on it is marked on the calendar', overduePips === 1, overdueLabel)
+  check('and says so to a screen reader as well as to an eye', /\d+ due/.test(overdueLabel), overdueLabel)
+  check('a day already past wears the same red the date chip turns', overdueLate === 1)
+
+  const quietDay = await showDay(-3)
+  check(
+    'and a day with none is left alone',
+    (await quietDay.locator('.cal-due').count()) === 0,
+    (await quietDay.getAttribute('aria-label')) ?? '',
+  )
+
+  const tomorrow = await showDay(1)
+  check(
+    'while a day still to come does not',
+    (await tomorrow.locator('.cal-due[data-late="0"]').count()) === 1,
+    (await tomorrow.getAttribute('aria-label')) ?? '',
+  )
+
+  const laterDay = await showDay(1)
+  await laterDay.click()
+  await page.waitForTimeout(500)
+  const dayPanel = page.locator('.rail .rail-section').nth(0)
+  check(
+    'clicking a day shows what it asks of you, under what is filed on it',
+    (await dayPanel.locator('.task-row').allInnerTexts()).join(' | ').includes('Renew passport'),
+    (await dayPanel.locator('.task-row').allInnerTexts()).join(' | '),
+  )
+  check(
+    'with no heading over them — a checkbox already says which rows are tasks',
+    (await dayPanel.locator('.task-group').count()) === 0,
+  )
+
+  /*
+   * And never the same task twice in one column. The Due list below already
+   * holds everything overdue and everything due today, so a day the list has
+   * covered keeps its notes and hands the tasks to it.
+   */
+  const overdueAgain = await showDay(-2)
+  await overdueAgain.click()
+  await page.waitForTimeout(500)
+  check(
+    'a day whose work is already late leaves it to the Due list below',
+    (await dayPanel.locator('.task-row').count()) === 0,
+    (await dayPanel.locator('.task-row').allInnerTexts()).join(' | '),
+  )
+  check(
+    'so the task is in the rail once, not twice',
+    (await page.locator('.rail .task-row', { hasText: 'Order the tiles' }).count()) === 1,
+  )
+
+  await page.locator('.cal-today').click()
+  await page.waitForTimeout(500)
+  check(
+    'and today says it once too, in the Due list rather than in both',
+    (await dayPanel.locator('.task-row').count()) === 0,
+    `${await dayPanel.locator('.task-row').count()} rows in the day panel`,
+  )
+
+  await page.locator('.side-row:has-text("All Notes")').first().click()
+  await page.waitForTimeout(400)
+
+  /* ---- copying a table back out -----------------------------------------
+   * The return trip. Only the HTML flavour is added: spreadsheets read it in
+   * preference to plain text, so Excel gets cells while the plain flavour
+   * stays the markdown that was selected and another markdown editor still
+   * gets the pipe table. Both halves are asserted, because writing tab
+   * separated text over the plain flavour would pass a check for the first and
+   * silently lose the second.
+   *
+   * "Table at start" is the fixture because its table is the first three lines
+   * of the note, so the selection can be made with the keyboard and end
+   * exactly where the table does — which is the thing being tested.
+   */
+  await page.locator('.note-row', { hasText: 'Table at start' }).first().click()
+  await page.waitForTimeout(500)
+  await page.locator('.cm-content').click()
+  await page.waitForTimeout(250)
+  // Source mode: no widgets, so the selection is over the pipes themselves.
+  let modeSteps = 0
+  for (let i = 0; i < 3 && (await page.locator('.cm-table-render').count()) > 0; i++) {
+    await page.keyboard.press('Control+Shift+m')
+    modeSteps++
+    await page.waitForTimeout(350)
+  }
+  await page.keyboard.press('Control+Home')
+  await page.keyboard.press('Shift+ArrowDown')
+  await page.keyboard.press('Shift+ArrowDown')
+  await page.keyboard.press('Shift+End')
+  await page.waitForTimeout(250)
+
+  const flavours = await page.evaluate(() => {
+    const dt = new DataTransfer()
+    document
+      .querySelector('.cm-content')
+      .dispatchEvent(
+        new ClipboardEvent('copy', { clipboardData: dt, bubbles: true, cancelable: true }),
+      )
+    return { html: dt.getData('text/html'), plain: dt.getData('text/plain') }
+  })
+  check(
+    'copying a table adds a real <table> for a spreadsheet to read',
+    flavours.html === '<table><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>',
+    JSON.stringify(flavours.html),
+  )
+  check(
+    'and leaves the plain text as the markdown it was',
+    flavours.plain.includes('| A | B |') && !flavours.plain.includes('<table'),
+    JSON.stringify(flavours.plain),
+  )
+
+  /*
+   * And a selection that is not rows of one table is left entirely alone —
+   * otherwise ordinary copying inside a note would start rewriting itself.
+   */
+  await page.keyboard.press('Control+a')
+  await page.waitForTimeout(200)
+  const wholeNote = await page.evaluate(() => {
+    const dt = new DataTransfer()
+    document
+      .querySelector('.cm-content')
+      .dispatchEvent(
+        new ClipboardEvent('copy', { clipboardData: dt, bubbles: true, cancelable: true }),
+      )
+    return dt.getData('text/html')
+  })
+  check(
+    'a selection running past the table is left to copy normally',
+    !wholeNote.startsWith('<table'),
+    JSON.stringify(wholeNote.slice(0, 60)),
+  )
+
+  /*
+   * The same thing without the aim: the caret is in the table, so the table is
+   * what gets copied. Dragging works and is checked above, but it is a gesture
+   * with no edges — in the rendered modes the table is one widget, and a drag
+   * that overshoots by a few pixels is correctly refused with no sign of it
+   * but pipes arriving in the spreadsheet.
+   */
+  // Rich text, which is the mode with a formatting bar to reach the menu from.
+  for (let i = 0; i < 3; i++) {
+    await page.locator('.cm-content').click()
+    await page.waitForTimeout(300)
+    if ((await page.locator('.fmt-bar').count()) > 0) break
+    await page.keyboard.press('Control+Shift+m')
+    modeSteps++
+    await page.waitForTimeout(400)
+  }
+  await page.locator('.cm-table-render td').first().click()
+  await page.waitForTimeout(400)
+  // Through `clickFormat`, because at this width the table button is in the
+  // overflow menu rather than on the bar.
+  await clickFormat('Table rows and columns')
+  await page.waitForTimeout(350)
+  check(
+    'the table menu offers to copy the whole table',
+    (await page.locator('.menu-item:has-text("Copy table")').count()) === 1,
+    JSON.stringify(await page.locator('.menu-item').allInnerTexts()),
+  )
+  await page.locator('.menu-item:has-text("Copy table")').click()
+  await page.waitForTimeout(700)
+
+  const onClipboard = await page.evaluate(async () => {
+    const items = await navigator.clipboard.read()
+    const out = {}
+    for (const item of items) {
+      for (const type of item.types) out[type] = await (await item.getType(type)).text()
+    }
+    return out
+  })
+  check(
+    'and puts a table on the clipboard for a spreadsheet',
+    onClipboard['text/html']?.includes('<th>A</th>') &&
+      onClipboard['text/html']?.includes('<td>1</td>'),
+    JSON.stringify(onClipboard['text/html'] ?? null),
+  )
+  check(
+    'with the markdown beside it for everything else',
+    onClipboard['text/plain']?.includes('| A') && onClipboard['text/plain']?.includes('| --- |'),
+    JSON.stringify(onClipboard['text/plain'] ?? null),
+  )
+
+  /*
+   * Put the mode back. The three modes cycle, so completing the loop returns
+   * whatever this borrowed — everything below reads the same editor, and
+   * leaving it in source mode means no live-preview decorations for any of it.
+   */
+  for (let i = (3 - (modeSteps % 3)) % 3; i > 0; i--) {
+    await page.keyboard.press('Control+Shift+m')
+    await page.waitForTimeout(350)
+  }
+
+  /* ---- naming a note after the heading you typed in it -------------------
+   * A note made with *New note here* — and every note started from a template
+   * — is called Untitled. Type a heading into it and the file, the note list
+   * and any wikilink to it all still say Untitled about a note that plainly
+   * is not. The offer is made only for a note that has never been named, so it
+   * can never nag anyone whose `2026-09-04.md` is headed `# Thursday` on
+   * purpose.
+   */
+  await page.click('[title^="New note"]')
+  await page.waitForTimeout(500)
+  await page.locator('.cm-content').click()
+  await page.locator('.cm-content').pressSequentially('# Kickoff with Acme', { delay: 12 })
+  await page.waitForTimeout(1400)
+  check(
+    'an unnamed note offers its heading as a name',
+    (await page.locator('.toast:has-text("Kickoff with Acme")').count()) === 1,
+    (await page.locator('.toast').innerText().catch(() => '')) || 'no toast',
+  )
+  check(
+    'and offers it rather than doing it',
+    (await page.locator('.editor-title-input').inputValue()).startsWith('Untitled'),
+    await page.locator('.editor-title-input').inputValue(),
+  )
+  await page.locator('.toast-action').click()
+  await page.waitForTimeout(800)
+  check(
+    'taking the offer renames the file',
+    (await page.locator('.editor-title-input').inputValue()) === 'Kickoff with Acme',
+    await page.locator('.editor-title-input').inputValue(),
+  )
+  const renamed = await page.evaluate(async () => {
+    const req = indexedDB.open('slate')
+    return new Promise((r) => {
+      req.onsuccess = () => {
+        const tx = req.result.transaction('files', 'readonly')
+        const all = tx.objectStore('files').getAll()
+        all.onsuccess = () =>
+          r(all.result.filter((f) => !f.deleted).map((f) => f.path).includes('Kickoff with Acme.md'))
+      }
+    })
+  })
+  check('on disk as well as in the header', renamed === true)
+
+  /*
+   * And a note that has a name of its own is left alone, however far its
+   * heading drifts from it — which is the case that would otherwise turn this
+   * into a nuisance.
+   */
+  await page.locator('.cm-content').click()
+  await page.locator('.cm-content').press('Control+End')
+  await page.locator('.cm-content').pressSequentially('\n\n# A different heading entirely', {
+    delay: 8,
+  })
+  await page.waitForTimeout(1400)
+  check(
+    'a note that has been named is never asked about again',
+    (await page.locator('.toast:has-text("A different heading")').count()) === 0,
+    (await page.locator('.toast').innerText().catch(() => '')) || 'no toast',
+  )
+
+  /* ---- exporting a note -------------------------------------------------
+   * Nothing is converted: the bytes that leave are the bytes on disk, which is
+   * the whole reason this is not a renderer. Headless Chromium has no share
+   * target, so `canShareFiles()` is false here and this exercises the download
+   * path — which is the desktop path anyway.
+   */
+  await page.locator('.note-row', { hasText: 'Kitchen Sink' }).first().click()
+  await page.waitForTimeout(400)
+  await page.locator('.note-row', { hasText: 'Kitchen Sink' }).first().click({ button: 'right' })
+  await page.waitForTimeout(300)
+  const exportItem = page.locator('.menu-item:has-text("Export as Markdown")')
+  check('a note offers a way out of the app', (await exportItem.count()) === 1)
+
+  const [download] = await Promise.all([
+    page.waitForEvent('download', { timeout: 10_000 }).catch(() => null),
+    exportItem.click(),
+  ])
+  check(
+    'exporting saves the note as a .md file named after it',
+    download?.suggestedFilename() === 'Kitchen Sink.md',
+    download ? download.suggestedFilename() : 'no download fired',
+  )
+  if (download) {
+    const saved = await download.createReadStream()
+    const chunks = []
+    for await (const c of saved) chunks.push(c)
+    const text = Buffer.concat(chunks).toString('utf8')
+    /*
+     * Byte-for-byte the file, frontmatter and wikilinks included — not a
+     * rendering of it. That is what makes the export worth having.
+     */
+    const onDisk = await noteContaining('Kitchen Sink')
+    check(
+      'and what comes out is the file, not a rendering of it',
+      text === onDisk && text.startsWith('---\n') && text.includes('[[Wikilink]]'),
+      JSON.stringify(text.slice(0, 60)),
+    )
+  }
+
+  /* ---- folder templates -------------------------------------------------
+   * The feature is opt-in, and the first assertion is the one that says so: a
+   * vault that has never made a `Templates/` folder must show no sign of any
+   * of this. Nothing creates that folder except the button in Settings.
+   */
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.waitForTimeout(400)
+  const clients = page.locator('.side-row:has-text("Clients")').first()
+  await clients.click({ button: 'right' })
+  await page.waitForTimeout(300)
+  const menuBefore = await page.locator('.menu-item').allInnerTexts()
+  check(
+    'a vault with no Templates folder is never told about templates',
+    !menuBefore.join(' ').toLowerCase().includes('template'),
+    JSON.stringify(menuBefore),
+  )
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(250)
+
+  const templateFiles = () =>
+    page.evaluate(async () => {
+      const req = indexedDB.open('slate')
+      return new Promise((r) => {
+        req.onsuccess = () => {
+          const tx = req.result.transaction('files', 'readonly')
+          const all = tx.objectStore('files').getAll()
+          all.onsuccess = () =>
+            r(all.result.filter((f) => !f.deleted && f.path.startsWith('Templates/')).map((f) => f.path))
+        }
+      })
+    })
+  check('and no Templates folder has appeared by itself', (await templateFiles()).length === 0)
+
+  // The one action in the app that creates it.
+  await page.click('.pane-head .icon-btn[title^="Settings"]')
+  await page.waitForSelector('.dialog')
+  await page.click('.tab:has-text("Editor")')
+  await page.waitForTimeout(300)
+  const optIn = page.locator('.dialog .btn:has-text("Create the Templates folder")')
+  check('Settings offers to start using templates', (await optIn.count()) === 1)
+  await optIn.click()
+  await page.waitForTimeout(800)
+  const seeded = await templateFiles()
+  check(
+    'and creating it writes one template to start from',
+    seeded.length === 1 && seeded[0] === 'Templates/Example.md',
+    JSON.stringify(seeded),
+  )
+  check(
+    'which opens so you can see what a template is',
+    (await page.locator('.editor-title-input').inputValue()) === 'Example',
+  )
+
+  /*
+   * The pair that matters. A template is a real note in a real folder — which
+   * is how it gets edited — but it is boilerplate for a note that does not
+   * exist yet, so it has no business in the list of what you have written.
+   */
+  const allNotesRow = page.locator('.side-row:has-text("All Notes")').first()
+  const countBefore = (await allNotesRow.innerText()).match(/(\d+)\s*$/)?.[1]
+  await allNotesRow.click()
+  await page.waitForTimeout(500)
+  const listed = await page.locator('.note-row-title').allInnerTexts()
+  check(
+    'a template stays out of the default notes view',
+    !listed.includes('Example'),
+    JSON.stringify(listed),
+  )
+  check(
+    'and out of the count beside it',
+    countBefore === String(listed.length),
+    `badge ${countBefore}, ${listed.length} rows`,
+  )
+  await page.locator('.side-row:has-text("Templates")').first().click()
+  await page.waitForTimeout(500)
+  check(
+    'but browsing the folder still shows it, which is how one is edited',
+    (await page.locator('.note-row-title').allInnerTexts()).includes('Example'),
+  )
+
+  // Point a folder at it.
+  await clients.click({ button: 'right' })
+  await page.waitForTimeout(300)
+  const pick = page.locator('.menu-item:has-text("Use a template")')
+  check('now a folder can be given one', (await pick.count()) === 1)
+  await pick.click()
+  await page.waitForTimeout(300)
+  check(
+    'the picker lists the templates and an off switch',
+    (await page.locator('.menu-item:has-text("No template")').count()) === 1 &&
+      (await page.locator('.menu-item:has-text("Example")').count()) === 1,
+  )
+  await page.locator('.menu-item:has-text("Example")').click()
+  await page.waitForTimeout(500)
+
+  // A new note in that folder starts from it.
+  await clients.click({ button: 'right' })
+  await page.waitForTimeout(300)
+  check(
+    'and the folder menu then names the template it is using',
+    (await page.locator('.menu-item:has-text("Template: Example")').count()) === 1,
+    JSON.stringify(await page.locator('.menu-item').allInnerTexts()),
+  )
+  await page.locator('.menu-item:has-text("New note here")').click()
+  await page.waitForTimeout(700)
+  await page.keyboard.type('Agenda')
+  await page.waitForTimeout(900)
+
+  const fromTemplate = await page.evaluate(async () => {
+    const req = indexedDB.open('slate')
+    return new Promise((r) => {
+      req.onsuccess = () => {
+        const tx = req.result.transaction('files', 'readonly')
+        const all = tx.objectStore('files').getAll()
+        all.onsuccess = () => {
+          const hit = all.result
+            .filter((f) => !f.deleted && f.path.startsWith('Clients/'))
+            .sort((a, b) => b.mtime - a.mtime)[0]
+          r(hit?.text ?? '')
+        }
+      }
+    })
+  })
+  check(
+    'a note made in that folder starts from the template',
+    /^# .*\n/.test(fromTemplate) && fromTemplate.includes(String(new Date().getFullYear())),
+    JSON.stringify(fromTemplate),
+  )
+  check(
+    'with its fields filled in rather than left as tokens',
+    !fromTemplate.includes('{{'),
+    JSON.stringify(fromTemplate),
+  )
+  /*
+   * `{{cursor}}` is the point of the exercise. Typing lands in the heading the
+   * starter template leaves open — not at position 0, which is where the caret
+   * sits without this and would have written "Agenda# ", and not at the end
+   * under the date, which is where it would go if the marker were ignored.
+   */
+  check(
+    'and typing starts where {{cursor}} said',
+    fromTemplate.startsWith('# Agenda\n'),
+    JSON.stringify(fromTemplate),
+  )
+
+  /*
+   * The vault root, which has no row in the sidebar to right-click and so is
+   * set from Settings. It is where a note created from a broken [[link]] goes,
+   * and that note is named for the link — the one place `{{title}}` is worth
+   * writing, and unreachable until this existed.
+   */
+  await page.click('.pane-head .icon-btn[title^="Settings"]')
+  await page.waitForSelector('.dialog')
+  await page.click('.tab:has-text("Editor")')
+  await page.waitForTimeout(300)
+  const rootPick = page.locator('.field:has-text("Notes outside any folder") select')
+  check('Settings can give the root a template too', (await rootPick.count()) === 1)
+  await rootPick.selectOption({ label: 'Example' })
+  await page.waitForTimeout(400)
+  await page.click('.dialog-foot .btn-primary')
+  await page.waitForTimeout(300)
+
+  // Follow a broken wikilink and let it create the note.
+  await page.click('[title^="New note"]')
+  await page.waitForTimeout(600)
+  await page.locator('.cm-content').click()
+  await page.locator('.cm-content').pressSequentially('See [[Highway 9]] for the outage.', {
+    delay: 12,
+  })
+  await page.waitForTimeout(700)
+  await page.locator('.cm-wikilink-broken').first().click()
+  await page.waitForTimeout(900)
+
+  const fromLink = await page.evaluate(async () => {
+    const req = indexedDB.open('slate')
+    return new Promise((r) => {
+      req.onsuccess = () => {
+        const tx = req.result.transaction('files', 'readonly')
+        const all = tx.objectStore('files').getAll()
+        all.onsuccess = () => r(all.result.find((f) => f.path === 'Highway 9.md')?.text ?? '')
+      }
+    })
+  })
+  check(
+    'a note created from a broken link starts from the root template',
+    fromLink.includes(String(new Date().getFullYear())) && !fromLink.includes('{{'),
+    JSON.stringify(fromLink),
+  )
+  /*
+   * And it is named for the link, which is the whole case `{{title}}` exists
+   * for. The same template leaves the heading empty for a note made with
+   * *New note here*, which has no name yet — checked above.
+   */
+  check(
+    'and {{title}} is the link text, not the word Untitled',
+    fromLink.startsWith('# Highway 9\n'),
+    JSON.stringify(fromLink),
+  )
+
+  /* ---- pasting a spreadsheet range -------------------------------------
+   * Excel, Numbers, Sheets and Calc all put two flavours on the clipboard: a
+   * `<table>` under text/html and the same cells tab-separated under
+   * text/plain. Only a real ClipboardEvent carrying both exercises the branch,
+   * and the negative case below is the one that keeps it honest — tab-separated
+   * text with no table behind it has to stay text.
+   */
+  await page.click('[title^="New note"]')
+  await page.waitForTimeout(500)
+  await page.locator('.cm-content').click()
+  await page.locator('.cm-content').press('Control+End')
+
+  /*
+   * `withPicture` is not a detail — it is the shape of a real Excel clipboard,
+   * and the reason this test exists in this form.
+   *
+   * Excel does not put cells on the clipboard and stop: it also puts a picture
+   * of the copied range there. The first version of this test built a
+   * clipboard out of the two text flavours alone, which no spreadsheet on
+   * earth produces, and so it passed against a handler that checked images
+   * first and turned every real paste into a screenshot of a spreadsheet.
+   */
+  const pasteGrid = (html, plain, withPicture = true) =>
+    page.evaluate(
+      async ([h, p, pic]) => {
+        const dt = new DataTransfer()
+        if (h) dt.setData('text/html', h)
+        dt.setData('text/plain', p)
+        if (pic) {
+          const c = document.createElement('canvas')
+          c.width = 220
+          c.height = 60
+          const x = c.getContext('2d')
+          x.fillStyle = '#fff'
+          x.fillRect(0, 0, 220, 60)
+          x.fillStyle = '#333'
+          x.font = '14px sans-serif'
+          x.fillText('a picture of the cells', 10, 34)
+          const blob = await new Promise((r) => c.toBlob(r, 'image/png'))
+          dt.items.add(new File([blob], 'image.png', { type: 'image/png' }))
+        }
+        document
+          .querySelector('.cm-content')
+          .dispatchEvent(
+            new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }),
+          )
+      },
+      [html, plain, withPicture],
+    )
+
+  const countAttachments = () =>
+    page.evaluate(async () => {
+      const req = indexedDB.open('slate')
+      return new Promise((r) => {
+        req.onsuccess = () => {
+          const tx = req.result.transaction('files', 'readonly')
+          const all = tx.objectStore('files').getAll()
+          all.onsuccess = () =>
+            r(all.result.filter((f) => f.kind === 'attachment' && !f.deleted).length)
+        }
+      })
+    })
+  const attachmentsBeforeGrid = await countAttachments()
+
+  // A quoted cell with a line break in it and a cell holding a pipe: both are
+  // ordinary in a spreadsheet and neither can survive in a pipe table as-is.
+  await pasteGrid(
+    '<table><tr><td>Region</td><td>Q3</td></tr><tr><td>EMEA</td><td>1200</td></tr></table>',
+    'Region\tQ3\r\nEMEA\t1200\r\n"North\nSouth"\ta|b\r\n',
+  )
+  await page.waitForTimeout(900)
+
+  const pastedNote = async () =>
+    page.evaluate(async () => {
+      const req = indexedDB.open('slate')
+      return new Promise((resolve) => {
+        req.onsuccess = () => {
+          const tx = req.result.transaction('files', 'readonly')
+          const all = tx.objectStore('files').getAll()
+          all.onsuccess = () => {
+            const notes = all.result
+              .filter((f) => f.kind === 'note' && !f.deleted)
+              .sort((a, b) => b.mtime - a.mtime)
+            resolve(notes[0]?.text ?? '')
+          }
+        }
+      })
+    })
+
+  const grid = await pastedNote()
+  check(
+    'a spreadsheet range pastes as a GFM table',
+    /\| Region +\| Q3 +\|/.test(grid) && /\| -+ \| -+ \|/.test(grid),
+    JSON.stringify(grid.slice(-160)),
+  )
+  check(
+    'a pipe inside a cell is escaped rather than ending it',
+    grid.includes('a\\|b'),
+    JSON.stringify(grid.slice(-160)),
+  )
+  check(
+    'a multi-line cell is flattened onto its row',
+    grid.includes('North South'),
+    JSON.stringify(grid.slice(-160)),
+  )
+  check(
+    'and it renders as a real table straight away',
+    (await page.locator('.cm-table-render td').count()) >= 4,
+  )
+  /*
+   * The picture Excel sent along with the cells has to lose, and lose
+   * silently: not embedded in the note, and not filed in the vault either,
+   * where it would sit as an orphaned attachment syncing to every device.
+   */
+  check(
+    'the picture a spreadsheet sends with its cells does not win',
+    !grid.includes('![['),
+    JSON.stringify(grid.slice(-160)),
+  )
+  check(
+    'and is not filed in the vault behind your back',
+    (await countAttachments()) === attachmentsBeforeGrid,
+    `${attachmentsBeforeGrid} → ${await countAttachments()} attachments`,
+  )
+
+  /*
+   * The discriminator, from the other side. Tab-separated text pasted out of a
+   * terminal has no `<table>` behind it and must arrive as the text it is —
+   * otherwise every indented paste in the app silently becomes a table.
+   */
+  await page.locator('.cm-content').click()
+  await page.locator('.cm-content').press('Control+End')
+  await pasteGrid(null, 'alpha\tbeta\ngamma\tdelta', false)
+  await page.waitForTimeout(900)
+  const plain = await pastedNote()
+  check(
+    'tab-separated text with no table behind it stays text',
+    plain.includes('alpha\tbeta') && !/\| alpha +\| beta/.test(plain),
+    JSON.stringify(plain.slice(-120)),
+  )
 
   /* ---- persistence across a reload ------------------------------------ */
   const beforeCount = await page.evaluate(

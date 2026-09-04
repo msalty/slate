@@ -28,14 +28,14 @@ const DAY = parseYmd('2026-06-09')!
 describe('daily notes', () => {
   it('creates the day’s note in the Daily folder, named for the day', async () => {
     const { vault, daily } = await fresh()
-    const path = await daily.dailyNotePath(DAY)
-    expect(path).toBe('Daily/2026-06-09.md')
-    expect(vault.getRaw(path)?.text).toBe('# 2026-06-09\n\n')
+    const made = await daily.dailyNotePath(DAY)
+    expect(made).toEqual({ path: 'Daily/2026-06-09.md', created: true, caret: undefined })
+    expect(vault.getRaw(made.path)?.text).toBe('# 2026-06-09\n\n')
   })
 
   it('files the new note under that day in the calendar, not under today', async () => {
     const { vault, daily } = await fresh()
-    const path = await daily.dailyNotePath(DAY)
+    const { path } = await daily.dailyNotePath(DAY)
     expect(vault.notesOnDay(DAY).map((n) => n.path)).toEqual([path])
   })
 
@@ -43,14 +43,17 @@ describe('daily notes', () => {
     const { daily } = await fresh()
     const first = await daily.dailyNotePath(DAY)
     const second = await daily.dailyNotePath(DAY)
-    expect(second).toBe(first)
+    expect(second.path).toBe(first.path)
+    // And says so, which is what decides whether it opens ready to write in.
+    expect(first.created).toBe(true)
+    expect(second.created).toBe(false)
   })
 
   it('finds a daily note the user keeps somewhere else', async () => {
     const { vault, daily } = await fresh()
     const existing = await vault.createNote('Journal', '2026-06-09', '# 2026-06-09\n\nwritten\n')
     expect(daily.dailyNoteFor(DAY)?.path).toBe(existing)
-    expect(await daily.dailyNotePath(DAY)).toBe(existing)
+    expect(await daily.dailyNotePath(DAY)).toEqual({ path: existing, created: false })
   })
 
   it('prefers the one in the Daily folder when a day has two', async () => {

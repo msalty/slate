@@ -103,6 +103,68 @@ export const editorTheme = EditorView.theme({
     paddingLeft: '14px',
     color: 'var(--text-muted)',
   },
+  /*
+   * Callouts.
+   *
+   * A callout is a blockquote, so it is built the same way — a coloured left
+   * edge and a tint, both painted with padding rather than margin, per the note
+   * at the top of this section. Only the ends are rounded, so a run of lines
+   * reads as one box.
+   *
+   * The body text stays `--text-muted` and that is deliberate: everything
+   * inside is tagged `t.quote` by the highlighter, which paints the spans
+   * directly, and the only way to override it from a line class would be a
+   * descendant rule broad enough to flatten link, tag and code colours inside
+   * the callout too. It is a quote; it is allowed to read like one.
+   */
+  '.cm-line.cm-callout': {
+    borderLeft: '3px solid var(--callout-accent)',
+    paddingLeft: '14px',
+    paddingRight: '12px',
+    color: 'var(--text-muted)',
+    backgroundColor: 'color-mix(in srgb, var(--callout-accent) 8%, transparent)',
+    backgroundClip: 'padding-box',
+  },
+  '.cm-line.cm-callout-first': {
+    borderRadius: '0 8px 0 0',
+    paddingTop: '7px',
+    borderTop: '5px solid transparent',
+  },
+  '.cm-line.cm-callout-last': {
+    borderRadius: '0 0 8px 0',
+    paddingBottom: '7px',
+    borderBottom: '5px solid transparent',
+  },
+  '.cm-line.cm-callout-note': { '--callout-accent': 'var(--callout-note)' },
+  '.cm-line.cm-callout-tip': { '--callout-accent': 'var(--callout-tip)' },
+  '.cm-line.cm-callout-important': { '--callout-accent': 'var(--callout-important)' },
+  '.cm-line.cm-callout-warning': { '--callout-accent': 'var(--callout-warning)' },
+  '.cm-line.cm-callout-caution': { '--callout-accent': 'var(--callout-caution)' },
+
+  /* The icon that replaced the `[!warning]`, plus its fallback label. */
+  '.cm-callout-mark': {
+    display: 'inline-flex',
+    alignItems: 'center',
+    color: 'var(--callout-accent)',
+    fontWeight: '650',
+    verticalAlign: '-0.15em',
+  },
+  /*
+   * The gap belongs to the icon, not to the row: the title is only sometimes
+   * the widget's own label — when the author wrote one it is ordinary document
+   * text that starts immediately after the widget ends, and a `gap` here would
+   * space the first case and not the second.
+   */
+  '.cm-callout-mark svg': {
+    width: '1.15em',
+    height: '1.15em',
+    flex: '0 0 auto',
+    marginRight: '0.4em',
+  },
+  '.cm-callout-label': { fontFamily: 'var(--font-body)' },
+  /* An author's own title takes the type's colour, like the label would. */
+  '.cm-callout-title': { color: 'var(--callout-accent)', fontWeight: '650' },
+
   '.cm-line.cm-codeblock': {
     backgroundColor: 'var(--code-bg)',
     fontFamily: 'var(--font-mono)',
@@ -115,6 +177,54 @@ export const editorTheme = EditorView.theme({
     borderRadius: '8px 8px 0 0',
     paddingTop: '8px',
     borderTop: '6px solid transparent',
+    // The containing block for the absolutely positioned copy button above.
+    position: 'relative',
+  },
+  /*
+   * The copy button, floated into the top right of a fenced block.
+   *
+   * Absolutely positioned, and that is load-bearing rather than cosmetic: it
+   * takes the button out of flow entirely, so the line box CodeMirror measures
+   * for its height map is exactly the height it would have been without it. An
+   * in-flow button would move every line below the block a few pixels and put
+   * every click below it on the wrong line — the same trap the margin note at
+   * the top of this file describes.
+   */
+  '.cm-code-copy': {
+    position: 'absolute',
+    top: '2px',
+    right: '6px',
+    zIndex: '2',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '26px',
+    height: '26px',
+    padding: '0',
+    border: '1px solid var(--border)',
+    borderRadius: '7px',
+    backgroundColor: 'var(--surface-float)',
+    color: 'var(--text-muted)',
+    cursor: 'pointer',
+    opacity: '0.75',
+    transition: 'opacity .12s, color .12s, border-color .12s',
+  },
+  '.cm-code-copy svg': { width: '15px', height: '15px' },
+  '.cm-code-copy:hover': { opacity: '1', color: 'var(--text)', borderColor: 'var(--border-strong)' },
+  '.cm-code-copy-done': { display: 'none', color: 'var(--ok)' },
+  '.cm-code-copy[data-copied] .cm-code-copy-idle': { display: 'none' },
+  '.cm-code-copy[data-copied] .cm-code-copy-done': { display: 'block' },
+  '.cm-code-copy[data-copied]': { opacity: '1', color: 'var(--ok)', borderColor: 'var(--ok)' },
+  /*
+   * Out of the way until asked for — but only where there is a pointer to ask
+   * with. On a touch screen there is no hover state to reveal it, so a button
+   * that hides until hover is a button that does not exist.
+   */
+  '@media (hover: hover) and (pointer: fine)': {
+    '.cm-code-copy': { opacity: '0' },
+    '.cm-line.cm-codeblock-first:hover .cm-code-copy': { opacity: '0.75' },
+    '.cm-line.cm-codeblock-first:hover .cm-code-copy:hover': { opacity: '1' },
+    '.cm-code-copy[data-copied]': { opacity: '1' },
   },
   '.cm-line.cm-codeblock-last': {
     borderRadius: '0 0 8px 8px',

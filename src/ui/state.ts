@@ -2,6 +2,7 @@
 
 import { computed, signal } from '@preact/signals'
 import {
+  contentNotes,
   notes,
   notesByDay,
   search,
@@ -9,7 +10,7 @@ import {
   attachments,
   unresolvedLinks,
 } from '../core/vault'
-import { dailyNoteFor, dailyNotePath } from '../core/daily'
+import { dailyNotePath } from '../core/daily'
 import { notesForSmartFolder, smartFolderById } from '../core/folders'
 import { settings } from '../core/settings'
 import type { NoteIndexEntry } from '../core/types'
@@ -76,7 +77,14 @@ export const paletteOpen = signal(false)
 export const settingsOpen = signal(false)
 export const historyOpen = signal(false)
 export const lightboxPath = signal<string | undefined>(undefined)
-export const toast = signal<{ text: string; kind: 'info' | 'error' } | undefined>(undefined)
+export interface Toast {
+  text: string
+  kind: 'info' | 'error'
+  /** One thing the toast offers to do. It dismisses itself either way. */
+  action?: { label: string; run: () => void }
+}
+
+export const toast = signal<Toast | undefined>(undefined)
 
 /* ------------------------------------------------------------ mobile shell */
 
@@ -94,6 +102,8 @@ export const mobileEditorOpen = signal(false)
  * read back later.
  */
 let openForWriting: string | undefined
+let openCaret: number | undefined
+let takenCaret: number | undefined
 
 /**
  * Open a note from anywhere. On a phone this also pushes the editor over the
@@ -103,8 +113,9 @@ let openForWriting: string | undefined
  * `editing` is for a note that was just created to be typed into: it opens with
  * the caret in it, because there is nothing in it to read yet.
  */
-export function openNote(path: string, opts?: { editing?: boolean }) {
+export function openNote(path: string, opts?: { editing?: boolean; caret?: number }) {
   openForWriting = opts?.editing ? path : undefined
+  openCaret = opts?.editing ? opts.caret : undefined
   activePath.value = path
   if (layoutMode.value === 'compact') mobileEditorOpen.value = true
 }
@@ -112,8 +123,24 @@ export function openNote(path: string, opts?: { editing?: boolean }) {
 /** True once, for a note that was opened to be written in rather than read. */
 function takeEditRequest(path: string): boolean {
   const asked = openForWriting === path
+  takenCaret = asked ? openCaret : undefined
   openForWriting = undefined
+  openCaret = undefined
   return asked
+}
+
+/**
+ * Where the caret goes in a note that was just opened for writing.
+ *
+ * Consumed with the request above and only meaningful straight after it: a
+ * template can say where writing should start with `{{cursor}}`, and without
+ * one the caret goes to the end of what the template put there rather than to
+ * position 0, where the first thing typed would land inside the heading.
+ */
+export function takeOpenCaret(): number | undefined {
+  const caret = takenCaret
+  takenCaret = undefined
+  return caret
 }
 
 /**
@@ -144,12 +171,11 @@ export function opensForWriting(path: string, text: string, trashed: boolean): b
  * you have lost.
  */
 export async function openDailyNote(day: number) {
-  const existed = dailyNoteFor(day) !== undefined
-  const path = await dailyNotePath(day)
-  // A day that had no note has one now, holding nothing but its own date:
-  // it was created to be written in, so it opens ready for that.
-  openNote(path, { editing: !existed })
-  if (!existed) notify(`Created ${path}`)
+  const { path, created, caret } = await dailyNotePath(day)
+  // A day that had no note has one now — its own date, or whatever template
+  // `Daily/` carries. It was created to be written in, so it opens for that.
+  openNote(path, { editing: created, caret })
+  if (created) notify(`Created ${path}`)
 }
 
 export function closeMobileEditor() {
@@ -162,10 +188,22 @@ export function closeMobileEditor() {
 /* ------------------------------------------------------------------ toasts */
 
 let toastTimer: ReturnType<typeof setTimeout> | undefined
-export function notify(text: string, kind: 'info' | 'error' = 'info') {
-  toast.value = { text, kind }
+export function notify(
+  text: string,
+  kind: 'info' | 'error' = 'info',
+  action?: { label: string; run: () => void },
+) {
+  toast.value = { text, kind, action }
   if (toastTimer) clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => (toast.value = undefined), kind === 'error' ? 7000 : 3200)
+  // A toast with something to press has to outlast a glance at it; one that
+  // only reports has said everything it has to say by the time you look.
+  const ms = action ? 8000 : kind === 'error' ? 7000 : 3200
+  toastTimer = setTimeout(() => (toast.value = undefined), ms)
+}
+
+export function dismissToast() {
+  if (toastTimer) clearTimeout(toastTimer)
+  toast.value = undefined
 }
 
 export function scopeLabel(s: Scope): string {
@@ -214,16 +252,22 @@ export const visibleNotes = computed<NoteIndexEntry[]>(() => {
       list = smartFolderById(s.id) ? notesForSmartFolder(s.id) : []
       break
     case 'tag':
-      list = notes.value.filter((n) => n.tags.some((t) => t === s.tag || t.startsWith(`${s.tag}/`)))
+      list = contentNotes.value.filter((n) =>
+        n.tags.some((t) => t === s.tag || t.startsWith(`${s.tag}/`)),
+      )
       break
     case 'day': {
       const paths = new Set(notesByDay.value.get(startOfDay(s.date)) ?? [])
-      list = notes.value.filter((n) => paths.has(n.path))
+      list = contentNotes.value.filter((n) => paths.has(n.path))
       break
     }
     case 'tasks':
-      list = notes.value.filter((n) => n.hasTasks)
-      break
+      /*
+       * Tasks are not notes. The row counts tasks, so it lists tasks: the
+       * middle column renders them from the task index directly, the same
+       * rows the rail and the phone tab use. Nothing for the note list here.
+       */
+      return []
     case 'trash':
       return []
     case 'files':
@@ -231,7 +275,12 @@ export const visibleNotes = computed<NoteIndexEntry[]>(() => {
     case 'unlinked':
       return []
     default:
-      list = notes.value
+      /*
+       * All Notes, and every other roll-up above it. The `folder` case above
+       * is deliberately not one of these: browsing `Templates/` has to show
+       * what is in it, which is the whole way a template gets edited.
+       */
+      list = contentNotes.value
   }
 
   const cmp =

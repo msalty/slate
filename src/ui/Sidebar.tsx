@@ -1,7 +1,7 @@
 /** Smart lists, the folder tree, Tag Folders, and tags. */
 
 import { useState } from 'preact/hooks'
-import { allTags, attachments, createNote, notes, tasks, trashItems, unresolvedLinks } from '../core/vault'
+import { allTags, attachments, contentNotes, tasks, trashItems, unresolvedLinks } from '../core/vault'
 import {
   createFolder,
   deleteFolder,
@@ -11,6 +11,7 @@ import {
   isGroupFolder,
   moveSmartFolder,
   renameFolder,
+  showsTasks,
   smartFolderAncestors,
   smartFolderCounts,
   smartFolderError,
@@ -21,8 +22,8 @@ import {
   type SmartNode,
 } from '../core/folders'
 import { parseQuery, tagsInQuery, folderInQuery } from '../core/tagquery'
-import { notify, openNote, scope, type Scope } from './state'
-import { openMenu, useLongPress, type MenuItem } from './Menu'
+import { notify, scope, type Scope } from './state'
+import { menuAnchor, openMenu, useLongPress, type MenuItem } from './Menu'
 import { openTagFolderDialog } from './TagFolderDialog'
 import { closeDrawer } from './layout'
 import {
@@ -36,6 +37,15 @@ import {
   IconTag,
   IconTrash,
 } from './Icons'
+import { newNoteInFolder } from './EditorPane'
+import {
+  assignedTemplate,
+  hasTemplates,
+  resolvedTemplate,
+  setFolderTemplate,
+  templatableFolder,
+  templateNotes,
+} from '../core/templates'
 
 function sameScope(a: Scope, b: Scope): boolean {
   if (a.kind !== b.kind) return false
@@ -88,14 +98,60 @@ function Row({
   )
 }
 
-function folderMenu(node: FolderNode) {
+/**
+ * Choose the template a folder's new notes start from.
+ *
+ * Only offered when the vault actually has templates — a vault with no
+ * `Templates/` folder never sees this item, which is the whole of what makes
+ * the feature optional: there is nothing to turn off, and nothing to explain
+ * to somebody who does not want it.
+ */
+function templateMenu(node: FolderNode) {
+  const current = assignedTemplate(node.path)
+  const items: MenuItem[] = [
+    {
+      label: current ? 'Stop using a template' : 'No template',
+      checked: !current,
+      onSelect: () => void setFolderTemplate(node.path, undefined),
+    },
+    ...templateNotes.value.map((t, i) => ({
+      label: t.title,
+      separated: i === 0,
+      checked: current === t.path,
+      onSelect: async () => {
+        await setFolderTemplate(node.path, t.path)
+        notify(`New notes in "${node.name}" start from "${t.title}"`)
+      },
+    })),
+  ]
+  return items
+}
+
+function folderMenu(node: FolderNode): MenuItem[] {
   return [
     {
       label: 'New note here',
       onSelect: async () => {
-        openNote(await createNote(node.path, 'Untitled'), { editing: true })
+        await newNoteInFolder(node.path)
       },
     },
+    ...(hasTemplates.value && templatableFolder(node.path)
+      ? [
+          {
+            /*
+             * Names the template rather than just saying there is one, and
+             * says so when the note it points at has been renamed or deleted
+             * — otherwise the folder looks configured and quietly applies
+             * nothing.
+             */
+            label: assignedTemplate(node.path)
+              ? `Template: ${resolvedTemplate(node.path)?.title ?? 'missing'}…`
+              : 'Use a template…',
+            onSelect: () =>
+              openMenu(menuAnchor(), templateMenu(node), `Template for "${node.name}"`),
+          } as MenuItem,
+        ]
+      : []),
     {
       label: 'New subfolder…',
       onSelect: async () => {
@@ -221,9 +277,7 @@ function SmartFolderRow({ node }: { node: SmartNode }) {
           })
         const tags = [...new Set([...inherited, ...tagsInQuery(parsed.node)])]
         const body = tags.length ? `${tags.map((t) => `#${t}`).join(' ')}\n\n` : ''
-        openNote(await createNote(folderInQuery(parsed.node) ?? '', 'Untitled', body), {
-          editing: true,
-        })
+        await newNoteInFolder(folderInQuery(parsed.node) ?? '', 'Untitled', { seed: body })
       },
     },
     {
@@ -299,6 +353,17 @@ function SmartFolderRow({ node }: { node: SmartNode }) {
         name={
           <>
             {sf.name}
+            {showsTasks(sf) && (
+              /*
+               * A folder that gathers tasks sits in the same list as folders
+               * that gather notes, and until this tick nothing on the row said
+               * which one you were about to open — same emoji slot, same
+               * count, different thing behind it.
+               */
+              <span class="side-task" title="Gathers tasks" aria-label="Gathers tasks">
+                <IconCheck size={11} />
+              </span>
+            )}
             {error && (
               <span class="side-warn" title={error}>
                 {' !'}
@@ -362,7 +427,7 @@ export function Sidebar() {
           target={{ kind: 'all' }}
           icon={<IconNotes size={15} />}
           name="All Notes"
-          count={notes.value.length}
+          count={contentNotes.value.length}
         />
         <Row target={{ kind: 'tasks' }} icon={<IconCheck size={15} />} name="Tasks" count={openTasks} />
         <Row

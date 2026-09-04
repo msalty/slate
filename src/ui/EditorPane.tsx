@@ -38,9 +38,13 @@ import {
   notify,
   openNote,
   opensForWriting,
+  takeOpenCaret,
   readingMode,
 } from './state'
 import { beginEditing, endEditing, installTapToEdit } from '../editor/reading'
+import { templateBodyFor } from '../core/templates'
+import { offerTitleFromHeading } from './titleDrift'
+import { UNTITLED } from '../core/vault'
 import { layoutMode, railState, toggleRail } from './layout'
 import { debounce, longDateTime } from '../core/util'
 import {
@@ -91,7 +95,10 @@ export function EditorPane() {
   const saveRef = useRef(
     debounce((p: string, text: string) => {
       baseRef.current = text
-      void saveNote(p, text).then(() => syncSoon())
+      void saveNote(p, text).then(() => {
+        syncSoon()
+        offerTitleFromHeading(p, text)
+      })
     }, 400),
   )
 
@@ -128,6 +135,8 @@ export function EditorPane() {
      * `opensForWriting`, which is the whole of the rule.
      */
     const writing = opensForWriting(path, text, isTrashed(path))
+    // Consumed with the request, whether or not it carried one.
+    const caret = takeOpenCaret()
     readingMode.value = !writing
     // The Format sheet belongs to the note that was being formatted, and the
     // note that has just opened is being read.
@@ -140,6 +149,15 @@ export function EditorPane() {
       fontSize: settings.value.fontSize,
       readOnly: isTrashed(path),
       editable: writing,
+      /*
+       * A note opened to be written in starts at the end of whatever is
+       * already in it, not at position 0. An empty note is the same either
+       * way; one that opened with a template, a first checkbox or its own
+       * date already in it is not, and position 0 puts the first keystroke
+       * inside the heading. A template can name somewhere better with
+       * `{{cursor}}`, and that is what arrives here.
+       */
+      caret: writing ? (caret ?? text.length) : undefined,
       onChange: (text) => saveRef.current(path, text),
     })
     const view = new EditorView({ state, parent: hostRef.current })
@@ -600,9 +618,24 @@ export function EditorPane() {
   )
 }
 
-/** Exposed so the shell's command palette can create-and-open in one step. */
-export async function newNoteInFolder(folder: string, title = 'Untitled') {
-  const p = await createNote(folder, title)
-  openNote(p, { editing: true })
+/**
+ * Create a note and open it ready to write in — the one path every "new note"
+ * in the app goes through, so a folder's template applies wherever a note is
+ * made rather than only from the button someone remembered to wire up.
+ *
+ * `seed` is text the caller needs in the note whatever else happens: the tags
+ * that make it match the Tag Folder it was created from, a first checkbox. It
+ * goes after the template. `fallback` is the body to use only when no template
+ * applies, for the callers that already had boilerplate of their own.
+ */
+export async function newNoteInFolder(
+  folder: string,
+  title: string = UNTITLED,
+  opts: { seed?: string; fallback?: string } = {},
+) {
+  const t = templateBodyFor(folder, title)
+  const body = `${t ? t.text : (opts.fallback ?? '')}${opts.seed ?? ''}`
+  const p = await createNote(folder, title, body)
+  openNote(p, { editing: true, caret: t?.caret })
   return p
 }

@@ -91,11 +91,28 @@ export interface TaskItem {
   id: string
   path: string
   noteTitle: string
+  folder: string
   line: number
   text: string
   done: boolean
   /** ms epoch local midnight, parsed from a 📅 / @due(...) marker, if any. */
   due?: number
+  /**
+   * Everything this task is tagged with: what is written on its own line, and
+   * what the note it lives on says about itself.
+   *
+   * Inheritance is the point. Tagging a note `#home` and writing ten tasks on
+   * it is how people actually work; making them tag each line would be the
+   * same information typed eleven times.
+   */
+  tags: string[]
+  /**
+   * Just the ones on the task's own line, so a rule can ask for a task that
+   * says something itself rather than one that merely sits under a note that
+   * does. Kept apart from `tags` for display too: an inherited tag is context,
+   * and shouldn't look like something typed on the line.
+   */
+  ownTags: string[]
 }
 
 export type SyncPhase = 'idle' | 'listing' | 'pulling' | 'pushing' | 'error' | 'offline'
@@ -218,6 +235,22 @@ export interface AppSettings {
   fontSize: number
   /** Sort order for the note list. */
   sortBy: 'mtime' | 'ctime' | 'title'
+  /**
+   * How every task list is arranged — the calendar rail, the phone's Tasks
+   * tab and a Tag Folder that gathers tasks. One setting rather than one per
+   * place: it is a way of reading a list of tasks, and there is no reason to
+   * want it one way in the rail and another in a folder.
+   */
+  taskGroupBy: 'none' | 'due' | 'note'
+  /**
+   * Whether a task list shows the ones already crossed off.
+   *
+   * Off by default. A list whose top is what you owe and whose bottom is a
+   * growing archive of what you don't is a list people stop reading — and the
+   * rule language already answers `is:done` for anyone who wants the archive.
+   * The heading still counts them, so nothing is hidden without saying so.
+   */
+  showDoneTasks: boolean
   deviceId: string
   deviceName: string
 }

@@ -18,8 +18,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 218 unit and two-device sync tests
-node scripts/smoke.mjs # 227-check browser smoke test against dist/
+npm test               # 354 unit and two-device sync tests
+node scripts/smoke.mjs # 310-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -45,11 +45,23 @@ so nothing is ever silently rewritten:
   to be typed into rather than in front of its own checkbox. The bar also
   inserts the two things markdown makes tedious by hand: a **link**, through a
   dialog with the words and the address as separate fields, and a **table**,
-  which then offers add/remove row and column from the same button. A table cell
+  which then offers add/remove row and column from the same button, along with
+    *Copy table* for getting one into a spreadsheet. A table cell
   is typed into directly, and on a phone it stays outlined while the Format
   sheet is up — the sheet only opens once the keyboard is down, so the cell has
   necessarily lost its focus, and "add a row below" has to be beside a row you
   can still see.
+
+  **The bar never runs off the edge of the pane.** The editor is the panel that
+  never yields width, so with the calendar inline and both left panels open
+  there can be less than half the bar's natural width to put it in. What does
+  not fit collapses into a **…** at the right-hand end, which opens the rest as
+  a menu — with each control's full name, whether it is currently on, and
+  greyed out when it does not apply, the same as the button would be. Groups go
+  whole rather than button by button, so the bar never strands one orphaned
+  control from a group whose siblings are all in the menu, and they come back as
+  soon as there is room. It is a bar-only affordance: the phone's Format sheet
+  is as wide as the screen and lays the same controls out over three rows.
 - **Live preview** — formatting renders as you type, and the raw syntax
   reappears the moment your caret enters it.
 - **Markdown source** — the file, exactly as it is written.
@@ -65,9 +77,10 @@ the bottom half of it before you have read a word. Tap the text and that is
 where the caret lands — the tap that starts the edit is the tap that says where
 — or press the pencil in the header, which starts you at the top of whatever is
 on screen rather than scrolling the note out from under you. Escape hands the
-note back. Links, checkboxes and images all still answer a tap while reading, so
-you can work through a note without falling into the editor, and a checkbox
-ticked in passing still saves: reading is not read-only. A brand new note is the
+note back. Links, checkboxes, images and a task's date chip all still answer
+a tap while reading, so you can work through a note without falling into the
+editor, and a checkbox ticked or a date set in passing still saves: reading is
+not read-only. A brand new note is the
 one exception — there is nothing in it to read, so it opens with the caret
 already in it, and so do the notes the app seeds for you, like a new daily note.
 While a note is being read the formatting bar, the phone's **Aa** button and
@@ -152,6 +165,103 @@ Live preview keeps its own contract: clicking a table there puts the caret in
 the pipe source, the same way the caret reveals every other construct it sits
 in.
 
+**A spreadsheet range pastes as a table.** Copy cells in Excel, Numbers, Sheets
+or Calc and paste: you get a GFM table with the columns lined up, not a wall of
+tabs. Excel puts *three* things on the clipboard — a `<table>` under
+`text/html`, the same cells tab-separated under `text/plain`, and a **picture**
+of the range as an ordinary PNG. The picture is the trap: an image-first paste
+handler files that instead, and a spreadsheet paste becomes a screenshot of a
+spreadsheet. So the table is looked for first, and nothing is lost by it —
+finding a table needs a `<table>` in the html *and* text that parses as a grid
+at least two columns wide, which a copied image matches neither of.
+
+The two text flavours are both used, for different jobs. The HTML is only ever a *discriminator*: its presence is what
+says this came out of a grid rather than out of a terminal, which nothing in the
+plain text can tell you, so tab-separated text pasted from anywhere else stays
+text. The cells themselves are read from the plain-text flavour, because Excel's
+HTML is a wall of `mso-` styles and parsing it would mean trusting markup from
+outside the app.
+
+The two things a spreadsheet holds that a pipe table cannot are handled on the
+way in rather than dropped: a cell containing a `|` is escaped so it can't end
+its column, and a multi-line cell is flattened onto its row.
+
+**And back out again.** Select rows of a table, copy, and they land in Excel as
+cells. Only the HTML flavour is added, which is the whole trick: every
+spreadsheet reads HTML in preference to plain text — it is how a table copied
+from a web page lands in cells, and it is the same flavour Excel *emits*, which
+is what the paste above keys off. So the plain-text flavour is left as the
+markdown you selected, and the same copy pastes into another markdown editor as
+the pipe table it was. Writing tab-separated text over the top would have
+bought the first and lost the second.
+
+There are two ways to ask. **Put the caret in the table and choose *Copy table*
+from the table button** — the same ⊞ that adds and removes rows — which is the
+reliable one, and the only practical one on a phone. Or **select the rows and
+copy**, which works in all three modes but is a gesture with no edges: in rich
+text and live preview the table is a single widget, and a drag that overshoots
+it by a few pixels has taken in the paragraph underneath.
+
+That is because the selection route is deliberately strict about what counts.
+Selecting a word inside a cell is a request for that word, so a selection has to
+cover a whole line or run across more than one; and every line it touches has to
+belong to the same table, or a selection running from the last row into the
+paragraph below would quietly drop the paragraph. Anything that doesn't qualify
+copies exactly as it did before — which is safe, but silent, which is why the
+menu item exists. Either way the `| --- |` row is left behind: it is markdown
+bookkeeping, not data.
+
+**Block quotes can say what kind of aside they are.**
+
+```markdown
+> [!WARNING] Friday deploys
+> The window closes at 16:00.
+```
+
+renders as a titled, coloured callout with an icon. The syntax is **GitHub's**,
+which is the reason to like it: GitHub renders these, every other markdown tool
+falls back to an ordinary blockquote, and the file on disk stays plain
+CommonMark — a note with callouts in it loses the tint somewhere else and
+nothing more.
+
+Five colours, because five is what GitHub defines — `note`, `tip`, `important`,
+`warning`, `caution` — and every extra one is a hue that has to stay legible in
+both themes forever. The longer vocabulary people actually type is aliased onto
+those five and keeps its own glyph where the glyph says something the colour
+does not: `[!bug]` is a bug in caution red, `[!question]` a question mark in
+important purple, `[!success]` a tick in tip green. A name nobody defined is not
+a broken callout — it stays the blockquote it is, exactly as GitHub treats an
+unknown alert.
+
+Type `> [!` and the list of types appears, with the colour family each alias
+lands in beside it; there is no toolbar button, because the formatting bar
+exists only in rich text while the syntax works in all three modes. Omit the
+title and the callout announces its own type instead. Put the caret on that
+line and the raw `[!warning]` comes back to be edited, the same way a link's URL
+does.
+
+**Code blocks have a copy button** in the top right corner — on hover with a
+pointer, always visible on a touch screen, and it works while a note is being
+read, which is where it is wanted most. It copies the code without its fences,
+and without the indentation of a block nested in a list.
+
+**A note names itself, if you let it.** A note made with *New note here* — and
+every note started from a template — is called `Untitled`, so typing a heading
+into one leaves the file, the note list and any `[[wikilink]]` to it all saying
+Untitled about a note that plainly is not. Pause after typing that heading and
+a toast offers the name; taking it renames the file, and ignoring it costs
+nothing. The offer is only ever made for a note that has **never been named** —
+plenty of vaults keep `2026-09-04.md` headed `# Thursday` on purpose, and an
+app that asked about that every time you paused would be a nuisance rather
+than a help. Nothing renames a file in a synced vault without being asked.
+
+**A note can leave.** Right-click one (or long-press it) for **Share…** on a
+phone and **Export as Markdown** everywhere else; ⌘K has it too, for the note
+you have open. Nothing is converted — the bytes that leave are the bytes on
+disk, frontmatter and wikilinks included — because the file was already the
+portable thing. Where the platform has a share sheet you get it, which is the
+one route from here into Mail; where it hasn't, the file downloads.
+
 **Pinned notes** sit in their own section at the top of the list — sorted the
 same way everything else is, by date edited, date created or title — and stay
 there while the rest of the list re-sorts around them. Pin from the note's
@@ -163,6 +273,61 @@ notes automatically — `#work AND (#urgent OR #blocked) NOT #archived` — and 
 nothing, so deleting one never touches a note. Rules also understand
 `folder:Work` and `has:tasks`, tags match hierarchically (`#work` catches
 `#work/active`), and two terms side by side mean AND.
+
+**A Tag Folder can gather tasks instead of notes.** Same folder, same rule
+language, one switch — *Gathers: Notes / Tasks* — because a second tree beside
+the first would have meant learning "a saved rule" twice.
+
+The reason it is worth having is **inheritance**: a task carries the tags on its
+own line *and* the ones its note carries. Tag a note `#home`, write ten jobs on
+it, and `#home` gathers all ten without any of them being tagged by hand — which
+is how people actually keep notes, and the alternative is the same information
+typed eleven times. A tag written on one task line is that task's own; it does
+not leak to its siblings, though it does still count towards the note (the note
+really does contain urgent work).
+
+Rules over tasks reach two things a note cannot answer: `is:open` / `is:done`,
+and `due:overdue`, `due:today`, `due:soon`, `due:none`, `due:any`. So
+
+```
+#home is:open              the jobs at home still to do
+#work due:overdue          work that has slipped
+#home AND NOT #urgent      everything at home that can wait
+```
+
+**Finished tasks are out of the list by default**, with *Show completed* in the
+same ⋮ menu to bring them back. A list whose top is what you owe and whose
+bottom is a growing archive of what you don't is a list people stop reading —
+and `is:done` already answers the archive question for anyone who wants it. The
+heading still counts them (*4 open · 12 done*), so nothing is hidden without
+saying so, and a group that runs past 200 rows says how many it left out rather
+than dropping them quietly.
+
+**Any task list can be arranged**, from the ⋮ beside its heading: *No
+grouping*, *By due date* — Overdue, Today, This week, Later, No date, Done, in
+that order — or *By note*. One setting for all three places a task list
+appears, because it is a way of reading such a list rather than a property of
+one of them, and grouping by note stops repeating the note's name down the side
+of every row.
+
+Not **by tag**, and that is a decision rather than an omission. A task carries
+the tags on its own line *and* the ones its note carries, so a job that is both
+`#home` and `#urgent` has no single group: it belongs in two, which means the
+same task in the list twice, a tick that has to update both, and counts that no
+longer sum. The inheritance that makes task tags worth having is exactly what
+makes grouping by them ambiguous. Due date and note are one apiece.
+
+The tasks appear in the note list's place, as the same rows the calendar rail
+and the phone's Tasks tab use — so ticking one there writes to the note it lives
+on, and it leaves the folder if the folder asked for open ones. The count beside
+the folder counts tasks, not the notes they sit on, and a small tick on the row
+says which kind of folder you are about to open: it sits in the same list as
+folders that gather notes, with the same emoji and the same count beside it. A
+tick is on offer as the icon as well, but the one on the row is drawn from what
+the folder *does* — an icon anyone can put on anything cannot be trusted to say
+so. Written into a rule over
+*notes*, `is:` and `due:` match nothing and the folder's live count says so as
+you type.
 
 **Tag Folders nest too, and nesting means something.** By default a child
 *narrows* its parent, so the hierarchy reads the way a folder tree does — a
@@ -188,14 +353,116 @@ than taking them with it; "delete with everything inside" is a separate item.
 Both kinds of folder are defined in `backstage/`, so they follow you to every
 device.
 
+**Folder templates, if you want them.** A folder can start its new notes from
+boilerplate — a meeting note with the fields you always fill in, a person note
+with the same four headings, a daily note that already knows its date.
+
+A template is **an ordinary note in an ordinary folder**. `Templates/` is a real
+directory holding real `.md` files, so a template is written, edited, searched,
+linked and synced exactly like everything else: there is no template format, no
+template editor, and nothing to export. Open one, change it, and the next note
+made from it picks the change up.
+
+**And nothing about it happens until you ask.** `Templates/` is never created
+for you — not at boot, not by the first note, not by looking at the feature.
+A vault without one behaves in every respect as though none of this existed: no
+folder in the sidebar, no item in any menu, nothing to turn off. Settings →
+Editor offers to make it, and that button is the only thing in the app that
+does; it writes one example template so there is something to look at rather
+than an empty folder. Once templates exist, a folder's context menu gains
+**Use a template…**, and names the one it is using afterwards — or says
+*missing* if that note has since been renamed or deleted, rather than looking
+configured while quietly applying nothing.
+
+```
+Templates/
+├─ Meeting.md          ← ordinary notes, edited like any other
+└─ Person.md
+```
+
+The fields a template can fill in are deliberately few: `{{title}}`, `{{date}}`,
+`{{time}}`, `{{year}}`, `{{month}}`, `{{day}}`, `{{weekday}}`, and `{{cursor}}`
+for where writing should start. `{{date}}` and `{{time}}` take a pattern —
+`{{date:DDDD, D MMMM YYYY}}` — built from `YYYY MM DD HH mm ss`, with `MMM` /
+`MMMM` for the month by name and `DDD` / `DDDD` for the day. A field nobody
+recognises is left exactly as written, so a typo looks like a typo in the note
+rather than disappearing into it. The line between "a few fields filled in" and
+"a template language with conditionals in it" is one that gets crossed a token
+at a time, and this is the side of it the app stays on.
+
+`{{title}}` is the note's name **at the moment it is created**, and it is empty
+when the note has not got one yet — "Untitled" is the absence of a title rather
+than a title, and a template that wrote that word into a heading would be worse
+than one that left the heading blank. So `# {{title}}{{cursor}}`, which is what
+the example template is, is right in every case: a daily note or one made from
+a `[[wikilink]]` is named already and gets its heading filled in, and one made
+with *New note here* gets an empty heading with the caret sitting in it.
+
+A template applies to **the folder it is attached to and no other**: one on
+`Work` does not reach `Work/Projects`. Inheritance would be a second rule to
+hold in your head, and a template on the vault root would then silently apply to
+every note anywhere — which is how an optional feature stops feeling optional.
+
+The vault root can have one too, set in Settings rather than from a menu,
+because it is the one folder with no row in the sidebar to right-click. It
+covers ⌘N with no folder selected, and **a note created from a broken
+`[[link]]`** — which always lands there, and is named for the link text. That
+is the case `{{title}}` is really for.
+
+**Templates stay out of the roll-ups.** They are real notes, so without care
+every view that adds your notes up would count them — and a template is
+boilerplate for a note that does not exist yet. Its `- [ ]` is a blank to fill
+in rather than a task you owe anybody; its `#work` describes the notes it will
+make rather than itself. One meeting template was enough to put a permanent
+empty task in the task list, invent a `#meeting` tag, count `#work` twice,
+place a dot on the calendar, report a broken link only it mentioned, and land
+in the Tag Folder that gathers everything tagged `#work`.
+
+So the roll-ups — the note list, its count, tasks, tag counts, the calendar,
+Tag Folder matches, backlinks and broken links — read your notes without the
+templates. Everything that looks at one named thing still sees them: browsing
+`Templates/` (which is the only way a template gets edited, so hiding the
+folder the way `backstage/` is hidden was never an option), search, wikilink
+targets, version history and sync. Two of those are not preferences but
+correctness — **the orphan scan** has to see templates or a picture used only
+by one is reported unused and invited to be deleted, and **rename repointing**
+has to, or a template's links break when a note it mentions is renamed.
+
+A vault with no `Templates/` folder gets the identical list back rather than a
+filtered copy of it, so none of this costs anything to anyone who never made
+one.
+
+The **daily note** is the case this was built for. Point `Daily/` at a template
+and every day's note starts from it, dated for *the day it is filed under* rather
+than for today — so Thursday's note, started on Saturday, still says Thursday.
+
 **Calendar and tasks.** An optional right column (⌘⇧R) shows a month calendar
 with a dot per note, filed by frontmatter `date:`, a `YYYY-MM-DD` filename, or
 creation time. Click a day to filter the list. Any day without a daily note
 offers to make one — **Create daily note**, at the top of that day's list and
 under the day in the rail — which writes `Daily/YYYY-MM-DD.md` and opens it, so
 Thursday's note can be started on Saturday and still lands on Thursday. Below
-it, every `- [ ]` in the vault is rolled up into one task list. Ticking a box
-there edits the source note.
+it, **Due**: the tasks that are due today and the ones already late. Ticking a
+box there edits the source note.
+
+The rail's list is narrowed on purpose. Every `- [ ]` in the vault is rolled up
+under **Tasks** in the sidebar, and repeating that list under a calendar made
+the two columns compete for the same job. Dates are what the column beside it
+is about, so a list scoped to them is the one thing the rail can say that the
+sidebar cannot — and an undated job is a job for another day.
+
+**The calendar reads both ways.** A day that owes you work carries a small pip
+in its corner — red once the day has passed, the same red the date chip turns
+when it is late. It is a channel of its own: the dots under the number mean
+notes filed on that day, and making a dot mean two things would cost you both.
+Click the day and its tasks appear under its notes, with no heading over them —
+a row with a checkbox and a date on it is not going to be mistaken for a note,
+and a rule across the panel made two lists out of one day.
+
+Nothing is said twice in one column: the **Due** list below already holds
+everything overdue and everything due today, so a day it has covered keeps its
+notes and hands the tasks to it. The phone's calendar tab has no such list under
+it, so there every selected day keeps its own.
 
 **Due dates you don't have to type.** A task line has two controls, one at each
 end: the checkbox that says whether it's done, and a chip that says when it's
@@ -510,6 +777,14 @@ search, calendar, tags or link autocomplete. Credentials are the one thing that
 is deliberately *not* in there — a WebDAV password or a Drive client ID stays in
 the browser's local database on each device, so secrets never enter the vault.
 
+`config.json` is written on a 1.5-second timer, because a pane resizer would
+otherwise write a vault file on every frame of a drag, and it is overlaid over
+the device's own copy at boot. So a preference changed a moment before a reload
+would come back as whatever it was before — which is why the pending write is
+flushed when the tab goes away, and why the keys this device has changed but
+not yet written are kept on disk beside the settings. A killed tab flushes
+nothing; the next boot still knows which values were yours.
+
 ---
 
 ## How sync works
@@ -593,8 +868,9 @@ src/
 │  ├─ merge.ts        three-way merge (diff3)
 │  ├─ rebase.ts       folding a synced change into the buffer being typed in
 │  ├─ markdown.ts     frontmatter, links, tags, tasks, due dates
-│  ├─ tagquery.ts     the Tag Folder rule language (tokenizer, parser, eval)
+│  ├─ tagquery.ts     the rule language behind Tag Folders, over notes or tasks
 │  ├─ folders.ts      nested folders + the Tag Folder tree and inheritance
+│  ├─ templates.ts    folder templates: the fields, and which folder uses what
 │  ├─ devices.ts      per-device write registry, for version attribution
 │  ├─ images.ts       paste- and capture-time re-encoding
 │  └─ settings.ts     device-local vs vault-wide preferences
@@ -604,6 +880,9 @@ src/
 │  ├─ links.ts      external URI recognition, opening and editing
 │  ├─ linkClicks.ts following a link from the text — clicks and taps alike
 │  ├─ table.ts      the pipe-table grid: parse, edit rows/columns, print
+│  ├─ tsv.ts       a spreadsheet range off the clipboard, as a table
+│  ├─ callout.ts   the callout vocabulary: five colours, and what aliases to them
+│  ├─ codeblock.ts reading a fenced block back out, for the copy button
 │  ├─ due.ts        writing a task's due date into the buffer being typed in
 │  ├─ inline.ts      inline markdown for text inside widgets (table cells)
 │  └─ pickImage.ts   camera / photo library / file insertion
@@ -647,6 +926,13 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
   underlying `reorderSmartFolders` exists but nothing calls it yet.
 - **A Tag Folder can't live inside a real folder.** The two hierarchies are
   separate — use `folder:Work` in the rule to pin one to a folder.
+- **Renaming a template breaks the folders pointing at it.** Renaming or moving
+  the *folder* is followed correctly; renaming the template note itself is not,
+  and the folder's menu then reads *Template: missing*. Re-picking it takes two
+  clicks, and the failure is at least visible rather than silent.
+- **Callouts can't be folded.** Obsidian's `[!note]-` and `[!note]+` are parsed
+  and their fold character is hidden rather than left on screen as a stray
+  dash, but nothing collapses yet.
 - **Table columns can't be aligned from the UI.** Cells are edited in place and
   rows and columns come and go from the toolbar, but `:--:` alignment still has
   to be typed into the delimiter row by hand, in live preview or source.
@@ -663,9 +949,6 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 
 ## Ideas worth considering next
 
-- **A daily note template.** Any day can be given one now, from the calendar or
-  the palette, but every one of them starts as an empty `# 2026-09-04`; a
-  configurable template and a keyboard shortcut would make it a habit.
 - **A graph or "related notes" view**, built on the backlink map that already
   exists.
 - **Publish a note** as a read-only shared link, straight from the adapter.
@@ -681,8 +964,8 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 218 unit + two-device sync tests
-node scripts/smoke.mjs  # 227 checks in headless Chromium against dist/
+npm test                # 354 unit + two-device sync tests
+node scripts/smoke.mjs  # 335 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 
@@ -705,6 +988,34 @@ also holds the reading mode to its promise on both layouts: a note opened from
 the list has no `contenteditable` anywhere in it and nothing focused, a table in
 it has no typeable cells, and the tap that ends that is the one that puts the
 caret in the word it landed on.
+
+Three of its sections are there because the browser is the only place the answer
+exists. The spreadsheet paste is driven through a real `ClipboardEvent` carrying every
+flavour Excel sends, the picture of the range included — the first version of
+that test built a clipboard from the two text flavours alone, which no
+spreadsheet on earth produces, and so it passed against a handler that checked
+images first and turned every real paste into a screenshot. It asserts the
+negative case too: tab-separated text with no table behind it has to stay text,
+or every indented paste in the app silently becomes a table. The copy button is clicked and the clipboard read back, which
+is also what caught it starting an edit on the note it was pressed in: it swallows
+the mouse events, but tap-to-edit watches pointer events, which arrive first.
+And the callout section writes one the way a person would — type `> [!`, pick
+from the list — because the marker doubles as a CommonMark shortcut link
+reference, so the brackets get hidden as link syntax unless the callout claims
+them first.
+
+The templates section starts by asserting the *absence* of the feature — a
+vault that has never made a `Templates/` folder must show no sign of it in any
+menu, and no folder must appear on its own — then drives the whole opt-in from
+the Settings button through to typing into a note that started from a template,
+checking the caret landed where `{{cursor}}` said rather than at position 0.
+
+The formatting bar's overflow is asserted as a property rather than a button
+count, because the count is a function of the window: at every width the bar
+must have no content it cannot show, and everything it cannot show must be in
+the **…** menu. It is checked in both directions — widening the pane has to
+bring the groups back, which is the failure mode of measuring a bar whose parts
+are already hidden and therefore measure zero.
 
 If Chromium isn't on the default path:
 

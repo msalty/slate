@@ -10,8 +10,34 @@ import { formatBytes } from '../core/util'
 import { notify, settingsOpen } from './state'
 import { apply, BUILD_ID, check, reinstall, updateReady } from '../app/update'
 import { IconClose, IconWarn } from './Icons'
+import { createFolder } from '../core/folders'
+import { createNote } from '../core/vault'
+import {
+  assignedTemplate,
+  hasTemplates,
+  setFolderTemplate,
+  STARTER_TEMPLATE,
+  TEMPLATES_FOLDER,
+  templateNotes,
+} from '../core/templates'
+import { openNote } from './state'
 
 type Tab = 'sync' | 'editor' | 'files' | 'about'
+
+/**
+ * Make `Templates/` and put one template in it, then open it.
+ *
+ * The only path in the app that creates this folder, and it runs from a button
+ * nobody presses by accident. Everything else about templates asks whether the
+ * folder is there and does nothing when it is not.
+ */
+async function startTemplates() {
+  await createFolder('', TEMPLATES_FOLDER)
+  const path = await createNote(TEMPLATES_FOLDER, 'Example', STARTER_TEMPLATE)
+  settingsOpen.value = false
+  openNote(path)
+  notify('Templates/ created. Edit this note, then pick it from a folder’s menu.')
+}
 
 export function Settings() {
   const [tab, setTab] = useState<Tab>('sync')
@@ -306,6 +332,84 @@ export function Settings() {
                   onInput={(e) => update({ fontSize: Number((e.target as HTMLInputElement).value) })}
                 />
               </label>
+              <div class="field">
+                <span>Templates</span>
+                {hasTemplates.value ? (
+                  <>
+                    <small>
+                      {templateNotes.value.length} template
+                      {templateNotes.value.length === 1 ? '' : 's'} in <code>Templates/</code>.
+                      Each one is an ordinary note — open it and edit it like any other.
+                      Right-click a folder in the sidebar and choose <b>Template…</b> to say
+                      which one its new notes start from.
+                    </small>
+                    {/*
+                      * The vault root is the one folder with no row in the
+                      * sidebar and so no menu to right-click, and it is where
+                      * ⌘N puts a note when no folder is selected — and where a
+                      * note created from a broken [[link]] always goes. That
+                      * last one is the case `{{title}}` exists for, so without
+                      * this control the field had nowhere it could be used.
+                      */}
+                    <label class="field">
+                      <span>Notes outside any folder</span>
+                      <select
+                        value={assignedTemplate('') ?? ''}
+                        onChange={(e) =>
+                          void setFolderTemplate('', (e.target as HTMLSelectElement).value || undefined)
+                        }
+                      >
+                        <option value="">No template</option>
+                        {templateNotes.value.map((t) => (
+                          <option key={t.path} value={t.path}>
+                            {t.title}
+                          </option>
+                        ))}
+                      </select>
+                      <small>
+                        Used by ⌘N with no folder selected, and by a note created from a broken{' '}
+                        <code>[[link]]</code> — which is named for the link, so this is where{' '}
+                        <code>{'{{title}}'}</code> earns its keep. It does not reach notes inside
+                        folders; those follow their own folder, or no template at all.
+                      </small>
+                    </label>
+                    <small>
+                      Fields a template can fill in: <code>{'{{title}}'}</code>{' '}
+                      <code>{'{{date}}'}</code> <code>{'{{time}}'}</code>{' '}
+                      <code>{'{{year}}'}</code> <code>{'{{month}}'}</code>{' '}
+                      <code>{'{{day}}'}</code> <code>{'{{weekday}}'}</code>, and{' '}
+                      <code>{'{{cursor}}'}</code> for where writing should start. Dates take a
+                      pattern — <code>{'{{date:DDDD, D MMMM YYYY}}'}</code> — built from{' '}
+                      <code>YYYY MM DD HH mm ss</code>, with <code>MMM</code>/<code>MMMM</code>{' '}
+                      for the month by name and <code>DDD</code>/<code>DDDD</code> for the day.
+                    </small>
+                    <small>
+                      <code>{'{{title}}'}</code> is the note's name when it is made — the date
+                      for a daily note, the link text for one created from a broken{' '}
+                      <code>[[link]]</code>, and the literal word "Untitled" for one made with{' '}
+                      <b>New note here</b>. For folders where you name notes yourself, leave the
+                      heading empty and put <code>{'{{cursor}}'}</code> in it instead.
+                    </small>
+                  </>
+                ) : (
+                  <>
+                    <small>
+                      A folder can start its new notes from boilerplate: a daily note that
+                      already has its date, a meeting note with the fields you always fill in.
+                      Templates are ordinary notes in a <code>Templates/</code> folder, so there
+                      is no template format and nothing new to learn — and nothing at all
+                      happens until you make that folder.
+                    </small>
+                    <button
+                      class="btn"
+                      style={{ alignSelf: 'flex-start' }}
+                      onClick={() => void startTemplates()}
+                    >
+                      Create the Templates folder
+                    </button>
+                  </>
+                )}
+              </div>
               <label class="check">
                 <input
                   type="checkbox"

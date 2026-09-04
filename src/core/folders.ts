@@ -17,6 +17,7 @@
 
 import { computed, signal } from '@preact/signals'
 import {
+  contentNotes,
   deleteNote,
   getRaw,
   isHidden,
@@ -25,16 +26,18 @@ import {
   notes,
   readBackstage,
   revision,
+  tasks,
   writeBackstage,
 } from './vault'
-import { basename, dirname, joinPath, normPath, safeSegment, uid } from './util'
+import { basename, dirname, joinPath, normPath, safeSegment, startOfDay, uid } from './util'
 import {
   evaluateQuery,
   parseQuery,
   type QueryContext,
   type QueryNode,
 } from './tagquery'
-import type { NoteIndexEntry } from './types'
+import type { NoteIndexEntry, TaskItem } from './types'
+import { clearTemplateFolders, repointTemplateFolders } from './templates'
 import { mediaClass } from './util'
 import { resolveEmbed } from './vault'
 
@@ -173,6 +176,10 @@ export async function renameFolder(from: string, name: string): Promise<string> 
     p === src || p.startsWith(`${src}/`) ? `${dest}${p.slice(src.length)}` : p,
   )
   await persistFolders()
+  // A template assignment is keyed by folder path, so it has to come along
+  // too — otherwise the folder is still there, still looks the same, and has
+  // quietly stopped applying its template.
+  await repointTemplateFolders(src, dest)
   return dest
 }
 
@@ -192,6 +199,7 @@ export async function deleteFolder(path: string): Promise<number> {
     (p) => p !== src && !p.startsWith(`${src}/`),
   )
   await persistFolders()
+  await clearTemplateFolders(src)
   return inside.length
 }
 
@@ -227,6 +235,17 @@ export interface SmartFolder {
    * grouping unrelated rules under one heading.
    */
   inherit?: boolean
+  /**
+   * What the folder gathers. Absent means notes, so every folder that existed
+   * before this did carries on unchanged.
+   *
+   * One kind of folder with a switch on it rather than a second tree beside
+   * the first: the rule language, the nesting, the narrowing and the editor
+   * are all the same, and "a saved rule" stays one idea to learn instead of
+   * two. A rule over tasks reaches `is:` and `due:`, which a rule over notes
+   * can write but never matches — a note is neither open nor done.
+   */
+  shows?: 'notes' | 'tasks'
   createdAt: number
 }
 
@@ -265,6 +284,9 @@ export async function saveSmartFolder(
     icon: input.icon,
     parentId,
     inherit: input.inherit ?? true,
+    // Absent rather than 'notes' when it gathers notes, so a folder written
+    // before this existed round-trips through backstage/ unchanged.
+    shows: input.shows === 'tasks' ? 'tasks' : undefined,
   }
   smartFolders.value = existing
     ? smartFolders.value.map((s) => (s.id === folder.id ? folder : s))
@@ -384,7 +406,35 @@ export function smartFolderAncestors(id: string): SmartFolder[] {
 
 /** Notes matching a parsed rule. */
 export function notesMatching(node: QueryNode): NoteIndexEntry[] {
-  return notes.value.filter((n) => evaluateQuery(node, contextFor(n)))
+  return contentNotes.value.filter((n) => evaluateQuery(node, contextFor(n)))
+}
+
+/**
+ * The same rule, run over tasks instead of notes.
+ *
+ * A task carries the tags on its own line *and* the ones its note carries, so
+ * `#home` gathers every task on every note about home without any of them
+ * having been tagged by hand — which is how people actually keep notes, and
+ * the whole reason this is worth having.
+ */
+export function tasksMatching(node: QueryNode): TaskItem[] {
+  const today = startOfDay(Date.now())
+  return tasks.value.filter((t) => evaluateQuery(node, taskContextFor(t, today)))
+}
+
+export function taskContextFor(task: TaskItem, today = startOfDay(Date.now())): QueryContext {
+  return {
+    tags: task.tags,
+    folder: task.folder,
+    // A task is not a note; the note-shaped questions are all false for one.
+    hasTasks: false,
+    hasImages: false,
+    hasAttachments: false,
+    hasLinks: false,
+    done: task.done,
+    due: task.due,
+    today,
+  }
 }
 
 /* ------------------------------------------------------- effective rules */
@@ -431,6 +481,16 @@ export function isGroupFolder(id: string): boolean {
  * folder — the union of everything nested beneath it, so a parent always
  * contains at least what its children do.
  */
+/** True when this folder gathers tasks rather than notes. */
+export function showsTasks(f: SmartFolder | undefined): boolean {
+  return f?.shows === 'tasks'
+}
+
+export function tasksForSmartFolder(id: string): TaskItem[] {
+  const node = effectiveNode(id)
+  return node ? tasksMatching(node) : []
+}
+
 export function notesForSmartFolder(id: string): NoteIndexEntry[] {
   const node = effectiveNode(id)
   if (node) return notesMatching(node)
@@ -456,7 +516,11 @@ export function smartFolderError(f: SmartFolder): string | undefined {
 /** Live match counts per Tag Folder, for the sidebar badges. */
 export const smartFolderCounts = computed<Map<string, number>>(() => {
   const out = new Map<string, number>()
-  for (const s of smartFolders.value) out.set(s.id, notesForSmartFolder(s.id).length)
+  // A folder that gathers tasks counts tasks; counting the notes they sit on
+  // would put a number beside it that matches nothing it shows.
+  for (const s of smartFolders.value) {
+    out.set(s.id, showsTasks(s) ? tasksForSmartFolder(s.id).length : notesForSmartFolder(s.id).length)
+  }
   return out
 })
 

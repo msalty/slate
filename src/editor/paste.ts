@@ -1,5 +1,5 @@
 /**
- * Clipboard and drag-and-drop handling.
+ * Clipboard and drag-and-drop handling, in both directions.
  *
  * Pasting a screenshot is the single most-used path in a notes app, so it has
  * to feel instantaneous. It does not wait for optimization: a placeholder goes
@@ -14,6 +14,8 @@ import { addAttachment } from '../core/vault'
 import { attachmentPath, imagesFromDataTransfer, optimizeImage } from '../core/images'
 import { settings } from '../core/settings'
 import { uid } from '../core/util'
+import { cellText, currentTable, renderTable, tableRowsInSelection } from './table'
+import { gridToHtml, looksLikeGrid, parseDelimited, tableFromGrid } from './tsv'
 
 async function ingest(file: File): Promise<string> {
   const s = settings.value
@@ -72,13 +74,187 @@ export function insertFiles(view: EditorView, files: File[]) {
   })
 }
 
-export const pasteHandler = EditorView.domEventHandlers({
-  paste(event, view) {
-    const images = imagesFromDataTransfer(event.clipboardData)
-    if (!images.length) return false
+/**
+ * A spreadsheet range on the clipboard, as GFM.
+ *
+ * The `<table>` in the HTML flavour is the discriminator and nothing more — see
+ * tsv.ts for why the cells themselves come from the plain-text flavour. Without
+ * that check, every tab-separated paste from a terminal would silently become a
+ * table; with it, a paste is only a table when it came out of something that
+ * thinks in cells.
+ */
+function tableFromClipboard(dt: DataTransfer | null): string | undefined {
+  if (!dt) return undefined
+  if (!/<table[\s>]/i.test(dt.getData('text/html') || '')) return undefined
+  const text = dt.getData('text/plain')
+  if (!text?.trim()) return undefined
+  const grid = parseDelimited(text)
+  if (!looksLikeGrid(grid)) return undefined
+  return renderTable(tableFromGrid(grid))
+}
+
+/**
+ * Drop a table into the note as its own block.
+ *
+ * A pipe table has to start a line, and a table butted straight up against a
+ * paragraph is read as more of that paragraph by stricter renderers than this
+ * one — so whatever is around the caret decides how many newlines go in front
+ * of it and behind it.
+ */
+function insertTableBlock(view: EditorView, table: string) {
+  const { state } = view
+  const range = state.selection.main
+  const line = state.doc.lineAt(range.from)
+  const before = state.doc.sliceString(line.from, range.from)
+  const after = state.doc.sliceString(range.to, line.to)
+
+  let lead = ''
+  if (before.trim()) lead = '\n\n'
+  else if (line.number > 1 && state.doc.line(line.number - 1).text.trim()) lead = '\n'
+
+  const insert = `${lead}${table}\n${after.trim() ? '\n' : ''}`
+  view.dispatch({
+    changes: { from: range.from, to: range.to, insert },
+    selection: { anchor: range.from + insert.length },
+    scrollIntoView: true,
+    userEvent: 'input.paste',
+  })
+}
+
+/**
+ * Put a whole table on the clipboard on demand, rather than by selecting it.
+ *
+ * Dragging across a table works and is what the `copy` handler below is for,
+ * but it is a gesture with no edges: in the rendered modes the table is a
+ * single widget, and a drag that overshoots it by a few pixels takes in the
+ * paragraph underneath — at which point the copy is correctly refused and the
+ * only sign of it is pipes arriving in Excel. This is the same operation with
+ * the aim taken out of it: the caret is somewhere in the table, so the table is
+ * what gets copied.
+ */
+export async function copyTable(view: EditorView): Promise<boolean> {
+  // Resolved here rather than passed in, so a cell still being typed in is
+  // folded into what gets copied — the same rule every other table action uses.
+  const cursor = currentTable(view)
+  if (!cursor) return false
+  const rows = cursor.model.rows.map((r) => r.map(cellText))
+  // Both flavours, for the same reason the selection path writes both: the
+  // markdown for anything that reads text, the table for anything that reads
+  // HTML — which is every spreadsheet.
+  return writeBothFlavours(renderTable(cursor.model), gridToHtml(rows, true))
+}
+
+/**
+ * Write text and HTML together, outside of a copy event.
+ *
+ * The async clipboard API is the way to do this and wants a `ClipboardItem`.
+ * Where that is missing the old trick still works: listen for one copy event,
+ * fill it in by hand, and provoke it with `execCommand` against a selection
+ * nobody sees. A hidden textarea is what supplies that selection — without one
+ * there is nothing to copy and the event never fires.
+ */
+async function writeBothFlavours(text: string, html: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.write && typeof ClipboardItem !== 'undefined') {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'text/plain': new Blob([text], { type: 'text/plain' }),
+          'text/html': new Blob([html], { type: 'text/html' }),
+        }),
+      ])
+      return true
+    }
+  } catch {
+    // Denied permission lands here as readily as a missing API. Fall through.
+  }
+
+  try {
+    let wrote = false
+    const fill = (e: ClipboardEvent) => {
+      e.preventDefault()
+      e.clipboardData?.setData('text/plain', text)
+      e.clipboardData?.setData('text/html', html)
+      wrote = true
+    }
+    document.addEventListener('copy', fill, true)
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.setAttribute('readonly', '')
+    ta.style.cssText = 'position:fixed;top:0;left:-9999px;opacity:0'
+    document.body.appendChild(ta)
+    ta.select()
+    document.execCommand('copy')
+    ta.remove()
+    document.removeEventListener('copy', fill, true)
+    return wrote
+  } catch {
+    return false
+  }
+}
+
+export const clipboardHandler = EditorView.domEventHandlers({
+  /**
+   * Copying a table puts it on the clipboard as a table as well as as markdown.
+   *
+   * Purely additive: the plain-text flavour stays exactly the markdown that was
+   * selected, and an HTML `<table>` is added beside it. Every spreadsheet reads
+   * HTML in preference to plain text — it is how a table copied from a web page
+   * lands in cells — so Excel gets cells while another markdown editor still
+   * gets the pipe table. Writing tab-separated text over the plain flavour
+   * would have bought the first and lost the second.
+   */
+  copy(event, view) {
+    /*
+     * A copy made inside a rendered cell is the browser copying that cell's own
+     * DOM, and the editor's selection is somewhere else entirely — quite
+     * possibly stale. Leave it alone.
+     */
+    if ((event.target as HTMLElement | null)?.closest?.('.cm-table-cell')) return false
+
+    const selected = tableRowsInSelection(view.state)
+    if (!selected) return false
+    const dt = event.clipboardData
+    if (!dt) return false
+
     event.preventDefault()
-    insertFiles(view, images)
+    const { main } = view.state.selection
+    dt.setData('text/plain', view.state.sliceDoc(main.from, main.to))
+    dt.setData('text/html', gridToHtml(selected.rows, selected.hasHeader))
     return true
+  },
+
+  paste(event, view) {
+    /*
+     * The table is looked for FIRST, and that ordering is the whole feature.
+     *
+     * A spreadsheet does not put cells on the clipboard and stop: Excel also
+     * puts a *picture* of the copied range there, beside the html and the
+     * tab-separated text, and the browser hands it over as an ordinary
+     * `image/png` file. So an image-first handler — which this was — turns
+     * every spreadsheet paste into a screenshot of a spreadsheet, and the
+     * table branch below it can never be reached from the app it was written
+     * for.
+     *
+     * Nothing is lost by preferring the table, because the check that finds
+     * one is far narrower than the check that finds an image: it needs a
+     * `<table>` in the html flavour AND text that parses as a grid at least
+     * two columns wide. A copied image, or a copied web page whose html has
+     * an <img> but no table, matches neither and falls straight through.
+     */
+    const table = tableFromClipboard(event.clipboardData)
+    if (table) {
+      event.preventDefault()
+      insertTableBlock(view, table)
+      return true
+    }
+
+    const images = imagesFromDataTransfer(event.clipboardData)
+    if (images.length) {
+      event.preventDefault()
+      insertFiles(view, images)
+      return true
+    }
+    return false
   },
 
   drop(event, view) {

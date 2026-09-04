@@ -8,6 +8,8 @@
 
 import { EditorView, WidgetType } from '@codemirror/view'
 import { attachmentUrl, getRaw } from '../core/vault'
+import { fencedBody } from './codeblock'
+import { ICONS } from './callout'
 import { renderInline } from './inline'
 import { dueLabel, dueTone, formatBytes, mediaClass, startOfDay } from '../core/util'
 import { requestDueMenu, requestLightbox } from './context'
@@ -60,6 +62,175 @@ export class BulletWidget extends WidgetType {
   }
   ignoreEvent() {
     return true
+  }
+}
+
+/* ---------------------------------------------------------------- callout */
+
+/**
+ * The `[!WARNING]` marker at the head of a callout, as an icon.
+ *
+ * This *replaces* the marker rather than sitting beside it, so the first line
+ * reads as a heading — an icon, then whatever title the author wrote. When they
+ * wrote none, the widget supplies the type's own name, which is what GitHub
+ * shows and what makes an untitled callout still announce itself.
+ */
+export class CalloutWidget extends WidgetType {
+  constructor(
+    readonly icon: string,
+    /** The fallback title, or "" when the author wrote their own. */
+    readonly label: string,
+  ) {
+    super()
+  }
+
+  eq(other: CalloutWidget) {
+    return other.icon === this.icon && other.label === this.label
+  }
+
+  toDOM() {
+    const el = document.createElement('span')
+    el.className = 'cm-callout-mark'
+    el.setAttribute('contenteditable', 'false')
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    svg.setAttribute('viewBox', '0 0 24 24')
+    svg.setAttribute('fill', 'none')
+    svg.setAttribute('stroke', 'currentColor')
+    svg.setAttribute('stroke-width', '1.8')
+    svg.setAttribute('stroke-linecap', 'round')
+    svg.setAttribute('stroke-linejoin', 'round')
+    svg.setAttribute('aria-hidden', 'true')
+    // App-authored constants from callout.ts, never note content.
+    svg.innerHTML = ICONS[this.icon] ?? ICONS.note
+    el.appendChild(svg)
+    if (this.label) {
+      const text = document.createElement('span')
+      text.className = 'cm-callout-label'
+      text.textContent = this.label
+      el.appendChild(text)
+    }
+    return el
+  }
+
+  ignoreEvent() {
+    return true
+  }
+}
+
+/* -------------------------------------------------------------- copy code */
+
+const COPY_ICON =
+  '<rect x="9" y="9" width="11.5" height="11.5" rx="2.2"/><path d="M5.5 15H4.6A1.6 1.6 0 0 1 3 13.4V4.6A1.6 1.6 0 0 1 4.6 3h8.8A1.6 1.6 0 0 1 15 4.6v.9"/>'
+const DONE_ICON = '<path d="m5 12.5 4.5 4.5L19 7"/>'
+
+function glyph(cls: string, paths: string): SVGSVGElement {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  svg.setAttribute('class', cls)
+  svg.setAttribute('viewBox', '0 0 24 24')
+  svg.setAttribute('fill', 'none')
+  svg.setAttribute('stroke', 'currentColor')
+  svg.setAttribute('stroke-width', '1.9')
+  svg.setAttribute('stroke-linecap', 'round')
+  svg.setAttribute('stroke-linejoin', 'round')
+  svg.setAttribute('aria-hidden', 'true')
+  svg.innerHTML = paths
+  return svg
+}
+
+/**
+ * Copy a fenced code block, from a button in its top right corner.
+ *
+ * The code is read out of the document when the button is *pressed*, not when
+ * it was drawn. That keeps `eq()` unconditionally true — so typing inside the
+ * block doesn't rebuild the button on every keystroke — and means the button
+ * can never hand over a stale copy of a block that has since been edited.
+ *
+ * Both glyphs are in the DOM from the start and CSS shows one of them, so the
+ * "copied" flash never rebuilds the button and never has to be undone if the
+ * widget goes away while the timer is still running.
+ */
+export class CopyCodeWidget extends WidgetType {
+  private timer: ReturnType<typeof setTimeout> | undefined
+
+  eq() {
+    return true
+  }
+
+  toDOM(view: EditorView) {
+    const btn = document.createElement('button')
+    btn.className = 'cm-code-copy'
+    btn.type = 'button'
+    // Not in the tab order: it is chrome on a block of text, and tabbing
+    // through a note should move through the note.
+    btn.tabIndex = -1
+    btn.setAttribute('contenteditable', 'false')
+    btn.title = 'Copy code'
+    btn.setAttribute('aria-label', 'Copy code')
+    btn.append(glyph('cm-code-copy-idle', COPY_ICON), glyph('cm-code-copy-done', DONE_ICON))
+
+    // Act on mousedown like the checkbox and the due chip do, so the press
+    // never also lands as a caret placement inside the block.
+    btn.addEventListener('mousedown', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+    })
+    btn.addEventListener('click', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const pos = view.posAtDOM(btn)
+      const body = fencedBody(view.state.doc.toString().split('\n'), view.state.doc.lineAt(pos).number - 1)
+      if (body === undefined) return
+      void copyText(body).then((ok) => {
+        if (!ok) return
+        btn.dataset.copied = '1'
+        btn.title = 'Copied'
+        clearTimeout(this.timer)
+        this.timer = setTimeout(() => {
+          delete btn.dataset.copied
+          btn.title = 'Copy code'
+        }, 1400)
+      })
+    })
+    return btn
+  }
+
+  destroy() {
+    clearTimeout(this.timer)
+  }
+
+  ignoreEvent() {
+    return false
+  }
+}
+
+/**
+ * Clipboard write with the old path behind it.
+ *
+ * `navigator.clipboard` needs a secure context, and the README's own LAN
+ * instructions put people on plain `http://` where it is simply absent — so the
+ * button would do nothing at all on exactly the setup the docs describe.
+ */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+      return true
+    }
+  } catch {
+    // Fall through: denied permission lands here as readily as no API at all.
+  }
+  try {
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.setAttribute('readonly', '')
+    ta.style.cssText = 'position:fixed;top:0;left:-9999px;opacity:0'
+    document.body.appendChild(ta)
+    ta.select()
+    const ok = document.execCommand('copy')
+    ta.remove()
+    return ok
+  } catch {
+    return false
   }
 }
 
