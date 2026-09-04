@@ -30,6 +30,7 @@ const SHARED_KEYS = [
   'attachmentFolder',
   'fontSize',
   'sortBy',
+  'taskGroupBy',
 ] as const
 
 type SharedKey = (typeof SHARED_KEYS)[number]
@@ -54,6 +55,7 @@ function defaults(): AppSettings {
     attachmentFolder: 'attachments',
     fontSize: 15,
     sortBy: 'mtime',
+    taskGroupBy: 'none',
     deviceId: uid(8),
     deviceName: guessDeviceName(),
   }

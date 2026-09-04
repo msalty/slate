@@ -18,8 +18,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 322 unit and two-device sync tests
-node scripts/smoke.mjs # 304-check browser smoke test against dist/
+npm test               # 332 unit and two-device sync tests
+node scripts/smoke.mjs # 310-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -294,6 +294,20 @@ and `due:overdue`, `due:today`, `due:soon`, `due:none`, `due:any`. So
 #work due:overdue          work that has slipped
 #home AND NOT #urgent      everything at home that can wait
 ```
+
+**Any task list can be arranged**, from the ⋮ beside its heading: *No
+grouping*, *By due date* — Overdue, Today, This week, Later, No date, Done, in
+that order — or *By note*. One setting for all three places a task list
+appears, because it is a way of reading such a list rather than a property of
+one of them, and grouping by note stops repeating the note's name down the side
+of every row.
+
+Not **by tag**, and that is a decision rather than an omission. A task carries
+the tags on its own line *and* the ones its note carries, so a job that is both
+`#home` and `#urgent` has no single group: it belongs in two, which means the
+same task in the list twice, a tick that has to update both, and counts that no
+longer sum. The inheritance that makes task tags worth having is exactly what
+makes grouping by them ambiguous. Due date and note are one apiece.
 
 The tasks appear in the note list's place, as the same rows the calendar rail
 and the phone's Tasks tab use — so ticking one there writes to the note it lives
@@ -910,8 +924,8 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 322 unit + two-device sync tests
-node scripts/smoke.mjs  # 304 checks in headless Chromium against dist/
+npm test                # 332 unit + two-device sync tests
+node scripts/smoke.mjs  # 310 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

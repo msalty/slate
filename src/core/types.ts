@@ -235,6 +235,13 @@ export interface AppSettings {
   fontSize: number
   /** Sort order for the note list. */
   sortBy: 'mtime' | 'ctime' | 'title'
+  /**
+   * How every task list is arranged — the calendar rail, the phone's Tasks
+   * tab and a Tag Folder that gathers tasks. One setting rather than one per
+   * place: it is a way of reading a list of tasks, and there is no reason to
+   * want it one way in the rail and another in a folder.
+   */
+  taskGroupBy: 'none' | 'due' | 'note'
   deviceId: string
   deviceName: string
 }

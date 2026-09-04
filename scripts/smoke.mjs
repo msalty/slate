@@ -2410,6 +2410,63 @@ try {
     (await page.locator('.list-scroll .task-row').count()) === 2,
     `${await page.locator('.list-scroll .task-row').count()} rows`,
   )
+  /*
+   * Arranging the list. Grouping by *tag* is deliberately not on offer: a task
+   * carries the tags on its own line and the ones its note carries, so a job
+   * that is both #home and #urgent has no single group. Due date and note are
+   * unambiguous, and by-note is the one that pays off here — the folder's
+   * tasks come from two different notes precisely because the tag was
+   * inherited.
+   */
+  await page.locator('.list-scroll .rail-group-btn').click()
+  await page.waitForTimeout(300)
+  const arrangeRows = await page.locator('.menu-item').allInnerTexts()
+  check(
+    'a task list can be arranged, but never by tag',
+    arrangeRows.some((r) => r.includes('By due date')) &&
+      arrangeRows.some((r) => r.includes('By note')) &&
+      !arrangeRows.join(' ').toLowerCase().includes('tag'),
+    JSON.stringify(arrangeRows),
+  )
+  await page.locator('.menu-item:has-text("By note")').click()
+  await page.waitForTimeout(500)
+  const noteGroups = await page.locator('.list-scroll .task-group').allInnerTexts()
+  check(
+    'grouping by note gathers the tasks under the notes they came from',
+    noteGroups.includes('Kitchen jobs') && noteGroups.length >= 1,
+    JSON.stringify(noteGroups),
+  )
+  check(
+    'and stops repeating the note name down the side of every row',
+    (await page.locator('.list-scroll .task-row .task-meta').count()) === 0,
+  )
+
+  await page.locator('.list-scroll .rail-group-btn').click()
+  await page.waitForTimeout(300)
+  await page.locator('.menu-item:has-text("By due date")').click()
+  await page.waitForTimeout(500)
+  const dueGroups = await page.locator('.list-scroll .task-group').allInnerTexts()
+  check(
+    'grouping by date bands them in the order they are worth reading',
+    dueGroups.join('|') === ['Overdue', 'No date'].join('|'),
+    JSON.stringify(dueGroups),
+  )
+
+  /* One setting, so the rail is arranged the same way as the folder. */
+  check(
+    'and the rail follows, because it is one way of reading a task list',
+    (await page.locator('.rail .task-group').count()) > 0,
+    JSON.stringify(await page.locator('.rail .task-group').allInnerTexts()),
+  )
+  await page.locator('.list-scroll .rail-group-btn').click()
+  await page.waitForTimeout(300)
+  await page.locator('.menu-item:has-text("No grouping")').click()
+  await page.waitForTimeout(400)
+  check(
+    'turning it off leaves the list as it was',
+    (await page.locator('.list-scroll .task-group').count()) === 0,
+  )
+
   await page.locator('.side-row:has-text("All Notes")').first().click()
   await page.waitForTimeout(400)
 

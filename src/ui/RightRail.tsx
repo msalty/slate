@@ -8,11 +8,22 @@
 
 import { getEntry, notesByDay, notesOnDay, setDue, tasks, toggleTask } from '../core/vault'
 import type { TaskItem } from '../core/types'
+import { Fragment } from 'preact'
+import { groupTasks } from '../core/taskgroups'
+import { settings, update } from '../core/settings'
+import { openMenu } from './Menu'
 import { dailyNoteFor } from '../core/daily'
 import { monthGrid, startOfDay, ymd } from '../core/util'
 import { calendarMonth, openDailyNote, openNote, scope, selectedDay } from './state'
 import { DueChip } from './DueChip'
-import { IconCalendar, IconCheck, IconChevronLeft, IconChevronRight, IconPlus } from './Icons'
+import {
+  IconCalendar,
+  IconCheck,
+  IconChevronLeft,
+  IconChevronRight,
+  IconDots,
+  IconPlus,
+} from './Icons'
 
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
@@ -159,6 +170,31 @@ export function TasksPanel({
   const done = all.filter((t) => t.done)
   const shown = items ? all : showDone ? [...open, ...done] : open
 
+  const by = settings.value.taskGroupBy
+  const groups = groupTasks(shown, by)
+
+  /**
+   * How the list is arranged, chosen once for every list in the app.
+   *
+   * Grouping by *tag* is deliberately not on offer: a task carries the tags on
+   * its own line and the ones its note carries, so a job that is both `#home`
+   * and `#urgent` has no single group — see core/taskgroups.ts.
+   */
+  const groupMenu = (e: { clientX: number; clientY: number }) =>
+    openMenu(
+      e,
+      ([
+        ['none', 'No grouping'],
+        ['due', 'By due date'],
+        ['note', 'By note'],
+      ] as const).map(([id, label]) => ({
+        label,
+        checked: by === id,
+        onSelect: () => update({ taskGroupBy: id }),
+      })),
+      'Arrange tasks',
+    )
+
   return (
     <div class="rail-section">
       <h3>
@@ -168,6 +204,17 @@ export function TasksPanel({
         <span>
           {open.length} open{done.length ? ` · ${done.length} done` : ''}
         </span>
+        {all.length > 1 && (
+          <button
+            class="rail-group-btn"
+            title="Arrange tasks"
+            aria-label="Arrange tasks"
+            aria-haspopup="menu"
+            onClick={groupMenu}
+          >
+            <IconDots size={14} />
+          </button>
+        )}
       </h3>
 
       {all.length === 0 ? (
@@ -182,7 +229,10 @@ export function TasksPanel({
       ) : shown.length === 0 ? (
         <p class="rail-empty">All clear.</p>
       ) : (
-        shown.slice(0, 200).map((t) => (
+        groups.map((g) => (
+          <Fragment key={g.key}>
+            {g.label && <div class="task-group">{g.label}</div>}
+            {g.items.slice(0, 200).map((t) => (
           <div key={t.id} class="task-row" data-done={t.done ? '1' : '0'}>
             <input
               type="checkbox"
@@ -201,9 +251,11 @@ export function TasksPanel({
               }}
             >
               {t.text || <em class="dim">Untitled task</em>}
-              <span class="task-meta">
-                <span>{getEntry(t.path)?.title ?? t.noteTitle}</span>
-              </span>
+              {by !== 'note' && (
+                <span class="task-meta">
+                  <span>{getEntry(t.path)?.title ?? t.noteTitle}</span>
+                </span>
+              )}
             </span>
             <DueChip
               due={t.due}
@@ -211,6 +263,8 @@ export function TasksPanel({
               onPick={(date) => void setDue(t.path, t.line, date)}
             />
           </div>
+            ))}
+          </Fragment>
         ))
       )}
     </div>

@@ -1218,6 +1218,47 @@ body.resizing .pane-resizer::after {
 .rail-section h3 .spacer {
   flex: 1;
 }
+/* Faint until wanted: it is chrome on a list, not part of the list. */
+.rail-group-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin: -4px -4px -4px 2px;
+  border-radius: 6px;
+  color: var(--text-faint);
+  opacity: 0.55;
+  transition: opacity var(--dur), background var(--dur);
+}
+.rail-section:hover .rail-group-btn,
+.rail-group-btn:focus-visible {
+  opacity: 1;
+}
+.rail-group-btn:hover {
+  background: var(--row-hover);
+  color: var(--text);
+}
+
+/*
+ * A group heading. Quieter than the section's own heading above it — it
+ * divides a list rather than announcing one — and it never sits at the very
+ * top without something above it, because the first group follows the h3.
+ */
+.task-group {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--text-faint);
+  padding: 10px 0 4px;
+  border-top: 1px solid var(--border);
+  margin-top: 6px;
+}
+.task-group:first-of-type {
+  border-top: 0;
+  margin-top: 0;
+  padding-top: 0;
+}
 
 .task-row {
   display: flex;
