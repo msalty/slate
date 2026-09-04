@@ -21,8 +21,8 @@ import {
   saveNote,
   deleteNote,
   createNote,
-  forget,
-  trashDisplayName,
+  purge,
+  trashTitle,
 } from '../core/vault'
 import { activeEditor } from '../editor/context'
 import { focusedCell } from '../editor/table'
@@ -77,7 +77,7 @@ export function EditorPane() {
   const rev = revision.value
   const entry = path ? getEntry(path) : undefined
   const file = path ? getRaw(path) : undefined
-  // A note open from Recently Deleted is shown, not edited — you restore it
+  // A note open from Deleted is shown, not edited — you restore it
   // first. Reading one is how you decide whether you want it back.
   const trashed = !!path && isTrashed(path)
 
@@ -391,7 +391,7 @@ export function EditorPane() {
         )}
         {trashed ? (
           <span class="editor-title-input" aria-label="Deleted note">
-            {trashDisplayName(path)}
+            {trashTitle(path)}
           </span>
         ) : (
         <input
@@ -490,7 +490,7 @@ export function EditorPane() {
                       await deleteNote(path)
                       activePath.value = undefined
                       closeMobileEditor()
-                      notify('Moved to Recently Deleted')
+                      notify('Moved to Deleted')
                     },
                   },
                 ],
@@ -520,11 +520,11 @@ export function EditorPane() {
             <button
               class="icon-btn"
               onClick={async () => {
-                if (!confirm(`Move "${entry.title}" to Recently Deleted?`)) return
+                if (!confirm(`Move "${entry.title}" to Deleted?`)) return
                 saveRef.current.flush()
                 await deleteNote(path)
                 activePath.value = undefined
-                notify('Moved to Recently Deleted')
+                notify('Moved to Deleted')
               }}
               title="Delete note"
             >
@@ -542,11 +542,15 @@ export function EditorPane() {
         )}
       </div>
 
+      {/*
+        * The list's rows have no buttons on them — a right-click menu and a
+        * swipe cover that — but a note you have opened out of Deleted is off
+        * the list, and this banner is the only thing on screen that knows it
+        * is deleted at all. So it keeps its two.
+        */}
       {trashed && (
         <div class="trash-banner">
-          <span>
-            In Recently Deleted. Restore it to make changes.
-          </span>
+          <span>Deleted. Restore it to make changes.</span>
           <span class="spacer" />
           <button
             class="row-action"
@@ -561,11 +565,12 @@ export function EditorPane() {
           <button
             class="row-action row-action-danger"
             onClick={async () => {
-              if (!confirm(`Permanently delete "${trashDisplayName(path)}"? This cannot be undone.`))
-                return
-              await forget(path)
+              const name = trashTitle(path)
+              if (!confirm(`Permanently delete "${name}"? This cannot be undone.`)) return
+              await purge(path)
               activePath.value = undefined
               if (compact) closeMobileEditor()
+              notify(`Deleted "${name}" for good`)
             }}
           >
             Delete

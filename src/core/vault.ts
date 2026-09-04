@@ -789,7 +789,14 @@ export async function restoreFromTrash(trashPath: string, to?: string): Promise<
   const name = trashDisplayName(trashPath)
   let dest = to ?? name
   let n = 2
-  while (files.has(dest)) {
+  /*
+   * Only a file that is actually there counts as being in the way. Deleting
+   * something leaves a tombstone at the path it came from — the row that tells
+   * sync the remote copy has to go — and treating that as occupied meant a
+   * note deleted and restored came back as "Note 2", every time, with nothing
+   * called "Note" anywhere for it to have collided with.
+   */
+  while (files.has(dest) && !files.get(dest)!.deleted) {
     const dot = name.lastIndexOf('.')
     dest = dot > 0 ? `${name.slice(0, dot)} ${n++}${name.slice(dot)}` : `${name} ${n++}`
   }
@@ -805,7 +812,7 @@ export async function deleteFile(path: string): Promise<void> {
   return deleteNote(path)
 }
 
-/** True for anything sitting in Recently Deleted. */
+/** True for anything sitting in Deleted. */
 export function isTrashed(path: string): boolean {
   return path.startsWith(`${TRASH}/`)
 }
@@ -818,11 +825,59 @@ export function trashDisplayName(path: string): string {
   return basename(path).replace(/^\d{4}-\d{2}-\d{2}T[\d-]+--(?:\d+--)?/, '')
 }
 
-export function trashItems(): VaultFile[] {
+/**
+ * What a deleted thing is called on screen.
+ *
+ * A note goes by its title everywhere else in the app, so it goes by its title
+ * here too — the `.md` is how the file is stored, not what the note is called,
+ * and a list that shows one row as "Groceries" and the next as "Groceries.md"
+ * is showing the same thing two ways. A deleted *file* keeps its extension,
+ * which is its name and half of what says which file it was.
+ */
+export function trashTitle(path: string): string {
+  return trashDisplayName(path).replace(/\.md$/i, '')
+}
+
+/**
+ * Everything in Deleted, newest first.
+ *
+ * A computed rather than a plain function, and it reads `revision` like every
+ * other derived signal here. As a bare function wrapped in a `computed()` by
+ * its caller it had no dependencies at all, so the signal settled after its
+ * first read and never recomputed: deleting something removed the file but
+ * left the row on screen, which looked exactly like a delete that did nothing.
+ */
+export const trashFiles = computed<VaultFile[]>(() => {
+  revision.value
   const out: VaultFile[] = []
   for (const f of files.values())
     if (!f.deleted && f.path.startsWith(`${TRASH}/`)) out.push(f)
   return out.sort((a, b) => b.mtime - a.mtime)
+})
+
+export function trashItems(): VaultFile[] {
+  return trashFiles.value
+}
+
+/**
+ * Permanently delete one file out of Deleted.
+ *
+ * A tombstone, not a straight drop from the local database: the remote still
+ * has the file, and forgetting it here would only mean the next sync pulled it
+ * back down. The tombstone is what tells sync to remove the remote copy too,
+ * and it disappears once that has happened — the same route a move takes for
+ * the path it leaves behind.
+ */
+export async function purge(path: string): Promise<void> {
+  if (!files.has(path)) return
+  await tombstone(path)
+}
+
+/** Permanently delete everything in Deleted. Returns how many went. */
+export async function emptyTrash(): Promise<number> {
+  const doomed = trashFiles.value.map((f) => f.path)
+  for (const p of doomed) await tombstone(p)
+  return doomed.length
 }
 
 /**
@@ -973,11 +1028,15 @@ export function search(query: string, limit = 200): SearchHit[] {
   const hits: SearchHit[] = []
   for (const e of notes.value) {
     const f = files.get(e.path)
-    const body = (f?.text ?? '').toLowerCase()
+    const text = f?.text ?? ''
+    const body = text.toLowerCase()
     const title = e.title.toLowerCase()
     let score = 0
-    let firstAt = -1
+    let snipAt = -1
+    let snipLen = 0
     let ok = true
+    /** Computed at most once per note, and only when there is a snippet to cut. */
+    let prose = -1
     for (const t of terms) {
       const inTitle = title.includes(t)
       const at = body.indexOf(t)
@@ -988,22 +1047,75 @@ export function search(query: string, limit = 200): SearchHit[] {
       if (inTitle) score += title === t ? 100 : title.startsWith(t) ? 40 : 20
       if (at >= 0) {
         score += 5
-        if (firstAt < 0) firstAt = at
+        if (snipAt < 0) {
+          if (prose < 0) prose = proseStart(text)
+          /*
+           * Looked for again from where the note's own prose starts, because
+           * the first hit is so often the `# Heading` the title was taken
+           * from — and a snippet of the title is a snippet of the bold line
+           * directly above it. Staying unset when the word appears nowhere
+           * else is the point: the row falls back to its excerpt rather than
+           * showing a snippet with nothing marked in it.
+           */
+          const pa = body.indexOf(t, prose)
+          if (pa >= 0) {
+            snipAt = pa
+            // This term's length, not the first term's: the window is sized
+            // for the word it is centred on.
+            snipLen = t.length
+          }
+        }
       }
     }
     if (!ok) continue
     // Recency is a mild tiebreaker, never enough to outrank a title match.
     score += Math.max(0, 10 - (Date.now() - e.mtime) / (86_400_000 * 30))
-    hits.push({ entry: e, score, snippet: snippetAt(f?.text ?? '', firstAt, terms[0].length) })
+    hits.push({ entry: e, score, snippet: snippetAt(text, snipAt, snipLen, Math.max(prose, 0)) })
   }
   return hits.sort((a, b) => b.score - a.score).slice(0, limit)
 }
 
-function snippetAt(text: string, at: number, len: number): string {
+/** Where a note's own prose starts: past frontmatter, and past its heading. */
+function proseStart(text: string): number {
+  const { bodyStart } = parseFrontmatter(text)
+  // Only a heading that opens the note — a later one is prose you scrolled to.
+  const m = /^[ \t]*#{1,6}[ \t]+[^\n]*\n?/.exec(text.slice(bodyStart))
+  return bodyStart + (m ? m[0].length : 0)
+}
+
+/**
+ * The bit of a note around the match, for the result row to show instead of
+ * the opening line.
+ *
+ * Cleaned the way an excerpt is cleaned. The window is cut out of the raw
+ * file, so without this it arrives carrying whatever markdown happened to be
+ * around the word — `**`, backticks, a `#` from a heading, the brackets of a
+ * wikilink — which is noise in a one-line preview and nothing the reader
+ * typed. Empty when the match was in the title alone: there is no body
+ * position to centre on, and the row falls back to its usual excerpt.
+ *
+ * `from` is the floor for the leading context. Without it the 40 characters
+ * of run-up walk straight back out of the prose and into the frontmatter and
+ * heading the match was deliberately found past.
+ */
+function snippetAt(text: string, at: number, len: number, from = 0): string {
   if (at < 0) return ''
-  const start = Math.max(0, at - 40)
+  /*
+   * A short run-up on purpose. The list pane is narrow — around forty
+   * characters of preview before it ellipsises, shared with the date — so
+   * every character spent ahead of the match is a character of risk that the
+   * word you searched for is the one clipped off the end.
+   */
+  let start = Math.max(from, at - 20)
+  // And never opening mid-word: "…e it is easier" reads as a typo.
+  if (start > from) {
+    const sp = text.indexOf(' ', start)
+    if (sp >= 0 && sp < at) start = sp + 1
+  }
   const end = Math.min(text.length, at + len + 80)
-  return `${start > 0 ? '…' : ''}${text.slice(start, end).replace(/\s+/g, ' ')}${end < text.length ? '…' : ''}`
+  const clean = stripInline(text.slice(start, end).replace(/^#{1,6}\s+/gm, ''))
+  if (!clean) return ''
+  return `${start > from ? '…' : ''}${clean}${end < text.length ? '…' : ''}`
 }
 
 /* ------------------------------------------------------------------- tasks */

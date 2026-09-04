@@ -12,7 +12,7 @@
  * `EditorState.readOnly` is deliberately NOT set with it. That one refuses
  * changes, and a note being read still has to accept the ones that are not
  * typing: a task ticked off in passing, a merge landing from another device.
- * Recently Deleted is the place that really is read-only, and it sets both.
+ * Deleted is the place that really is read-only, and it sets both.
  */
 
 import { Compartment } from '@codemirror/state'

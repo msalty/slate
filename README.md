@@ -494,8 +494,10 @@ opens or closes anything by itself.
 network at all, and syncs when connectivity returns.
 
 **Never losing things.** Deletes are soft — notes move to `backstage/trash/` and
-show up under Recently Deleted, where opening one shows its contents read-only
-so you can decide with the note in front of you rather than from its title. Every save, sync pull and delete writes a local
+show up under Deleted, where opening one shows its contents read-only
+so you can decide with the note in front of you rather than from its title.
+Nothing in there expires: it stays until you restore it, delete that one for
+good from its menu, or empty the whole list from the header. Every save, sync pull and delete writes a local
 snapshot, and the history dialog restores any of them — each one labelled with
 the device it came from, so a version pulled from the server says *which*
 machine wrote it. Conflicting edits are merged when possible and kept as two
@@ -516,6 +518,26 @@ double-click the divider to put it back; ⌘\ hides the sidebar entirely and the
 button in the note list's header brings it back. The editor never gives up its
 space: drag the panels wider than the window can afford and they are the ones
 that yield.
+
+The sidebar's three sections — **Folders**, **Tag Folders** and **Tags** — each
+fold away from their header, and a folded one carries the count of what is
+inside it. Which are folded is a preference like any other, so it survives a
+reload and follows the vault to your other devices.
+
+**Search filters the list in front of you.** In Files it searches files, in
+Deleted it searches deleted things, in Tasks it searches tasks — the header and
+the placeholder both name which, so a screen of five results never goes on
+claiming to be All Notes. Anything showing notes searches notes across the whole
+vault, folder or no folder, which is the convention every notes app follows and
+means a search is never quietly limited to whatever you happened to have open.
+Changing scope clears the query, so the box is always about the list under it.
+
+**A result shows the line the match is on**, cleaned of its markdown and cut
+around the word, with every term marked in the title and the snippet alike —
+because the one thing a result row has to answer is why it is in the list, and
+a note's opening line usually says nothing about it. A word that appears only
+in the title keeps its ordinary excerpt: there is nothing in the body to point
+at, and the marked title has already said why the note is there.
 
 Long-press or right-click a Tag Folder for *New folder inside…*, *Move…*, and
 the two delete variants.

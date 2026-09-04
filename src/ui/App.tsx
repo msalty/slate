@@ -31,6 +31,7 @@ import {
   openNote,
   paletteOpen,
   scope,
+  setScope,
   settingsOpen,
   dismissToast,
   toast,
@@ -141,7 +142,7 @@ export function App() {
       openDueMenu({ clientX: x, clientY: y }, current, (date) => applyDue(pos, date))
     }
     const onTag = (e: Event) => {
-      scope.value = { kind: 'tag', tag: (e as CustomEvent<{ tag: string }>).detail.tag }
+      setScope({ kind: 'tag', tag: (e as CustomEvent<{ tag: string }>).detail.tag })
       if (layoutMode.value === 'compact') {
         mobileTab.value = 'notes'
         closeMobileEditor()

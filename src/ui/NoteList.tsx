@@ -10,12 +10,13 @@ import {
   renameAttachment,
   resolveEmbed,
   restoreFromTrash,
-  forget,
+  emptyTrash,
+  purge,
   getEntry,
-  trashDisplayName,
+  trashTitle,
 } from '../core/vault'
 import { dailyNoteFor } from '../core/daily'
-import { setFrontmatterKey } from '../core/markdown'
+import { excerptOf, setFrontmatterKey } from '../core/markdown'
 import { getRaw, saveNote } from '../core/vault'
 import type { NoteIndexEntry, VaultFile } from '../core/types'
 import { basename, formatBytes, mediaClass, relativeTime, startOfDay, ymd } from '../core/util'
@@ -29,7 +30,12 @@ import {
   orphansOnly,
   query,
   scope,
+  queryTerms,
   scopeLabel,
+  searchKind,
+  searchLabel,
+  searchSnippets,
+  searching,
   sections,
   trashList,
   unlinkedList,
@@ -45,6 +51,7 @@ import {
 import { TasksPanel } from './RightRail'
 import { openMenu, useLongPress, type MenuItem } from './Menu'
 import { SwipeRow, type SwipeAction } from './SwipeRow'
+import { Highlight } from './Highlight'
 import { openPrompt } from './PromptDialog'
 import { layoutMode, toggleSidebar } from './layout'
 import { MobileScopeBar } from './Mobile'
@@ -69,6 +76,13 @@ function NoteRow({ entry }: { entry: NoteIndexEntry }) {
   const active = activePath.value === entry.path
   const thumb = thumbFor(entry)
   const stamp = settings.value.sortBy === 'ctime' ? entry.ctime : entry.mtime
+  const hl = queryTerms.value
+  /*
+   * A result row shows the line the match is on, not the note's opening line.
+   * Which word put a note in the list is the one thing the row has to answer,
+   * and the first line of a long note usually says nothing about it.
+   */
+  const snippet = searchSnippets.value.get(entry.path)
   const longPress = useLongPress(
     () => noteMenu(entry),
     () => entry.title,
@@ -86,10 +100,18 @@ function NoteRow({ entry }: { entry: NoteIndexEntry }) {
       {...longPress}
     >
       <span class="note-row-main">
-        <span class="note-row-title">{entry.title}</span>
+        <span class="note-row-title">
+          <Highlight text={entry.title} terms={hl} />
+        </span>
         <span class="note-row-sub">
           <span class="note-row-date">{relativeTime(stamp)}</span>
-          <span class="note-row-excerpt">{entry.excerpt || 'No additional text'}</span>
+          <span class="note-row-excerpt">
+            {snippet ? (
+              <Highlight text={snippet} terms={hl} />
+            ) : (
+              entry.excerpt || 'No additional text'
+            )}
+          </span>
         </span>
       </span>
       <span class="note-row-badges">
@@ -111,7 +133,7 @@ function NoteRow({ entry }: { entry: NoteIndexEntry }) {
           onSelect: async () => {
             await deleteNote(entry.path)
             if (activePath.value === entry.path) activePath.value = undefined
-            notify(`Moved "${entry.title}" to Recently Deleted`)
+            notify(`Moved "${entry.title}" to Deleted`)
           },
         },
       ]}
@@ -191,7 +213,7 @@ function noteMenu(entry: NoteIndexEntry): MenuItem[] {
       onSelect: async () => {
         await deleteNote(entry.path)
         if (activePath.value === entry.path) activePath.value = undefined
-        notify(`Moved "${entry.title}" to Recently Deleted`)
+        notify(`Moved "${entry.title}" to Deleted`)
       },
     },
   ]
@@ -243,6 +265,16 @@ export function NoteList({ children }: { children?: preact.ComponentChildren }) 
       ? startOfDay(s.date)
       : undefined
 
+  /*
+   * Searching renames the header, because the old one was a lie: the list
+   * underneath is a handful of results and the header went on saying "All
+   * Notes". It names what is being searched rather than just saying "Search",
+   * since that is the one thing the screen otherwise never states — the
+   * placeholder said it, and the placeholder is gone the moment you type.
+   */
+  const kind = searchKind.value
+  const title = searching.value ? `Search ${searchLabel(kind)}` : scopeLabel(s)
+
   return (
     <div class="pane list-pane">
       <div class="pane-head">
@@ -252,7 +284,7 @@ export function NoteList({ children }: { children?: preact.ComponentChildren }) 
           </button>
         )}
         <span class={compact ? 'pane-title pane-title-lg' : 'pane-title'}>
-          {compact ? 'Notes' : scopeLabel(s)}
+          {compact && !searching.value ? 'Notes' : title}
         </span>
         <span class="spacer" />
         {compact && (
@@ -297,10 +329,10 @@ export function NoteList({ children }: { children?: preact.ComponentChildren }) 
           <IconSearch size={14} />
           <input
             type="search"
-            placeholder="Search all notes"
+            placeholder={`Search ${searchLabel(kind)}`}
             value={query.value}
             onInput={(e) => (query.value = (e.target as HTMLInputElement).value)}
-            aria-label="Search notes"
+            aria-label={`Search ${searchLabel(kind)}`}
           />
           {query.value && (
             <button class="icon-btn" style={{ width: 18, height: 18 }} onClick={() => (query.value = '')}>
@@ -312,20 +344,26 @@ export function NoteList({ children }: { children?: preact.ComponentChildren }) 
 
       {compact && <MobileScopeBar />}
 
+      {/*
+        * A search filters the list that is here; it never replaces it. Typing
+        * in Files used to swap the whole pane for note results, so the one
+        * thing you could not do from the Files browser was find a file.
+        */}
       <div class="list-scroll" ref={scrollRef}>
-        {s.kind === 'trash' && !query.value ? (
+        {s.kind === 'trash' ? (
           <TrashView />
-        ) : s.kind === 'files' && !query.value ? (
+        ) : s.kind === 'files' ? (
           <FilesView />
-        ) : s.kind === 'unlinked' && !query.value ? (
+        ) : s.kind === 'unlinked' ? (
           <UnlinkedView />
-        ) : s.kind === 'tasks' && !query.value ? (
+        ) : s.kind === 'tasks' ? (
           /*
            * The Tasks row lists tasks, not the notes that happen to contain
            * them: it counts tasks in the sidebar, and a list of note titles is
            * one click short of what the count promised.
            */
           <TasksPanel
+            query={query.value}
             empty={
               <>
                 Type <code>- [ ]</code> in any note to add a task. Every one in the vault turns up
@@ -333,7 +371,7 @@ export function NoteList({ children }: { children?: preact.ComponentChildren }) 
               </>
             }
           />
-        ) : taskFolder && !query.value ? (
+        ) : taskFolder ? (
           /*
            * A Tag Folder that gathers tasks puts them here, where its notes
            * would otherwise be. The same rows the rail and the phone's Tasks
@@ -342,6 +380,7 @@ export function NoteList({ children }: { children?: preact.ComponentChildren }) 
            */
           <TasksPanel
             items={tasksForSmartFolder(s.kind === 'smart' ? s.id : '')}
+            query={query.value}
             empty={<>No tasks match this folder’s rule yet.</>}
           />
         ) : visibleNotes.value.length === 0 ? (
@@ -381,102 +420,142 @@ export function NoteList({ children }: { children?: preact.ComponentChildren }) 
   )
 }
 
+/** Restore one deleted thing and open it where it lands. */
+async function restoreItem(path: string) {
+  const p = await restoreFromTrash(path)
+  openNote(p)
+  notify('Restored')
+}
+
+/** Permanently delete one deleted thing, after asking. */
+async function purgeItem(path: string) {
+  const name = trashTitle(path)
+  if (!confirm(`Permanently delete "${name}"? This cannot be undone.`)) return
+  if (activePath.value === path) activePath.value = undefined
+  await purge(path)
+  notify(`Deleted "${name}" for good`)
+}
+
 /** Actions on a deleted note or file, shared by the menu and the swipe. */
 function trashMenu(f: { path: string }): MenuItem[] {
-  const name = trashDisplayName(f.path)
   return [
-    {
-      label: 'Restore',
-      onSelect: async () => {
-        const p = await restoreFromTrash(f.path)
-        openNote(p)
-        notify('Restored')
-      },
-    },
+    { label: 'Restore', onSelect: () => restoreItem(f.path) },
     {
       label: 'Delete permanently',
       danger: true,
       separated: true,
-      onSelect: async () => {
-        if (!confirm(`Permanently delete "${name}"? This cannot be undone.`)) return
-        if (activePath.value === f.path) activePath.value = undefined
-        await forget(f.path)
-      },
+      onSelect: () => purgeItem(f.path),
     },
   ]
 }
 
+/**
+ * One row in Deleted.
+ *
+ * The same shape as a note row and a file row — title, date, preview, and a
+ * thumbnail when there is an image to show — rather than the two-line variant
+ * with its own Restore and Delete buttons it used to be. The buttons are gone:
+ * right-click gives the menu on a pointer, a swipe gives the same two actions
+ * on touch, and both were already here doing the job.
+ *
+ * Its own component so `useLongPress` sits at a stable hook position as the
+ * list shortens under it.
+ */
+function TrashRow({ f }: { f: VaultFile }) {
+  const name = trashTitle(f.path)
+  const url = mediaClass(f.path) === 'image' ? attachmentUrl(f.path) : undefined
+  const longPress = useLongPress(
+    () => trashMenu(f),
+    () => name,
+  )
+
+  return (
+    <SwipeRow
+      id={f.path}
+      actions={[
+        { label: 'Restore', onSelect: () => restoreItem(f.path) },
+        { label: 'Delete', danger: true, onSelect: () => purgeItem(f.path) },
+      ]}
+    >
+      {/*
+        * A deleted note you cannot read is a deleted note you cannot decide
+        * about, so the row opens it — read-only in the editor, or in the
+        * lightbox when what was deleted was a file rather than a note.
+        */}
+      <button
+        class="note-row"
+        aria-current={activePath.value === f.path}
+        onClick={() => (f.kind === 'attachment' ? (lightboxPath.value = f.path) : openNote(f.path))}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          openMenu(e, trashMenu(f), name)
+        }}
+        {...longPress}
+      >
+        <span class="note-row-main">
+          <span class="note-row-title">
+            <Highlight text={name} terms={queryTerms.value} />
+          </span>
+          <span class="note-row-sub">
+            <span class="note-row-date">{relativeTime(f.mtime)}</span>
+            <span class="note-row-excerpt">
+              <Highlight
+                text={(f.text !== undefined ? excerptOf(f.text) : '') || formatBytes(f.size)}
+                terms={queryTerms.value}
+              />
+            </span>
+          </span>
+        </span>
+        {url && <img class="note-row-thumb" src={url} alt="" loading="lazy" />}
+      </button>
+    </SwipeRow>
+  )
+}
+
 function TrashView() {
   const items = trashList.value
-  if (!items.length) return <div class="empty">Recently Deleted is empty.</div>
+  const q = searching.value
+  if (!items.length)
+    return <div class="empty">{q ? <>Nothing deleted matches “{query.value}”.</> : 'Nothing deleted.'}</div>
   return (
     <>
-      <div class="section-label">Deleted notes are kept until you remove them here.</div>
-      {items.map((f) => {
-        const name = trashDisplayName(f.path)
-        const permanently = async () => {
-          if (!confirm(`Permanently delete "${name}"? This cannot be undone.`)) return
-          if (activePath.value === f.path) activePath.value = undefined
-          await forget(f.path)
-        }
-        const restore = async () => {
-          const p = await restoreFromTrash(f.path)
-          openNote(p)
-          notify('Restored')
-        }
-        return (
-          <SwipeRow
-            key={f.path}
-            id={f.path}
-            actions={[
-              { label: 'Restore', onSelect: restore },
-              { label: 'Delete', danger: true, onSelect: permanently },
-            ]}
-          >
-            {/*
-              * The row is a button now: a deleted note you cannot read is a
-              * deleted note you cannot decide about. Opening it shows the
-              * contents in the editor, read-only, with the same two choices.
-              */}
-            <div class="note-row trash-row" aria-current={activePath.value === f.path}>
-              <button
-                class="trash-open"
-                // A deleted file has no note to read: show the file itself.
-                onClick={() =>
-                  f.kind === 'attachment' ? (lightboxPath.value = f.path) : openNote(f.path)
-                }
-                onContextMenu={(e) => {
-                  e.preventDefault()
-                  openMenu(e, trashMenu(f), name)
-                }}
-              >
-                <span class="note-row-main">
-                  <span class="note-row-title">{name}</span>
-                  <span class="note-row-sub">
-                    <span class="note-row-date">{relativeTime(f.mtime)}</span>
-                    <span class="note-row-excerpt">
-                      {(f.text ?? '').slice(0, 90) || formatBytes(f.size)}
-                    </span>
-                  </span>
-                </span>
-              </button>
-              {/*
-                * Their own line, right-aligned. Sharing one with the title put
-                * two small targets hard against text that is trying to use the
-                * whole width, and in a narrow list pane they met in the middle.
-                */}
-              <span class="row-actions">
-                <button class="row-action" onClick={restore}>
-                  Restore
-                </button>
-                <button class="row-action row-action-danger" onClick={permanently}>
-                  Delete
-                </button>
-              </span>
-            </div>
-          </SwipeRow>
-        )
-      })}
+      <div class="section-label section-label-row">
+        <span>
+          {q ? `${items.length} found` : `${items.length} deleted item${items.length === 1 ? '' : 's'}`}
+        </span>
+        {/*
+          * Emptying it is the one action about the whole list rather than
+          * about a row, so it lives on the list's own header — and it is
+          * spelled out, because the confirm is the only thing standing between
+          * a stray tap and everything in here.
+          *
+          * It goes away during a search. "Empty Trash" over a filtered list
+          * either means the wrong thing or does it, and neither is a button
+          * worth having.
+          */}
+        {!q && (
+        <button
+          class="list-action list-action-danger"
+          onClick={async () => {
+            if (
+              !confirm(
+                `Permanently delete all ${items.length} item${items.length === 1 ? '' : 's'}? This cannot be undone.`,
+              )
+            )
+              return
+            if (activePath.value && items.some((f) => f.path === activePath.value))
+              activePath.value = undefined
+            const n = await emptyTrash()
+            notify(`Deleted ${n} item${n === 1 ? '' : 's'} for good`)
+          }}
+        >
+          Empty Trash
+        </button>
+        )}
+      </div>
+      {items.map((f) => (
+        <TrashRow key={f.path} f={f} />
+      ))}
     </>
   )
 }
@@ -519,7 +598,7 @@ function fileMenu(f: { path: string }): MenuItem[] {
       separated: true,
       onSelect: async () => {
         await deleteFile(f.path)
-        notify(`Moved ${name} to Recently Deleted`)
+        notify(`Moved ${name} to Deleted`)
       },
     },
   ]
@@ -539,7 +618,7 @@ function FileRow({ f, orphan }: { f: VaultFile; orphan: boolean }) {
       danger: true,
       onSelect: async () => {
         await deleteFile(f.path)
-        notify(`Moved ${basename(f.path)} to Recently Deleted`)
+        notify(`Moved ${basename(f.path)} to Deleted`)
       },
     },
   ]
@@ -557,16 +636,24 @@ function FileRow({ f, orphan }: { f: VaultFile; orphan: boolean }) {
         {...longPress}
       >
         <span class="note-row-main">
-          <span class="note-row-title">{basename(f.path)}</span>
+          <span class="note-row-title">
+            <Highlight text={basename(f.path)} terms={queryTerms.value} />
+          </span>
           <span class="note-row-sub">
-            <span class="note-row-date">{kind}</span>
+            {/*
+              * A date where a note row and a deleted row both put one. The
+              * media kind moves into the preview line beside the size and the
+              * path, which is where the rest of the file's details already are.
+              */}
+            <span class="note-row-date">{relativeTime(f.mtime)}</span>
             {orphan && (
               <span class="orphan-tag" title="No note references this file">
                 Orphaned
               </span>
             )}
             <span class="note-row-excerpt">
-              {formatBytes(f.size)} · {f.path}
+              {kind} · {formatBytes(f.size)} ·{' '}
+              <Highlight text={f.path} terms={queryTerms.value} />
             </span>
           </span>
         </span>
@@ -578,6 +665,7 @@ function FileRow({ f, orphan }: { f: VaultFile; orphan: boolean }) {
 
 function FilesView() {
   const all = fileList.value
+  const q = searching.value
   const orphans = orphanFiles.value
   // The filter turns itself off once there is nothing left to work through,
   // rather than leaving the browser looking empty.
@@ -585,7 +673,9 @@ function FilesView() {
   const items = only ? all.filter((f) => orphans.has(f.path)) : all
 
   if (!all.length)
-    return (
+    return q ? (
+      <div class="empty">No files match “{query.value}”.</div>
+    ) : (
       <div class="empty">
         No files yet.
         <br />
@@ -595,10 +685,16 @@ function FilesView() {
   return (
     <>
       <div class="section-label section-label-row">
-        <span>{only ? `${items.length} of ${all.length} files` : `${all.length} files`}</span>
+        <span>
+          {q
+            ? `${items.length} found`
+            : only
+              ? `${items.length} of ${all.length} files`
+              : `${all.length} file${all.length === 1 ? '' : 's'}`}
+        </span>
         {orphans.size > 0 && (
           <button
-            class="orphan-filter"
+            class="list-action"
             aria-pressed={only}
             title={
               only
@@ -620,14 +716,24 @@ function FilesView() {
 
 function UnlinkedView() {
   const items = unlinkedList.value
-  if (!items.length) return <div class="empty">Every link resolves. Nice.</div>
+  const q = searching.value
+  if (!items.length)
+    return (
+      <div class="empty">
+        {q ? <>No unlinked mentions match “{query.value}”.</> : 'Every link resolves. Nice.'}
+      </div>
+    )
   return (
     <>
-      <div class="section-label">Links pointing at notes that don’t exist yet</div>
+      <div class="section-label">
+        {q ? `${items.length} found` : 'Links pointing at notes that don’t exist yet'}
+      </div>
       {items.map(([target, sources]) => (
         <div key={target} class="note-row" style={{ cursor: 'default' }}>
           <span class="note-row-main">
-            <span class="note-row-title">{target}</span>
+            <span class="note-row-title">
+              <Highlight text={target} terms={queryTerms.value} />
+            </span>
             <span class="note-row-sub">
               <span class="note-row-excerpt">
                 linked from {sources.map((p) => getEntry(p)?.title ?? p).join(', ')}

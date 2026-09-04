@@ -21,9 +21,18 @@ import { dueByToday, groupTasks, tasksDueOn } from '../core/taskgroups'
 import { settings, update } from '../core/settings'
 import { openMenu } from './Menu'
 import { dailyNoteFor } from '../core/daily'
-import { monthGrid, startOfDay, ymd } from '../core/util'
-import { calendarMonth, openDailyNote, openNote, scope, selectedDay } from './state'
+import { monthGrid, searchTerms, startOfDay, ymd } from '../core/util'
+import {
+  calendarMonth,
+  matchingTasks,
+  openDailyNote,
+  openNote,
+  scope,
+  selectedDay,
+  setScope,
+} from './state'
 import { DueChip } from './DueChip'
+import { Highlight } from './Highlight'
 import {
   IconCalendar,
   IconCheck,
@@ -65,7 +74,7 @@ export function CalendarPanel({ big = false }: { big?: boolean }) {
           onClick={() => {
             calendarMonth.value = today
             selectedDay.value = today
-            scope.value = { kind: 'day', date: today }
+            setScope({ kind: 'day', date: today })
           }}
         >
           TODAY
@@ -102,7 +111,7 @@ export function CalendarPanel({ big = false }: { big?: boolean }) {
               onClick={() => {
                 selectedDay.value = day
                 // Tapping the selected day again clears the filter.
-                scope.value = isSelected ? { kind: 'all' } : { kind: 'day', date: day }
+                setScope(isSelected ? { kind: 'all' } : { kind: 'day', date: day })
                 if (outside) calendarMonth.value = day
               }}
             >
@@ -201,7 +210,16 @@ const CAP = 200
  * gathers tasks, and the day panel. Same checkbox, same date chip, so ticking
  * one is the same act everywhere and always writes to the note it lives on.
  */
-function TaskRow({ task: t, showNote = true }: { task: TaskItem; showNote?: boolean }) {
+function TaskRow({
+  task: t,
+  showNote = true,
+  terms = [],
+}: {
+  task: TaskItem
+  showNote?: boolean
+  /** Set only where this row sits under a search box; see `TasksPanel`. */
+  terms?: string[]
+}) {
   return (
     <div class="task-row" data-done={t.done ? '1' : '0'}>
       <input
@@ -220,10 +238,12 @@ function TaskRow({ task: t, showNote = true }: { task: TaskItem; showNote?: bool
           if (e.key === 'Enter') openNote(t.path)
         }}
       >
-        {t.text || <em class="dim">Untitled task</em>}
+        {t.text ? <Highlight text={t.text} terms={terms} /> : <em class="dim">Untitled task</em>}
         {showNote && (
           <span class="task-meta">
-            <span>{getEntry(t.path)?.title ?? t.noteTitle}</span>
+            <span>
+              <Highlight text={getEntry(t.path)?.title ?? t.noteTitle} terms={terms} />
+            </span>
           </span>
         )}
       </span>
@@ -243,17 +263,28 @@ function TaskRow({ task: t, showNote = true }: { task: TaskItem; showNote?: bool
  * `items` is what makes the third one possible: given a list it shows that
  * list and nothing else — a folder's rule has already decided what belongs,
  * including whether finished ones do, so it must not be filtered again here.
+ *
+ * `query` is passed only where this panel sits under a search box, which is
+ * the note list and nowhere else: the rail and the phone's Tasks tab have no
+ * search of their own, and a list that quietly narrowed itself to whatever was
+ * typed in a different column would be a list nobody could trust. Counts and
+ * the empty state follow the filter, so a search that finds nothing says so
+ * rather than offering to teach you the checkbox syntax again.
  */
 export function TasksPanel({
   items,
   title = 'Tasks',
   empty,
+  query,
 }: {
   items?: TaskItem[]
   title?: string
   empty?: preact.ComponentChildren
+  query?: string
 }) {
-  const all = items ?? tasks.value
+  const searching = !!query?.trim()
+  const hlTerms = searching ? searchTerms(query!) : []
+  const all = searching ? matchingTasks(items ?? tasks.value) : (items ?? tasks.value)
   const open = all.filter((t) => !t.done)
   const done = all.filter((t) => t.done)
   /*
@@ -326,11 +357,15 @@ export function TasksPanel({
 
       {all.length === 0 ? (
         <p class="rail-empty">
-          {empty ?? (
-            <>
-              Type <code>- [ ]</code> in any note to add a task. Each one gets a date button here
-              and in the note.
-            </>
+          {searching ? (
+            <>No tasks match “{query}”.</>
+          ) : (
+            (empty ?? (
+              <>
+                Type <code>- [ ]</code> in any note to add a task. Each one gets a date button here
+                and in the note.
+              </>
+            ))
           )}
         </p>
       ) : shown.length === 0 ? (
@@ -340,7 +375,7 @@ export function TasksPanel({
           <Fragment key={g.key}>
             {g.label && <div class="task-group">{g.label}</div>}
             {g.items.slice(0, CAP).map((t) => (
-              <TaskRow key={t.id} task={t} showNote={by !== 'note'} />
+              <TaskRow key={t.id} task={t} showNote={by !== 'note'} terms={hlTerms} />
             ))}
             {g.items.length > CAP && (
               <div class="task-more">and {g.items.length - CAP} more</div>

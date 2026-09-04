@@ -305,8 +305,44 @@ textarea {
   color: var(--text-faint);
   padding: 0 6px 5px 10px;
 }
-.side-group-label > span {
+/*
+ * The whole header is the disclosure target, not just the chevron: it is a
+ * 11px cap-height label with a "+" beside it, and aiming at a 14px triangle
+ * between them is a worse deal than the space it saves.
+ */
+.side-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   flex: 1;
+  min-width: 0;
+  margin-left: -4px;
+  padding: 2px 4px;
+  border-radius: 6px;
+  /* Neither survives the trip into a button in every engine. */
+  letter-spacing: inherit;
+  text-transform: inherit;
+  text-align: left;
+}
+.side-group-toggle:hover {
+  background: var(--row-hover);
+  color: var(--text-muted);
+}
+.side-group-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/*
+ * Only shown while folded — what you would see if you opened it — and hard
+ * right, where every count in the sidebar sits.
+ */
+.side-group-count {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  opacity: 0.75;
 }
 .side-add {
   display: inline-flex;
@@ -491,6 +527,16 @@ textarea {
 .search-box input::placeholder {
   color: var(--text-faint);
 }
+/*
+ * WebKit puts its own clear button inside a search input, so a typed query sat
+ * behind two ✕ in a row — the browser's and ours. Ours is the one that keeps
+ * the query signal honest, so the native one goes.
+ */
+.search-box input::-webkit-search-cancel-button,
+.search-box input::-webkit-search-decoration {
+  appearance: none;
+  -webkit-appearance: none;
+}
 
 .list-scroll {
   flex: 1 1 auto;
@@ -590,24 +636,6 @@ textarea {
   flex: 0 0 auto;
 }
 
-/*
- * Rows whose actions are buttons rather than badges — Recently Deleted, and
- * anything else that offers a decision. The actions get their own line under
- * the text: at list-pane width, two 60px targets beside a title and a preview
- * line leave all three fighting for the same pixels.
- */
-.trash-row {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 8px;
-  padding: 11px 10px 10px;
-  cursor: default;
-}
-.row-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
 .row-action {
   color: var(--accent);
   font-size: 12px;
@@ -706,15 +734,8 @@ body.resizing .pane-resizer::after {
   touch-action: pan-y;
 }
 
-/* ---- Recently Deleted -------------------------------------------------- */
+/* ---- Deleted ------------------------------------------------------------ */
 
-.trash-open {
-  display: flex;
-  width: 100%;
-  text-align: left;
-  color: inherit;
-  min-width: 0;
-}
 .trash-banner {
   display: flex;
   align-items: center;
@@ -727,15 +748,46 @@ body.resizing .pane-resizer::after {
   border-bottom: 1px solid var(--border);
 }
 
-/* ---- orphaned files ---------------------------------------------------- */
+/*
+ * The searched-for words, wherever a row shows them.
+ *
+ * `mark` arrives with a yellow highlighter block and near-black text from the
+ * UA sheet, which at 12px across a dense list is a stripe you read instead of
+ * the row. Colour alone does the job, and stays legible on a selected row —
+ * which is why it is the accent rather than a second hue nothing else uses.
+ */
+.hit {
+  background: none;
+  color: var(--accent);
+}
+/*
+ * On the selected row the accent IS the background, so an accent-coloured word
+ * on it is amber on amber. There the mark keeps the row's own text colour and
+ * takes an underline instead — still obviously marked, and legible in both
+ * themes, where a second hue picked to beat one background would not be.
+ */
+.note-row[aria-current='true'] .hit {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 2px;
+}
 
+/* ---- list headers ------------------------------------------------------- */
+
+/*
+ * The one action a list has about itself rather than about a row — emptying
+ * Deleted, filtering Files down to the orphans — sits on the list's own header
+ * line. Notes, Files and Deleted all open with the same header, so the three
+ * lists start at the same place and read the same way.
+ */
 .section-label-row {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
 }
-.orphan-filter {
+.list-action {
   font-size: 11.5px;
   font-weight: 600;
   color: var(--text-muted);
@@ -744,14 +796,23 @@ body.resizing .pane-resizer::after {
   border: 1px solid var(--border-strong);
   white-space: nowrap;
 }
-.orphan-filter:hover {
+.list-action:hover {
   background: var(--row-hover);
 }
-.orphan-filter[aria-pressed='true'] {
+.list-action[aria-pressed='true'] {
   background: color-mix(in srgb, var(--danger) 14%, transparent);
   border-color: transparent;
   color: var(--danger);
 }
+.list-action-danger {
+  color: var(--danger);
+}
+.list-action-danger:hover {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+/* ---- orphaned files ---------------------------------------------------- */
+
 .orphan-tag {
   flex: 0 0 auto;
   font-size: 10.5px;

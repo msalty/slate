@@ -20,6 +20,7 @@ import {
   openNote,
   paletteOpen,
   scope,
+  setScope,
   settingsOpen,
 } from './state'
 import { relativeTime, startOfDay } from '../core/util'
@@ -118,8 +119,8 @@ export function CommandPalette() {
                   : 'system',
           }),
       },
-      { id: 'trash', label: 'Show Recently Deleted', run: () => (scope.value = { kind: 'trash' }) },
-      { id: 'files', label: 'Show all files', run: () => (scope.value = { kind: 'files' }) },
+      { id: 'trash', label: 'Show Deleted', run: () => setScope({ kind: 'trash' }) },
+      { id: 'files', label: 'Show all files', run: () => setScope({ kind: 'files' }) },
     ],
     [settings.value, day, notes.value],
   )
