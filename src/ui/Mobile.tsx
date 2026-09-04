@@ -23,6 +23,7 @@ import {
   mobileTab,
   scope,
   scopeLabel,
+  setScope,
   settingsOpen,
   type MobileTab,
   type Scope,
@@ -70,7 +71,7 @@ export function MobileNav() {
               document.querySelector('.mobile-view .list-scroll, .mobile-view .rail-scroll')?.scrollTo({ top: 0, behavior: 'smooth' })
             }
             mobileTab.value = t.id
-            if (t.id === 'notes' && scope.value.kind === 'day') scope.value = { kind: 'all' }
+            if (t.id === 'notes' && scope.value.kind === 'day') setScope({ kind: 'all' })
           }}
         >
           <span class="tabbar-icon">
@@ -159,7 +160,7 @@ function flattenFolders(node: FolderNode, depth = 0): Array<{ node: FolderNode; 
 
 export function MobileMore() {
   const go = (s: Scope) => {
-    scope.value = s
+    setScope(s)
     mobileTab.value = 'notes'
   }
   const st = status.value
@@ -296,7 +297,7 @@ export function MobileScopeBar() {
       )}
       <button
         onClick={() => {
-          scope.value = { kind: 'all' }
+          setScope({ kind: 'all' })
         }}
         aria-label={`Close ${scopeLabel(s)}`}
       >

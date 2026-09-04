@@ -31,6 +31,9 @@ import {
   query,
   scope,
   scopeLabel,
+  searchKind,
+  searchLabel,
+  searching,
   sections,
   trashList,
   unlinkedList,
@@ -244,6 +247,16 @@ export function NoteList({ children }: { children?: preact.ComponentChildren }) 
       ? startOfDay(s.date)
       : undefined
 
+  /*
+   * Searching renames the header, because the old one was a lie: the list
+   * underneath is a handful of results and the header went on saying "All
+   * Notes". It names what is being searched rather than just saying "Search",
+   * since that is the one thing the screen otherwise never states — the
+   * placeholder said it, and the placeholder is gone the moment you type.
+   */
+  const kind = searchKind.value
+  const title = searching.value ? `Search ${searchLabel(kind)}` : scopeLabel(s)
+
   return (
     <div class="pane list-pane">
       <div class="pane-head">
@@ -253,7 +266,7 @@ export function NoteList({ children }: { children?: preact.ComponentChildren }) 
           </button>
         )}
         <span class={compact ? 'pane-title pane-title-lg' : 'pane-title'}>
-          {compact ? 'Notes' : scopeLabel(s)}
+          {compact && !searching.value ? 'Notes' : title}
         </span>
         <span class="spacer" />
         {compact && (
@@ -298,10 +311,10 @@ export function NoteList({ children }: { children?: preact.ComponentChildren }) 
           <IconSearch size={14} />
           <input
             type="search"
-            placeholder="Search all notes"
+            placeholder={`Search ${searchLabel(kind)}`}
             value={query.value}
             onInput={(e) => (query.value = (e.target as HTMLInputElement).value)}
-            aria-label="Search notes"
+            aria-label={`Search ${searchLabel(kind)}`}
           />
           {query.value && (
             <button class="icon-btn" style={{ width: 18, height: 18 }} onClick={() => (query.value = '')}>
@@ -313,20 +326,26 @@ export function NoteList({ children }: { children?: preact.ComponentChildren }) 
 
       {compact && <MobileScopeBar />}
 
+      {/*
+        * A search filters the list that is here; it never replaces it. Typing
+        * in Files used to swap the whole pane for note results, so the one
+        * thing you could not do from the Files browser was find a file.
+        */}
       <div class="list-scroll" ref={scrollRef}>
-        {s.kind === 'trash' && !query.value ? (
+        {s.kind === 'trash' ? (
           <TrashView />
-        ) : s.kind === 'files' && !query.value ? (
+        ) : s.kind === 'files' ? (
           <FilesView />
-        ) : s.kind === 'unlinked' && !query.value ? (
+        ) : s.kind === 'unlinked' ? (
           <UnlinkedView />
-        ) : s.kind === 'tasks' && !query.value ? (
+        ) : s.kind === 'tasks' ? (
           /*
            * The Tasks row lists tasks, not the notes that happen to contain
            * them: it counts tasks in the sidebar, and a list of note titles is
            * one click short of what the count promised.
            */
           <TasksPanel
+            query={query.value}
             empty={
               <>
                 Type <code>- [ ]</code> in any note to add a task. Every one in the vault turns up
@@ -334,7 +353,7 @@ export function NoteList({ children }: { children?: preact.ComponentChildren }) 
               </>
             }
           />
-        ) : taskFolder && !query.value ? (
+        ) : taskFolder ? (
           /*
            * A Tag Folder that gathers tasks puts them here, where its notes
            * would otherwise be. The same rows the rail and the phone's Tasks
@@ -343,6 +362,7 @@ export function NoteList({ children }: { children?: preact.ComponentChildren }) 
            */
           <TasksPanel
             items={tasksForSmartFolder(s.kind === 'smart' ? s.id : '')}
+            query={query.value}
             empty={<>No tasks match this folder’s rule yet.</>}
           />
         ) : visibleNotes.value.length === 0 ? (
@@ -471,19 +491,26 @@ function TrashRow({ f }: { f: VaultFile }) {
 
 function TrashView() {
   const items = trashList.value
-  if (!items.length) return <div class="empty">Nothing deleted.</div>
+  const q = searching.value
+  if (!items.length)
+    return <div class="empty">{q ? <>Nothing deleted matches “{query.value}”.</> : 'Nothing deleted.'}</div>
   return (
     <>
       <div class="section-label section-label-row">
         <span>
-          {items.length} deleted item{items.length === 1 ? '' : 's'}
+          {q ? `${items.length} found` : `${items.length} deleted item${items.length === 1 ? '' : 's'}`}
         </span>
         {/*
           * Emptying it is the one action about the whole list rather than
           * about a row, so it lives on the list's own header — and it is
           * spelled out, because the confirm is the only thing standing between
           * a stray tap and everything in here.
+          *
+          * It goes away during a search. "Empty Trash" over a filtered list
+          * either means the wrong thing or does it, and neither is a button
+          * worth having.
           */}
+        {!q && (
         <button
           class="list-action list-action-danger"
           onClick={async () => {
@@ -501,6 +528,7 @@ function TrashView() {
         >
           Empty Trash
         </button>
+        )}
       </div>
       {items.map((f) => (
         <TrashRow key={f.path} f={f} />
@@ -611,6 +639,7 @@ function FileRow({ f, orphan }: { f: VaultFile; orphan: boolean }) {
 
 function FilesView() {
   const all = fileList.value
+  const q = searching.value
   const orphans = orphanFiles.value
   // The filter turns itself off once there is nothing left to work through,
   // rather than leaving the browser looking empty.
@@ -618,7 +647,9 @@ function FilesView() {
   const items = only ? all.filter((f) => orphans.has(f.path)) : all
 
   if (!all.length)
-    return (
+    return q ? (
+      <div class="empty">No files match “{query.value}”.</div>
+    ) : (
       <div class="empty">
         No files yet.
         <br />
@@ -629,7 +660,11 @@ function FilesView() {
     <>
       <div class="section-label section-label-row">
         <span>
-          {only ? `${items.length} of ${all.length} files` : `${all.length} file${all.length === 1 ? '' : 's'}`}
+          {q
+            ? `${items.length} found`
+            : only
+              ? `${items.length} of ${all.length} files`
+              : `${all.length} file${all.length === 1 ? '' : 's'}`}
         </span>
         {orphans.size > 0 && (
           <button
@@ -655,10 +690,18 @@ function FilesView() {
 
 function UnlinkedView() {
   const items = unlinkedList.value
-  if (!items.length) return <div class="empty">Every link resolves. Nice.</div>
+  const q = searching.value
+  if (!items.length)
+    return (
+      <div class="empty">
+        {q ? <>No unlinked mentions match “{query.value}”.</> : 'Every link resolves. Nice.'}
+      </div>
+    )
   return (
     <>
-      <div class="section-label">Links pointing at notes that don’t exist yet</div>
+      <div class="section-label">
+        {q ? `${items.length} found` : 'Links pointing at notes that don’t exist yet'}
+      </div>
       {items.map(([target, sources]) => (
         <div key={target} class="note-row" style={{ cursor: 'default' }}>
           <span class="note-row-main">

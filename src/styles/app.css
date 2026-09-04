@@ -527,6 +527,16 @@ textarea {
 .search-box input::placeholder {
   color: var(--text-faint);
 }
+/*
+ * WebKit puts its own clear button inside a search input, so a typed query sat
+ * behind two ✕ in a row — the browser's and ours. Ours is the one that keeps
+ * the query signal honest, so the native one goes.
+ */
+.search-box input::-webkit-search-cancel-button,
+.search-box input::-webkit-search-decoration {
+  appearance: none;
+  -webkit-appearance: none;
+}
 
 .list-scroll {
   flex: 1 1 auto;

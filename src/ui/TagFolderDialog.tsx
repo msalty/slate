@@ -24,7 +24,7 @@ import {
   type SmartFolder,
 } from '../core/folders'
 import { describeQuery, parseQuery, type QueryNode } from '../core/tagquery'
-import { notify, scope } from './state'
+import { notify, setScope } from './state'
 import { IconClose } from './Icons'
 
 const editing = signal<Partial<SmartFolder> | null>(null)
@@ -143,7 +143,7 @@ export function TagFolderDialog() {
       shows,
     })
     editing.value = null
-    scope.value = { kind: 'smart', id: saved.id }
+    setScope({ kind: 'smart', id: saved.id })
     notify(draft.id ? 'Tag Folder updated' : 'Tag Folder created')
   }
 

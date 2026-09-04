@@ -524,6 +524,14 @@ fold away from their header, and a folded one carries the count of what is
 inside it. Which are folded is a preference like any other, so it survives a
 reload and follows the vault to your other devices.
 
+**Search filters the list in front of you.** In Files it searches files, in
+Deleted it searches deleted things, in Tasks it searches tasks — the header and
+the placeholder both name which, so a screen of five results never goes on
+claiming to be All Notes. Anything showing notes searches notes across the whole
+vault, folder or no folder, which is the convention every notes app follows and
+means a search is never quietly limited to whatever you happened to have open.
+Changing scope clears the query, so the box is always about the list under it.
+
 Long-press or right-click a Tag Folder for *New folder inside…*, *Move…*, and
 the two delete variants.
 

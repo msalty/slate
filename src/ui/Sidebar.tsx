@@ -22,7 +22,7 @@ import {
   type SmartNode,
 } from '../core/folders'
 import { parseQuery, tagsInQuery, folderInQuery } from '../core/tagquery'
-import { notify, scope, type Scope } from './state'
+import { notify, scope, setScope, type Scope } from './state'
 import { menuAnchor, openMenu, useLongPress, type MenuItem } from './Menu'
 import { openTagFolderDialog } from './TagFolderDialog'
 import { closeDrawer } from './layout'
@@ -58,7 +58,7 @@ function sameScope(a: Scope, b: Scope): boolean {
 
 /** Selecting anything in the sidebar dismisses it when it's a drawer. */
 function select(s: Scope) {
-  scope.value = s
+  setScope(s)
   closeDrawer()
 }
 
@@ -323,7 +323,7 @@ function SmartFolderRow({ node }: { node: SmartNode }) {
           : `Delete "${sf.name}"? The notes it gathers are not affected.`
         if (!confirm(msg)) return
         await deleteSmartFolder(sf.id)
-        if (scope.value.kind === 'smart' && scope.value.id === sf.id) scope.value = { kind: 'all' }
+        if (scope.value.kind === 'smart' && scope.value.id === sf.id) setScope({ kind: 'all' })
       },
     },
   ]
@@ -335,7 +335,7 @@ function SmartFolderRow({ node }: { node: SmartNode }) {
       onSelect: async () => {
         if (!confirm(`Delete "${sf.name}" and every folder inside it? No notes are affected.`)) return
         const n = await deleteSmartFolderTree(sf.id)
-        if (scope.value.kind === 'smart') scope.value = { kind: 'all' }
+        if (scope.value.kind === 'smart') setScope({ kind: 'all' })
         notify(`Deleted ${n} Tag Folders`)
       },
     })

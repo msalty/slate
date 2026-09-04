@@ -22,7 +22,15 @@ import { settings, update } from '../core/settings'
 import { openMenu } from './Menu'
 import { dailyNoteFor } from '../core/daily'
 import { monthGrid, startOfDay, ymd } from '../core/util'
-import { calendarMonth, openDailyNote, openNote, scope, selectedDay } from './state'
+import {
+  calendarMonth,
+  matchingTasks,
+  openDailyNote,
+  openNote,
+  scope,
+  selectedDay,
+  setScope,
+} from './state'
 import { DueChip } from './DueChip'
 import {
   IconCalendar,
@@ -65,7 +73,7 @@ export function CalendarPanel({ big = false }: { big?: boolean }) {
           onClick={() => {
             calendarMonth.value = today
             selectedDay.value = today
-            scope.value = { kind: 'day', date: today }
+            setScope({ kind: 'day', date: today })
           }}
         >
           TODAY
@@ -102,7 +110,7 @@ export function CalendarPanel({ big = false }: { big?: boolean }) {
               onClick={() => {
                 selectedDay.value = day
                 // Tapping the selected day again clears the filter.
-                scope.value = isSelected ? { kind: 'all' } : { kind: 'day', date: day }
+                setScope(isSelected ? { kind: 'all' } : { kind: 'day', date: day })
                 if (outside) calendarMonth.value = day
               }}
             >
@@ -243,17 +251,27 @@ function TaskRow({ task: t, showNote = true }: { task: TaskItem; showNote?: bool
  * `items` is what makes the third one possible: given a list it shows that
  * list and nothing else — a folder's rule has already decided what belongs,
  * including whether finished ones do, so it must not be filtered again here.
+ *
+ * `query` is passed only where this panel sits under a search box, which is
+ * the note list and nowhere else: the rail and the phone's Tasks tab have no
+ * search of their own, and a list that quietly narrowed itself to whatever was
+ * typed in a different column would be a list nobody could trust. Counts and
+ * the empty state follow the filter, so a search that finds nothing says so
+ * rather than offering to teach you the checkbox syntax again.
  */
 export function TasksPanel({
   items,
   title = 'Tasks',
   empty,
+  query,
 }: {
   items?: TaskItem[]
   title?: string
   empty?: preact.ComponentChildren
+  query?: string
 }) {
-  const all = items ?? tasks.value
+  const searching = !!query?.trim()
+  const all = searching ? matchingTasks(items ?? tasks.value) : (items ?? tasks.value)
   const open = all.filter((t) => !t.done)
   const done = all.filter((t) => t.done)
   /*
@@ -326,11 +344,15 @@ export function TasksPanel({
 
       {all.length === 0 ? (
         <p class="rail-empty">
-          {empty ?? (
-            <>
-              Type <code>- [ ]</code> in any note to add a task. Each one gets a date button here
-              and in the note.
-            </>
+          {searching ? (
+            <>No tasks match “{query}”.</>
+          ) : (
+            (empty ?? (
+              <>
+                Type <code>- [ ]</code> in any note to add a task. Each one gets a date button here
+                and in the note.
+              </>
+            ))
           )}
         </p>
       ) : shown.length === 0 ? (

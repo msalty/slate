@@ -3,18 +3,20 @@
 import { computed, signal } from '@preact/signals'
 import {
   contentNotes,
+  getEntry,
   notes,
   notesByDay,
   search,
   trashFiles,
+  trashTitle,
   attachments,
   unresolvedLinks,
 } from '../core/vault'
 import { dailyNotePath } from '../core/daily'
-import { notesForSmartFolder, smartFolderById } from '../core/folders'
+import { notesForSmartFolder, showsTasks, smartFolderById } from '../core/folders'
 import { settings } from '../core/settings'
-import type { NoteIndexEntry } from '../core/types'
-import { startOfDay } from '../core/util'
+import type { NoteIndexEntry, TaskItem } from '../core/types'
+import { matchesAll, searchTerms, startOfDay } from '../core/util'
 import { layoutMode } from './layout'
 
 export type Scope =
@@ -30,6 +32,21 @@ export type Scope =
 
 export const scope = signal<Scope>({ kind: 'all' })
 export const query = signal('')
+
+/**
+ * Change what the note list is showing.
+ *
+ * Every navigation goes through here rather than assigning `scope` directly,
+ * because a search belongs to the list it was typed into. Carrying "budget"
+ * from Notes into Files would hand you an empty Files list with no visible
+ * reason for it — the query would be sitting in a box you have already
+ * stopped looking at. So changing scope clears it, and the search box is
+ * always about the list underneath it.
+ */
+export function setScope(s: Scope) {
+  query.value = ''
+  scope.value = s
+}
 export const activePath = signal<string | undefined>(undefined)
 export const selectedDay = signal<number>(startOfDay(Date.now()))
 export const calendarMonth = signal<number>(startOfDay(Date.now()))
@@ -206,6 +223,65 @@ export function dismissToast() {
   toast.value = undefined
 }
 
+/* ------------------------------------------------------------------ search */
+
+/**
+ * What the search box searches.
+ *
+ * The rule is that search filters *the kind of thing the list is showing*, not
+ * some fixed corpus. So Files searches files and Deleted searches deleted
+ * things, and typing in either no longer swaps the list out from under you for
+ * note results — which is what it used to do, while the header went on naming
+ * the scope you thought you were in.
+ *
+ * Everything that shows notes — All Notes, a folder, a Tag Folder, a tag, a
+ * day — searches notes, vault-wide. That is the convention every notes app
+ * follows, and it means a search is never quietly limited to a folder you
+ * happened to have open. A Tag Folder that gathers tasks lands on 'tasks' by
+ * the same rule: what is in front of you is tasks.
+ */
+export type SearchKind = 'notes' | 'tasks' | 'files' | 'trash' | 'unlinked'
+
+export const searchKind = computed<SearchKind>(() => {
+  const s = scope.value
+  switch (s.kind) {
+    case 'files':
+      return 'files'
+    case 'trash':
+      return 'trash'
+    case 'unlinked':
+      return 'unlinked'
+    case 'tasks':
+      return 'tasks'
+    case 'smart':
+      return showsTasks(smartFolderById(s.id)) ? 'tasks' : 'notes'
+    default:
+      return 'notes'
+  }
+})
+
+/** What the search box and the header call what they are searching. */
+export function searchLabel(k: SearchKind): string {
+  switch (k) {
+    case 'tasks':
+      return 'Tasks'
+    case 'files':
+      return 'Files'
+    case 'trash':
+      return 'Deleted'
+    case 'unlinked':
+      return 'Unlinked'
+    case 'notes':
+      return 'Notes'
+  }
+}
+
+/** The terms a list has to match, empty when nothing is being searched. */
+const terms = computed(() => searchTerms(query.value))
+
+/** True while the search box has something in it. */
+export const searching = computed(() => terms.value.length > 0)
+
 export function scopeLabel(s: Scope): string {
   switch (s.kind) {
     case 'all':
@@ -235,6 +311,9 @@ export function scopeLabel(s: Scope): string {
 
 /** The notes shown in the middle column, after scope and search are applied. */
 export const visibleNotes = computed<NoteIndexEntry[]>(() => {
+  // A scope showing files, tasks or deleted things has its own list below and
+  // no notes to contribute, searching or not.
+  if (searchKind.value !== 'notes') return []
   const q = query.value.trim()
   if (q) return search(q).map((h) => h.entry)
 
@@ -294,9 +373,37 @@ export const visibleNotes = computed<NoteIndexEntry[]>(() => {
   return [...list].sort((a, b) => (a.pinned === b.pinned ? cmp(a, b) : a.pinned ? -1 : 1))
 })
 
-export const trashList = trashFiles
-export const fileList = computed(() => attachments.value)
-export const unlinkedList = computed(() => [...unresolvedLinks.value.entries()])
+/*
+ * The three lists that are not notes, each filtered by the search box when the
+ * search box is theirs. Matching is on what the row actually shows — a name, a
+ * path, a preview — because that is what somebody typing into a list of files
+ * is aiming at; the ranked full-text scorer in core/vault.ts is for note
+ * bodies and stays there.
+ */
+
+export const trashList = computed(() =>
+  trashFiles.value.filter(
+    (f) => matchesAll(`${trashTitle(f.path)} ${f.text ?? ''}`, terms.value),
+  ),
+)
+
+export const fileList = computed(() =>
+  attachments.value.filter((f) => matchesAll(f.path, terms.value)),
+)
+
+export const unlinkedList = computed(() =>
+  [...unresolvedLinks.value.entries()].filter(([target, sources]) =>
+    matchesAll(`${target} ${sources.map((p) => getEntry(p)?.title ?? p).join(' ')}`, terms.value),
+  ),
+)
+
+/** Tasks for the Tasks row, filtered the same way. */
+export function matchingTasks(list: TaskItem[]): TaskItem[] {
+  if (!terms.value.length) return list
+  return list.filter((t) =>
+    matchesAll(`${t.text} ${getEntry(t.path)?.title ?? t.noteTitle}`, terms.value),
+  )
+}
 
 /** Date-bucketed sections for the note list, mirroring Apple Notes' grouping. */
 export interface Section {
