@@ -56,6 +56,18 @@ export const calendarMonth = signal<number>(startOfDay(Date.now()))
 export const formatSheetOpen = signal(false)
 
 /**
+ * Focus mode: the note takes the whole window, and everything else stands down.
+ *
+ * A desktop idea only — a phone's editor is already the whole screen — so the
+ * shell only ever reads it outside compact, and the button that sets it is not
+ * rendered there. It is deliberately *not* a saved preference: focus mode is
+ * something you enter for a stretch of writing, and an app that reopened three
+ * days later with its sidebar still missing would look broken rather than
+ * focused.
+ */
+export const editorMaximized = signal(false)
+
+/**
  * Whether the open note is being read rather than written in.
  *
  * A note opens as a page — the whole pane given to the text, no caret in it and

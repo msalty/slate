@@ -1815,6 +1815,82 @@ try {
   })
   check('the sync status bar is on screen, not below the fold', statusVisible)
 
+  /* ---- focus mode, and a note in a window of its own ----------------------
+   *
+   * Both are desktop only. Focus mode is a CSS-level thing and cheap to check;
+   * the popout is a second window, and everything that could go wrong about it
+   * is a boundary between the two — the note being handed over cleanly, what
+   * is typed next door reaching this window's copy of the vault, and the note
+   * coming back when the window closes. So all three are checked here rather
+   * than trusted to look right.
+   */
+  await page.keyboard.press('Meta+n')
+  await page.waitForSelector('.cm-content')
+  await page.keyboard.type('# Popped out\n\nwritten in the main window')
+  await page.waitForTimeout(600)
+
+  await page.click('.editor-head [aria-label="Focus mode"]')
+  await page.waitForTimeout(250)
+  check('focus mode gives the note the whole window', (await page.getAttribute('.shell', 'data-zen')) === '1')
+  check(
+    'and takes every panel with it',
+    !(await page.locator('.pane.sidebar').isVisible()) && (await page.locator('.statusbar').count()) === 0,
+  )
+  await page.screenshot({ path: join(SHOTS, '30-focus-mode.png') })
+  await page.keyboard.press('Meta+Shift+f')
+  await page.waitForTimeout(250)
+  check('⌘⇧F puts them back', (await page.getAttribute('.shell', 'data-zen')) === '0')
+
+  const popoutSoon = page.waitForEvent('popup')
+  await page.locator('.editor-head [aria-label="Focus mode"]').click({ modifiers: ['Shift'] })
+  const popout = await popoutSoon
+  popout.on('console', (m) => {
+    if (m.type() === 'error') consoleErrors.push(`popout: ${m.text()}`)
+  })
+  popout.on('pageerror', (e) => consoleErrors.push(`popout pageerror: ${e.message}`))
+  await popout.waitForSelector('.popout-shell .cm-content', { timeout: 15_000 })
+  const popoutText = await popout.locator('.cm-content').innerText()
+  check(
+    'Shift-clicking the same button opens the note in its own window',
+    popoutText.includes('written in the main window'),
+    JSON.stringify(popoutText.slice(0, 48)),
+  )
+  check(
+    'which is one note and no app around it',
+    (await popout.locator('.pane.sidebar').count()) === 0 &&
+      (await popout.locator('.statusbar').count()) === 0,
+  )
+  check(
+    'and the pane it left holds no second editor on the same note',
+    (await page.locator('.popped-card').count()) === 1 &&
+      (await page.locator('.editor-pane .cm-content').count()) === 0,
+  )
+  await popout.screenshot({ path: join(SHOTS, '31-popout-window.png') })
+
+  await popout.locator('.cm-content').click()
+  await popout.waitForTimeout(200)
+  await popout.keyboard.type('\n\nand this was typed next door')
+  const mirrored = await noteAfterEdit('written in the main window', 'typed next door')
+  check("what is typed there reaches this window's vault", mirrored.includes('typed next door'))
+
+  await popout.close()
+  await page.waitForTimeout(1500)
+  check(
+    'closing that window hands the note back',
+    (await page.locator('.popped-card').count()) === 0 &&
+      (await page.locator('.editor-pane .cm-content').count()) === 1,
+  )
+  const returned = await page.locator('.editor-pane .cm-content').innerText()
+  check(
+    'with everything that was written in it while it was away',
+    returned.includes('typed next door'),
+    JSON.stringify(returned.slice(-42)),
+  )
+
+  // Put the vault back the way the rest of the run expects to find it.
+  await page.click('.editor-head [title="Delete note"]')
+  await page.waitForTimeout(500)
+
   /* ---- Settings › About: the update controls ------------------------------ */
   // The full stale-build scenario needs two builds and a swappable server, so it
   // is not reproduced here. This just holds the panel itself honest: the buttons

@@ -21,10 +21,10 @@ import {
 } from './types'
 import {
   allFiles,
-  deleteFileRow,
+  deleteFileRow as dbDeleteFileRow,
   getFile,
-  putFile,
-  putFiles,
+  putFile as dbPutFile,
+  putFiles as dbPutFiles,
   pushVersion,
   renameVersions,
 } from './db'
@@ -78,6 +78,90 @@ const indexMap = new Map<string, NoteIndexEntry>()
 
 function bump() {
   revision.value = revision.value + 1
+}
+
+/* ------------------------------------------------------------ other windows */
+
+/**
+ * Told which paths were just written, when anything is listening.
+ *
+ * A note popped out into a window of its own is edited by a *second copy of
+ * this module*, in a second JS context, over the same IndexedDB. Each window's
+ * `files` map is its own, so without a word between them the two drift: one
+ * window's list, search index and — worse — its sync engine would go on
+ * working from the copy it was holding when the other window started typing.
+ *
+ * `ui/popout.ts` installs a listener that broadcasts these paths to the other
+ * windows, and `adoptFromStorage` below is the far end of it. Nothing is
+ * installed until a note is actually popped out, so an ordinary session pays
+ * one undefined check per write and nothing else.
+ */
+let onWrite: ((paths: string[]) => void) | undefined
+
+export function onVaultWrite(fn: (paths: string[]) => void): void {
+  onWrite = fn
+}
+
+/*
+ * The three durable writes, wrapped so every mutation below announces itself
+ * without having to remember to. They shadow the imports of the same name, so
+ * the call sites read exactly as they did before.
+ */
+
+async function putFile(f: VaultFile): Promise<void> {
+  await dbPutFile(f)
+  onWrite?.([f.path])
+}
+
+async function putFiles(list: VaultFile[]): Promise<void> {
+  await dbPutFiles(list)
+  onWrite?.(list.map((f) => f.path))
+}
+
+async function deleteFileRow(path: string): Promise<void> {
+  await dbDeleteFileRow(path)
+  onWrite?.([path])
+}
+
+/**
+ * Take IndexedDB's current rows for these paths as this window's copy of them.
+ *
+ * The other end of the hook above: another window has written, and this one is
+ * told which paths so it can refresh exactly those rather than reloading the
+ * whole vault on every keystroke someone types next door. Nothing is written
+ * back and no version is recorded — the window that made the edit did both —
+ * which is also what stops two windows from echoing each other forever.
+ *
+ * A note open in the editor here picks the change up through the same rebase
+ * the sync engine's pulls go through: `revision` moves, and the editor folds
+ * the new text into whatever is in the buffer.
+ */
+export async function adoptFromStorage(paths: readonly string[]): Promise<void> {
+  let changed = false
+  for (const path of paths) {
+    const row = await getFile(path)
+    const held = files.get(path)
+    if (!row) {
+      if (!held) continue
+      files.delete(path)
+      indexMap.delete(path)
+      releaseUrl(path)
+      changed = true
+      continue
+    }
+    // Sync bookkeeping (dirty, base hash) is taken either way; only a change to
+    // what is *in* the file is worth reindexing and redrawing for.
+    const same =
+      !!held &&
+      held.hash === row.hash &&
+      held.mtime === row.mtime &&
+      !!held.deleted === !!row.deleted
+    files.set(path, row)
+    if (same) continue
+    reindex(path)
+    changed = true
+  }
+  if (changed) bump()
 }
 
 /** True for anything under backstage/ — hidden from every UI surface. */
