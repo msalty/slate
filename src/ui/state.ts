@@ -77,7 +77,14 @@ export const paletteOpen = signal(false)
 export const settingsOpen = signal(false)
 export const historyOpen = signal(false)
 export const lightboxPath = signal<string | undefined>(undefined)
-export const toast = signal<{ text: string; kind: 'info' | 'error' } | undefined>(undefined)
+export interface Toast {
+  text: string
+  kind: 'info' | 'error'
+  /** One thing the toast offers to do. It dismisses itself either way. */
+  action?: { label: string; run: () => void }
+}
+
+export const toast = signal<Toast | undefined>(undefined)
 
 /* ------------------------------------------------------------ mobile shell */
 
@@ -181,10 +188,22 @@ export function closeMobileEditor() {
 /* ------------------------------------------------------------------ toasts */
 
 let toastTimer: ReturnType<typeof setTimeout> | undefined
-export function notify(text: string, kind: 'info' | 'error' = 'info') {
-  toast.value = { text, kind }
+export function notify(
+  text: string,
+  kind: 'info' | 'error' = 'info',
+  action?: { label: string; run: () => void },
+) {
+  toast.value = { text, kind, action }
   if (toastTimer) clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => (toast.value = undefined), kind === 'error' ? 7000 : 3200)
+  // A toast with something to press has to outlast a glance at it; one that
+  // only reports has said everything it has to say by the time you look.
+  const ms = action ? 8000 : kind === 'error' ? 7000 : 3200
+  toastTimer = setTimeout(() => (toast.value = undefined), ms)
+}
+
+export function dismissToast() {
+  if (toastTimer) clearTimeout(toastTimer)
+  toast.value = undefined
 }
 
 export function scopeLabel(s: Scope): string {

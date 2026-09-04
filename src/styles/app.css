@@ -1802,6 +1802,26 @@ body.resizing .pane-resizer::after {
   border-color: var(--danger);
   color: var(--danger);
 }
+/* A toast that offers something puts it on the same pill, not under it. */
+.toast:has(.toast-action) {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-right: 6px;
+}
+.toast-action {
+  flex: 0 0 auto;
+  padding: 5px 13px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--text-on-accent);
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.toast-action:hover {
+  filter: brightness(1.08);
+}
 @keyframes rise {
   from {
     opacity: 0;

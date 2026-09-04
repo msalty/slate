@@ -32,6 +32,7 @@ import {
   paletteOpen,
   scope,
   settingsOpen,
+  dismissToast,
   toast,
   visibleNotes,
 } from './state'
@@ -353,7 +354,19 @@ export function App() {
       <ContextMenu />
       {toast.value && (
         <div class="toast" data-kind={toast.value.kind} role="status">
-          {toast.value.text}
+          <span>{toast.value.text}</span>
+          {toast.value.action && (
+            <button
+              class="toast-action"
+              onClick={() => {
+                const act = toast.value?.action
+                dismissToast()
+                act?.run()
+              }}
+            >
+              {toast.value.action.label}
+            </button>
+          )}
         </div>
       )}
     </>

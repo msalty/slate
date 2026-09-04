@@ -2417,6 +2417,66 @@ try {
     await page.waitForTimeout(350)
   }
 
+  /* ---- naming a note after the heading you typed in it -------------------
+   * A note made with *New note here* — and every note started from a template
+   * — is called Untitled. Type a heading into it and the file, the note list
+   * and any wikilink to it all still say Untitled about a note that plainly
+   * is not. The offer is made only for a note that has never been named, so it
+   * can never nag anyone whose `2026-09-04.md` is headed `# Thursday` on
+   * purpose.
+   */
+  await page.click('[title^="New note"]')
+  await page.waitForTimeout(500)
+  await page.locator('.cm-content').click()
+  await page.locator('.cm-content').pressSequentially('# Kickoff with Acme', { delay: 12 })
+  await page.waitForTimeout(1400)
+  check(
+    'an unnamed note offers its heading as a name',
+    (await page.locator('.toast:has-text("Kickoff with Acme")').count()) === 1,
+    (await page.locator('.toast').innerText().catch(() => '')) || 'no toast',
+  )
+  check(
+    'and offers it rather than doing it',
+    (await page.locator('.editor-title-input').inputValue()).startsWith('Untitled'),
+    await page.locator('.editor-title-input').inputValue(),
+  )
+  await page.locator('.toast-action').click()
+  await page.waitForTimeout(800)
+  check(
+    'taking the offer renames the file',
+    (await page.locator('.editor-title-input').inputValue()) === 'Kickoff with Acme',
+    await page.locator('.editor-title-input').inputValue(),
+  )
+  const renamed = await page.evaluate(async () => {
+    const req = indexedDB.open('slate')
+    return new Promise((r) => {
+      req.onsuccess = () => {
+        const tx = req.result.transaction('files', 'readonly')
+        const all = tx.objectStore('files').getAll()
+        all.onsuccess = () =>
+          r(all.result.filter((f) => !f.deleted).map((f) => f.path).includes('Kickoff with Acme.md'))
+      }
+    })
+  })
+  check('on disk as well as in the header', renamed === true)
+
+  /*
+   * And a note that has a name of its own is left alone, however far its
+   * heading drifts from it — which is the case that would otherwise turn this
+   * into a nuisance.
+   */
+  await page.locator('.cm-content').click()
+  await page.locator('.cm-content').press('Control+End')
+  await page.locator('.cm-content').pressSequentially('\n\n# A different heading entirely', {
+    delay: 8,
+  })
+  await page.waitForTimeout(1400)
+  check(
+    'a note that has been named is never asked about again',
+    (await page.locator('.toast:has-text("A different heading")').count()) === 0,
+    (await page.locator('.toast').innerText().catch(() => '')) || 'no toast',
+  )
+
   /* ---- exporting a note -------------------------------------------------
    * Nothing is converted: the bytes that leave are the bytes on disk, which is
    * the whole reason this is not a renderer. Headless Chromium has no share

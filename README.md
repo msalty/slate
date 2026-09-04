@@ -19,7 +19,7 @@ npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
 npm test               # 307 unit and two-device sync tests
-node scripts/smoke.mjs # 289-check browser smoke test against dist/
+node scripts/smoke.mjs # 294-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -244,6 +244,16 @@ does.
 pointer, always visible on a touch screen, and it works while a note is being
 read, which is where it is wanted most. It copies the code without its fences,
 and without the indentation of a block nested in a list.
+
+**A note names itself, if you let it.** A note made with *New note here* — and
+every note started from a template — is called `Untitled`, so typing a heading
+into one leaves the file, the note list and any `[[wikilink]]` to it all saying
+Untitled about a note that plainly is not. Pause after typing that heading and
+a toast offers the name; taking it renames the file, and ignoring it costs
+nothing. The offer is only ever made for a note that has **never been named** —
+plenty of vaults keep `2026-09-04.md` headed `# Thursday` on purpose, and an
+app that asked about that every time you paused would be a nuisance rather
+than a help. Nothing renames a file in a synced vault without being asked.
 
 **A note can leave.** Right-click one (or long-press it) for **Share…** on a
 phone and **Export as Markdown** everywhere else; ⌘K has it too, for the note
@@ -873,7 +883,7 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 
 ```bash
 npm test                # 307 unit + two-device sync tests
-node scripts/smoke.mjs  # 289 checks in headless Chromium against dist/
+node scripts/smoke.mjs  # 294 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

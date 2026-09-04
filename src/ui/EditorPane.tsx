@@ -43,6 +43,7 @@ import {
 } from './state'
 import { beginEditing, endEditing, installTapToEdit } from '../editor/reading'
 import { templateBodyFor } from '../core/templates'
+import { offerTitleFromHeading } from './titleDrift'
 import { UNTITLED } from '../core/vault'
 import { layoutMode, railState, toggleRail } from './layout'
 import { debounce, longDateTime } from '../core/util'
@@ -94,7 +95,10 @@ export function EditorPane() {
   const saveRef = useRef(
     debounce((p: string, text: string) => {
       baseRef.current = text
-      void saveNote(p, text).then(() => syncSoon())
+      void saveNote(p, text).then(() => {
+        syncSoon()
+        offerTitleFromHeading(p, text)
+      })
     }, 400),
   )
 
