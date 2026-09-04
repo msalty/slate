@@ -118,7 +118,7 @@ export function CommandPalette() {
                   : 'system',
           }),
       },
-      { id: 'trash', label: 'Show Recently Deleted', run: () => (scope.value = { kind: 'trash' }) },
+      { id: 'trash', label: 'Show Deleted', run: () => (scope.value = { kind: 'trash' }) },
       { id: 'files', label: 'Show all files', run: () => (scope.value = { kind: 'files' }) },
     ],
     [settings.value, day, notes.value],

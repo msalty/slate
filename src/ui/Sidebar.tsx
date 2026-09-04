@@ -38,6 +38,7 @@ import {
   IconTrash,
 } from './Icons'
 import { newNoteInFolder } from './EditorPane'
+import { settings, update } from '../core/settings'
 import {
   assignedTemplate,
   hasTemplates,
@@ -183,12 +184,12 @@ function folderMenu(node: FolderNode): MenuItem[] {
       onSelect: async () => {
         const n = node.count
         const msg = n
-          ? `Move "${node.name}" and its ${n} note${n === 1 ? '' : 's'} to Recently Deleted?`
+          ? `Move "${node.name}" and its ${n} note${n === 1 ? '' : 's'} to Deleted?`
           : `Delete the empty folder "${node.name}"?`
         if (!confirm(msg)) return
         await deleteFolder(node.path)
         select({ kind: 'all' })
-        notify(n ? `${n} note${n === 1 ? '' : 's'} moved to Recently Deleted` : 'Folder deleted')
+        notify(n ? `${n} note${n === 1 ? '' : 's'} moved to Deleted` : 'Folder deleted')
       },
     },
   ]
@@ -414,6 +415,60 @@ function isUnder(id: string, ancestorId: string): boolean {
   return smartFolderAncestors(id).some((a) => a.id === ancestorId)
 }
 
+/**
+ * A named section of the sidebar that can be folded away.
+ *
+ * The three of them stack up: a vault with a deep folder tree, a dozen Tag
+ * Folders and eighty tags is several screens of sidebar, and most of the time
+ * you are only using one of the three. Which are folded is a preference rather
+ * than component state, so it survives a reload and follows you between
+ * devices, and the count on the header says what is behind a folded one — a
+ * section that hides its contents without saying how many there are is a
+ * section people open again just to check.
+ */
+function SideGroup({
+  title,
+  collapsed,
+  onToggle,
+  count,
+  add,
+  children,
+}: {
+  title: string
+  collapsed: boolean
+  onToggle: () => void
+  count?: number
+  add?: { label: string; onSelect: () => void }
+  children: preact.ComponentChildren
+}) {
+  return (
+    <div class="side-group">
+      <div class="side-group-label">
+        <button
+          class="side-group-toggle"
+          aria-expanded={!collapsed}
+          onClick={onToggle}
+          title={collapsed ? `Show ${title}` : `Hide ${title}`}
+        >
+          <span class="disclose" data-open={!collapsed}>
+            <IconChevron size={11} />
+          </span>
+          <span class="side-group-name">{title}</span>
+          {collapsed && count !== undefined && count > 0 && (
+            <span class="side-group-count">{count}</span>
+          )}
+        </button>
+        {add && (
+          <button class="side-add" title={add.label} aria-label={add.label} onClick={add.onSelect}>
+            <IconPlus size={13} />
+          </button>
+        )}
+      </div>
+      {!collapsed && children}
+    </div>
+  )
+}
+
 export function Sidebar() {
   const tree = folderTree.value
   const openTasks = tasks.value.filter((t) => !t.done).length
@@ -447,47 +502,49 @@ export function Sidebar() {
         <Row
           target={{ kind: 'trash' }}
           icon={<IconTrash size={15} />}
-          name="Recently Deleted"
+          name="Deleted"
           count={trash}
         />
       </div>
 
-      <div class="side-group">
-        <div class="side-group-label">
-          <span>Folders</span>
-          <button
-            class="side-add"
-            title="New folder"
-            aria-label="New folder"
-            onClick={async () => {
-              const name = prompt('New folder', '')
-              if (!name?.trim()) return
-              const path = await createFolder('', name)
-              select({ kind: 'folder', path })
-            }}
-          >
-            <IconPlus size={13} />
-          </button>
-        </div>
+      <SideGroup
+        title="Folders"
+        collapsed={settings.value.collapseFolders}
+        onToggle={() => update({ collapseFolders: !settings.value.collapseFolders })}
+        count={tree.children.length}
+        add={{
+          label: 'New folder',
+          onSelect: async () => {
+            const name = prompt('New folder', '')
+            if (!name?.trim()) return
+            const path = await createFolder('', name)
+            // A new folder inside a folded section would be created out of
+            // sight, so making one unfolds it.
+            update({ collapseFolders: false })
+            select({ kind: 'folder', path })
+          },
+        }}
+      >
         {tree.children.length === 0 ? (
           <p class="side-hint">No folders yet.</p>
         ) : (
           tree.children.map((c) => <FolderRow key={c.path} node={c} depth={0} />)
         )}
-      </div>
+      </SideGroup>
 
-      <div class="side-group">
-        <div class="side-group-label">
-          <span>Tag Folders</span>
-          <button
-            class="side-add"
-            title="New Tag Folder"
-            aria-label="New Tag Folder"
-            onClick={() => openTagFolderDialog()}
-          >
-            <IconPlus size={13} />
-          </button>
-        </div>
+      <SideGroup
+        title="Tag Folders"
+        collapsed={settings.value.collapseTagFolders}
+        onToggle={() => update({ collapseTagFolders: !settings.value.collapseTagFolders })}
+        count={smartFolders.value.length}
+        add={{
+          label: 'New Tag Folder',
+          onSelect: () => {
+            update({ collapseTagFolders: false })
+            openTagFolderDialog()
+          },
+        }}
+      >
         {smartFolders.value.length === 0 ? (
           <p class="side-hint">
             Saved rules like <code>#work AND #active</code> that gather notes automatically.
@@ -495,13 +552,15 @@ export function Sidebar() {
         ) : (
           smartFolderTree.value.map((n) => <SmartFolderRow key={n.folder.id} node={n} />)
         )}
-      </div>
+      </SideGroup>
 
       {allTags.value.length > 0 && (
-        <div class="side-group">
-          <div class="side-group-label">
-            <span>Tags</span>
-          </div>
+        <SideGroup
+          title="Tags"
+          collapsed={settings.value.collapseTags}
+          onToggle={() => update({ collapseTags: !settings.value.collapseTags })}
+          count={allTags.value.length}
+        >
           <div class="tag-cloud">
             {allTags.value.slice(0, 80).map((t) => {
               const current = scope.value.kind === 'tag' && scope.value.tag === t.tag
@@ -519,7 +578,7 @@ export function Sidebar() {
               )
             })}
           </div>
-        </div>
+        </SideGroup>
       )}
     </div>
   )

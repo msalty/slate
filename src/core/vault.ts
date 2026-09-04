@@ -789,7 +789,14 @@ export async function restoreFromTrash(trashPath: string, to?: string): Promise<
   const name = trashDisplayName(trashPath)
   let dest = to ?? name
   let n = 2
-  while (files.has(dest)) {
+  /*
+   * Only a file that is actually there counts as being in the way. Deleting
+   * something leaves a tombstone at the path it came from — the row that tells
+   * sync the remote copy has to go — and treating that as occupied meant a
+   * note deleted and restored came back as "Note 2", every time, with nothing
+   * called "Note" anywhere for it to have collided with.
+   */
+  while (files.has(dest) && !files.get(dest)!.deleted) {
     const dot = name.lastIndexOf('.')
     dest = dot > 0 ? `${name.slice(0, dot)} ${n++}${name.slice(dot)}` : `${name} ${n++}`
   }
@@ -805,7 +812,7 @@ export async function deleteFile(path: string): Promise<void> {
   return deleteNote(path)
 }
 
-/** True for anything sitting in Recently Deleted. */
+/** True for anything sitting in Deleted. */
 export function isTrashed(path: string): boolean {
   return path.startsWith(`${TRASH}/`)
 }
@@ -818,11 +825,59 @@ export function trashDisplayName(path: string): string {
   return basename(path).replace(/^\d{4}-\d{2}-\d{2}T[\d-]+--(?:\d+--)?/, '')
 }
 
-export function trashItems(): VaultFile[] {
+/**
+ * What a deleted thing is called on screen.
+ *
+ * A note goes by its title everywhere else in the app, so it goes by its title
+ * here too — the `.md` is how the file is stored, not what the note is called,
+ * and a list that shows one row as "Groceries" and the next as "Groceries.md"
+ * is showing the same thing two ways. A deleted *file* keeps its extension,
+ * which is its name and half of what says which file it was.
+ */
+export function trashTitle(path: string): string {
+  return trashDisplayName(path).replace(/\.md$/i, '')
+}
+
+/**
+ * Everything in Deleted, newest first.
+ *
+ * A computed rather than a plain function, and it reads `revision` like every
+ * other derived signal here. As a bare function wrapped in a `computed()` by
+ * its caller it had no dependencies at all, so the signal settled after its
+ * first read and never recomputed: deleting something removed the file but
+ * left the row on screen, which looked exactly like a delete that did nothing.
+ */
+export const trashFiles = computed<VaultFile[]>(() => {
+  revision.value
   const out: VaultFile[] = []
   for (const f of files.values())
     if (!f.deleted && f.path.startsWith(`${TRASH}/`)) out.push(f)
   return out.sort((a, b) => b.mtime - a.mtime)
+})
+
+export function trashItems(): VaultFile[] {
+  return trashFiles.value
+}
+
+/**
+ * Permanently delete one file out of Deleted.
+ *
+ * A tombstone, not a straight drop from the local database: the remote still
+ * has the file, and forgetting it here would only mean the next sync pulled it
+ * back down. The tombstone is what tells sync to remove the remote copy too,
+ * and it disappears once that has happened — the same route a move takes for
+ * the path it leaves behind.
+ */
+export async function purge(path: string): Promise<void> {
+  if (!files.has(path)) return
+  await tombstone(path)
+}
+
+/** Permanently delete everything in Deleted. Returns how many went. */
+export async function emptyTrash(): Promise<number> {
+  const doomed = trashFiles.value.map((f) => f.path)
+  for (const p of doomed) await tombstone(p)
+  return doomed.length
 }
 
 /**

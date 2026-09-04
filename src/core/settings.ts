@@ -40,6 +40,9 @@ const SHARED_KEYS = [
   'sortBy',
   'taskGroupBy',
   'showDoneTasks',
+  'collapseFolders',
+  'collapseTagFolders',
+  'collapseTags',
 ] as const
 
 type SharedKey = (typeof SHARED_KEYS)[number]
@@ -69,6 +72,9 @@ function defaults(): AppSettings {
     sortBy: 'mtime',
     taskGroupBy: 'none',
     showDoneTasks: false,
+    collapseFolders: false,
+    collapseTagFolders: false,
+    collapseTags: false,
     deviceId: uid(8),
     deviceName: guessDeviceName(),
   }

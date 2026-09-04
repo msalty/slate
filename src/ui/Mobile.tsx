@@ -200,7 +200,7 @@ export function MobileMore() {
           )}
           <MoreRow
             icon={<IconTrash size={17} />}
-            label="Recently Deleted"
+            label="Deleted"
             count={trashItems().length}
             onClick={() => go({ kind: 'trash' })}
           />

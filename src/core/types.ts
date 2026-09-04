@@ -251,6 +251,17 @@ export interface AppSettings {
    * The heading still counts them, so nothing is hidden without saying so.
    */
   showDoneTasks: boolean
+  /**
+   * Which of the sidebar's named sections are folded away.
+   *
+   * Three flags rather than one list, because settings are compared by value
+   * to decide what still needs writing to the shared config — an array or an
+   * object would be a fresh reference every time and so always look changed,
+   * and would never take an update from another device.
+   */
+  collapseFolders: boolean
+  collapseTagFolders: boolean
+  collapseTags: boolean
   deviceId: string
   deviceName: string
 }

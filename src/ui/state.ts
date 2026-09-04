@@ -6,7 +6,7 @@ import {
   notes,
   notesByDay,
   search,
-  trashItems,
+  trashFiles,
   attachments,
   unresolvedLinks,
 } from '../core/vault'
@@ -152,7 +152,7 @@ export function takeOpenCaret(): number | undefined {
  * template — a daily note, a note created inside a Tag Folder — which are as
  * new as an empty one even though the file is not empty.
  *
- * A note in Recently Deleted always opens as a page. There is nothing to be
+ * A note in Deleted always opens as a page. There is nothing to be
  * done to it until it is restored.
  */
 export function opensForWriting(path: string, text: string, trashed: boolean): boolean {
@@ -229,7 +229,7 @@ export function scopeLabel(s: Scope): string {
     case 'unlinked':
       return 'Unlinked mentions'
     case 'trash':
-      return 'Recently Deleted'
+      return 'Deleted'
   }
 }
 
@@ -294,7 +294,7 @@ export const visibleNotes = computed<NoteIndexEntry[]>(() => {
   return [...list].sort((a, b) => (a.pinned === b.pinned ? cmp(a, b) : a.pinned ? -1 : 1))
 })
 
-export const trashList = computed(() => trashItems())
+export const trashList = trashFiles
 export const fileList = computed(() => attachments.value)
 export const unlinkedList = computed(() => [...unresolvedLinks.value.entries()])
 
