@@ -342,6 +342,16 @@ textarea {
   color: var(--danger);
   font-weight: 700;
 }
+/* Marks a Tag Folder that gathers tasks rather than notes. */
+.side-task {
+  display: inline-flex;
+  vertical-align: -1px;
+  margin-left: 5px;
+  color: var(--text-faint);
+}
+.side-row[aria-current='true'] .side-task {
+  color: color-mix(in srgb, currentColor 65%, transparent);
+}
 
 .side-row {
   display: flex;

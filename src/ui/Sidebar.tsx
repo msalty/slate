@@ -11,6 +11,7 @@ import {
   isGroupFolder,
   moveSmartFolder,
   renameFolder,
+  showsTasks,
   smartFolderAncestors,
   smartFolderCounts,
   smartFolderError,
@@ -352,6 +353,17 @@ function SmartFolderRow({ node }: { node: SmartNode }) {
         name={
           <>
             {sf.name}
+            {showsTasks(sf) && (
+              /*
+               * A folder that gathers tasks sits in the same list as folders
+               * that gather notes, and until this tick nothing on the row said
+               * which one you were about to open — same emoji slot, same
+               * count, different thing behind it.
+               */
+              <span class="side-task" title="Gathers tasks" aria-label="Gathers tasks">
+                <IconCheck size={11} />
+              </span>
+            )}
             {error && (
               <span class="side-warn" title={error}>
                 {' !'}

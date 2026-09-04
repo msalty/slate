@@ -9,7 +9,7 @@
 import { getEntry, notesByDay, notesOnDay, setDue, tasks, toggleTask } from '../core/vault'
 import type { TaskItem } from '../core/types'
 import { Fragment } from 'preact'
-import { groupTasks } from '../core/taskgroups'
+import { dueByToday, groupTasks } from '../core/taskgroups'
 import { settings, update } from '../core/settings'
 import { openMenu } from './Menu'
 import { dailyNoteFor } from '../core/daily'
@@ -271,6 +271,24 @@ export function TasksPanel({
   )
 }
 
+/**
+ * The rail's own task list: what is due today, and what is already late.
+ *
+ * Narrowed on purpose. The sidebar's Tasks row holds every task in the vault,
+ * and repeating that list under a calendar made the two columns compete —
+ * whereas dates are what the column beside it is about, so a list scoped to
+ * them is the one thing the rail can say that the sidebar cannot.
+ */
+function DueTasksPanel() {
+  return (
+    <TasksPanel
+      items={dueByToday(tasks.value)}
+      title="Due"
+      empty={<>Nothing due today. The Tasks list in the sidebar has everything else.</>}
+    />
+  )
+}
+
 /** The wide-screen right column. */
 export function RightRail() {
   return (
@@ -278,7 +296,7 @@ export function RightRail() {
       <div class="rail-scroll">
         <CalendarPanel />
         <DayNotesPanel />
-        <TasksPanel />
+        <DueTasksPanel />
       </div>
     </div>
   )

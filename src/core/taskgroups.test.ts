@@ -1,7 +1,7 @@
 /** Arranging a task list into groups. */
 
 import { describe, expect, it } from 'vitest'
-import { groupTasks } from './taskgroups'
+import { dueByToday, groupTasks } from './taskgroups'
 import { startOfDay } from './util'
 import type { TaskItem } from './types'
 
@@ -127,5 +127,42 @@ describe('whatever the grouping', () => {
       expect(flat).toHaveLength(items.length)
       expect(new Set(flat.map((t) => t.id)).size).toBe(items.length)
     }
+  })
+})
+
+/**
+ * What the rail beside the calendar shows. The narrowing is the feature: a
+ * list of everything was already one column to the left, and only the dated
+ * part of it has anything to do with the date the calendar is on.
+ */
+describe('due by today', () => {
+  const late = task({ due: TODAY - 3 * DAY })
+  const now = task({ due: TODAY })
+  const soon = task({ due: TODAY + DAY })
+  const undated = task({})
+  const finished = task({ due: TODAY - DAY, done: true })
+  const list = [late, now, soon, undated, finished]
+
+  it('takes what is late and what is due today', () => {
+    expect(dueByToday(list, TODAY)).toEqual([late, now])
+  })
+
+  it('leaves out a task due later — it is not today’s problem', () => {
+    expect(dueByToday(list, TODAY)).not.toContain(soon)
+  })
+
+  it('leaves out an undated task, however urgent it reads', () => {
+    expect(dueByToday(list, TODAY)).not.toContain(undated)
+  })
+
+  it('leaves out one that is crossed off: it is over, not overdue', () => {
+    expect(dueByToday(list, TODAY)).not.toContain(finished)
+  })
+
+  it('groups into no more than Overdue and Today', () => {
+    expect(shape(dueByToday(list, TODAY), 'due')).toEqual([
+      ['Overdue', 1],
+      ['Today', 1],
+    ])
   })
 })

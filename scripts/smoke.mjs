@@ -99,6 +99,17 @@ page.on('pageerror', (e) => consoleErrors.push(`pageerror: ${e.message}`))
  * text, because a note whose first lines are a table or an image would be
  * answering a click aimed at those instead.
  */
+/**
+ * A date as the app writes it into a task line: local, not UTC, so a run near
+ * midnight in a western timezone does not date "today" as tomorrow.
+ */
+const isoDay = (offset = 0) => {
+  const d = new Date()
+  d.setDate(d.getDate() + offset)
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+
 const startEditing = async () => {
   const edit = page.locator('.editor-pane [aria-label="Edit note"]')
   if (await edit.count()) {
@@ -209,14 +220,28 @@ try {
   check('bold markers hidden in preview', !visibleText.includes('**booked**'), visibleText.slice(0, 60))
 
   /* ---- tasks --------------------------------------------------------- */
-  await editor.pressSequentially('- [ ] Book the tram tickets 📅 2026-09-04\n', { delay: 4 })
+  await editor.pressSequentially(`- [ ] Book the tram tickets 📅 ${isoDay()}\n`, { delay: 4 })
   await editor.pressSequentially('Renew passport\n', { delay: 4 })
   await page.waitForTimeout(500)
   const checkboxes = await page.locator('.cm-task-checkbox').count()
   check('task checkbox renders as a widget', checkboxes > 0, `${checkboxes} found`)
 
-  const railTasks = await page.locator('.rail .task-row').count()
-  check('task appears in the right rail', railTasks > 0, `${railTasks} in rail`)
+  /*
+   * The rail's list is the dated one: what is due today and what is already
+   * late. Everything else lives in the sidebar's Tasks row — beside a calendar,
+   * an undated job is a job for another day.
+   */
+  const railRows = () => page.locator('.rail .task-row')
+  check(
+    'a task due today appears in the right rail',
+    (await railRows().filter({ hasText: 'Book the tram tickets' }).count()) === 1,
+    `${await railRows().count()} in rail`,
+  )
+  check(
+    'and an undated one does not crowd it',
+    (await railRows().filter({ hasText: 'Renew passport' }).count()) === 0,
+    (await railRows().allInnerTexts()).join(' | '),
+  )
 
   /* ---- due dates ------------------------------------------------------
    * The chip is the whole feature: a date is a control at the end of the task
@@ -226,7 +251,7 @@ try {
   check('a due date renders as a chip, not as syntax', (await dated.count()) === 1)
   check(
     'and the raw marker is gone from the rendered line',
-    !(await page.locator('.cm-content').innerText()).includes('📅 2026-09-04'),
+    !(await page.locator('.cm-content').innerText()).includes(`📅 ${isoDay()}`),
   )
   check('the chip says something a person would say', ((await dated.innerText()) || '').length > 0, await dated.innerText())
 
@@ -316,9 +341,15 @@ try {
   )
   check('and the note now carries two dated tasks', (trip.match(/📅/g) ?? []).length === 2)
   check(
-    'the rail gives every task a date button, set or not',
+    'the rail gives every task it shows a date button',
     (await page.locator('.rail .task-row .due-chip').count()) ===
-      (await page.locator('.rail .task-row').count()),
+      (await page.locator('.rail .task-row').count()) &&
+      (await page.locator('.rail .task-row').count()) > 0,
+  )
+  check(
+    'and a task dated tomorrow waits its turn',
+    (await railRows().filter({ hasText: 'Renew passport' }).count()) === 0,
+    (await railRows().allInnerTexts()).join(' | '),
   )
 
   /* ---- second note + wikilink autocomplete --------------------------- */
@@ -2465,6 +2496,45 @@ try {
   check(
     'turning it off leaves the list as it was',
     (await page.locator('.list-scroll .task-group').count()) === 0,
+  )
+
+  /* ---- what the sidebar's Tasks row is for -------------------------------
+   * It counts tasks, so it lists tasks. Listing the notes that happened to
+   * hold them left the count promising one thing and the click delivering
+   * another — and the check glyph is what tells a task-gathering Tag Folder
+   * apart from the note-gathering one sitting right beside it.
+   */
+  check(
+    'a Tag Folder that gathers tasks says so on its row',
+    (await page.locator('.side-row:has-text("Home jobs") .side-task').count()) === 1,
+  )
+  check(
+    'and one that gathers notes does not',
+    (await page.locator('.side-row:has-text("Active work") .side-task').count()) === 0,
+  )
+
+  await page.locator('.side-row:has-text("Tasks")').first().click()
+  await page.waitForTimeout(500)
+  const taskRowTexts = await page.locator('.list-scroll .task-row').allInnerTexts()
+  const noteRows = await page.locator('.list-scroll .note-row').count()
+  check(
+    'the sidebar Tasks row lists tasks, not the notes holding them',
+    taskRowTexts.length > 0 && noteRows === 0,
+    `${taskRowTexts.length} task rows, ${noteRows} note rows`,
+  )
+  const taskNotes = new Set(
+    (await page.locator('.list-scroll .task-row .task-meta').allInnerTexts()).map((t) => t.trim()),
+  )
+  check(
+    'and gathers them from every note in the vault, not one',
+    taskNotes.size > 1,
+    [...taskNotes].join(' | '),
+  )
+  check(
+    'the ones still to do and the ones already crossed off',
+    taskRowTexts.join(' | ').includes('Ring the plumber') &&
+      taskRowTexts.join(' | ').includes('Measure the worktop'),
+    taskRowTexts.join(' | ').slice(0, 140),
   )
 
   await page.locator('.side-row:has-text("All Notes")').first().click()

@@ -319,6 +319,21 @@ export function NoteList({ children }: { children?: preact.ComponentChildren }) 
           <FilesView />
         ) : s.kind === 'unlinked' && !query.value ? (
           <UnlinkedView />
+        ) : s.kind === 'tasks' && !query.value ? (
+          /*
+           * The Tasks row lists tasks, not the notes that happen to contain
+           * them: it counts tasks in the sidebar, and a list of note titles is
+           * one click short of what the count promised.
+           */
+          <TasksPanel
+            showDone
+            empty={
+              <>
+                Type <code>- [ ]</code> in any note to add a task. Every one in the vault turns up
+                here.
+              </>
+            }
+          />
         ) : taskFolder && !query.value ? (
           /*
            * A Tag Folder that gathers tasks puts them here, where its notes

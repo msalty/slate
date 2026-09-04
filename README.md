@@ -18,7 +18,7 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 332 unit and two-device sync tests
+npm test               # 337 unit and two-device sync tests
 node scripts/smoke.mjs # 310-check browser smoke test against dist/
 ```
 
@@ -312,7 +312,9 @@ makes grouping by them ambiguous. Due date and note are one apiece.
 The tasks appear in the note list's place, as the same rows the calendar rail
 and the phone's Tasks tab use — so ticking one there writes to the note it lives
 on, and it leaves the folder if the folder asked for open ones. The count beside
-the folder counts tasks, not the notes they sit on. Written into a rule over
+the folder counts tasks, not the notes they sit on, and a small tick on the row
+says which kind of folder you are about to open: it sits in the same list as
+folders that gather notes, with the same emoji and the same count beside it. Written into a rule over
 *notes*, `is:` and `due:` match nothing and the folder's live count says so as
 you type.
 
@@ -429,8 +431,14 @@ creation time. Click a day to filter the list. Any day without a daily note
 offers to make one — **Create daily note**, at the top of that day's list and
 under the day in the rail — which writes `Daily/YYYY-MM-DD.md` and opens it, so
 Thursday's note can be started on Saturday and still lands on Thursday. Below
-it, every `- [ ]` in the vault is rolled up into one task list. Ticking a box
-there edits the source note.
+it, **Due**: the tasks that are due today and the ones already late. Ticking a
+box there edits the source note.
+
+The rail's list is narrowed on purpose. Every `- [ ]` in the vault is rolled up
+under **Tasks** in the sidebar, and repeating that list under a calendar made
+the two columns compete for the same job. Dates are what the column beside it
+is about, so a list scoped to them is the one thing the rail can say that the
+sidebar cannot — and an undated job is a job for another day.
 
 **Due dates you don't have to type.** A task line has two controls, one at each
 end: the checkbox that says whether it's done, and a chip that says when it's
@@ -924,8 +932,8 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 332 unit + two-device sync tests
-node scripts/smoke.mjs  # 310 checks in headless Chromium against dist/
+npm test                # 337 unit + two-device sync tests
+node scripts/smoke.mjs  # 317 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

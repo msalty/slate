@@ -58,6 +58,17 @@ const DUE_BANDS: Array<[string, string]> = [
   ['done', 'Done'],
 ]
 
+/**
+ * Open tasks that are due today or should already have been done.
+ *
+ * The rail's list beside the calendar, where a date is what the whole column
+ * is about: an undated job is a job for another day, and the sidebar's Tasks
+ * row is where the whole list lives.
+ */
+export function dueByToday(items: TaskItem[], today = startOfDay(Date.now())): TaskItem[] {
+  return items.filter((t) => !t.done && t.due !== undefined && t.due <= today)
+}
+
 export function groupTasks(
   items: TaskItem[],
   by: TaskGroupBy,

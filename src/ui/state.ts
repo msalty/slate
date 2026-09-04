@@ -262,8 +262,12 @@ export const visibleNotes = computed<NoteIndexEntry[]>(() => {
       break
     }
     case 'tasks':
-      list = contentNotes.value.filter((n) => n.hasTasks)
-      break
+      /*
+       * Tasks are not notes. The row counts tasks, so it lists tasks: the
+       * middle column renders them from the task index directly, the same
+       * rows the rail and the phone tab use. Nothing for the note list here.
+       */
+      return []
     case 'trash':
       return []
     case 'files':
