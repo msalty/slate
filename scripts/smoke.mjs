@@ -1244,8 +1244,20 @@ try {
    * Clicking a table in rich text puts the caret in the cell, not in the
    * pipes: the rendered table *is* the editor there. (Live preview's
    * click-to-reveal is checked in the table section further down.)
+   *
+   * The mode is put into rich text here rather than inherited: the editor mode
+   * is a saved preference, so what this note opens in depends on reloads pages
+   * of script away, and a table check failing because the app was in live
+   * preview says nothing about tables.
    */
   await startEditing()
+  for (let i = 0; i < 3 && (await page.locator('.fmt-bar').count()) === 0; i++) {
+    await page.keyboard.press('Control+Shift+m')
+    await page.waitForTimeout(400)
+    await page.locator('.cm-content').click()
+    await page.waitForTimeout(250)
+  }
+  check('rich text is reachable from wherever the mode was left', (await page.locator('.fmt-bar').count()) === 1)
   await page.locator('.cm-table-render td').first().click()
   await page.waitForTimeout(400)
   check(
@@ -1280,6 +1292,7 @@ try {
   await page.locator('.menu-item', { hasText: 'Delete row' }).click()
   await page.waitForTimeout(400)
   check('and takes it away again', (await page.locator('.cm-table-render tr').count()) === barRows)
+
 
   /* ---- folders and Tag Folders -----------------------------------------
    * Both are new containers with real persistence, so they get exercised end
@@ -1476,6 +1489,13 @@ try {
     `${await page.locator('.cm-table-cell[contenteditable]').count()} of ${await page.locator('.cm-table-cell').count()} cells typeable`,
   )
   await startEditing()
+  // Rich text again, for the same reason: the mode is a saved preference, and
+  // a cell is only an editing surface in the mode that never shows the pipes.
+  for (let i = 0; i < 3 && (await page.locator('.fmt-bar').count()) === 0; i++) {
+    await page.keyboard.press('Control+Shift+m')
+    await page.waitForTimeout(400)
+  }
+  check('the cells belong to rich text, so that is the mode', (await page.locator('.fmt-bar').count()) === 1)
   check(
     'and gets them the moment the note is being written in',
     (await page.locator('.cm-table-cell[contenteditable]').count()) > 0,
@@ -2596,12 +2616,12 @@ try {
       .includes('Measure the worktop'),
   )
   /*
-   * Long enough for the vault-wide write to leave its debounce: preferences
-   * are saved to backstage/config.json on a timer, and that file is overlaid
-   * over the device's own copy at boot, so a reload inside the window reads
-   * back the value from before the change.
+   * Straight into the reload, inside the timer the vault-wide write sits on:
+   * backstage/config.json is overlaid over this device's own copy at boot, so
+   * a preference changed a moment before a reload used to come back as
+   * whatever it was before the change.
    */
-  await page.waitForTimeout(1800)
+  await page.waitForTimeout(250)
   await page.reload()
   await page.waitForSelector('.side-row')
   await page.waitForTimeout(900)

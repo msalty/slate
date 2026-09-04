@@ -18,7 +18,7 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 346 unit and two-device sync tests
+npm test               # 354 unit and two-device sync tests
 node scripts/smoke.mjs # 310-check browser smoke test against dist/
 ```
 
@@ -777,6 +777,14 @@ search, calendar, tags or link autocomplete. Credentials are the one thing that
 is deliberately *not* in there — a WebDAV password or a Drive client ID stays in
 the browser's local database on each device, so secrets never enter the vault.
 
+`config.json` is written on a 1.5-second timer, because a pane resizer would
+otherwise write a vault file on every frame of a drag, and it is overlaid over
+the device's own copy at boot. So a preference changed a moment before a reload
+would come back as whatever it was before — which is why the pending write is
+flushed when the tab goes away, and why the keys this device has changed but
+not yet written are kept on disk beside the settings. A killed tab flushes
+nothing; the next boot still knows which values were yours.
+
 ---
 
 ## How sync works
@@ -956,8 +964,8 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 346 unit + two-device sync tests
-node scripts/smoke.mjs  # 333 checks in headless Chromium against dist/
+npm test                # 354 unit + two-device sync tests
+node scripts/smoke.mjs  # 335 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 
