@@ -264,6 +264,22 @@ export const notesByDay = computed(() => {
   return m
 })
 
+/**
+ * date (local midnight ms) -> how many *open* tasks are due that day.
+ *
+ * What the calendar draws its second signal from. Open only, whatever the
+ * "show completed" switch says: the mark means work this day is still going to
+ * ask of you, and a day whose jobs are all done has nothing to say.
+ */
+export const openTasksByDueDay = computed(() => {
+  const m = new Map<number, number>()
+  for (const t of tasks.value) {
+    if (t.done || t.due === undefined) continue
+    m.set(t.due, (m.get(t.due) ?? 0) + 1)
+  }
+  return m
+})
+
 /** Reverse link map: path -> paths that link to it. */
 export const backlinkMap = computed(() => {
   const titles = titleIndex.value

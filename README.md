@@ -18,7 +18,7 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 337 unit and two-device sync tests
+npm test               # 346 unit and two-device sync tests
 node scripts/smoke.mjs # 310-check browser smoke test against dist/
 ```
 
@@ -295,6 +295,14 @@ and `due:overdue`, `due:today`, `due:soon`, `due:none`, `due:any`. So
 #home AND NOT #urgent      everything at home that can wait
 ```
 
+**Finished tasks are out of the list by default**, with *Show completed* in the
+same ⋮ menu to bring them back. A list whose top is what you owe and whose
+bottom is a growing archive of what you don't is a list people stop reading —
+and `is:done` already answers the archive question for anyone who wants it. The
+heading still counts them (*4 open · 12 done*), so nothing is hidden without
+saying so, and a group that runs past 200 rows says how many it left out rather
+than dropping them quietly.
+
 **Any task list can be arranged**, from the ⋮ beside its heading: *No
 grouping*, *By due date* — Overdue, Today, This week, Later, No date, Done, in
 that order — or *By note*. One setting for all three places a task list
@@ -314,7 +322,10 @@ and the phone's Tasks tab use — so ticking one there writes to the note it liv
 on, and it leaves the folder if the folder asked for open ones. The count beside
 the folder counts tasks, not the notes they sit on, and a small tick on the row
 says which kind of folder you are about to open: it sits in the same list as
-folders that gather notes, with the same emoji and the same count beside it. Written into a rule over
+folders that gather notes, with the same emoji and the same count beside it. A
+tick is on offer as the icon as well, but the one on the row is drawn from what
+the folder *does* — an icon anyone can put on anything cannot be trusted to say
+so. Written into a rule over
 *notes*, `is:` and `due:` match nothing and the folder's live count says so as
 you type.
 
@@ -439,6 +450,15 @@ under **Tasks** in the sidebar, and repeating that list under a calendar made
 the two columns compete for the same job. Dates are what the column beside it
 is about, so a list scoped to them is the one thing the rail can say that the
 sidebar cannot — and an undated job is a job for another day.
+
+**The calendar reads both ways.** A day that owes you work carries a small pip
+in its corner — red once the day has passed, the same red the date chip turns
+when it is late. It is a channel of its own: the dots under the number mean
+notes filed on that day, and making a dot mean two things would cost you both.
+Click the day and its tasks appear under its notes, headed *Due* — or *Was due*
+for a day that has been and gone. Today is the exception: the **Due** list below
+is already today's, and the same rows twice in one column is worse than not
+having them at the top.
 
 **Due dates you don't have to type.** A task line has two controls, one at each
 end: the checkbox that says whether it's done, and a chip that says when it's
@@ -932,8 +952,8 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 337 unit + two-device sync tests
-node scripts/smoke.mjs  # 317 checks in headless Chromium against dist/
+npm test                # 346 unit + two-device sync tests
+node scripts/smoke.mjs  # 331 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

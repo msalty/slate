@@ -242,6 +242,15 @@ export interface AppSettings {
    * want it one way in the rail and another in a folder.
    */
   taskGroupBy: 'none' | 'due' | 'note'
+  /**
+   * Whether a task list shows the ones already crossed off.
+   *
+   * Off by default. A list whose top is what you owe and whose bottom is a
+   * growing archive of what you don't is a list people stop reading — and the
+   * rule language already answers `is:done` for anyone who wants the archive.
+   * The heading still counts them, so nothing is hidden without saying so.
+   */
+  showDoneTasks: boolean
   deviceId: string
   deviceName: string
 }

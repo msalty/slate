@@ -6,10 +6,18 @@
  * a phone. Same components, same behaviour, no second implementation to drift.
  */
 
-import { getEntry, notesByDay, notesOnDay, setDue, tasks, toggleTask } from '../core/vault'
+import {
+  getEntry,
+  notesByDay,
+  notesOnDay,
+  openTasksByDueDay,
+  setDue,
+  tasks,
+  toggleTask,
+} from '../core/vault'
 import type { TaskItem } from '../core/types'
 import { Fragment } from 'preact'
-import { dueByToday, groupTasks } from '../core/taskgroups'
+import { dueByToday, groupTasks, tasksDueOn } from '../core/taskgroups'
 import { settings, update } from '../core/settings'
 import { openMenu } from './Menu'
 import { dailyNoteFor } from '../core/daily'
@@ -31,6 +39,7 @@ export function CalendarPanel({ big = false }: { big?: boolean }) {
   const anchor = calendarMonth.value
   const anchorDate = new Date(anchor)
   const byDay = notesByDay.value
+  const dueByDay = openTasksByDueDay.value
   const today = startOfDay(Date.now())
   const days = monthGrid(anchor)
 
@@ -74,6 +83,7 @@ export function CalendarPanel({ big = false }: { big?: boolean }) {
         ))}
         {days.map((day) => {
           const count = byDay.get(day)?.length ?? 0
+          const owed = dueByDay.get(day) ?? 0
           const outside = new Date(day).getMonth() !== anchorDate.getMonth()
           const isSelected = scope.value.kind === 'day' && startOfDay(scope.value.date) === day
           return (
@@ -84,7 +94,11 @@ export function CalendarPanel({ big = false }: { big?: boolean }) {
               data-outside={outside ? '1' : '0'}
               data-today={day === today ? '1' : '0'}
               aria-pressed={isSelected}
-              aria-label={`${new Date(day).toDateString()}, ${count} notes`}
+              aria-label={
+                owed
+                  ? `${new Date(day).toDateString()}, ${count} notes, ${owed} due`
+                  : `${new Date(day).toDateString()}, ${count} notes`
+              }
               onClick={() => {
                 selectedDay.value = day
                 // Tapping the selected day again clears the filter.
@@ -92,6 +106,15 @@ export function CalendarPanel({ big = false }: { big?: boolean }) {
                 if (outside) calendarMonth.value = day
               }}
             >
+              {/*
+                * A day that owes you work says so in a channel of its own: the
+                * dots below mean notes filed here, and overloading them would
+                * make a dot mean two things. Red once the day has passed —
+                * the same red the date chip turns when it is late.
+                */}
+              {owed > 0 && (
+                <span class="cal-due" data-late={day < today ? '1' : '0'} aria-hidden="true" />
+              )}
               <span class="cal-num">{new Date(day).getDate()}</span>
               <span class="cal-dots">
                 {Array.from({ length: Math.min(count, 5) }, (_, i) => (
@@ -109,6 +132,14 @@ export function CalendarPanel({ big = false }: { big?: boolean }) {
 export function DayNotesPanel() {
   const day = scope.value.kind === 'day' ? startOfDay(scope.value.date) : selectedDay.value
   const list = notesOnDay(day)
+  /*
+   * What this day asks of you, under what is filed on it — the calendar read
+   * the other way round. Today is the exception: the Due panel below is
+   * already today's list, and the same rows twice in one column is worse than
+   * not having them at the top.
+   */
+  const today = startOfDay(Date.now())
+  const due = day === today ? [] : tasksDueOn(tasks.value, day, settings.value.showDoneTasks)
   /*
    * The offer is only made when the day hasn't got one. Once it has, the note
    * is already sitting in the list above, and a second way in from the same
@@ -142,6 +173,63 @@ export function DayNotesPanel() {
           Create daily note
         </button>
       )}
+      {due.length > 0 && (
+        <>
+          <div class="task-group day-due">{day < today ? 'Was due' : 'Due'}</div>
+          {due.map((t) => (
+            <TaskRow key={t.id} task={t} />
+          ))}
+        </>
+      )}
+    </div>
+  )
+}
+
+/**
+ * How many rows one group draws before it stops.
+ *
+ * A list long enough to hit this is a list nobody is reading to the end of, and
+ * a thousand rows of DOM cost something on every keystroke. The count is said
+ * out loud rather than silently dropped — a cap you cannot see is a lie.
+ */
+const CAP = 200
+
+/**
+ * One task, wherever a task appears: the rail, the phone tab, a Tag Folder that
+ * gathers tasks, and the day panel. Same checkbox, same date chip, so ticking
+ * one is the same act everywhere and always writes to the note it lives on.
+ */
+function TaskRow({ task: t, showNote = true }: { task: TaskItem; showNote?: boolean }) {
+  return (
+    <div class="task-row" data-done={t.done ? '1' : '0'}>
+      <input
+        type="checkbox"
+        class="task-check"
+        checked={t.done}
+        aria-label={t.text}
+        onChange={() => void toggleTask(t.path, t.line)}
+      />
+      <span
+        class="task-text"
+        role="button"
+        tabIndex={0}
+        onClick={() => openNote(t.path)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') openNote(t.path)
+        }}
+      >
+        {t.text || <em class="dim">Untitled task</em>}
+        {showNote && (
+          <span class="task-meta">
+            <span>{getEntry(t.path)?.title ?? t.noteTitle}</span>
+          </span>
+        )}
+      </span>
+      <DueChip
+        due={t.due}
+        label={t.text || 'this task'}
+        onPick={(date) => void setDue(t.path, t.line, date)}
+      />
     </div>
   )
 }
@@ -155,12 +243,10 @@ export function DayNotesPanel() {
  * including whether finished ones do, so it must not be filtered again here.
  */
 export function TasksPanel({
-  showDone = false,
   items,
   title = 'Tasks',
   empty,
 }: {
-  showDone?: boolean
   items?: TaskItem[]
   title?: string
   empty?: preact.ComponentChildren
@@ -168,7 +254,13 @@ export function TasksPanel({
   const all = items ?? tasks.value
   const open = all.filter((t) => !t.done)
   const done = all.filter((t) => t.done)
-  const shown = items ? all : showDone ? [...open, ...done] : open
+  /*
+   * Finished ones are out by default and the heading still counts them, so the
+   * list is what you owe rather than an archive that grows for ever. `items`
+   * lists are exempt: their rule already said whether done ones belong.
+   */
+  const withDone = settings.value.showDoneTasks
+  const shown = items ? all : withDone ? [...open, ...done] : open
 
   const by = settings.value.taskGroupBy
   const groups = groupTasks(shown, by)
@@ -183,15 +275,28 @@ export function TasksPanel({
   const groupMenu = (e: { clientX: number; clientY: number }) =>
     openMenu(
       e,
-      ([
-        ['none', 'No grouping'],
-        ['due', 'By due date'],
-        ['note', 'By note'],
-      ] as const).map(([id, label]) => ({
-        label,
-        checked: by === id,
-        onSelect: () => update({ taskGroupBy: id }),
-      })),
+      [
+        ...([
+          ['none', 'No grouping'],
+          ['due', 'By due date'],
+          ['note', 'By note'],
+        ] as const).map(([id, label]) => ({
+          label,
+          checked: by === id,
+          onSelect: () => update({ taskGroupBy: id }),
+        })),
+        // Only where this panel owns its list: a folder's rule decides its own.
+        ...(items
+          ? []
+          : [
+              {
+                label: 'Show completed',
+                separated: true,
+                checked: withDone,
+                onSelect: () => update({ showDoneTasks: !withDone }),
+              },
+            ]),
+      ],
       'Arrange tasks',
     )
 
@@ -232,38 +337,12 @@ export function TasksPanel({
         groups.map((g) => (
           <Fragment key={g.key}>
             {g.label && <div class="task-group">{g.label}</div>}
-            {g.items.slice(0, 200).map((t) => (
-          <div key={t.id} class="task-row" data-done={t.done ? '1' : '0'}>
-            <input
-              type="checkbox"
-              class="task-check"
-              checked={t.done}
-              aria-label={t.text}
-              onChange={() => void toggleTask(t.path, t.line)}
-            />
-            <span
-              class="task-text"
-              role="button"
-              tabIndex={0}
-              onClick={() => openNote(t.path)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') openNote(t.path)
-              }}
-            >
-              {t.text || <em class="dim">Untitled task</em>}
-              {by !== 'note' && (
-                <span class="task-meta">
-                  <span>{getEntry(t.path)?.title ?? t.noteTitle}</span>
-                </span>
-              )}
-            </span>
-            <DueChip
-              due={t.due}
-              label={t.text || 'this task'}
-              onPick={(date) => void setDue(t.path, t.line, date)}
-            />
-          </div>
+            {g.items.slice(0, CAP).map((t) => (
+              <TaskRow key={t.id} task={t} showNote={by !== 'note'} />
             ))}
+            {g.items.length > CAP && (
+              <div class="task-more">and {g.items.length - CAP} more</div>
+            )}
           </Fragment>
         ))
       )}

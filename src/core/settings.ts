@@ -31,6 +31,7 @@ const SHARED_KEYS = [
   'fontSize',
   'sortBy',
   'taskGroupBy',
+  'showDoneTasks',
 ] as const
 
 type SharedKey = (typeof SHARED_KEYS)[number]
@@ -56,6 +57,7 @@ function defaults(): AppSettings {
     fontSize: 15,
     sortBy: 'mtime',
     taskGroupBy: 'none',
+    showDoneTasks: false,
     deviceId: uid(8),
     deviceName: guessDeviceName(),
   }

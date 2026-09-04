@@ -326,7 +326,6 @@ export function NoteList({ children }: { children?: preact.ComponentChildren }) 
            * one click short of what the count promised.
            */
           <TasksPanel
-            showDone
             empty={
               <>
                 Type <code>- [ ]</code> in any note to add a task. Every one in the vault turns up

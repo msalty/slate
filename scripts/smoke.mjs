@@ -110,6 +110,29 @@ const isoDay = (offset = 0) => {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
 }
 
+/** The calendar cell for a day, addressed by the label it announces. */
+const calCell = (offset = 0) => {
+  const d = new Date()
+  d.setDate(d.getDate() + offset)
+  return page.locator(`.cal-day[aria-label^="${d.toDateString()}"]`)
+}
+
+/*
+ * The same cell, brought into view first. A month grid runs from the Sunday
+ * before the 1st to the end of the last week, so a day two either side of
+ * today is *usually* on it — and near a month boundary it is not, which would
+ * make these checks fail on a handful of days a year for no reason at all.
+ */
+const showDay = async (offset) => {
+  const cell = calCell(offset)
+  const arrow = offset < 0 ? 'Previous month' : 'Next month'
+  for (let i = 0; i < 2 && (await cell.count()) === 0; i++) {
+    await page.locator(`[aria-label="${arrow}"]`).click()
+    await page.waitForTimeout(250)
+  }
+  return cell
+}
+
 const startEditing = async () => {
   const edit = page.locator('.editor-pane [aria-label="Edit note"]')
   if (await edit.count()) {
@@ -2365,6 +2388,16 @@ try {
   )
   await page.locator('.seg-btn:has-text("Tasks")').click()
   await page.waitForTimeout(300)
+  /*
+   * A tick is on offer as the folder's icon too. It is a choice rather than a
+   * statement — anyone can put it on a folder that gathers notes — which is
+   * why the row draws its own from what the folder actually does.
+   */
+  check(
+    'a tick is among the icons a folder can wear',
+    (await page.locator('.dialog select option').allInnerTexts()).some((t) => t.includes('✅')),
+    (await page.locator('.dialog select option').allInnerTexts()).join(''),
+  )
   check(
     'and offers the questions only a task can answer',
     (await page.locator('.chip:has-text("is:open")').count()) === 1 &&
@@ -2531,10 +2564,118 @@ try {
     [...taskNotes].join(' | '),
   )
   check(
-    'the ones still to do and the ones already crossed off',
-    taskRowTexts.join(' | ').includes('Ring the plumber') &&
-      taskRowTexts.join(' | ').includes('Measure the worktop'),
+    'showing what is still to do',
+    taskRowTexts.join(' | ').includes('Ring the plumber'),
     taskRowTexts.join(' | ').slice(0, 140),
+  )
+  /*
+   * And not the ones already crossed off. A list whose bottom is a growing
+   * archive of finished work is a list people stop reading — but the heading
+   * still counts them, so nothing is hidden without saying so, and the switch
+   * that brings them back is in the same menu that arranges the list.
+   */
+  check(
+    'but not the ones already crossed off',
+    !taskRowTexts.join(' | ').includes('Measure the worktop'),
+    taskRowTexts.join(' | ').slice(0, 140),
+  )
+  check(
+    'though the heading still counts them, so nothing is hidden silently',
+    /\d+ open · \d+ done/i.test(await page.locator('.list-scroll .rail-section h3').innerText()),
+    (await page.locator('.list-scroll .rail-section h3').innerText()).replace(/\n/g, ' '),
+  )
+
+  await page.locator('.list-scroll .rail-group-btn').click()
+  await page.waitForTimeout(300)
+  await page.locator('.menu-item:has-text("Show completed")').click()
+  await page.waitForTimeout(500)
+  check(
+    'turning them on brings the finished ones back',
+    (await page.locator('.list-scroll .task-row').allInnerTexts())
+      .join(' | ')
+      .includes('Measure the worktop'),
+  )
+  /*
+   * Long enough for the vault-wide write to leave its debounce: preferences
+   * are saved to backstage/config.json on a timer, and that file is overlaid
+   * over the device's own copy at boot, so a reload inside the window reads
+   * back the value from before the change.
+   */
+  await page.waitForTimeout(1800)
+  await page.reload()
+  await page.waitForSelector('.side-row')
+  await page.waitForTimeout(900)
+  await page.locator('.side-row:has-text("Tasks")').first().click()
+  await page.waitForTimeout(500)
+  check(
+    'and the choice survives a reload, like every other way of reading a list',
+    (await page.locator('.list-scroll .task-row').allInnerTexts())
+      .join(' | ')
+      .includes('Measure the worktop'),
+  )
+  await page.locator('.list-scroll .rail-group-btn').click()
+  await page.waitForTimeout(300)
+  await page.locator('.menu-item:has-text("Show completed")').click()
+  await page.waitForTimeout(500)
+  check(
+    'and turning it off hides them again',
+    !(await page.locator('.list-scroll .task-row').allInnerTexts())
+      .join(' | ')
+      .includes('Measure the worktop'),
+  )
+
+  /* ---- the calendar, read the other way round ----------------------------
+   * A day with work owed on it has to look different from an empty one, or the
+   * only way to find it is clicking days at random. The pip is its own channel:
+   * the dots below the number mean notes filed on that day, and overloading
+   * them would make a dot mean two things.
+   */
+  /* "Order the tiles" is due two days ago; nothing is due three days ago. */
+  await page.locator('.cal-today').click()
+  await page.waitForTimeout(400)
+  const overdueDay = await showDay(-2)
+  const overdueLabel = (await overdueDay.getAttribute('aria-label')) ?? ''
+  const overduePips = await overdueDay.locator('.cal-due').count()
+  const overdueLate = await overdueDay.locator('.cal-due[data-late="1"]').count()
+  check('a day with work due on it is marked on the calendar', overduePips === 1, overdueLabel)
+  check('and says so to a screen reader as well as to an eye', /\d+ due/.test(overdueLabel), overdueLabel)
+  check('a day already past wears the same red the date chip turns', overdueLate === 1)
+
+  const quietDay = await showDay(-3)
+  check(
+    'and a day with none is left alone',
+    (await quietDay.locator('.cal-due').count()) === 0,
+    (await quietDay.getAttribute('aria-label')) ?? '',
+  )
+
+  const tomorrow = await showDay(1)
+  check(
+    'while a day still to come does not',
+    (await tomorrow.locator('.cal-due[data-late="0"]').count()) === 1,
+    (await tomorrow.getAttribute('aria-label')) ?? '',
+  )
+
+  const overdueAgain = await showDay(-2)
+  await overdueAgain.click()
+  await page.waitForTimeout(500)
+  const dayPanel = page.locator('.rail .rail-section').nth(0)
+  check(
+    'clicking it shows what that day asks of you, under what is filed on it',
+    (await dayPanel.locator('.task-row').allInnerTexts()).join(' | ').includes('Order the tiles'),
+    (await dayPanel.locator('.task-row').allInnerTexts()).join(' | '),
+  )
+  check(
+    'labelled for a day that has been and gone',
+    (await dayPanel.locator('.task-group').innerText()).trim() === 'Was due',
+    await dayPanel.locator('.task-group').innerText(),
+  )
+
+  await page.locator('.cal-today').click()
+  await page.waitForTimeout(500)
+  check(
+    'and today says it once, in the Due list, rather than twice in one column',
+    (await dayPanel.locator('.task-row').count()) === 0,
+    `${await dayPanel.locator('.task-row').count()} rows in the day panel`,
   )
 
   await page.locator('.side-row:has-text("All Notes")').first().click()

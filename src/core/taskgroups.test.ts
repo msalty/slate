@@ -1,7 +1,7 @@
 /** Arranging a task list into groups. */
 
 import { describe, expect, it } from 'vitest'
-import { dueByToday, groupTasks } from './taskgroups'
+import { dueByToday, groupTasks, tasksDueOn } from './taskgroups'
 import { startOfDay } from './util'
 import type { TaskItem } from './types'
 
@@ -164,5 +164,39 @@ describe('due by today', () => {
       ['Overdue', 1],
       ['Today', 1],
     ])
+  })
+})
+
+/**
+ * What one day asks of you. The calendar read the other way round: click a day
+ * and see what is due on it, rather than only what was filed on it.
+ */
+describe('tasks due on a day', () => {
+  const day = TODAY + 3 * DAY
+  const onIt = task({ due: day })
+  const alsoOnIt = task({ due: day })
+  const finishedOnIt = task({ due: day, done: true })
+  const dayBefore = task({ due: day - DAY })
+  const undated = task({})
+  const list = [onIt, alsoOnIt, finishedOnIt, dayBefore, undated]
+
+  it('takes the ones due that day and no other', () => {
+    expect(tasksDueOn(list, day)).toEqual([onIt, alsoOnIt])
+  })
+
+  it('leaves out the day before, however close', () => {
+    expect(tasksDueOn(list, day)).not.toContain(dayBefore)
+  })
+
+  it('leaves out a finished one by default, like every other list', () => {
+    expect(tasksDueOn(list, day)).not.toContain(finishedOnIt)
+  })
+
+  it('and includes it when the switch says to, so one setting means one thing', () => {
+    expect(tasksDueOn(list, day, true)).toEqual([onIt, alsoOnIt, finishedOnIt])
+  })
+
+  it('says nothing about a day with nothing due', () => {
+    expect(tasksDueOn(list, TODAY + 99 * DAY)).toEqual([])
   })
 })

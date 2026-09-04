@@ -33,7 +33,12 @@ export function openTagFolderDialog(existing?: SmartFolder, parentId?: string) {
   editing.value = existing ?? { name: '', query: '', icon: '🏷️', parentId, inherit: true }
 }
 
-const ICONS = ['🏷️', '⭐️', '🔥', '📌', '💼', '🏠', '🧠', '📚', '🧾', '🌱', '⚡️', '🎯']
+/*
+ * The tick is here for a folder that gathers tasks. It is a choice, not a
+ * statement — the row draws its own tick from what the folder actually does,
+ * because an icon anyone can put on anything cannot be trusted to say so.
+ */
+const ICONS = ['🏷️', '✅', '☑️', '⭐️', '🔥', '📌', '💼', '🏠', '🧠', '📚', '🧾', '🌱', '⚡️', '🎯']
 
 export function TagFolderDialog() {
   const draft = editing.value

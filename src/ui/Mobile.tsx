@@ -101,7 +101,7 @@ export function MobileTasks() {
         </button>
       </div>
       <div class="rail-scroll">
-        <TasksPanel showDone />
+        <TasksPanel />
       </div>
     </div>
   )

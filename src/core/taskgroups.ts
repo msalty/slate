@@ -69,6 +69,17 @@ export function dueByToday(items: TaskItem[], today = startOfDay(Date.now())): T
   return items.filter((t) => !t.done && t.due !== undefined && t.due <= today)
 }
 
+/**
+ * Tasks due on one particular day.
+ *
+ * What the calendar is for, read the other way round: click a day and see what
+ * it is going to ask of you. `withDone` follows the same switch as every other
+ * list, so "show completed" means one thing everywhere.
+ */
+export function tasksDueOn(items: TaskItem[], day: number, withDone = false): TaskItem[] {
+  return items.filter((t) => t.due === day && (withDone || !t.done))
+}
+
 export function groupTasks(
   items: TaskItem[],
   by: TaskGroupBy,
