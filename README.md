@@ -455,10 +455,14 @@ sidebar cannot — and an undated job is a job for another day.
 in its corner — red once the day has passed, the same red the date chip turns
 when it is late. It is a channel of its own: the dots under the number mean
 notes filed on that day, and making a dot mean two things would cost you both.
-Click the day and its tasks appear under its notes, headed *Due* — or *Was due*
-for a day that has been and gone. Today is the exception: the **Due** list below
-is already today's, and the same rows twice in one column is worse than not
-having them at the top.
+Click the day and its tasks appear under its notes, with no heading over them —
+a row with a checkbox and a date on it is not going to be mistaken for a note,
+and a rule across the panel made two lists out of one day.
+
+Nothing is said twice in one column: the **Due** list below already holds
+everything overdue and everything due today, so a day it has covered keeps its
+notes and hands the tasks to it. The phone's calendar tab has no such list under
+it, so there every selected day keeps its own.
 
 **Due dates you don't have to type.** A task line has two controls, one at each
 end: the checkbox that says whether it's done, and a chip that says when it's
@@ -953,7 +957,7 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 
 ```bash
 npm test                # 346 unit + two-device sync tests
-node scripts/smoke.mjs  # 331 checks in headless Chromium against dist/
+node scripts/smoke.mjs  # 333 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

@@ -1295,14 +1295,16 @@ body.resizing .pane-resizer::after {
   padding-top: 0;
 }
 /*
- * In the day panel the label always follows the day's notes, so it keeps the
- * rule above it that a first heading in a task list drops.
+ * The day's tasks, under the day's notes. Air rather than a rule: a row with a
+ * checkbox on it is not going to be mistaken for a note, and a line across the
+ * panel made two lists out of one day.
  */
-.task-group.day-due {
-  border-top: 1px solid var(--border);
-  margin-top: 8px;
-  padding-top: 10px;
+.day-note-row + .task-row,
+.day-create-row + .task-row,
+.rail-empty + .task-row {
+  margin-top: 6px;
 }
+
 /* What a capped group left out, said rather than silently dropped. */
 .task-more {
   font-size: 11.5px;

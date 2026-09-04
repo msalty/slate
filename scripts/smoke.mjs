@@ -2655,25 +2655,42 @@ try {
     (await tomorrow.getAttribute('aria-label')) ?? '',
   )
 
-  const overdueAgain = await showDay(-2)
-  await overdueAgain.click()
+  const laterDay = await showDay(1)
+  await laterDay.click()
   await page.waitForTimeout(500)
   const dayPanel = page.locator('.rail .rail-section').nth(0)
   check(
-    'clicking it shows what that day asks of you, under what is filed on it',
-    (await dayPanel.locator('.task-row').allInnerTexts()).join(' | ').includes('Order the tiles'),
+    'clicking a day shows what it asks of you, under what is filed on it',
+    (await dayPanel.locator('.task-row').allInnerTexts()).join(' | ').includes('Renew passport'),
     (await dayPanel.locator('.task-row').allInnerTexts()).join(' | '),
   )
   check(
-    'labelled for a day that has been and gone',
-    (await dayPanel.locator('.task-group').innerText()).trim() === 'Was due',
-    await dayPanel.locator('.task-group').innerText(),
+    'with no heading over them — a checkbox already says which rows are tasks',
+    (await dayPanel.locator('.task-group').count()) === 0,
+  )
+
+  /*
+   * And never the same task twice in one column. The Due list below already
+   * holds everything overdue and everything due today, so a day the list has
+   * covered keeps its notes and hands the tasks to it.
+   */
+  const overdueAgain = await showDay(-2)
+  await overdueAgain.click()
+  await page.waitForTimeout(500)
+  check(
+    'a day whose work is already late leaves it to the Due list below',
+    (await dayPanel.locator('.task-row').count()) === 0,
+    (await dayPanel.locator('.task-row').allInnerTexts()).join(' | '),
+  )
+  check(
+    'so the task is in the rail once, not twice',
+    (await page.locator('.rail .task-row', { hasText: 'Order the tiles' }).count()) === 1,
   )
 
   await page.locator('.cal-today').click()
   await page.waitForTimeout(500)
   check(
-    'and today says it once, in the Due list, rather than twice in one column',
+    'and today says it once too, in the Due list rather than in both',
     (await dayPanel.locator('.task-row').count()) === 0,
     `${await dayPanel.locator('.task-row').count()} rows in the day panel`,
   )

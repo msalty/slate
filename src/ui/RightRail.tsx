@@ -129,17 +129,24 @@ export function CalendarPanel({ big = false }: { big?: boolean }) {
   )
 }
 
-export function DayNotesPanel() {
+export function DayNotesPanel({ omitOwed = false }: { omitOwed?: boolean } = {}) {
   const day = scope.value.kind === 'day' ? startOfDay(scope.value.date) : selectedDay.value
   const list = notesOnDay(day)
   /*
    * What this day asks of you, under what is filed on it — the calendar read
-   * the other way round. Today is the exception: the Due panel below is
-   * already today's list, and the same rows twice in one column is worse than
-   * not having them at the top.
+   * the other way round. No heading over them: a row with a checkbox and a
+   * date on it is not going to be mistaken for a note.
+   *
+   * `omitOwed` is for the rail, where the Due list sits directly below and
+   * already holds everything overdue and everything due today: without it,
+   * selecting a day with late work on it shows the same task twice in one
+   * column. The phone's calendar tab has no such list under it, so there it
+   * stays off and the day keeps its own tasks.
    */
-  const today = startOfDay(Date.now())
-  const due = day === today ? [] : tasksDueOn(tasks.value, day, settings.value.showDoneTasks)
+  const owed = omitOwed ? new Set(dueByToday(tasks.value).map((t) => t.id)) : new Set<string>()
+  const due = tasksDueOn(tasks.value, day, settings.value.showDoneTasks).filter(
+    (t) => !owed.has(t.id),
+  )
   /*
    * The offer is only made when the day hasn't got one. Once it has, the note
    * is already sitting in the list above, and a second way in from the same
@@ -173,14 +180,9 @@ export function DayNotesPanel() {
           Create daily note
         </button>
       )}
-      {due.length > 0 && (
-        <>
-          <div class="task-group day-due">{day < today ? 'Was due' : 'Due'}</div>
-          {due.map((t) => (
-            <TaskRow key={t.id} task={t} />
-          ))}
-        </>
-      )}
+      {due.map((t) => (
+        <TaskRow key={t.id} task={t} />
+      ))}
     </div>
   )
 }
@@ -374,7 +376,7 @@ export function RightRail() {
     <div class="pane rail">
       <div class="rail-scroll">
         <CalendarPanel />
-        <DayNotesPanel />
+        <DayNotesPanel omitOwed />
         <DueTasksPanel />
       </div>
     </div>
