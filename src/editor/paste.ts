@@ -14,7 +14,7 @@ import { addAttachment } from '../core/vault'
 import { attachmentPath, imagesFromDataTransfer, optimizeImage } from '../core/images'
 import { settings } from '../core/settings'
 import { uid } from '../core/util'
-import { renderTable, tableRowsInSelection } from './table'
+import { cellText, currentTable, renderTable, tableRowsInSelection } from './table'
 import { gridToHtml, looksLikeGrid, parseDelimited, tableFromGrid } from './tsv'
 
 async function ingest(file: File): Promise<string> {
@@ -119,6 +119,77 @@ function insertTableBlock(view: EditorView, table: string) {
     scrollIntoView: true,
     userEvent: 'input.paste',
   })
+}
+
+/**
+ * Put a whole table on the clipboard on demand, rather than by selecting it.
+ *
+ * Dragging across a table works and is what the `copy` handler below is for,
+ * but it is a gesture with no edges: in the rendered modes the table is a
+ * single widget, and a drag that overshoots it by a few pixels takes in the
+ * paragraph underneath — at which point the copy is correctly refused and the
+ * only sign of it is pipes arriving in Excel. This is the same operation with
+ * the aim taken out of it: the caret is somewhere in the table, so the table is
+ * what gets copied.
+ */
+export async function copyTable(view: EditorView): Promise<boolean> {
+  // Resolved here rather than passed in, so a cell still being typed in is
+  // folded into what gets copied — the same rule every other table action uses.
+  const cursor = currentTable(view)
+  if (!cursor) return false
+  const rows = cursor.model.rows.map((r) => r.map(cellText))
+  // Both flavours, for the same reason the selection path writes both: the
+  // markdown for anything that reads text, the table for anything that reads
+  // HTML — which is every spreadsheet.
+  return writeBothFlavours(renderTable(cursor.model), gridToHtml(rows, true))
+}
+
+/**
+ * Write text and HTML together, outside of a copy event.
+ *
+ * The async clipboard API is the way to do this and wants a `ClipboardItem`.
+ * Where that is missing the old trick still works: listen for one copy event,
+ * fill it in by hand, and provoke it with `execCommand` against a selection
+ * nobody sees. A hidden textarea is what supplies that selection — without one
+ * there is nothing to copy and the event never fires.
+ */
+async function writeBothFlavours(text: string, html: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.write && typeof ClipboardItem !== 'undefined') {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'text/plain': new Blob([text], { type: 'text/plain' }),
+          'text/html': new Blob([html], { type: 'text/html' }),
+        }),
+      ])
+      return true
+    }
+  } catch {
+    // Denied permission lands here as readily as a missing API. Fall through.
+  }
+
+  try {
+    let wrote = false
+    const fill = (e: ClipboardEvent) => {
+      e.preventDefault()
+      e.clipboardData?.setData('text/plain', text)
+      e.clipboardData?.setData('text/html', html)
+      wrote = true
+    }
+    document.addEventListener('copy', fill, true)
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.setAttribute('readonly', '')
+    ta.style.cssText = 'position:fixed;top:0;left:-9999px;opacity:0'
+    document.body.appendChild(ta)
+    ta.select()
+    document.execCommand('copy')
+    ta.remove()
+    document.removeEventListener('copy', fill, true)
+    return wrote
+  } catch {
+    return false
+  }
 }
 
 export const clipboardHandler = EditorView.domEventHandlers({

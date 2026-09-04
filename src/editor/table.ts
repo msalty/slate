@@ -431,30 +431,29 @@ export interface TableEditOptions {
   refocus?: boolean
 }
 
-export function applyTableOp(
-  view: EditorView,
-  op: TableOp,
-  { refocus = true }: TableEditOptions = {},
-): boolean {
-  /*
-   * Which cell is this acting on?
-   *
-   * The cell being worked in wins whenever there is one. Rich text never shows
-   * a table's source, so the caret there is not the user's — it is wherever the
-   * last rewrite parked it, which is inside the table and therefore looks like
-   * a perfectly good answer. That is how a second operation in a row used to
-   * land on the header instead of the row you were standing in.
-   */
+/**
+ * The table a toolbar action should act on, with anything still being typed
+ * folded into it.
+ *
+ * Two things have to be right, and both were learned the hard way.
+ *
+ * *Which* table: the cell being worked in wins whenever there is one. Rich text
+ * never shows a table's source, so the caret there is not the user's — it is
+ * wherever the last rewrite parked it, which is inside the table and therefore
+ * looks like a perfectly good answer. That is how a second operation in a row
+ * used to land on the header instead of the row you were standing in.
+ *
+ * And *what is in it*: a cell that still has focus holds text the note has not
+ * seen yet, because pressing a toolbar button is not the same as leaving the
+ * cell. Taken now, or the action would quietly work from a table missing
+ * whatever was just typed.
+ */
+export function currentTable(view: EditorView): TableCursor | undefined {
   const inCell = !!focusedCell.value
   const caret = () => tableAt(view.state, view.state.selection.main.head)
   const cur = inCell ? (focusedCellCursor(view.state) ?? caret()) : (caret() ?? focusedCellCursor(view.state))
-  if (!cur) return false
+  if (!cur) return undefined
 
-  /*
-   * A cell that still has focus has text the note has not seen yet — pressing
-   * a toolbar button is not the same as leaving the cell. Take it now, or the
-   * rewrite would quietly discard whatever was just typed.
-   */
   const active = typeof document !== 'undefined' ? document.activeElement : null
   if (inCell && active instanceof HTMLElement && active.classList.contains('cm-table-cell')) {
     const r = Number(active.dataset.row)
@@ -463,6 +462,18 @@ export function applyTableOp(
       cur.model.rows[r][c] = cellSource(active.textContent ?? '')
     }
   }
+  return cur
+}
+
+export function applyTableOp(
+  view: EditorView,
+  op: TableOp,
+  { refocus = true }: TableEditOptions = {},
+): boolean {
+  const cur = currentTable(view)
+  if (!cur) return false
+  // Read after `currentTable`, which may have taken the cell's live text.
+  const inCell = !!focusedCell.value
 
   if (op === 'delete') {
     // Take the newline with it, so deleting a table doesn't leave a hole.

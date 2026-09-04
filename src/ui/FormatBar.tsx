@@ -30,6 +30,8 @@ import type { EditorView } from '@codemirror/view'
 import { applyTableOp, insertTable, tableContext } from '../editor/table'
 import { editLinkAtCaret } from './linkActions'
 import { openMenu, type MenuItem } from './Menu'
+import { copyTable } from '../editor/paste'
+import { notify } from './state'
 import {
   IconCode,
   IconHighlight,
@@ -139,6 +141,22 @@ export function FormatBar({ getView, variant }: FormatBarProps) {
     openMenu(
       at,
       [
+        /*
+         * First, because it is the only item here that is not an edit — and
+         * because dragging across a table to copy it is a gesture with no
+         * edges, especially on a phone and in the rendered modes where the
+         * table is one widget. From here the caret is the aim.
+         */
+        {
+          label: 'Copy table',
+          onSelect: async () => {
+            const ok = await copyTable(view)
+            notify(
+              ok ? 'Table copied — paste it into a spreadsheet' : 'Could not reach the clipboard',
+              ok ? 'info' : 'error',
+            )
+          },
+        } as MenuItem,
         op('Insert row above', 'row-above'),
         op('Insert row below', 'row-below'),
         op('Insert column left', 'col-left'),
@@ -146,7 +164,7 @@ export function FormatBar({ getView, variant }: FormatBarProps) {
         op('Delete row', 'row-delete', true),
         op('Delete column', 'col-delete', true),
         op('Delete table', 'delete', true),
-      ].map((item, i) => (i === 4 ? { ...item, separated: true } : item)),
+      ].map((item, i) => (i === 1 || i === 5 ? { ...item, separated: true } : item)),
       `Table · row ${table.row + 1} of ${table.rows}, column ${table.col + 1} of ${table.cols}`,
     )
   }

@@ -19,7 +19,7 @@ npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
 npm test               # 307 unit and two-device sync tests
-node scripts/smoke.mjs # 283-check browser smoke test against dist/
+node scripts/smoke.mjs # 286-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -45,7 +45,8 @@ so nothing is ever silently rewritten:
   to be typed into rather than in front of its own checkbox. The bar also
   inserts the two things markdown makes tedious by hand: a **link**, through a
   dialog with the words and the address as separate fields, and a **table**,
-  which then offers add/remove row and column from the same button. A table cell
+  which then offers add/remove row and column from the same button, along with
+    *Copy table* for getting one into a spreadsheet. A table cell
   is typed into directly, and on a phone it stays outlined while the Format
   sheet is up — the sheet only opens once the keyboard is down, so the cell has
   necessarily lost its focus, and "add a row below" has to be beside a row you
@@ -193,12 +194,21 @@ markdown you selected, and the same copy pastes into another markdown editor as
 the pipe table it was. Writing tab-separated text over the top would have
 bought the first and lost the second.
 
-It is deliberately strict about what counts as copying a table. Selecting a word
-inside a cell is a request for that word, so a selection has to cover a whole
-line or run across more than one; and every line it touches has to belong to the
-same table, or a selection running from the last row into the paragraph below
-would quietly drop the paragraph. Anything else copies exactly as it did before.
-The `| --- |` row is left behind — it is markdown bookkeeping, not data.
+There are two ways to ask. **Put the caret in the table and choose *Copy table*
+from the table button** — the same ⊞ that adds and removes rows — which is the
+reliable one, and the only practical one on a phone. Or **select the rows and
+copy**, which works in all three modes but is a gesture with no edges: in rich
+text and live preview the table is a single widget, and a drag that overshoots
+it by a few pixels has taken in the paragraph underneath.
+
+That is because the selection route is deliberately strict about what counts.
+Selecting a word inside a cell is a request for that word, so a selection has to
+cover a whole line or run across more than one; and every line it touches has to
+belong to the same table, or a selection running from the last row into the
+paragraph below would quietly drop the paragraph. Anything that doesn't qualify
+copies exactly as it did before — which is safe, but silent, which is why the
+menu item exists. Either way the `| --- |` row is left behind: it is markdown
+bookkeeping, not data.
 
 **Block quotes can say what kind of aside they are.**
 
@@ -862,7 +872,7 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 
 ```bash
 npm test                # 307 unit + two-device sync tests
-node scripts/smoke.mjs  # 283 checks in headless Chromium against dist/
+node scripts/smoke.mjs  # 286 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

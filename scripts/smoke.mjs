@@ -2296,6 +2296,56 @@ try {
   )
 
   /*
+   * The same thing without the aim: the caret is in the table, so the table is
+   * what gets copied. Dragging works and is checked above, but it is a gesture
+   * with no edges — in the rendered modes the table is one widget, and a drag
+   * that overshoots by a few pixels is correctly refused with no sign of it
+   * but pipes arriving in the spreadsheet.
+   */
+  // Rich text, which is the mode with a formatting bar to reach the menu from.
+  for (let i = 0; i < 3; i++) {
+    await page.locator('.cm-content').click()
+    await page.waitForTimeout(300)
+    if ((await page.locator('.fmt-bar').count()) > 0) break
+    await page.keyboard.press('Control+Shift+m')
+    modeSteps++
+    await page.waitForTimeout(400)
+  }
+  await page.locator('.cm-table-render td').first().click()
+  await page.waitForTimeout(400)
+  // Through `clickFormat`, because at this width the table button is in the
+  // overflow menu rather than on the bar.
+  await clickFormat('Table rows and columns')
+  await page.waitForTimeout(350)
+  check(
+    'the table menu offers to copy the whole table',
+    (await page.locator('.menu-item:has-text("Copy table")').count()) === 1,
+    JSON.stringify(await page.locator('.menu-item').allInnerTexts()),
+  )
+  await page.locator('.menu-item:has-text("Copy table")').click()
+  await page.waitForTimeout(700)
+
+  const onClipboard = await page.evaluate(async () => {
+    const items = await navigator.clipboard.read()
+    const out = {}
+    for (const item of items) {
+      for (const type of item.types) out[type] = await (await item.getType(type)).text()
+    }
+    return out
+  })
+  check(
+    'and puts a table on the clipboard for a spreadsheet',
+    onClipboard['text/html']?.includes('<th>A</th>') &&
+      onClipboard['text/html']?.includes('<td>1</td>'),
+    JSON.stringify(onClipboard['text/html'] ?? null),
+  )
+  check(
+    'with the markdown beside it for everything else',
+    onClipboard['text/plain']?.includes('| A') && onClipboard['text/plain']?.includes('| --- |'),
+    JSON.stringify(onClipboard['text/plain'] ?? null),
+  )
+
+  /*
    * Put the mode back. The three modes cycle, so completing the loop returns
    * whatever this borrowed — everything below reads the same editor, and
    * leaving it in source mode means no live-preview decorations for any of it.
