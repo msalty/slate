@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { addDays, dueLabel, duePresets, dueTone, monthGrid, startOfDay } from './util'
+import {
+  addDays,
+  dueLabel,
+  duePresets,
+  dueTone,
+  matchRanges,
+  matchesAll,
+  monthGrid,
+  searchTerms,
+  startOfDay,
+} from './util'
 
 /** Local midnight for a plain "2026-09-02", without going via UTC. */
 const day = (s: string) => startOfDay(new Date(`${s}T00:00:00`))
@@ -102,5 +112,73 @@ describe('duePresets', () => {
       const today = addDays(day('2026-09-02'), i)
       expect(duePresets(today).slice(0, 2).map((p) => p.label)).toEqual(['Today', 'Tomorrow'])
     }
+  })
+})
+
+describe('searchTerms', () => {
+  it('lowercases and splits on whitespace, dropping the empties', () => {
+    expect(searchTerms('  Old   Draft ')).toEqual(['old', 'draft'])
+    expect(searchTerms('   ')).toEqual([])
+  })
+})
+
+describe('matchesAll', () => {
+  it('needs every term, in any order', () => {
+    const t = searchTerms('old draft')
+    expect(matchesAll('The draft is old', t)).toBe(true)
+    expect(matchesAll('An old note', t)).toBe(false)
+  })
+
+  it('matches everything when nothing was typed', () => {
+    expect(matchesAll('anything at all', [])).toBe(true)
+  })
+})
+
+describe('matchRanges', () => {
+  it('finds every occurrence of every term', () => {
+    expect(matchRanges('test a test', ['test'])).toEqual([
+      { from: 0, to: 4 },
+      { from: 7, to: 11 },
+    ])
+  })
+
+  it('ignores case, and reports the range in the original', () => {
+    const text = 'A Test of things'
+    const [r] = matchRanges(text, ['test'])
+    expect(text.slice(r.from, r.to)).toBe('Test')
+  })
+
+  it('merges overlapping terms rather than nesting them', () => {
+    // Without the merge these would mark the same four letters twice, and
+    // one <mark> would end up inside another.
+    expect(matchRanges('testing', ['test', 'testing'])).toEqual([{ from: 0, to: 7 }])
+    // 'esti' is 3-7 and 'sting' is 4-9; together they are 'esting', once.
+    const [r] = matchRanges('a testing b', ['esti', 'sting'])
+    expect('a testing b'.slice(r.from, r.to)).toBe('esting')
+  })
+
+  it('returns the ranges in order whatever order the terms came in', () => {
+    expect(matchRanges('alpha beta', ['beta', 'alpha'])).toEqual([
+      { from: 0, to: 5 },
+      { from: 6, to: 10 },
+    ])
+  })
+
+  it('answers nothing for no terms, no text, or no match', () => {
+    expect(matchRanges('some text', [])).toEqual([])
+    expect(matchRanges('', ['x'])).toEqual([])
+    expect(matchRanges('some text', ['zebra'])).toEqual([])
+  })
+
+  it('stops at the cap rather than marking a thousand letters', () => {
+    // 500 hits, capped at 20 — and being adjacent they merge into one range
+    // covering those 20 letters, leaving the rest of the line plain.
+    const out = matchRanges('e'.repeat(500), ['e'], 20)
+    expect(out).toEqual([{ from: 0, to: 20 }])
+  })
+
+  it('caps separated matches too', () => {
+    const text = 'e '.repeat(500)
+    expect(matchRanges(text, ['e'], 20)).toHaveLength(20)
   })
 })

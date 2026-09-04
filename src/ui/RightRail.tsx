@@ -21,7 +21,7 @@ import { dueByToday, groupTasks, tasksDueOn } from '../core/taskgroups'
 import { settings, update } from '../core/settings'
 import { openMenu } from './Menu'
 import { dailyNoteFor } from '../core/daily'
-import { monthGrid, startOfDay, ymd } from '../core/util'
+import { monthGrid, searchTerms, startOfDay, ymd } from '../core/util'
 import {
   calendarMonth,
   matchingTasks,
@@ -32,6 +32,7 @@ import {
   setScope,
 } from './state'
 import { DueChip } from './DueChip'
+import { Highlight } from './Highlight'
 import {
   IconCalendar,
   IconCheck,
@@ -209,7 +210,16 @@ const CAP = 200
  * gathers tasks, and the day panel. Same checkbox, same date chip, so ticking
  * one is the same act everywhere and always writes to the note it lives on.
  */
-function TaskRow({ task: t, showNote = true }: { task: TaskItem; showNote?: boolean }) {
+function TaskRow({
+  task: t,
+  showNote = true,
+  terms = [],
+}: {
+  task: TaskItem
+  showNote?: boolean
+  /** Set only where this row sits under a search box; see `TasksPanel`. */
+  terms?: string[]
+}) {
   return (
     <div class="task-row" data-done={t.done ? '1' : '0'}>
       <input
@@ -228,10 +238,12 @@ function TaskRow({ task: t, showNote = true }: { task: TaskItem; showNote?: bool
           if (e.key === 'Enter') openNote(t.path)
         }}
       >
-        {t.text || <em class="dim">Untitled task</em>}
+        {t.text ? <Highlight text={t.text} terms={terms} /> : <em class="dim">Untitled task</em>}
         {showNote && (
           <span class="task-meta">
-            <span>{getEntry(t.path)?.title ?? t.noteTitle}</span>
+            <span>
+              <Highlight text={getEntry(t.path)?.title ?? t.noteTitle} terms={terms} />
+            </span>
           </span>
         )}
       </span>
@@ -271,6 +283,7 @@ export function TasksPanel({
   query?: string
 }) {
   const searching = !!query?.trim()
+  const hlTerms = searching ? searchTerms(query!) : []
   const all = searching ? matchingTasks(items ?? tasks.value) : (items ?? tasks.value)
   const open = all.filter((t) => !t.done)
   const done = all.filter((t) => t.done)
@@ -362,7 +375,7 @@ export function TasksPanel({
           <Fragment key={g.key}>
             {g.label && <div class="task-group">{g.label}</div>}
             {g.items.slice(0, CAP).map((t) => (
-              <TaskRow key={t.id} task={t} showNote={by !== 'note'} />
+              <TaskRow key={t.id} task={t} showNote={by !== 'note'} terms={hlTerms} />
             ))}
             {g.items.length > CAP && (
               <div class="task-more">and {g.items.length - CAP} more</div>

@@ -532,6 +532,13 @@ vault, folder or no folder, which is the convention every notes app follows and
 means a search is never quietly limited to whatever you happened to have open.
 Changing scope clears the query, so the box is always about the list under it.
 
+**A result shows the line the match is on**, cleaned of its markdown and cut
+around the word, with every term marked in the title and the snippet alike —
+because the one thing a result row has to answer is why it is in the list, and
+a note's opening line usually says nothing about it. A word that appears only
+in the title keeps its ordinary excerpt: there is nothing in the body to point
+at, and the marked title has already said why the note is there.
+
 Long-press or right-click a Tag Folder for *New folder inside…*, *Move…*, and
 the two delete variants.
 

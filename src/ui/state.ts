@@ -11,6 +11,7 @@ import {
   trashTitle,
   attachments,
   unresolvedLinks,
+  type SearchHit,
 } from '../core/vault'
 import { dailyNotePath } from '../core/daily'
 import { notesForSmartFolder, showsTasks, smartFolderById } from '../core/folders'
@@ -276,11 +277,44 @@ export function searchLabel(k: SearchKind): string {
   }
 }
 
-/** The terms a list has to match, empty when nothing is being searched. */
-const terms = computed(() => searchTerms(query.value))
+/**
+ * The terms a list has to match, empty when nothing is being searched.
+ *
+ * Exported because the rows mark them: a result row shows the words you typed
+ * where they appear, in the title and in the snippet.
+ */
+export const queryTerms = computed(() => searchTerms(query.value))
+
+const terms = queryTerms
 
 /** True while the search box has something in it. */
 export const searching = computed(() => terms.value.length > 0)
+
+/**
+ * The ranked note hits for the current query, scored once.
+ *
+ * Both the list and the snippets come off this, so `search()` runs a single
+ * time per query rather than once for each — the scan is linear over every
+ * note body, which is cheap enough to do on a keystroke and not cheap enough
+ * to do twice.
+ */
+const noteHits = computed<SearchHit[]>(() =>
+  searchKind.value === 'notes' && searching.value ? search(query.value) : [],
+)
+
+/**
+ * Path -> the bit of the note the query matched.
+ *
+ * `search()` has always built these and the list has always thrown them away,
+ * so a search showed you the opening line of each note and left you to guess
+ * which word in it you were looking for. A title-only match has no body
+ * position to centre on and is absent here, and the row keeps its excerpt.
+ */
+export const searchSnippets = computed(() => {
+  const m = new Map<string, string>()
+  for (const h of noteHits.value) if (h.snippet) m.set(h.entry.path, h.snippet)
+  return m
+})
 
 export function scopeLabel(s: Scope): string {
   switch (s.kind) {
@@ -314,8 +348,7 @@ export const visibleNotes = computed<NoteIndexEntry[]>(() => {
   // A scope showing files, tasks or deleted things has its own list below and
   // no notes to contribute, searching or not.
   if (searchKind.value !== 'notes') return []
-  const q = query.value.trim()
-  if (q) return search(q).map((h) => h.entry)
+  if (searching.value) return noteHits.value.map((h) => h.entry)
 
   const s = scope.value
   const sort = settings.value.sortBy

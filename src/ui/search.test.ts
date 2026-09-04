@@ -187,3 +187,148 @@ describe('each list filters itself', () => {
     expect(st.visibleNotes.value).toEqual([])
   })
 })
+
+describe('what a result row shows', () => {
+  it('shows the line the match is on, not the note\u2019s opening line', async () => {
+    const { v, st } = await fresh()
+    const body = [
+      '# Trip',
+      '',
+      'Booked the flights on Tuesday, which took most of the morning and a',
+      'certain amount of arguing about which airport we actually want.',
+      '',
+      'The hotel is paid for already.',
+      '',
+    ].join('\n')
+    const path = await v.createNote('', 'Trip', body)
+    // The excerpt is what the row shows when nothing is being searched, and
+    // it says nothing at all about the word we are about to look for.
+    expect(v.getEntry(path)!.excerpt).toContain('Booked the flights')
+
+    st.setScope({ kind: 'all' })
+    st.query.value = 'hotel'
+    const snippet = st.searchSnippets.value.get(path)!
+
+    expect(snippet).toContain('hotel is paid for')
+    expect(snippet).not.toContain('Booked the flights')
+    // Cut out of the middle, and it says so at both ends.
+    expect(snippet.startsWith('\u2026')).toBe(true)
+  })
+
+  it('cleans the markdown out of the window it cut', async () => {
+    const { v, st } = await fresh()
+    await v.createNote(
+      '',
+      'Styled',
+      '# Styled\n\nSee **the budget** in `figures.csv`, or [[Last year|the old one]].\n',
+    )
+    st.setScope({ kind: 'all' })
+    st.query.value = 'budget'
+    const snippet = st.searchSnippets.value.get(st.visibleNotes.value[0].path)!
+
+    expect(snippet).toContain('the budget')
+    // The window is cut out of the raw file, so without cleaning it arrives
+    // carrying whatever markdown happened to be around the word.
+    expect(snippet).not.toMatch(/[*`[\]]/)
+    expect(snippet).toContain('the old one')
+  })
+
+  it('leaves a title-only match to fall back to the excerpt', async () => {
+    const { v, st } = await fresh()
+    await v.createNote('', 'Budget', 'nothing about that word in here\n')
+    st.setScope({ kind: 'all' })
+    st.query.value = 'budget'
+    expect(st.visibleNotes.value).toHaveLength(1)
+    expect(st.searchSnippets.value.size).toBe(0)
+  })
+
+  it('skips the note\u2019s own heading, which is the title again', async () => {
+    const { v, st } = await fresh()
+    // The word is in the H1 and nowhere else. That is a title match wearing a
+    // body match's clothes: a snippet of it would repeat the bold line above.
+    const path = await v.createNote('', 'Budget', '# Budget\n\nnothing else about it\n')
+    st.setScope({ kind: 'all' })
+    st.query.value = 'budget'
+    expect(st.searchSnippets.value.get(path)).toBeUndefined()
+  })
+
+  it('skips frontmatter and the heading to reach the real match', async () => {
+    const { v, st } = await fresh()
+    const path = await v.createNote(
+      '',
+      'Budget',
+      '---\ntags: [money]\n---\n\n# Budget\n\nThe budget lands on Friday.\n',
+    )
+    st.setScope({ kind: 'all' })
+    st.query.value = 'budget'
+    const snippet = st.searchSnippets.value.get(path)!
+    expect(snippet).toContain('The budget lands on Friday')
+    expect(snippet).not.toMatch(/tags|money|---/)
+  })
+
+  it('opens on a whole word, not halfway through one', async () => {
+    const { v, st } = await fresh()
+    const bodies = [
+      'It was considerably more expensive than the budget allowed for.',
+      'Something unmistakably longer sits ahead of the budget here.',
+      'Short lead-in with acknowledgement before the budget arrives.',
+    ]
+    st.setScope({ kind: 'all' })
+    for (const [i, body] of bodies.entries()) {
+      const path = await v.createNote('', `Note ${i}`, `${body}\n`)
+      st.query.value = 'budget'
+      const snippet = st.searchSnippets.value.get(path)!
+      const first = snippet.replace(/^…/, '').split(' ')[0]
+      // Whatever the run-up lands in the middle of, what it opens on is a word
+      // the note actually contains — never "…iderably".
+      expect(body).toContain(` ${first}`)
+      expect(snippet).toContain('budget')
+    }
+  })
+
+  it('keeps the match near the front, where a narrow pane can show it', async () => {
+    const { v, st } = await fresh()
+    const path = await v.createNote(
+      '',
+      'Note',
+      'A long opening line of context that goes on for a while before the word budget turns up at last.\n',
+    )
+    st.setScope({ kind: 'all' })
+    st.query.value = 'budget'
+    const snippet = st.searchSnippets.value.get(path)!
+    // The list pane ellipsises at around forty characters. A match further in
+    // than this is a match the reader never sees marked.
+    expect(snippet.toLowerCase().indexOf('budget')).toBeLessThanOrEqual(30)
+  })
+
+  it('always puts the match inside the snippet it shows', async () => {
+    const { v, st } = await fresh()
+    const paths = [
+      await v.createNote('', 'One', '# One\n\nthe word budget is here\n'),
+      await v.createNote('', 'Budget', '# Budget\n\nbut not in the prose\n'),
+      await v.createNote('', 'Three', 'no heading at all, just budget\n'),
+    ]
+    st.setScope({ kind: 'all' })
+    st.query.value = 'budget'
+    // A snippet that does not contain the word renders with nothing marked,
+    // which reads as a bug. So there either is a match in it, or no snippet.
+    for (const p of paths) {
+      const snippet = st.searchSnippets.value.get(p)
+      if (snippet !== undefined) expect(snippet.toLowerCase()).toContain('budget')
+    }
+  })
+
+  it('has no snippets at all when nothing is being searched', async () => {
+    const { v, st } = await fresh()
+    await v.createNote('', 'Trip', 'the hotel is paid for\n')
+    st.setScope({ kind: 'all' })
+    expect(st.searchSnippets.value.size).toBe(0)
+  })
+
+  it('hands the rows the terms to mark', async () => {
+    const { st } = await fresh()
+    st.setScope({ kind: 'all' })
+    st.query.value = '  Budget   Hotel '
+    expect(st.queryTerms.value).toEqual(['budget', 'hotel'])
+  })
+})

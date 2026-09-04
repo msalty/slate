@@ -1028,11 +1028,15 @@ export function search(query: string, limit = 200): SearchHit[] {
   const hits: SearchHit[] = []
   for (const e of notes.value) {
     const f = files.get(e.path)
-    const body = (f?.text ?? '').toLowerCase()
+    const text = f?.text ?? ''
+    const body = text.toLowerCase()
     const title = e.title.toLowerCase()
     let score = 0
-    let firstAt = -1
+    let snipAt = -1
+    let snipLen = 0
     let ok = true
+    /** Computed at most once per note, and only when there is a snippet to cut. */
+    let prose = -1
     for (const t of terms) {
       const inTitle = title.includes(t)
       const at = body.indexOf(t)
@@ -1043,22 +1047,75 @@ export function search(query: string, limit = 200): SearchHit[] {
       if (inTitle) score += title === t ? 100 : title.startsWith(t) ? 40 : 20
       if (at >= 0) {
         score += 5
-        if (firstAt < 0) firstAt = at
+        if (snipAt < 0) {
+          if (prose < 0) prose = proseStart(text)
+          /*
+           * Looked for again from where the note's own prose starts, because
+           * the first hit is so often the `# Heading` the title was taken
+           * from — and a snippet of the title is a snippet of the bold line
+           * directly above it. Staying unset when the word appears nowhere
+           * else is the point: the row falls back to its excerpt rather than
+           * showing a snippet with nothing marked in it.
+           */
+          const pa = body.indexOf(t, prose)
+          if (pa >= 0) {
+            snipAt = pa
+            // This term's length, not the first term's: the window is sized
+            // for the word it is centred on.
+            snipLen = t.length
+          }
+        }
       }
     }
     if (!ok) continue
     // Recency is a mild tiebreaker, never enough to outrank a title match.
     score += Math.max(0, 10 - (Date.now() - e.mtime) / (86_400_000 * 30))
-    hits.push({ entry: e, score, snippet: snippetAt(f?.text ?? '', firstAt, terms[0].length) })
+    hits.push({ entry: e, score, snippet: snippetAt(text, snipAt, snipLen, Math.max(prose, 0)) })
   }
   return hits.sort((a, b) => b.score - a.score).slice(0, limit)
 }
 
-function snippetAt(text: string, at: number, len: number): string {
+/** Where a note's own prose starts: past frontmatter, and past its heading. */
+function proseStart(text: string): number {
+  const { bodyStart } = parseFrontmatter(text)
+  // Only a heading that opens the note — a later one is prose you scrolled to.
+  const m = /^[ \t]*#{1,6}[ \t]+[^\n]*\n?/.exec(text.slice(bodyStart))
+  return bodyStart + (m ? m[0].length : 0)
+}
+
+/**
+ * The bit of a note around the match, for the result row to show instead of
+ * the opening line.
+ *
+ * Cleaned the way an excerpt is cleaned. The window is cut out of the raw
+ * file, so without this it arrives carrying whatever markdown happened to be
+ * around the word — `**`, backticks, a `#` from a heading, the brackets of a
+ * wikilink — which is noise in a one-line preview and nothing the reader
+ * typed. Empty when the match was in the title alone: there is no body
+ * position to centre on, and the row falls back to its usual excerpt.
+ *
+ * `from` is the floor for the leading context. Without it the 40 characters
+ * of run-up walk straight back out of the prose and into the frontmatter and
+ * heading the match was deliberately found past.
+ */
+function snippetAt(text: string, at: number, len: number, from = 0): string {
   if (at < 0) return ''
-  const start = Math.max(0, at - 40)
+  /*
+   * A short run-up on purpose. The list pane is narrow — around forty
+   * characters of preview before it ellipsises, shared with the date — so
+   * every character spent ahead of the match is a character of risk that the
+   * word you searched for is the one clipped off the end.
+   */
+  let start = Math.max(from, at - 20)
+  // And never opening mid-word: "…e it is easier" reads as a typo.
+  if (start > from) {
+    const sp = text.indexOf(' ', start)
+    if (sp >= 0 && sp < at) start = sp + 1
+  }
   const end = Math.min(text.length, at + len + 80)
-  return `${start > 0 ? '…' : ''}${text.slice(start, end).replace(/\s+/g, ' ')}${end < text.length ? '…' : ''}`
+  const clean = stripInline(text.slice(start, end).replace(/^#{1,6}\s+/gm, ''))
+  if (!clean) return ''
+  return `${start > from ? '…' : ''}${clean}${end < text.length ? '…' : ''}`
 }
 
 /* ------------------------------------------------------------------- tasks */

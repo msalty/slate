@@ -748,6 +748,31 @@ body.resizing .pane-resizer::after {
   border-bottom: 1px solid var(--border);
 }
 
+/*
+ * The searched-for words, wherever a row shows them.
+ *
+ * `mark` arrives with a yellow highlighter block and near-black text from the
+ * UA sheet, which at 12px across a dense list is a stripe you read instead of
+ * the row. Colour alone does the job, and stays legible on a selected row —
+ * which is why it is the accent rather than a second hue nothing else uses.
+ */
+.hit {
+  background: none;
+  color: var(--accent);
+}
+/*
+ * On the selected row the accent IS the background, so an accent-coloured word
+ * on it is amber on amber. There the mark keeps the row's own text colour and
+ * takes an underline instead — still obviously marked, and legible in both
+ * themes, where a second hue picked to beat one background would not be.
+ */
+.note-row[aria-current='true'] .hit {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 2px;
+}
+
 /* ---- list headers ------------------------------------------------------- */
 
 /*

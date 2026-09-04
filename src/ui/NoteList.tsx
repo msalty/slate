@@ -30,9 +30,11 @@ import {
   orphansOnly,
   query,
   scope,
+  queryTerms,
   scopeLabel,
   searchKind,
   searchLabel,
+  searchSnippets,
   searching,
   sections,
   trashList,
@@ -49,6 +51,7 @@ import {
 import { TasksPanel } from './RightRail'
 import { openMenu, useLongPress, type MenuItem } from './Menu'
 import { SwipeRow, type SwipeAction } from './SwipeRow'
+import { Highlight } from './Highlight'
 import { openPrompt } from './PromptDialog'
 import { layoutMode, toggleSidebar } from './layout'
 import { MobileScopeBar } from './Mobile'
@@ -73,6 +76,13 @@ function NoteRow({ entry }: { entry: NoteIndexEntry }) {
   const active = activePath.value === entry.path
   const thumb = thumbFor(entry)
   const stamp = settings.value.sortBy === 'ctime' ? entry.ctime : entry.mtime
+  const hl = queryTerms.value
+  /*
+   * A result row shows the line the match is on, not the note's opening line.
+   * Which word put a note in the list is the one thing the row has to answer,
+   * and the first line of a long note usually says nothing about it.
+   */
+  const snippet = searchSnippets.value.get(entry.path)
   const longPress = useLongPress(
     () => noteMenu(entry),
     () => entry.title,
@@ -90,10 +100,18 @@ function NoteRow({ entry }: { entry: NoteIndexEntry }) {
       {...longPress}
     >
       <span class="note-row-main">
-        <span class="note-row-title">{entry.title}</span>
+        <span class="note-row-title">
+          <Highlight text={entry.title} terms={hl} />
+        </span>
         <span class="note-row-sub">
           <span class="note-row-date">{relativeTime(stamp)}</span>
-          <span class="note-row-excerpt">{entry.excerpt || 'No additional text'}</span>
+          <span class="note-row-excerpt">
+            {snippet ? (
+              <Highlight text={snippet} terms={hl} />
+            ) : (
+              entry.excerpt || 'No additional text'
+            )}
+          </span>
         </span>
       </span>
       <span class="note-row-badges">
@@ -475,11 +493,16 @@ function TrashRow({ f }: { f: VaultFile }) {
         {...longPress}
       >
         <span class="note-row-main">
-          <span class="note-row-title">{name}</span>
+          <span class="note-row-title">
+            <Highlight text={name} terms={queryTerms.value} />
+          </span>
           <span class="note-row-sub">
             <span class="note-row-date">{relativeTime(f.mtime)}</span>
             <span class="note-row-excerpt">
-              {(f.text !== undefined ? excerptOf(f.text) : '') || formatBytes(f.size)}
+              <Highlight
+                text={(f.text !== undefined ? excerptOf(f.text) : '') || formatBytes(f.size)}
+                terms={queryTerms.value}
+              />
             </span>
           </span>
         </span>
@@ -613,7 +636,9 @@ function FileRow({ f, orphan }: { f: VaultFile; orphan: boolean }) {
         {...longPress}
       >
         <span class="note-row-main">
-          <span class="note-row-title">{basename(f.path)}</span>
+          <span class="note-row-title">
+            <Highlight text={basename(f.path)} terms={queryTerms.value} />
+          </span>
           <span class="note-row-sub">
             {/*
               * A date where a note row and a deleted row both put one. The
@@ -627,7 +652,8 @@ function FileRow({ f, orphan }: { f: VaultFile; orphan: boolean }) {
               </span>
             )}
             <span class="note-row-excerpt">
-              {kind} · {formatBytes(f.size)} · {f.path}
+              {kind} · {formatBytes(f.size)} ·{' '}
+              <Highlight text={f.path} terms={queryTerms.value} />
             </span>
           </span>
         </span>
@@ -705,7 +731,9 @@ function UnlinkedView() {
       {items.map(([target, sources]) => (
         <div key={target} class="note-row" style={{ cursor: 'default' }}>
           <span class="note-row-main">
-            <span class="note-row-title">{target}</span>
+            <span class="note-row-title">
+              <Highlight text={target} terms={queryTerms.value} />
+            </span>
             <span class="note-row-sub">
               <span class="note-row-excerpt">
                 linked from {sources.map((p) => getEntry(p)?.title ?? p).join(', ')}
