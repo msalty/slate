@@ -83,9 +83,14 @@ const TAP_MS = 600
 /**
  * The parts of a note that answer a tap themselves: a link goes somewhere, a
  * checkbox ticks, an image opens full screen, a code block's copy button puts
- * the code on the clipboard. None of them is a request to start writing, and a
- * note you cannot read through without falling into the editor is not a reading
- * mode.
+ * the code on the clipboard, a task's date chip opens its picker. None of them
+ * is a request to start writing, and a note you cannot read through without
+ * falling into the editor is not a reading mode.
+ *
+ * The date chip belongs here for the same reason the checkbox does: reading is
+ * not read-only, and giving a task a date while reading through a note is the
+ * same kind of act as ticking one off. Without it the picker opened *and* the
+ * note went into edit — two things from one tap, one of them unasked for.
  *
  * Preventing the mouse events is not enough to stay off this list. The tap is
  * watched as a pointerdown/pointerup pair — that is what a phone actually
@@ -93,7 +98,7 @@ const TAP_MS = 600
  * so a control that swallows `mousedown` is still, as far as this is
  * concerned, a tap on the note.
  */
-const SELF_HANDLED = '.cm-task-checkbox, .cm-embed, .cm-code-copy'
+const SELF_HANDLED = '.cm-task-checkbox, .cm-embed, .cm-code-copy, .cm-due-chip'
 
 /** A table is content, not a control — but it places its own caret. */
 const TABLE = '.cm-table-wrap'

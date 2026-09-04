@@ -19,7 +19,7 @@ npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
 npm test               # 307 unit and two-device sync tests
-node scripts/smoke.mjs # 286-check browser smoke test against dist/
+node scripts/smoke.mjs # 289-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -77,9 +77,10 @@ the bottom half of it before you have read a word. Tap the text and that is
 where the caret lands — the tap that starts the edit is the tap that says where
 — or press the pencil in the header, which starts you at the top of whatever is
 on screen rather than scrolling the note out from under you. Escape hands the
-note back. Links, checkboxes and images all still answer a tap while reading, so
-you can work through a note without falling into the editor, and a checkbox
-ticked in passing still saves: reading is not read-only. A brand new note is the
+note back. Links, checkboxes, images and a task's date chip all still answer
+a tap while reading, so you can work through a note without falling into the
+editor, and a checkbox ticked or a date set in passing still saves: reading is
+not read-only. A brand new note is the
 one exception — there is nothing in it to read, so it opens with the caret
 already in it, and so do the notes the app seeds for you, like a new daily note.
 While a note is being read the formatting bar, the phone's **Aa** button and
@@ -872,7 +873,7 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 
 ```bash
 npm test                # 307 unit + two-device sync tests
-node scripts/smoke.mjs  # 286 checks in headless Chromium against dist/
+node scripts/smoke.mjs  # 289 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

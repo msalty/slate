@@ -999,6 +999,57 @@ try {
     (await page.locator('.editor-pane [aria-label="Edit note"]').count()) === 1,
   )
 
+  /*
+   * A task's date chip answers its own tap.
+   *
+   * Same rule as the checkbox beside it: reading is not read-only, and giving a
+   * task a date while reading through a note is the same kind of act as ticking
+   * one off. Before the chip joined that list a single tap did two things —
+   * opened the picker, and put the note into edit — and only one of them was
+   * asked for. It is watched as a pointer event, so swallowing the mouse events
+   * (which the chip does) was never enough on its own.
+   */
+  await page.click('[title^="New note"]')
+  await page.waitForTimeout(500)
+  await page.locator('.cm-content').click()
+  await page.locator('.cm-content').pressSequentially('- [ ] Pay the deposit 📅 2026-09-04', {
+    delay: 6,
+  })
+  await page.waitForTimeout(600)
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(400)
+  const beforeChipTap = await readingState()
+  check(
+    'a note with a dated task can be read without a caret in it',
+    beforeChipTap.flag === '1',
+    `reading=${beforeChipTap.flag}`,
+  )
+  /*
+   * Tapped, not clicked, and that is the whole test. The chip opens its picker
+   * on `mousedown`, and the scrim that appears swallows the mouse-up — so a
+   * pointer never reaches the tap-to-edit watcher and a click reproduces
+   * nothing. A phone sends pointerdown and pointerup first and the synthesised
+   * mousedown afterwards, so there the editing starts before the picker is
+   * even open. That ordering is the bug, and only a real tap has it.
+   */
+  await page.locator('.cm-due-chip[data-set="1"]').first().tap()
+  await page.waitForTimeout(450)
+  check(
+    'tapping a task’s date while reading opens its picker',
+    (await page.locator('.due-preset').count()) > 0,
+  )
+  const afterChipTap = await readingState()
+  check(
+    'and does not also drop a caret into the note',
+    afterChipTap.flag === '1' && afterChipTap.editable === 'false',
+    `reading=${afterChipTap.flag}, contenteditable=${afterChipTap.editable}`,
+  )
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(300)
+  // Back to the note everything below reads.
+  await page.locator('.note-row', { hasText: 'Kitchen Sink' }).first().click()
+  await page.waitForTimeout(600)
+
   /* ---- clicks land where they are aimed ---------------------------------
    * Vertical space around a heading or a code block has to be padding or a
    * transparent border, never margin: CodeMirror turns a click into a document
@@ -1098,7 +1149,6 @@ try {
   await armLinkTrap()
   const bodyLink = page.locator('.cm-uri').first()
   await bodyLink.scrollIntoViewIfNeeded()
-  const beforeLinkClick = await page.locator('.cm-content').innerText()
   await bodyLink.click()
   await page.waitForTimeout(250)
   const clicked = await linkTrapResult()
@@ -1107,9 +1157,21 @@ try {
     clicked.opened.length === 1 && clicked.opened[0] === 'https://example.com',
     clicked.opened.join(',') || 'nothing opened',
   )
+  /*
+   * Asserted on the link rather than on the whole note. Comparing the note's
+   * rendered text before and after looks stricter and is not: CodeMirror only
+   * builds the lines that are on screen, so a click that scrolls the view
+   * changes that text without anything having happened to the link — which is
+   * what this used to catch. The claim is that the caret stayed out, and live
+   * preview reveals a link's URL the moment it goes in, so the URL still being
+   * hidden is the claim itself.
+   */
+  const afterLinkClick = await page.locator('.cm-content').innerText()
   check(
     'and leaves the caret out of the link text',
-    (await page.locator('.cm-content').innerText()) === beforeLinkClick,
+    afterLinkClick.includes('an external link') &&
+      !afterLinkClick.includes('](https://example.com)'),
+    afterLinkClick.split('\n').find((l) => l.includes('external')) ?? 'link line not rendered',
   )
 
   // Right-click is the desktop way to reach a link's own text, since one plain
