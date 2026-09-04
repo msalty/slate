@@ -18,8 +18,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 307 unit and two-device sync tests
-node scripts/smoke.mjs # 294-check browser smoke test against dist/
+npm test               # 322 unit and two-device sync tests
+node scripts/smoke.mjs # 304-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -273,6 +273,34 @@ notes automatically — `#work AND (#urgent OR #blocked) NOT #archived` — and 
 nothing, so deleting one never touches a note. Rules also understand
 `folder:Work` and `has:tasks`, tags match hierarchically (`#work` catches
 `#work/active`), and two terms side by side mean AND.
+
+**A Tag Folder can gather tasks instead of notes.** Same folder, same rule
+language, one switch — *Gathers: Notes / Tasks* — because a second tree beside
+the first would have meant learning "a saved rule" twice.
+
+The reason it is worth having is **inheritance**: a task carries the tags on its
+own line *and* the ones its note carries. Tag a note `#home`, write ten jobs on
+it, and `#home` gathers all ten without any of them being tagged by hand — which
+is how people actually keep notes, and the alternative is the same information
+typed eleven times. A tag written on one task line is that task's own; it does
+not leak to its siblings, though it does still count towards the note (the note
+really does contain urgent work).
+
+Rules over tasks reach two things a note cannot answer: `is:open` / `is:done`,
+and `due:overdue`, `due:today`, `due:soon`, `due:none`, `due:any`. So
+
+```
+#home is:open              the jobs at home still to do
+#work due:overdue          work that has slipped
+#home AND NOT #urgent      everything at home that can wait
+```
+
+The tasks appear in the note list's place, as the same rows the calendar rail
+and the phone's Tasks tab use — so ticking one there writes to the note it lives
+on, and it leaves the folder if the folder asked for open ones. The count beside
+the folder counts tasks, not the notes they sit on. Written into a rule over
+*notes*, `is:` and `due:` match nothing and the folder's live count says so as
+you type.
 
 **Tag Folders nest too, and nesting means something.** By default a child
 *narrows* its parent, so the hierarchy reads the way a folder tree does — a
@@ -786,9 +814,9 @@ src/
 │  ├─ merge.ts        three-way merge (diff3)
 │  ├─ rebase.ts       folding a synced change into the buffer being typed in
 │  ├─ markdown.ts     frontmatter, links, tags, tasks, due dates
-│  ├─ tagquery.ts     the Tag Folder rule language (tokenizer, parser, eval)
+│  ├─ tagquery.ts     the rule language behind Tag Folders, over notes or tasks
 │  ├─ folders.ts      nested folders + the Tag Folder tree and inheritance
-│  ├─ templates.ts   folder templates: the fields, and which folder uses what
+│  ├─ templates.ts    folder templates: the fields, and which folder uses what
 │  ├─ devices.ts      per-device write registry, for version attribution
 │  ├─ images.ts       paste- and capture-time re-encoding
 │  └─ settings.ts     device-local vs vault-wide preferences
@@ -882,8 +910,8 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 307 unit + two-device sync tests
-node scripts/smoke.mjs  # 294 checks in headless Chromium against dist/
+npm test                # 322 unit + two-device sync tests
+node scripts/smoke.mjs  # 304 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

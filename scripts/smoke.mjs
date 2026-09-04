@@ -2287,6 +2287,132 @@ try {
     (await page.locator('.cm-line.cm-callout-warning').count()) === 2,
   )
 
+  /* ---- a Tag Folder that gathers tasks -----------------------------------
+   * The whole point is inheritance: tag a *note* #home and every job written
+   * on it is a #home task, without any of them being tagged by hand. That is
+   * how people actually keep notes, and tagging each line would be the same
+   * information typed eleven times.
+   */
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.waitForTimeout(400)
+  await page.evaluate(async () => {
+    const iso = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10)
+    const text = [
+      '# Kitchen',
+      '',
+      '#home',
+      '',
+      '- [ ] Fix the dripping tap',
+      `- [ ] Order the tiles 📅 ${iso(-2)}`,
+      '- [x] Measure the worktop',
+      '- [ ] Ring the plumber #urgent',
+      '',
+    ].join('\n')
+    const db = await new Promise((res, rej) => {
+      const r = indexedDB.open('slate')
+      r.onsuccess = () => res(r.result)
+      r.onerror = () => rej(r.error)
+    })
+    const tx = db.transaction('files', 'readwrite')
+    tx.objectStore('files').put({
+      path: 'Kitchen jobs.md', kind: 'note', text, mime: 'text/markdown', size: text.length,
+      hash: 'kj', mtime: Date.now() + 50_000, ctime: Date.now(),
+      dirty: true, dirtyFlag: 1, sync: {},
+    })
+    await new Promise((res) => { tx.oncomplete = res })
+  })
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForSelector('.note-row')
+  await page.waitForTimeout(400)
+
+  await page.click('.side-group-label:has-text("Tag Folders") .side-add')
+  await ruleDialogReady()
+  await page.fill('.dialog input[type="text"]', 'Home jobs')
+  check(
+    'a Tag Folder can be set to gather tasks instead of notes',
+    (await page.locator('.seg-btn:has-text("Tasks")').count()) === 1,
+  )
+  await page.locator('.seg-btn:has-text("Tasks")').click()
+  await page.waitForTimeout(300)
+  check(
+    'and offers the questions only a task can answer',
+    (await page.locator('.chip:has-text("is:open")').count()) === 1 &&
+      (await page.locator('.chip:has-text("due:overdue")').count()) === 1,
+  )
+  await page.fill('.rule-input', '#home')
+  await page.waitForTimeout(400)
+  const inherited = await page.locator('.rule-status').innerText()
+  check(
+    'a note tagged #home hands its tag to every task on it',
+    /matches\s*4\b/i.test(inherited.replace(/\s+/g, ' ')) && /tasks/i.test(inherited),
+    inherited.replace(/\s+/g, ' ').slice(0, 90),
+  )
+  const previewed = (await page.locator('.rule-preview-row').allInnerTexts()).join(' | ')
+  check(
+    'and the preview lists the tasks, not the note they are on',
+    ['Fix the dripping tap', 'Order the tiles', 'Measure the worktop', 'Ring the plumber'].every(
+      (t) => previewed.includes(t),
+    ),
+    previewed.replace(/\n/g, ' · '),
+  )
+
+  await page.fill('.rule-input', '#home is:open')
+  await page.waitForTimeout(400)
+  const openOnly = await page.locator('.rule-status').innerText()
+  check(
+    'narrowing to what is still to do drops the finished one',
+    /matches\s*3\b/i.test(openOnly.replace(/\s+/g, ' ')),
+    openOnly.replace(/\s+/g, ' ').slice(0, 90),
+  )
+  await page.fill('.rule-input', '#home due:overdue')
+  await page.waitForTimeout(400)
+  check(
+    'and asking for overdue leaves the one whose date has passed',
+    /matches\s*1\b/i.test((await page.locator('.rule-status').innerText()).replace(/\s+/g, ' ')),
+    (await page.locator('.rule-status').innerText()).replace(/\s+/g, ' ').slice(0, 90),
+  )
+
+  await page.fill('.rule-input', '#home is:open')
+  await page.waitForTimeout(400)
+  await page.click('.dialog-foot .btn-primary')
+  await page.waitForTimeout(600)
+  check(
+    'the folder lists its tasks where its notes would have been',
+    (await page.locator('.list-scroll .task-row').count()) === 3,
+    `${await page.locator('.list-scroll .task-row').count()} rows`,
+  )
+  const folderCount = await page
+    .locator('.side-row:has-text("Home jobs") .side-count')
+    .first()
+    .innerText()
+  check(
+    'and counts tasks beside it, not the one note they sit on',
+    folderCount.trim() === '3',
+    `badge reads ${JSON.stringify(folderCount)}`,
+  )
+
+  /*
+   * Ticking one off in the folder writes to the note it came from — the rows
+   * are the same rows the rail uses, so a task is the same thing everywhere.
+   */
+  await page
+    .locator('.list-scroll .task-row', { hasText: 'Fix the dripping tap' })
+    .locator('.task-check')
+    .click()
+  await page.waitForTimeout(900)
+  check(
+    'ticking one there edits the note it lives on',
+    (await noteContaining('dripping tap')).includes('- [x] Fix the dripping tap'),
+    (await noteContaining('dripping tap')).split('\n').find((l) => l.includes('dripping')) ?? '',
+  )
+  check(
+    'and it leaves the folder, which asked for open ones',
+    (await page.locator('.list-scroll .task-row').count()) === 2,
+    `${await page.locator('.list-scroll .task-row').count()} rows`,
+  )
+  await page.locator('.side-row:has-text("All Notes")').first().click()
+  await page.waitForTimeout(400)
+
   /* ---- copying a table back out -----------------------------------------
    * The return trip. Only the HTML flavour is added: spreadsheets read it in
    * preference to plain text, so Excel gets cells while the plain flavour

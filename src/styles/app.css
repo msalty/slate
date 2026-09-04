@@ -1902,6 +1902,29 @@ body.resizing .pane-resizer::after {
 .chip-group {
   margin-top: 16px;
 }
+/* A two-way switch inside a dialog field: notes or tasks. */
+.seg {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-2);
+  align-self: flex-start;
+}
+.seg-btn {
+  padding: 5px 16px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.seg-btn[aria-checked='true'] {
+  background: var(--surface-float);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
 .chip-group-label {
   font-size: 11px;
   font-weight: 600;

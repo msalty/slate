@@ -33,6 +33,7 @@ import {
   codeRegions,
   excerptOf,
   isTaskLine,
+  noteLevelTags,
   parseFrontmatter,
   resolveTarget,
   scanMdLinks,
@@ -226,15 +227,20 @@ export const tasks = computed<TaskItem[]>(() => {
     if (!e.hasTasks) continue
     const f = files.get(e.path)
     if (!f?.text) continue
+    // What the note says about itself, which every task on it inherits.
+    const inherited = noteLevelTags(f.text)
     for (const t of scanTasks(f.text)) {
       out.push({
         id: `${e.path}:${t.line}`,
         path: e.path,
         noteTitle: e.title,
+        folder: e.folder,
         line: t.line,
         text: stripInline(t.text),
         done: t.done,
         due: t.due,
+        tags: [...new Set([...t.tags, ...inherited])],
+        ownTags: t.tags,
       })
     }
   }

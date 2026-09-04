@@ -35,7 +35,14 @@ import {
   unlinkedList,
   visibleNotes,
 } from './state'
-import { allFolderPaths, moveNoteToFolder } from '../core/folders'
+import {
+  allFolderPaths,
+  moveNoteToFolder,
+  showsTasks,
+  smartFolderById,
+  tasksForSmartFolder,
+} from '../core/folders'
+import { TasksPanel } from './RightRail'
 import { openMenu, useLongPress, type MenuItem } from './Menu'
 import { SwipeRow, type SwipeAction } from './SwipeRow'
 import { openPrompt } from './PromptDialog'
@@ -227,6 +234,9 @@ export function NoteList({ children }: { children?: preact.ComponentChildren }) 
     await newNoteInFolder(folder, 'Untitled', { seed: body })
   }
 
+  // A Tag Folder set to gather tasks shows tasks here instead of notes.
+  const taskFolder = s.kind === 'smart' && showsTasks(smartFolderById(s.id))
+
   // The day a "create daily note" row would be for, when there isn't one yet.
   const dayNeedingDaily =
     s.kind === 'day' && !query.value && !dailyNoteFor(startOfDay(s.date))
@@ -309,6 +319,17 @@ export function NoteList({ children }: { children?: preact.ComponentChildren }) 
           <FilesView />
         ) : s.kind === 'unlinked' && !query.value ? (
           <UnlinkedView />
+        ) : taskFolder && !query.value ? (
+          /*
+           * A Tag Folder that gathers tasks puts them here, where its notes
+           * would otherwise be. The same rows the rail and the phone's Tasks
+           * tab use, so a task is the same thing to tick and to date wherever
+           * it turns up.
+           */
+          <TasksPanel
+            items={tasksForSmartFolder(s.kind === 'smart' ? s.id : '')}
+            empty={<>No tasks match this folder’s rule yet.</>}
+          />
         ) : visibleNotes.value.length === 0 ? (
           <>
             {dayNeedingDaily !== undefined && <DailyNoteRow day={dayNeedingDaily} />}

@@ -7,6 +7,7 @@
  */
 
 import { getEntry, notesByDay, notesOnDay, setDue, tasks, toggleTask } from '../core/vault'
+import type { TaskItem } from '../core/types'
 import { dailyNoteFor } from '../core/daily'
 import { monthGrid, startOfDay, ymd } from '../core/util'
 import { calendarMonth, openDailyNote, openNote, scope, selectedDay } from './state'
@@ -134,17 +135,35 @@ export function DayNotesPanel() {
   )
 }
 
-export function TasksPanel({ showDone = false }: { showDone?: boolean }) {
-  const all = tasks.value
+/**
+ * The task list, in the rail, as a phone tab, and as the body of a Tag Folder
+ * that gathers tasks.
+ *
+ * `items` is what makes the third one possible: given a list it shows that
+ * list and nothing else — a folder's rule has already decided what belongs,
+ * including whether finished ones do, so it must not be filtered again here.
+ */
+export function TasksPanel({
+  showDone = false,
+  items,
+  title = 'Tasks',
+  empty,
+}: {
+  showDone?: boolean
+  items?: TaskItem[]
+  title?: string
+  empty?: preact.ComponentChildren
+}) {
+  const all = items ?? tasks.value
   const open = all.filter((t) => !t.done)
   const done = all.filter((t) => t.done)
-  const shown = showDone ? [...open, ...done] : open
+  const shown = items ? all : showDone ? [...open, ...done] : open
 
   return (
     <div class="rail-section">
       <h3>
         <IconCheck size={12} />
-        Tasks
+        {title}
         <span class="spacer" />
         <span>
           {open.length} open{done.length ? ` · ${done.length} done` : ''}
@@ -153,8 +172,12 @@ export function TasksPanel({ showDone = false }: { showDone?: boolean }) {
 
       {all.length === 0 ? (
         <p class="rail-empty">
-          Type <code>- [ ]</code> in any note to add a task. Each one gets a date button here and in
-          the note.
+          {empty ?? (
+            <>
+              Type <code>- [ ]</code> in any note to add a task. Each one gets a date button here
+              and in the note.
+            </>
+          )}
         </p>
       ) : shown.length === 0 ? (
         <p class="rail-empty">All clear.</p>

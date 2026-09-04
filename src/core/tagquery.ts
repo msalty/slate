@@ -25,6 +25,8 @@ export type QueryNode =
   | { t: 'tag'; name: string }
   | { t: 'folder'; path: string }
   | { t: 'has'; what: 'tasks' | 'images' | 'attachments' | 'links' }
+  | { t: 'is'; what: 'open' | 'done' }
+  | { t: 'due'; when: 'overdue' | 'today' | 'soon' | 'none' | 'any' }
   | { t: 'and'; l: QueryNode; r: QueryNode }
   | { t: 'or'; l: QueryNode; r: QueryNode }
   | { t: 'not'; n: QueryNode }
@@ -38,7 +40,14 @@ export interface ParseResult {
   at?: number
 }
 
-/** Everything a rule can be evaluated against. */
+/**
+ * Everything a rule can be evaluated against.
+ *
+ * One shape for both kinds of thing a rule can gather. The task fields are
+ * absent for a note — a note is neither open nor done — so `is:` and `due:` in
+ * a rule over notes match nothing, which is what the folder's own live count
+ * shows you the moment you type it.
+ */
 export interface QueryContext {
   tags: string[]
   folder: string
@@ -46,6 +55,12 @@ export interface QueryContext {
   hasImages: boolean
   hasAttachments: boolean
   hasLinks: boolean
+  /** Set only when the thing being matched is a task. */
+  done?: boolean
+  /** The task's due date, ms epoch at local midnight. */
+  due?: number
+  /** Today at local midnight, so `due:` has something to compare against. */
+  today?: number
 }
 
 /* ---------------------------------------------------------------- tokenize */
@@ -122,7 +137,14 @@ function tokenize(src: string): { toks: Tok[]; error?: string; at?: number } {
     // recognized key, so "#a:b" stays one odd-looking tag rather than erroring.
     if (!hadHash && src[i] === ':') {
       const key = word.toLowerCase()
-      if (key === 'folder' || key === 'in' || key === 'has' || key === 'tag') {
+      if (
+        key === 'folder' ||
+        key === 'in' ||
+        key === 'has' ||
+        key === 'tag' ||
+        key === 'is' ||
+        key === 'due'
+      ) {
         i++
         let val = ''
         if (src[i] === '"') {
@@ -146,6 +168,8 @@ function tokenize(src: string): { toks: Tok[]; error?: string; at?: number } {
 /* ------------------------------------------------------------------- parse */
 
 const HAS_VALUES = ['tasks', 'images', 'attachments', 'links'] as const
+const IS_VALUES = ['open', 'done'] as const
+const DUE_VALUES = ['overdue', 'today', 'soon', 'none', 'any'] as const
 
 export function parseQuery(src: string): ParseResult {
   const { toks, error, at } = tokenize(src)
@@ -189,6 +213,18 @@ export function parseQuery(src: string): ParseResult {
       p++
       if (t.key === 'tag') return { t: 'tag', name: t.v.toLowerCase() }
       if (t.key === 'folder' || t.key === 'in') return { t: 'folder', path: t.v }
+      if (t.key === 'is') {
+        const v = t.v.toLowerCase()
+        if (!(IS_VALUES as readonly string[]).includes(v))
+          return fail(`is: expects one of ${IS_VALUES.join(', ')}`, t.at)
+        return { t: 'is', what: v as 'open' }
+      }
+      if (t.key === 'due') {
+        const v = t.v.toLowerCase()
+        if (!(DUE_VALUES as readonly string[]).includes(v))
+          return fail(`due: expects one of ${DUE_VALUES.join(', ')}`, t.at)
+        return { t: 'due', when: v as 'overdue' }
+      }
       const what = t.v.toLowerCase()
       if (!(HAS_VALUES as readonly string[]).includes(what))
         return fail(`has: expects one of ${HAS_VALUES.join(', ')}`, t.at)
@@ -253,6 +289,22 @@ export function evaluateQuery(node: QueryNode, ctx: QueryContext): boolean {
       return true
     case 'tag':
       return ctx.tags.some((t) => tagMatches(node.name, t))
+    case 'is':
+      // A note is neither open nor done, so it never matches either.
+      if (ctx.done === undefined) return false
+      return node.what === 'done' ? ctx.done : !ctx.done
+    case 'due': {
+      if (ctx.done === undefined) return false
+      const { due } = ctx
+      if (node.when === 'none') return due === undefined
+      if (due === undefined) return false
+      if (node.when === 'any') return true
+      const today = ctx.today ?? 0
+      if (node.when === 'overdue') return due < today
+      if (node.when === 'today') return due === today
+      // "soon" is today and the six days after it — the week you can see.
+      return due >= today && due < today + 7 * 86_400_000
+    }
     case 'folder': {
       const want = node.path.replace(/^\/+|\/+$/g, '').toLowerCase()
       const have = ctx.folder.toLowerCase()
@@ -318,6 +370,16 @@ export function describeQuery(node: QueryNode): string {
         return `in ${n.path}`
       case 'has':
         return `has ${n.what}`
+      case 'is':
+        return n.what === 'done' ? 'finished' : 'still open'
+      case 'due':
+        return n.when === 'none'
+          ? 'with no date'
+          : n.when === 'any'
+            ? 'with a date'
+            : n.when === 'soon'
+              ? 'due this week'
+              : `due ${n.when}`
       case 'not':
         return `not ${render(n.n, depth + 1)}`
       case 'and': {
