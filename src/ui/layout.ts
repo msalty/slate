@@ -34,8 +34,22 @@ export const viewportWidth = signal(
   typeof window === 'undefined' ? 1440 : window.innerWidth,
 )
 
+/**
+ * Whether this window may fall back to the phone layout at all.
+ *
+ * A window holding one popped-out note is a desktop window however narrow it is
+ * dragged: the compact layout's back button and action sheet exist to get you
+ * back to a list, and this window has none — they would be dead ends. The
+ * popout window clears this as it boots; nothing else touches it.
+ */
+export const compactAllowed = signal(true)
+
 export const layoutMode = computed<LayoutMode>(() =>
-  viewportWidth.value < COMPACT_MAX ? 'compact' : viewportWidth.value < WIDE_MIN ? 'medium' : 'wide',
+  viewportWidth.value < COMPACT_MAX && compactAllowed.value
+    ? 'compact'
+    : viewportWidth.value < WIDE_MIN
+      ? 'medium'
+      : 'wide',
 )
 
 /** Which floating panel is open. Only meaningful outside `wide`. */

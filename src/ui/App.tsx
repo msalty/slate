@@ -23,6 +23,8 @@ import { ready, resolveLink } from '../core/vault'
 import {
   activePath,
   closeMobileEditor,
+  editorMaximized,
+  historyOpen,
   lightboxPath,
   mobileEditorOpen,
   mobileTab,
@@ -33,10 +35,10 @@ import {
   scope,
   setScope,
   settingsOpen,
-  dismissToast,
-  toast,
   visibleNotes,
 } from './state'
+import { Toaster } from './Toast'
+import { resumePopouts } from './popout'
 import {
   closeDrawer,
   drawer,
@@ -55,10 +57,24 @@ import { IconSettings, IconSync, IconWarn } from './Icons'
 export function App() {
   const s = settings.value
   const mode = layoutMode.value
+  /*
+   * Focus mode: the note takes the window and every panel stands down. A phone
+   * has nothing to hide — its editor is already the whole screen — so the flag
+   * is only ever read outside compact, which is also why crossing a breakpoint
+   * with it set restores the panels rather than losing the mode.
+   */
+  const zen = mode !== 'compact' && editorMaximized.value
 
   /* ---- layout ------------------------------------------------------ */
   useEffect(() => installLayoutWatcher(), [])
   useEffect(() => installKeyboardWatcher(), [])
+
+  /*
+   * Notes that were popped out into their own windows before this one was
+   * reloaded are still out there, and this window has forgotten them. A no-op
+   * in a session that has never popped anything out.
+   */
+  useEffect(() => resumePopouts(), [])
 
   /* ---- theme ------------------------------------------------------- */
   useEffect(() => {
@@ -169,7 +185,23 @@ export function App() {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey
       if (!mod) {
-        if (e.key === 'Escape' && drawer.value) closeDrawer()
+        if (e.key !== 'Escape') return
+        if (drawer.value) {
+          closeDrawer()
+          return
+        }
+        /*
+         * Escape leaves focus mode — but only once the note has stopped being
+         * written in. The editor answers Escape first by handing the caret
+         * back (see EditorPane), and that same keypress must not also throw
+         * the panels back up: one Escape puts the pen down, the next one
+         * leaves. Anything with its own Escape — a dialog, the palette, the
+         * lightbox — is likewise still busy with this one.
+         */
+        const inEditor = !!(e.target as HTMLElement | null)?.closest?.('.cm-editor')
+        const dialog =
+          paletteOpen.value || settingsOpen.value || historyOpen.value || !!lightboxPath.value
+        if (editorMaximized.value && !inEditor && !dialog) editorMaximized.value = false
         return
       }
       const k = e.key.toLowerCase()
@@ -196,6 +228,11 @@ export function App() {
       } else if (k === 'm' && e.shiftKey) {
         e.preventDefault()
         update({ editorMode: nextEditorMode(settings.value.editorMode) })
+      } else if (k === 'f' && e.shiftKey) {
+        // Nothing to maximise on a phone, where the editor is the screen.
+        if (layoutMode.value === 'compact') return
+        e.preventDefault()
+        editorMaximized.value = !editorMaximized.value
       }
     }
     addEventListener('keydown', onKey)
@@ -244,6 +281,7 @@ export function App() {
         data-sidebar={sidebarState.value}
         data-rail={railState.value}
         data-list={listInline.value ? '1' : '0'}
+        data-zen={zen ? '1' : '0'}
         /*
          * The grid reads these; the resizers write them straight to the DOM
          * while dragging, so a resize costs one custom property, not a render.
@@ -344,7 +382,7 @@ export function App() {
         </div>
       )}
 
-      {mode !== 'compact' && <StatusBar />}
+      {mode !== 'compact' && !zen && <StatusBar />}
       <CommandPalette />
       <Settings />
       <VersionHistory />
@@ -353,23 +391,7 @@ export function App() {
       <PromptDialog />
       <Lightbox />
       <ContextMenu />
-      {toast.value && (
-        <div class="toast" data-kind={toast.value.kind} role="status">
-          <span>{toast.value.text}</span>
-          {toast.value.action && (
-            <button
-              class="toast-action"
-              onClick={() => {
-                const act = toast.value?.action
-                dismissToast()
-                act?.run()
-              }}
-            >
-              {toast.value.action.label}
-            </button>
-          )}
-        </div>
-      )}
+      <Toaster />
     </>
   )
 }

@@ -103,6 +103,43 @@
   grid-template-columns: 1fr;
 }
 
+/* --- focus mode: the note, and nothing else -----------------------------
+ *
+ * Set from the button in the editor's header, or ⌘⇧F, and stamped on the shell
+ * like every other layout decision — so the panels leave in one attribute
+ * rather than each being told, and the columns collapse to the one that is
+ * left. The status bar is dropped in App.tsx, being a sibling of the shell.
+ *
+ * Hidden rather than unmounted, which is the whole reason this is CSS: the note
+ * list keeps its scroll position, its search and its sections, so leaving focus
+ * mode puts you back exactly where you were instead of at the top of the list.
+ * `display: none` also takes them out of the tab order, so there is nothing to
+ * tab into behind the note.
+ */
+/*
+ * Written against every attribute the mode rules above match on, so that it
+ * outweighs whichever combination of panels happened to be showing when focus
+ * mode was entered — `[data-mode='wide'][data-sidebar='hidden'][data-rail=
+ * 'inline']` is three of them. Reordering the mode rules instead would make the
+ * everyday layout depend on a mode that is off almost all of the time.
+ */
+.shell[data-zen='1'][data-mode][data-sidebar][data-rail][data-list] {
+  grid-template-columns: minmax(0, 1fr);
+}
+.shell[data-zen='1'] > *:not(.editor-pane) {
+  display: none;
+}
+
+/* --- a popped-out note: one window, one note, no shell around it -------- */
+.popout-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+
 .pane {
   min-width: 0;
   height: 100%;

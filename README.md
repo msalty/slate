@@ -490,6 +490,33 @@ guaranteed minimum width in all of them, so when space runs short a side panel
 is dropped rather than the writing surface squeezed. Crossing a breakpoint never
 opens or closes anything by itself.
 
+**Back and forward.** Two arrows to the left of the note's title, over the notes
+this window has opened — a vault is a web of links, and three notes into
+following one you want the one you started from, which a list sorted by date
+cannot give you. Each arrow's tooltip names the note it would take you to, so
+"back" is answerable without pressing it first, and a note that has since been
+renamed or deleted is stepped over rather than offered. Desktop only: a phone's
+editor header already has a back arrow in that spot and it means something
+else — it returns to the note list, which is the right thing for it to do.
+
+**Focus mode, and a note in a window of its own.** On a desktop the editor's
+header carries one more button. Press it (or ⌘⇧F) and the note takes the whole
+window — no sidebar, no list, no calendar, no status bar. The text is laid out
+the way Settings → Editor → **Body width** says, the same as it is everywhere
+else: full width, or a centred reading column if that is what you have chosen.
+Escape gives the app back, after the Escape that puts the caret down.
+
+Hold **Shift** over that same button and it becomes a popout, exactly the way
+Gmail's compose window does it: click it and the note steps out into a small
+window of its own, to sit beside whatever you are writing about. The pane it
+came from shows a card saying where it went, with *Show me* and *Bring it
+back* — one window owns a note at a time, so there is never a second caret in
+the same file. Closing the popped-out window hands the note straight back, with
+everything written in it. Both windows are the same vault: what you type in one
+appears in the other's list, search and calendar as you type it, and the window
+you started from is the one that syncs. Nothing about either feature exists on a
+phone, where the editor is already the whole screen.
+
 **Offline.** The whole app is precached. It opens, reads and writes with no
 network at all, and syncs when connectivity returns.
 
@@ -518,6 +545,12 @@ double-click the divider to put it back; ⌘\ hides the sidebar entirely and the
 button in the note list's header brings it back. The editor never gives up its
 space: drag the panels wider than the window can afford and they are the ones
 that yield.
+
+**⌘⇧F clears the rest of the screen away** — every panel and the status bar with
+them — and gives the whole window to the note, laid out however **Body width**
+says. The panels are hidden rather than torn down, so the list comes back with
+its scroll position and its search exactly as you left them. Shift held over the same
+button pops the note into a window of its own instead; see *What it does*.
 
 The sidebar's three sections — **Folders**, **Tag Folders** and **Tags** — each
 fold away from their header, and a folded one carries the count of what is
@@ -561,6 +594,7 @@ bar above the list carries an **Edit** next to the **Close**.
 | ⌘, | Settings |
 | ⌘\ | Toggle sidebar |
 | ⌘⇧R | Toggle calendar column |
+| ⌘⇧F | Focus mode — the note takes the window |
 | ⌘⇧M | Cycle rich text → live preview → source |
 | ⌘B / ⌘I / ⌘U | Bold / italic / underline |
 | ⌘⇧X / ⌘⇧H / ⌘E | Strikethrough / highlight / monospace |
@@ -910,6 +944,11 @@ src/
 │  └─ pickImage.ts   camera / photo library / file insertion
 └─ ui/            Preact components
    ├─ layout.ts      the three layout modes and panel visibility
+   ├─ backForward.ts the trail behind the two arrows, kept by watching what
+   │                 is open rather than by every caller remembering to say
+   ├─ popout.ts      a note in a window of its own, and what the windows tell
+   │                 each other so one vault stays one vault
+   ├─ PopoutWindow.tsx  the one-note shell that window boots into
    ├─ Menu.tsx       popover on a pointer, bottom sheet on a phone
    ├─ DueMenu.tsx    the due-date picker that rides on it
    ├─ DueChip.tsx    a task's date, as a control rather than a caption
@@ -958,6 +997,13 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 - **Table columns can't be aligned from the UI.** Cells are edited in place and
   rows and columns come and go from the toolbar, but `:--:` alignment still has
   to be typed into the delimiter row by hand, in live preview or source.
+- **A popped-out note on its own doesn't sync.** The window that opened it is
+  the one with the backend connected, and a popout deliberately doesn't run a
+  second sync engine racing the first. It saves to the same local database
+  regardless, so nothing is lost — but close the app and leave only the popout
+  open, and what you write there goes up the next time the app itself is. The
+  fix is a leader election between the windows, which is more machinery than
+  the case deserves for now.
 - **Search is a linear scan.** Fast and predictable to a few thousand notes; past
   that it wants an inverted index.
 - **No encryption at rest.** Notes are plain files on your server. Per-file

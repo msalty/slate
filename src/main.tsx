@@ -12,11 +12,21 @@
 
 import { render } from 'preact'
 import { App } from './ui/App'
+import { PopoutWindow, preparePopout } from './ui/PopoutWindow'
+import { popoutRequest } from './ui/popout'
 import { initVault, applySharedSettingsSafe } from './app/boot'
 import { apply as applyUpdate, setPluginUpdater, updateReady } from './app/update'
 import './styles/app.css'
 
 const root = document.getElementById('app')!
+
+/**
+ * A note popped out into a window of its own opens the same document with the
+ * note's path in its hash, and boots into a one-note shell instead of the app.
+ * Everything above this line is the same either way — the vault it reads is the
+ * same IndexedDB, so the window opens as fast as the app does.
+ */
+const popout = popoutRequest()
 
 async function main() {
   try {
@@ -32,11 +42,21 @@ async function main() {
     return
   }
 
-  render(<App />, root)
+  if (popout) {
+    preparePopout(popout)
+    render(<PopoutWindow />, root)
+  } else {
+    render(<App />, root)
+  }
 
   // Everything below is deliberately after first paint.
   void applySharedSettingsSafe()
-  void registerServiceWorker()
+  /*
+   * Not in a popout. The service worker is already installed by the window this
+   * one came out of, and an update prompt belongs in the app rather than in a
+   * window someone is in the middle of writing in.
+   */
+  if (!popout) void registerServiceWorker()
 }
 
 async function registerServiceWorker() {

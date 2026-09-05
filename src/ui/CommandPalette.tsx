@@ -11,8 +11,11 @@ import { notes, search } from '../core/vault'
 import { dailyNoteFor } from '../core/daily'
 import { sync } from '../core/sync'
 import { settings, update } from '../core/settings'
+import { layoutMode } from './layout'
+import { canPopOut, openPopout } from './popout'
 import {
   activePath,
+  editorMaximized,
   editorModeLabel,
   nextEditorMode,
   notify,
@@ -106,6 +109,37 @@ export function CommandPalette() {
         hint: '⌘⇧R',
         run: () => update({ showRightRail: !settings.value.showRightRail }),
       },
+      /*
+       * Both of these are desktop ideas: a phone's editor is already the whole
+       * screen, and it has no second window to put a note in.
+       */
+      ...(layoutMode.value === 'compact'
+        ? []
+        : [
+            {
+              id: 'focus',
+              label: editorMaximized.value ? 'Leave focus mode' : 'Focus mode',
+              hint: '⌘⇧F',
+              run: () => (editorMaximized.value = !editorMaximized.value),
+            },
+            ...(canPopOut()
+              ? [
+                  {
+                    id: 'popout',
+                    label: 'Open this note in a new window',
+                    run: () => {
+                      const path = activePath.value
+                      if (!path) {
+                        notify('Open a note first.', 'error')
+                        return
+                      }
+                      if (!openPopout(path))
+                        notify('Your browser blocked the new window. Allow pop-ups for Slate.', 'error')
+                    },
+                  },
+                ]
+              : []),
+          ]),
       {
         id: 'theme',
         label: `Theme: ${settings.value.theme}`,
@@ -122,7 +156,7 @@ export function CommandPalette() {
       { id: 'trash', label: 'Show Deleted', run: () => setScope({ kind: 'trash' }) },
       { id: 'files', label: 'Show all files', run: () => setScope({ kind: 'files' }) },
     ],
-    [settings.value, day, notes.value],
+    [settings.value, day, notes.value, editorMaximized.value, layoutMode.value],
   )
 
   const results = useMemo(() => {

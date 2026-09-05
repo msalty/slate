@@ -33,6 +33,7 @@ import {
   EDITOR_MODES,
   activePath,
   closeMobileEditor,
+  editorMaximized,
   formatSheetOpen,
   historyOpen,
   notify,
@@ -41,6 +42,15 @@ import {
   takeOpenCaret,
   readingMode,
 } from './state'
+import {
+  bringBack,
+  canFocusPopout,
+  canPopOut,
+  focusPopout,
+  isPoppedOut,
+  isPopoutWindow,
+  openPopout,
+} from './popout'
 import { beginEditing, endEditing, installTapToEdit } from '../editor/reading'
 import { templateBodyFor } from '../core/templates'
 import { offerTitleFromHeading } from './titleDrift'
@@ -56,13 +66,17 @@ import {
   IconEye,
   IconHistory,
   IconImagePlus,
+  IconMaximize,
+  IconMinimize,
   IconPaperclip,
   IconPencil,
+  IconPopout,
   IconRail,
   IconRichText,
   IconTrash,
 } from './Icons'
 import { openMenu, type MenuItem } from './Menu'
+import { NoteNav } from './NoteNav'
 import { hasCamera, pickAndInsert } from '../editor/pickImage'
 
 export function EditorPane() {
@@ -72,6 +86,14 @@ export function EditorPane() {
   const [scrolled, setScrolled] = useState(false)
   const path = activePath.value
   const compact = layoutMode.value === 'compact'
+  /*
+   * This note has been handed to a window of its own. The pane keeps the note
+   * selected — the list should not jump — but it holds no editor for it: see
+   * the top of the rebuild effect, and the card rendered in its place below.
+   */
+  const popped = !!path && isPoppedOut(path)
+  /** True in a popped-out window, which is one note and no app around it. */
+  const detached = isPopoutWindow()
   // Reading the vault's revision here is what makes the editor notice writes it
   // did not make: a sync pull, a restore from history, a task toggled elsewhere.
   const rev = revision.value
@@ -115,6 +137,27 @@ export function EditorPane() {
   // Rebuild the editor when the open note changes. A fresh state per note means
   // undo history is scoped to the note, which is what people expect.
   useLayoutEffect(() => {
+    /*
+     * A note that has gone to a window of its own leaves this pane completely:
+     * the buffer is flushed and the view destroyed before that window has
+     * finished loading. Keeping a live editor on a note somebody else is now
+     * typing into is how you get one window's stale copy saved over the
+     * other's — the switch back rebuilds from what the vault holds by then.
+     */
+    if (popped) {
+      /*
+       * Flushed only while this buffer is still the copy the vault agrees
+       * with. If something has written since — the window it is going to,
+       * having got there first — then the newer text is next door, and saving
+       * this one over it would undo somebody's typing to keep our own.
+       */
+      if (pathRef.current && baseRef.current === getRaw(pathRef.current)?.text) flush()
+      viewRef.current?.destroy()
+      viewRef.current = null
+      pathRef.current = undefined
+      activeEditor.value = null
+      return
+    }
     if (!hostRef.current) return
     if (pathRef.current && pathRef.current !== path) flush()
 
@@ -197,7 +240,7 @@ export function EditorPane() {
       view.dom.removeEventListener('keydown', onKeyDown)
       stopTaps()
     }
-  }, [path])
+  }, [path, popped])
 
   /**
    * Fold a version that arrived from elsewhere into the open buffer.
@@ -308,18 +351,58 @@ export function EditorPane() {
     return (
       <div class="pane editor-pane">
         <div class="pane-head">
+          {/* Back still means something with nothing open — a note deleted a
+              moment ago is exactly when you want the one before it. */}
+          {!compact && <NoteNav />}
           <span class="spacer" />
-          <button
-            class="icon-btn"
-            aria-pressed={railState.value !== 'hidden'}
-            onClick={toggleRail}
-            title="Calendar and tasks (⌘⇧R)"
-          >
-            <IconRail />
-          </button>
+          {!detached && (
+            <button
+              class="icon-btn"
+              aria-pressed={railState.value !== 'hidden'}
+              onClick={toggleRail}
+              title="Calendar and tasks (⌘⇧R)"
+            >
+              <IconRail />
+            </button>
+          )}
         </div>
         <div class="empty" style={{ marginTop: '18vh' }}>
-          Select a note, or press ⌘N to write a new one.
+          {detached
+            ? 'This note is no longer here. Close this window.'
+            : 'Select a note, or press ⌘N to write a new one.'}
+        </div>
+      </div>
+    )
+  }
+
+  /*
+   * The note is out in a window of its own. What is left here is a card saying
+   * where it went and two ways to get it back, so the pane is never just blank
+   * with the note missing from it.
+   */
+  if (popped) {
+    return (
+      <div class="pane editor-pane">
+        <div class="pane-head editor-head">
+          {!compact && <NoteNav />}
+          <span class="editor-title-input">{entry.title}</span>
+          <span class="spacer" />
+        </div>
+        <div class="popped-card">
+          <IconPopout size={24} />
+          <h3>Open in its own window</h3>
+          <p>Everything you write there is saved to this vault as you type.</p>
+          <div class="popped-actions">
+            {/* Nothing to raise for a window that outlived a reload of this one. */}
+            {canFocusPopout(path) && (
+              <button class="row-action" onClick={() => focusPopout(path)}>
+                Show me
+              </button>
+            )}
+            <button class="row-action" onClick={() => bringBack(path)}>
+              Bring it back
+            </button>
+          </div>
         </div>
       </div>
     )
@@ -378,16 +461,26 @@ export function EditorPane() {
   return (
     <div
       class="pane editor-pane"
+      /*
+       * The Editor width preference, in every mode. Focus mode used to force
+       * the reading column on the theory that a full-width line across a whole
+       * screen is nobody's idea of distraction-free — but that is a decision
+       * the setting already exists to make, and overriding it meant the same
+       * app answered the same preference two different ways depending on which
+       * window the note was in.
+       */
       data-width={settings.value.editorWidth}
       data-scrolled={scrolled ? '1' : '0'}
       data-reading={reading ? '1' : '0'}
       data-format-open={rich && compact && formatSheetOpen.value ? '1' : '0'}
     >
       <div class="pane-head editor-head">
-        {compact && (
+        {compact ? (
           <button class="icon-btn" onClick={closeMobileEditor} aria-label="Back">
             <IconChevronLeft size={20} />
           </button>
+        ) : (
+          <NoteNav />
         )}
         {trashed ? (
           <span class="editor-title-input" aria-label="Deleted note">
@@ -457,14 +550,16 @@ export function EditorPane() {
           </button>
         )}
         {trashed ? (
-          <button
-            class="icon-btn"
-            aria-pressed={railState.value !== 'hidden'}
-            onClick={toggleRail}
-            title="Calendar and tasks (⌘⇧R)"
-          >
-            <IconRail />
-          </button>
+          !detached && (
+            <button
+              class="icon-btn"
+              aria-pressed={railState.value !== 'hidden'}
+              onClick={toggleRail}
+              title="Calendar and tasks (⌘⇧R)"
+            >
+              <IconRail />
+            </button>
+          )
         ) : compact ? (
           <button
             class="icon-btn"
@@ -517,27 +612,45 @@ export function EditorPane() {
             >
               <IconHistory />
             </button>
-            <button
-              class="icon-btn"
-              onClick={async () => {
-                if (!confirm(`Move "${entry.title}" to Deleted?`)) return
-                saveRef.current.flush()
-                await deleteNote(path)
-                activePath.value = undefined
-                notify('Moved to Deleted')
-              }}
-              title="Delete note"
-            >
-              <IconTrash />
-            </button>
-            <button
-              class="icon-btn"
-              aria-pressed={railState.value !== 'hidden'}
-              onClick={toggleRail}
-              title="Calendar and tasks (⌘⇧R)"
-            >
-              <IconRail />
-            </button>
+            {/*
+              * A popped-out window is one note and no app around it: deleting
+              * from it would leave an empty window with nowhere to go, and the
+              * calendar rail it would toggle is not in this window to show.
+              * Both are a click away in the window it came from.
+              */}
+            {!detached && (
+              <>
+                <button
+                  class="icon-btn"
+                  onClick={async () => {
+                    if (!confirm(`Move "${entry.title}" to Deleted?`)) return
+                    saveRef.current.flush()
+                    await deleteNote(path)
+                    activePath.value = undefined
+                    notify('Moved to Deleted')
+                  }}
+                  title="Delete note"
+                >
+                  <IconTrash />
+                </button>
+                <FocusButton path={path} flush={flush} />
+                {/*
+                  * There is no rail in focus mode to toggle, so the button that
+                  * toggles it would be a light that turns on and off with
+                  * nothing behind it. It comes back with the panels.
+                  */}
+                {!editorMaximized.value && (
+                  <button
+                    class="icon-btn"
+                    aria-pressed={railState.value !== 'hidden'}
+                    onClick={toggleRail}
+                    title="Calendar and tasks (⌘⇧R)"
+                  >
+                    <IconRail />
+                  </button>
+                )}
+              </>
+            )}
           </>
         )}
       </div>
@@ -620,6 +733,80 @@ export function EditorPane() {
         </div>
       )}
     </div>
+  )
+}
+
+/**
+ * Focus mode, and — with Shift held — the way out of the window altogether.
+ *
+ * One button for two things, the way Gmail's compose window does it: press it
+ * and the note takes the whole app; hold Shift and it becomes a popout, which
+ * hands the note to a window of its own. The icon changes under the pointer so
+ * the second one is discoverable at all, and Shift-click works whether or not
+ * anybody waited to watch it change.
+ *
+ * Shift is only listened for while the pointer is actually over the button.
+ * Watching it the whole time would re-render this pane on every capital letter
+ * typed into the note, which is a lot of work for an icon nobody is looking at.
+ */
+function FocusButton({ path, flush }: { path: string; flush: () => void }) {
+  const [hovering, setHovering] = useState(false)
+  const [shift, setShift] = useState(false)
+  const maximized = editorMaximized.value
+  const offersPopout = hovering && shift && canPopOut()
+
+  useEffect(() => {
+    if (!hovering) {
+      setShift(false)
+      return
+    }
+    const track = (e: KeyboardEvent) => setShift(e.shiftKey)
+    addEventListener('keydown', track)
+    addEventListener('keyup', track)
+    return () => {
+      removeEventListener('keydown', track)
+      removeEventListener('keyup', track)
+    }
+  }, [hovering])
+
+  const label = offersPopout
+    ? 'Open in a new window'
+    : maximized
+      ? 'Leave focus mode'
+      : 'Focus mode'
+
+  return (
+    <button
+      class="icon-btn"
+      aria-label={label}
+      aria-pressed={maximized}
+      title={
+        canPopOut()
+          ? `${maximized ? 'Leave focus mode' : 'Focus mode'} (⌘⇧F) — hold Shift for a new window`
+          : `${maximized ? 'Leave focus mode' : 'Focus mode'} (⌘⇧F)`
+      }
+      onMouseEnter={() => setHovering(true)}
+      onMouseLeave={() => setHovering(false)}
+      onClick={(e) => {
+        // `e.shiftKey`, not the hover state: the key as it is at the moment of
+        // the click is what the person actually asked for.
+        if (e.shiftKey && canPopOut()) {
+          /*
+           * Flushed here rather than left to the rebuild effect, so the write
+           * is already on its way to IndexedDB while the new window is still
+           * loading and it opens on the last thing typed.
+           */
+          flush()
+          editorMaximized.value = false
+          if (!openPopout(path))
+            notify('Your browser blocked the new window. Allow pop-ups for Slate.', 'error')
+          return
+        }
+        editorMaximized.value = !maximized
+      }}
+    >
+      {offersPopout ? <IconPopout /> : maximized ? <IconMinimize /> : <IconMaximize />}
+    </button>
   )
 }
 
