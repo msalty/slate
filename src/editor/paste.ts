@@ -14,6 +14,8 @@ import { addAttachment } from '../core/vault'
 import { attachmentPath, imagesFromDataTransfer, optimizeImage } from '../core/images'
 import { settings } from '../core/settings'
 import { uid } from '../core/util'
+import { expandToMarks } from './format'
+import { previewMode } from './livePreview'
 import { cellText, currentTable, renderTable, tableRowsInSelection } from './table'
 import { gridToHtml, looksLikeGrid, parseDelimited, tableFromGrid } from './tsv'
 
@@ -192,6 +194,22 @@ async function writeBothFlavours(text: string, html: string): Promise<boolean> {
   }
 }
 
+/**
+ * The selection to put on the clipboard, when it is not the one the user made.
+ *
+ * Rich text hides the `==` around a highlight, so double-clicking the word
+ * inside one selects the word and nothing else — and the copy comes out plain.
+ * Null when the selection already covers whatever it is inside, which is every
+ * other mode and nearly every selection in this one.
+ */
+function markedSelection(view: EditorView): { from: number; to: number } | null {
+  if (view.state.facet(previewMode) !== 'rich') return null
+  const { main } = view.state.selection
+  if (main.empty) return null
+  const grown = expandToMarks(view.state, main.from, main.to)
+  return grown.from === main.from && grown.to === main.to ? null : grown
+}
+
 export const clipboardHandler = EditorView.domEventHandlers({
   /**
    * Copying a table puts it on the clipboard as a table as well as as markdown.
@@ -210,16 +228,44 @@ export const clipboardHandler = EditorView.domEventHandlers({
      * possibly stale. Leave it alone.
      */
     if ((event.target as HTMLElement | null)?.closest?.('.cm-table-cell')) return false
-
-    const selected = tableRowsInSelection(view.state)
-    if (!selected) return false
     const dt = event.clipboardData
     if (!dt) return false
 
+    const selected = tableRowsInSelection(view.state)
+    if (selected) {
+      event.preventDefault()
+      const { main } = view.state.selection
+      dt.setData('text/plain', view.state.sliceDoc(main.from, main.to))
+      dt.setData('text/html', gridToHtml(selected.rows, selected.hasHeader))
+      return true
+    }
+
+    const grown = markedSelection(view)
+    if (!grown) return false
     event.preventDefault()
-    const { main } = view.state.selection
-    dt.setData('text/plain', view.state.sliceDoc(main.from, main.to))
-    dt.setData('text/html', gridToHtml(selected.rows, selected.hasHeader))
+    dt.setData('text/plain', view.state.sliceDoc(grown.from, grown.to))
+    return true
+  },
+
+  /**
+   * The same widening, applied to the text that leaves the note *and* to the
+   * text taken out of it — a cut that removed only the inside of a highlight
+   * would leave a bare `====` behind, which is not even a highlight any more.
+   */
+  cut(event, view) {
+    if ((event.target as HTMLElement | null)?.closest?.('.cm-table-cell')) return false
+    const dt = event.clipboardData
+    if (!dt) return false
+    const grown = markedSelection(view)
+    if (!grown) return false
+
+    event.preventDefault()
+    dt.setData('text/plain', view.state.sliceDoc(grown.from, grown.to))
+    view.dispatch({
+      changes: { from: grown.from, to: grown.to, insert: '' },
+      selection: { anchor: grown.from },
+      userEvent: 'delete.cut',
+    })
     return true
   },
 

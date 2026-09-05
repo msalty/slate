@@ -972,6 +972,137 @@ try {
     `${wide.shown} → ${backAgain.shown} groups`,
   )
 
+  /* ---- rich text, where the caret is in markup it cannot see -------------
+   * Every check here is a position that draws at the same pixel as another
+   * one: after a highlight's text and before its hidden `==`, at the start of
+   * `## Heading` and in front of the `#`, between a hidden `- ` and the
+   * checkbox after it. Each of them used to split the construct in half, and
+   * none of it is visible on screen — so the file is what gets asserted.
+   */
+  await page.evaluate(async (text) => {
+    const db = await new Promise((res, rej) => {
+      const r = indexedDB.open('slate')
+      r.onsuccess = () => res(r.result)
+      r.onerror = () => rej(r.error)
+    })
+    const tx = db.transaction('files', 'readwrite')
+    tx.objectStore('files').put({
+      path: 'Hidden Markup.md',
+      kind: 'note',
+      text,
+      mime: 'text/markdown',
+      size: text.length,
+      hash: 'hidden',
+      mtime: Date.now() + 30_000,
+      ctime: Date.now(),
+      dirty: true,
+      dirtyFlag: 1,
+      sync: {},
+    })
+    await new Promise((res) => {
+      tx.oncomplete = res
+    })
+  }, ['==Highlighted phrase==', '', '## Heading line', '', '- [ ] Test task', '', 'Some ==sample== words', '', '```js', 'const a = 1', '```', ''].join('\n'))
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForSelector('.note-row')
+  await page.locator('.note-row', { hasText: 'Hidden Markup' }).first().click()
+  await page.waitForTimeout(600)
+  await startEditing()
+  check('the editor mode survives a reload', (await page.locator('.fmt-bar').count()) === 1)
+
+  /** The box of the rendered line holding some text, for clicking into. */
+  const lineBox = (needle) =>
+    page.locator('.cm-content .cm-line', { hasText: needle }).first().boundingBox()
+
+  /*
+   * The fence, which rich text hides everywhere else. It is where the language
+   * is written, and the language is the whole of whether the block is
+   * highlighted — so it comes back for the caret, exactly as a link's URL does.
+   */
+  const codeBox = await lineBox('const a = 1')
+  await page.mouse.click(codeBox.x + 20, codeBox.y + codeBox.height / 2)
+  await page.waitForTimeout(350)
+  check(
+    'a code fence shows itself while the caret is in the block',
+    (await page.locator('.cm-content').innerText()).includes('```js'),
+  )
+  check(
+    'and the language on it is syntax highlighted',
+    (await page.locator('.cm-line.cm-codeblock span').count()) > 2,
+  )
+
+  const phraseBox = await lineBox('Highlighted phrase')
+  await page.mouse.click(phraseBox.x + phraseBox.width - 4, phraseBox.y + phraseBox.height / 2)
+  await page.waitForTimeout(250)
+  check(
+    'the fence hides again once the caret leaves',
+    !(await page.locator('.cm-content').innerText()).includes('```'),
+  )
+
+  await page.keyboard.press('Enter')
+  check(
+    'Enter after a highlighted phrase breaks after the highlight, not through it',
+    (await noteAfterEdit('Highlighted phrase', '==Highlighted phrase==\n')).includes(
+      '==Highlighted phrase==\n',
+    ),
+  )
+
+  const headingBox = await lineBox('Heading line')
+  await page.mouse.click(headingBox.x + 1, headingBox.y + headingBox.height / 2)
+  await page.waitForTimeout(250)
+  await page.keyboard.press('Enter')
+  check(
+    'Enter at the start of a heading takes the heading down with its words',
+    (await noteAfterEdit('Heading line', '\n\n## Heading line')).includes('\n\n## Heading line'),
+  )
+
+  const taskBox = await lineBox('Test task')
+  await page.mouse.click(taskBox.x + 1, taskBox.y + taskBox.height / 2)
+  await page.waitForTimeout(250)
+  await page.keyboard.press('Enter')
+  check(
+    'Enter in front of a checkbox opens an empty checkbox above it',
+    (await noteAfterEdit('Test task', '- [ ] \n- [ ] Test task')).includes('- [ ] \n- [ ] Test task'),
+  )
+
+  /*
+   * The toggle has to be an exact round trip. Off and on again used to give
+   * back two characters less every time, so the third press here is the one
+   * that matters: it wrapped `mple` when the fix was not in.
+   */
+  await page.locator('.cm-content .cm-highlight', { hasText: 'sample' }).first().dblclick()
+  await page.waitForTimeout(250)
+  await clickFormat('Highlight (⌘⇧H)')
+  await page.waitForTimeout(350)
+  const unhighlighted = await noteAfterEdit('sample', 'Some sample words')
+  check('a highlight comes off the words it was on', unhighlighted.includes('Some sample words'))
+  await clickFormat('Highlight (⌘⇧H)')
+  await page.waitForTimeout(350)
+  check(
+    'and goes back on exactly the same ones',
+    (await noteAfterEdit('sample', '==sample==')).includes('Some ==sample== words'),
+  )
+
+  /*
+   * And what leaves on the clipboard carries the markup the mode is hiding —
+   * selecting the word inside a highlight can only ever land on the word,
+   * since the `==` around it is atomic and the selection is merely against it.
+   */
+  const copiedMark = await page.evaluate(() => {
+    const dt = new DataTransfer()
+    document
+      .querySelector('.cm-content')
+      .dispatchEvent(
+        new ClipboardEvent('copy', { clipboardData: dt, bubbles: true, cancelable: true }),
+      )
+    return dt.getData('text/plain')
+  })
+  check(
+    'copying a highlighted word takes the highlight with it',
+    copiedMark === '==sample==',
+    JSON.stringify(copiedMark),
+  )
+
   await page.keyboard.press('Control+Shift+m')
   await page.waitForTimeout(300)
   check('cycling lands back in live preview', (await page.locator('.fmt-bar').count()) === 0)

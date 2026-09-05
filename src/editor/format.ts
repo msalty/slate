@@ -387,17 +387,23 @@ export function toggleInline(state: EditorState, mark: InlineMark): TransactionS
   return state.changeByRange((range) => {
     const existing = spanAround(state, mark, range.from, range.to)
     if (existing) {
-      const shift = (pos: number) =>
-        pos - (pos > existing.innerFrom ? open.length : 0) - (pos > existing.innerTo ? close.length : 0)
+      /*
+       * Both ends of the range sit within the span's inner text — that is what
+       * `spanAround` matched on — so the only delimiter removed from in front
+       * of them is the opening one, and both move back by exactly its length.
+       *
+       * Getting this wrong is not cosmetic. An off-by-one here left the anchor
+       * where it was, so a highlight toggled off and on again came back two
+       * characters shorter every time: the selection crept forward through its
+       * own text while the user held still.
+       */
+      const shift = (pos: number) => pos - open.length
       return {
         changes: [
           { from: existing.from, to: existing.innerFrom, insert: '' },
           { from: existing.innerTo, to: existing.to, insert: '' },
         ],
-        range: EditorSelection.range(
-          Math.max(existing.from, shift(range.from)),
-          Math.max(existing.from, shift(range.to)),
-        ),
+        range: EditorSelection.range(shift(range.anchor), shift(range.head)),
       }
     }
 
@@ -427,6 +433,38 @@ export function toggleInline(state: EditorState, mark: InlineMark): TransactionS
         : EditorSelection.cursor(from + open.length),
     }
   })
+}
+
+/**
+ * Grow a range outward over any inline delimiters it exactly encloses.
+ *
+ * In rich text the delimiters are hidden, so selecting a highlighted word —
+ * double-clicking it, most often — lands the selection on `word` and not on
+ * `==word==`: the `==` is atomic, and CodeMirror only pushes a selection edge
+ * out of an atomic range it is *inside*, never off one it is merely against.
+ * Copying then produces bare text, and the highlight is lost on the way out of
+ * the note. Nested marks unwrap one layer at a time, so `**==word==**` comes
+ * back whole.
+ *
+ * Deliberately exact: a selection that covers only part of a span is left
+ * alone, because there is no honest way to widen it — the user picked those
+ * characters, and quietly adding two more to each end would be worse than
+ * losing the mark.
+ */
+export function expandToMarks(
+  state: EditorState,
+  from: number,
+  to: number,
+): { from: number; to: number } {
+  const line = state.doc.lineAt(from)
+  if (from === to || to > line.to) return { from, to }
+  const spans = scanInline(line.text, line.from)
+  for (;;) {
+    const hit = spans.find((s) => s.innerFrom === from && s.innerTo === to)
+    if (!hit) return { from, to }
+    from = hit.from
+    to = hit.to
+  }
 }
 
 /* -------------------------------------------------------------- inspection */

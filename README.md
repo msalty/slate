@@ -42,7 +42,13 @@ so nothing is ever silently rewritten:
   the moment it becomes one — and backspacing at the start of a styled line
   takes the style off, because the hidden marks behave as single characters.
   Applying a marker leaves the caret after it, so a new checklist item is ready
-  to be typed into rather than in front of its own checkbox. The bar also
+  to be typed into rather than in front of its own checkbox. Enter is measured
+  against what you can see rather than against the characters behind it: at the
+  start of a heading the heading goes down with its words and leaves blank space
+  above, in front of a checkbox it opens an empty checkbox above, and at the end
+  of a highlighted phrase the break lands after the highlight instead of through
+  it. Copying that phrase takes the highlight with it, for the same reason. The
+  bar also
   inserts the two things markdown makes tedious by hand: a **link**, through a
   dialog with the words and the address as separate fields, and a **table**,
   which then offers add/remove row and column from the same button, along with
@@ -244,6 +250,14 @@ does.
 pointer, always visible on a touch screen, and it works while a note is being
 read, which is where it is wanted most. It copies the code without its fences,
 and without the indentation of a block nested in a list.
+
+The fence itself comes back the moment the caret is in the block, in rich text
+as well as live preview. The language written on it — ` ```js ` — is what turns
+the syntax highlighting on, and it lives in that one place with no picker
+anywhere else, so a permanently hidden fence would be a block you could not
+label and could not find the ends of. Everything else about a code block stays
+hidden in rich text; this is a fence, a link's URL and a callout's `[!type]`
+being the same kind of thing.
 
 **A note names itself, if you let it.** A note made with *New note here* — and
 every note started from a template — is called `Untitled`, so typing a heading
@@ -953,6 +967,7 @@ src/
 ├─ adapters/      webdav.ts · gdrive.ts · memory.ts (tests)
 ├─ editor/        CodeMirror 6: live preview, widgets, completion, paste
 │  ├─ format.ts     the formatting commands behind the rich-text bar
+│  ├─ enter.ts      Enter where the markup it would split is invisible
 │  ├─ links.ts      external URI recognition, opening and editing
 │  ├─ linkClicks.ts following a link from the text — clicks and taps alike
 │  ├─ table.ts      the pipe-table grid: parse, edit rows/columns, print

@@ -61,6 +61,7 @@ import {
   formatSnapshot,
   inspect,
 } from './format'
+import { fixEnterPosition } from './enter'
 import { clipboardHandler } from './paste'
 import { editableCompartment, editableFacet } from './reading'
 import { WikiLink } from './wikilink-syntax'
@@ -139,9 +140,14 @@ const formattingKeymap = [
   // It must hand off to the completion popup first, though. This binding sits
   // at high precedence, so without the explicit check it swallows Enter while a
   // wikilink suggestion is open and inserts a newline instead of accepting it.
+  //
+  // `fixEnterPosition` sits between the two because rich text hides the markup
+  // the caret is standing in; it usually only nudges the caret and returns
+  // false, leaving the newline to the command behind it. See editor/enter.ts.
   {
     key: 'Enter',
-    run: (view: EditorView) => acceptCompletion(view) || insertNewlineContinueMarkup(view),
+    run: (view: EditorView) =>
+      acceptCompletion(view) || fixEnterPosition(view) || insertNewlineContinueMarkup(view),
   },
 ]
 
