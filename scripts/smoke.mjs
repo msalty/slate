@@ -3534,14 +3534,39 @@ try {
   await optIn.click()
   await page.waitForTimeout(800)
   const seeded = await templateFiles()
+  /*
+   * A set rather than one example. Someone who has just asked for templates is
+   * looking at a folder, not at a manual, and the folder has to answer both of
+   * the questions the manual would — what one looks like, and what one is for.
+   */
+  const starters = [
+    'Templates/Daily Note.md',
+    'Templates/Meeting.md',
+    'Templates/Person.md',
+    'Templates/Project.md',
+    'Templates/Decision.md',
+    'Templates/Reading.md',
+    'Templates/Weekly Review.md',
+  ]
   check(
-    'and creating it writes one template to start from',
-    seeded.length === 1 && seeded[0] === 'Templates/Example.md',
+    'and creating it writes a set of templates to start from',
+    starters.every((p) => seeded.includes(p)) && seeded.length === starters.length,
     JSON.stringify(seeded),
   )
   check(
-    'which opens so you can see what a template is',
-    (await page.locator('.editor-title-input').inputValue()) === 'Example',
+    'the daily note among them opens, so one is in front of you',
+    (await page.locator('.editor-title-input').inputValue()) === 'Daily Note',
+  )
+  /*
+   * And it opens as what it is: a note with `{{date}}` written in it. Nothing
+   * is filled in until a note is *made* from a template, which is the whole
+   * reason one can be edited like anything else.
+   */
+  const dailyText = await page.locator('.cm-content').innerText()
+  check(
+    'showing the fields as written rather than filled in',
+    dailyText.includes('{{cursor}}') && dailyText.includes('{{date'),
+    JSON.stringify(dailyText.slice(0, 120)),
   )
 
   /*
@@ -3556,7 +3581,7 @@ try {
   const listed = await page.locator('.note-row-title').allInnerTexts()
   check(
     'a template stays out of the default notes view',
-    !listed.includes('Example'),
+    !listed.some((t) => starters.includes(`Templates/${t}.md`)),
     JSON.stringify(listed),
   )
   check(
@@ -3566,9 +3591,11 @@ try {
   )
   await page.locator('.side-row:has-text("Templates")').first().click()
   await page.waitForTimeout(500)
+  const browsed = await page.locator('.note-row-title').allInnerTexts()
   check(
-    'but browsing the folder still shows it, which is how one is edited',
-    (await page.locator('.note-row-title').allInnerTexts()).includes('Example'),
+    'but browsing the folder still shows them, which is how one is edited',
+    starters.every((p) => browsed.includes(p.slice('Templates/'.length, -'.md'.length))),
+    JSON.stringify(browsed),
   )
 
   // Point a folder at it.
@@ -3581,9 +3608,9 @@ try {
   check(
     'the picker lists the templates and an off switch',
     (await page.locator('.menu-item:has-text("No template")').count()) === 1 &&
-      (await page.locator('.menu-item:has-text("Example")').count()) === 1,
+      (await page.locator('.menu-item:has-text("Meeting")').count()) === 1,
   )
-  await page.locator('.menu-item:has-text("Example")').click()
+  await page.locator('.menu-item:has-text("Meeting")').click()
   await page.waitForTimeout(500)
 
   // A new note in that folder starts from it.
@@ -3591,7 +3618,7 @@ try {
   await page.waitForTimeout(300)
   check(
     'and the folder menu then names the template it is using',
-    (await page.locator('.menu-item:has-text("Template: Example")').count()) === 1,
+    (await page.locator('.menu-item:has-text("Template: Meeting")').count()) === 1,
     JSON.stringify(await page.locator('.menu-item').allInnerTexts()),
   )
   await page.locator('.menu-item:has-text("New note here")').click()
@@ -3616,8 +3643,19 @@ try {
   })
   check(
     'a note made in that folder starts from the template',
-    /^# .*\n/.test(fromTemplate) && fromTemplate.includes(String(new Date().getFullYear())),
+    /\n# .*\n/.test(fromTemplate) && fromTemplate.includes(String(new Date().getFullYear())),
     JSON.stringify(fromTemplate),
+  )
+  /*
+   * The properties come through as a block the form can read, which is what
+   * makes a template worth having frontmatter in at all: the note arrives with
+   * the fields already listed and empty, rather than with a wall of YAML to
+   * type from memory.
+   */
+  check(
+    'frontmatter and all, ready for the properties form',
+    fromTemplate.startsWith('---\n') && /\nattendees: \[\]\n/.test(fromTemplate),
+    JSON.stringify(fromTemplate.slice(0, 120)),
   )
   check(
     'with its fields filled in rather than left as tokens',
@@ -3632,7 +3670,7 @@ try {
    */
   check(
     'and typing starts where {{cursor}} said',
-    fromTemplate.startsWith('# Agenda\n'),
+    fromTemplate.includes('\n# Agenda\n'),
     JSON.stringify(fromTemplate),
   )
 
@@ -3648,7 +3686,7 @@ try {
   await page.waitForTimeout(300)
   const rootPick = page.locator('.field:has-text("Notes outside any folder") select')
   check('Settings can give the root a template too', (await rootPick.count()) === 1)
-  await rootPick.selectOption({ label: 'Example' })
+  await rootPick.selectOption({ label: 'Person' })
   await page.waitForTimeout(400)
   await page.click('.dialog-foot .btn-primary')
   await page.waitForTimeout(300)
@@ -3686,7 +3724,7 @@ try {
    */
   check(
     'and {{title}} is the link text, not the word Untitled',
-    fromLink.startsWith('# Highway 9\n'),
+    fromLink.includes('\n# Highway 9\n') && fromLink.includes('\nname: Highway 9\n'),
     JSON.stringify(fromLink),
   )
 

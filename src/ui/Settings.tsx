@@ -16,27 +16,43 @@ import {
   assignedTemplate,
   hasTemplates,
   setFolderTemplate,
-  STARTER_TEMPLATE,
   TEMPLATES_FOLDER,
   templateNotes,
 } from '../core/templates'
+import { STARTER_TEMPLATES } from '../core/starters'
 import { openNote } from './state'
 
 type Tab = 'sync' | 'editor' | 'files' | 'about'
 
 /**
- * Make `Templates/` and put one template in it, then open it.
+ * Make `Templates/` and fill it with the starter set, then open the first one.
  *
  * The only path in the app that creates this folder, and it runs from a button
  * nobody presses by accident. Everything else about templates asks whether the
  * folder is there and does nothing when it is not.
+ *
+ * A set rather than a single example, because an empty folder — or one holding
+ * a two-line demonstration — leaves the person who just asked for templates
+ * exactly where they were: knowing the feature exists and not what to put in
+ * it. They are ordinary notes, so the answer to "not like that" is to rewrite
+ * or delete the one that is wrong.
+ *
+ * The daily note opens because it is the case this was built for, and because
+ * a folder full of unopened notes is a worse first sight than one of them
+ * already in the editor.
  */
 async function startTemplates() {
   await createFolder('', TEMPLATES_FOLDER)
-  const path = await createNote(TEMPLATES_FOLDER, 'Example', STARTER_TEMPLATE)
+  let first: string | undefined
+  for (const t of STARTER_TEMPLATES) {
+    const path = await createNote(TEMPLATES_FOLDER, t.name, t.text)
+    first ??= path
+  }
   settingsOpen.value = false
-  openNote(path)
-  notify('Templates/ created. Edit this note, then pick it from a folder’s menu.')
+  if (first) openNote(first)
+  notify(
+    `Templates/ created, with ${STARTER_TEMPLATES.length} to start from. Edit any of them, then pick one from a folder’s menu.`,
+  )
 }
 
 export function Settings() {
@@ -399,6 +415,11 @@ export function Settings() {
                       Templates are ordinary notes in a <code>Templates/</code> folder, so there
                       is no template format and nothing new to learn — and nothing at all
                       happens until you make that folder.
+                    </small>
+                    <small>
+                      Making it writes {STARTER_TEMPLATES.length} to start from —{' '}
+                      {STARTER_TEMPLATES.map((t) => t.name).join(', ')} — as notes like any
+                      other, to rewrite or delete.
                     </small>
                     <button
                       class="btn"

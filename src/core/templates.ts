@@ -332,27 +332,6 @@ export function templatableFolder(path: string): boolean {
   return !isTemplatePath(path)
 }
 
-/**
- * The one thing in the app that creates `Templates/`, and only when a person
- * presses the button in Settings that calls it.
- *
- * It writes a starter template as well as the folder. An empty folder would
- * leave the feature exactly as invisible as it was — no template to assign, so
- * no item in any folder's menu — and someone who has just asked for templates
- * would be looking at nothing, with no clue what a template is meant to
- * contain. It is an ordinary note: rename it, rewrite it, delete it.
- */
-/*
- * `{{title}}` and `{{cursor}}` together, which is the pairing worth teaching.
- *
- * A note that already has a name — a daily note, or one created from a
- * `[[link]]`, which is named for the link — gets its heading filled in and the
- * caret after it. A note made with *New note here* has no name yet, so
- * `{{title}}` comes out empty and the caret lands in the heading for you to
- * type one. One template, right in both cases.
- */
-export const STARTER_TEMPLATE = ['# {{title}}{{cursor}}', '', '{{date:DDDD, D MMMM YYYY}}', ''].join('\n')
-
 /** Where a template note lives, for showing it in a picker. */
 export function templateLabel(path: string): string {
   const dir = dirname(path)

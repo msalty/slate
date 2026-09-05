@@ -18,8 +18,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 451 unit and two-device sync tests
-node scripts/smoke.mjs # 385-check browser smoke test against dist/
+npm test               # 504 unit and two-device sync tests
+node scripts/smoke.mjs # 404-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -418,17 +418,45 @@ for you — not at boot, not by the first note, not by looking at the feature.
 A vault without one behaves in every respect as though none of this existed: no
 folder in the sidebar, no item in any menu, nothing to turn off. Settings →
 Editor offers to make it, and that button is the only thing in the app that
-does; it writes one example template so there is something to look at rather
-than an empty folder. Once templates exist, a folder's context menu gains
-**Use a template…**, and names the one it is using afterwards — or says
+does; it writes a set of templates to start from, so there is something to look
+at — and something to use — rather than an empty folder. Once templates exist,
+a folder's context menu gains **Use a template…**, and names the one it is
+using afterwards — or says
 *missing* if that note has since been renamed or deleted, rather than looking
 configured while quietly applying nothing.
 
 ```
 Templates/
-├─ Meeting.md          ← ordinary notes, edited like any other
-└─ Person.md
+├─ Daily Note.md       ← ordinary notes, edited like any other
+├─ Meeting.md
+├─ Person.md
+├─ Project.md
+├─ Decision.md
+├─ Reading.md
+└─ Weekly Review.md
 ```
+
+**What that set is.** Seven notes, none of them special:
+
+| template | for | what it carries |
+| --- | --- | --- |
+| **Daily Note** | `Daily/`, and the calendar's *Create daily note* | the day's date in `date:` and in the heading, today's tasks, a timestamped log, habits, tomorrow |
+| **Meeting** | the folder your meetings live in | date, time, client, project, attendees, location; agenda, notes, a decisions callout, actions |
+| **Person** | a folder of people, or the vault root, so a `[[Ana Ruiz]]` fills one in | the fields a vCard carries — name, nickname, org, department, role, emails, phones, website, the address split the way `ADR` is, timezone, birthday, anniversary, social, assistant, partner |
+| **Project** | the note a folder of notes hangs off | status, owner, client, started, due, stakeholders; outcome, a milestone table, tasks, risks, a log |
+| **Decision** | anywhere a choice is worth outliving the room it was made in | status, owner, supersedes; the question, the options with their fors and againsts, what was chosen, what it costs |
+| **Reading** | books and articles | author, kind, source, status, started, finished, rating; the argument in one line, highlights, takeaways |
+| **Weekly Review** | read back over seven daily notes | went well, did not, rolled over as tasks you can tick, next week |
+
+Three conventions run through all seven, and they are the ones worth copying
+into one of your own. `# {{title}}{{cursor}}` heads the note — filled in for a
+note that is named already, empty with the caret in it for one that is not. An
+empty `-`, `- [ ]` or table row is a blank to fill in rather than a task
+anybody owes: none of them arrives ticked, and none of them arrives with a due
+date, so a new note adds nothing to Due until you put it there. And the
+frontmatter carries what the note *is* while the body carries what happened —
+`attendees: []` is typed as "Ana, Bo" in the properties form, so an empty list
+is an invitation rather than a puzzle.
 
 The fields a template can fill in are deliberately few: `{{title}}`, `{{date}}`,
 `{{time}}`, `{{year}}`, `{{month}}`, `{{day}}`, `{{weekday}}`, and `{{cursor}}`
@@ -998,6 +1026,7 @@ src/
 │  ├─ tagquery.ts     the rule language behind Tag Folders, over notes or tasks
 │  ├─ folders.ts      nested folders + the Tag Folder tree and inheritance
 │  ├─ templates.ts    folder templates: the fields, and which folder uses what
+│  ├─ starters.ts     the seven templates `Templates/` is created with
 │  ├─ devices.ts      per-device write registry, for version attribution
 │  ├─ images.ts       paste- and capture-time re-encoding
 │  └─ settings.ts     device-local vs vault-wide preferences
@@ -1151,6 +1180,12 @@ vault that has never made a `Templates/` folder must show no sign of it in any
 menu, and no folder must appear on its own — then drives the whole opt-in from
 the Settings button through to typing into a note that started from a template,
 checking the caret landed where `{{cursor}}` said rather than at position 0.
+The starter set is checked as the notes it is: written to `Templates/`, opened
+with its `{{date}}` still written out — nothing is filled in until a note is
+*made* from one — and then filled in, frontmatter and all, in the note that is.
+The templates themselves are unit-tested in `core/starters.test.ts`, because a
+typo in one is invisible in review and then appears verbatim in every note made
+from it.
 
 The formatting bar's overflow is asserted as a property rather than a button
 count, because the count is a function of the window: at every width the bar

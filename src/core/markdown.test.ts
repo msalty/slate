@@ -189,6 +189,21 @@ describe('excerpt', () => {
   it('returns empty for a note with only a heading', () => {
     expect(excerptOf('# Only a title')).toBe('')
   })
+
+  /*
+   * A note that opens with a callout — which is how several of the starter
+   * templates open — otherwise reads out its own punctuation in the list:
+   * "[!NOTE] In one line".
+   */
+  it('reads a callout for what it says, not for its marker', () => {
+    expect(excerptOf('# Ana Ruiz\n\n> [!NOTE] In one line\n> How you would introduce them.')).toBe(
+      'In one line',
+    )
+    // A callout with no title of its own falls through to its first words.
+    expect(excerptOf('# Ana Ruiz\n\n> [!NOTE]\n> How you would introduce them.')).toBe(
+      'How you would introduce them.',
+    )
+  })
 })
 
 describe('calendar date', () => {
