@@ -1056,12 +1056,45 @@ try {
     (await noteAfterEdit('Heading line', '\n\n## Heading line')).includes('\n\n## Heading line'),
   )
 
-  const taskBox = await lineBox('Test task')
-  await page.mouse.click(taskBox.x + 1, taskBox.y + taskBox.height / 2)
-  await page.waitForTimeout(250)
+  /*
+   * A checklist line has two caret positions on one stretch of screen — in
+   * front of the checkbox and behind it — and they mean different things.
+   * `clickCheckbox` aims at one of them the way a person does: to the left of
+   * the box, or to the right of it.
+   */
+  const clickCheckbox = async (needle, side) => {
+    const line = await lineBox(needle)
+    const box = await page
+      .locator('.cm-content .cm-line', { hasText: needle })
+      .first()
+      .locator('.cm-task-checkbox')
+      .first()
+      .boundingBox()
+    const x = side === 'front' ? Math.max(line.x + 1, box.x - 4) : box.x + box.width + 3
+    await page.mouse.click(x, line.y + line.height / 2)
+    await page.waitForTimeout(300)
+  }
+
+  await clickCheckbox('Test task', 'front')
   await page.keyboard.press('Enter')
   check(
-    'Enter in front of a checkbox opens an empty checkbox above it',
+    'Enter in front of a checkbox takes the whole item down a line',
+    (await noteAfterEdit('Test task', '\n\n\n- [ ] Test task')).includes('\n\n\n- [ ] Test task'),
+    JSON.stringify((await noteContaining('Test task')).slice(0, 70)),
+  )
+  await page.keyboard.press('Backspace')
+  check(
+    'and Backspace in front of it brings the item back up, checkbox and all',
+    !(await noteAfterEdit('Test task', 'line\n\n- [ ] Test task')).includes(
+      '\n\n\n- [ ] Test task',
+    ) && (await noteContaining('Test task')).includes('- [ ] Test task'),
+    JSON.stringify((await noteContaining('Test task')).slice(0, 70)),
+  )
+
+  await clickCheckbox('Test task', 'back')
+  await page.keyboard.press('Enter')
+  check(
+    'Enter behind a checkbox opens another checkbox above it',
     (await noteAfterEdit('Test task', '- [ ] \n- [ ] Test task')).includes('- [ ] \n- [ ] Test task'),
   )
 
@@ -1152,19 +1185,15 @@ try {
   )
 
   /*
-   * Home on a checklist line lands between the hidden bullet and the checkbox
-   * widget — the first place on that line with any geometry. Backspace there
-   * took the `- ` and left `[ ] second task`: a bullet with the characters of a
+   * Behind the checkbox, Backspace takes the checkbox — all of it. The bullet
+   * and the box are two separate hidden things in the document, and taking only
+   * the first left `[ ] second task`: a bullet with the characters of a
    * checkbox in it, which is not a task and does not render as one.
    */
-  const taskBox2 = await lineBox('second task')
-  await page.mouse.click(taskBox2.x + 40, taskBox2.y + taskBox2.height / 2)
-  await page.waitForTimeout(300)
-  await page.keyboard.press('Home')
-  await page.keyboard.press('Backspace')
+  await clickCheckbox('second task', 'back')
   await page.keyboard.press('Backspace')
   check(
-    'Backspace takes a whole checkbox off rather than stranding its brackets',
+    'Backspace behind a checkbox takes the whole thing off',
     (await noteAfterEdit('second task', '\nsecond task')).includes('\nsecond task') &&
       !(await noteContaining('second task')).includes('[ ] second task'),
     (await noteContaining('second task')).split('\n').slice(-3).join(' / '),

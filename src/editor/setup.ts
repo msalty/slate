@@ -66,6 +66,8 @@ import {
   caretOutOfPrefixes,
   deleteInRichText,
   fixEnterPosition,
+  hiddenHeadAtoms,
+  typeIntoText,
 } from './caret'
 import { clipboardHandler } from './paste'
 import { editableCompartment, editableFacet } from './reading'
@@ -164,10 +166,10 @@ const hiddenMarkupKeymap = [
       acceptCompletion(view) || fixEnterPosition(view) || insertNewlineContinueMarkup(view),
   },
   /*
-   * The deletion keys, for the one position each of them can reach hidden
-   * markup from: the start of a line's text and the end of a line. Both fall
-   * through everywhere else, which is everywhere the caret is among characters
-   * the user can see. See editor/caret.ts.
+   * The deletion keys, for the positions they can reach hidden markup from:
+   * either edge of a line's hidden head, and the end of the line above one.
+   * Both fall through everywhere else, which is everywhere the caret is among
+   * characters the user can see. See editor/caret.ts.
    */
   { key: 'Backspace', run: backspaceInRichText },
   { key: 'Delete', run: deleteInRichText },
@@ -261,9 +263,14 @@ export function previewExtensions(mode: EditorMode): Extension {
     ? [
         previewMode.of('rich'),
         ...shared,
-        // Rich text is the only mode with positions the user cannot see, so it
-        // is the only one where they are taken away. See editor/caret.ts.
+        /*
+         * Rich text is the only mode that hides the head of a line, so it is
+         * the only one that has to say where the caret may stand in it, and
+         * what happens when something is typed there. See editor/caret.ts.
+         */
+        hiddenHeadAtoms,
         caretOutOfPrefixes,
+        typeIntoText,
         formatWatcher,
         cellTargetWatcher,
         /*

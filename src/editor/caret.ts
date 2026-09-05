@@ -1,35 +1,40 @@
 /**
- * Where the caret can be, and what Enter, Backspace and Delete do about markup
- * it cannot see.
+ * Where the caret can be on a line whose markup is hidden, and what Enter,
+ * Backspace and Delete do about it.
  *
- * Rich text hides the characters that make a line a heading, a list item or a
- * highlight. That leaves the caret with positions that draw at the same pixel
- * and behave nothing alike: `|## Heading`, `#|# Heading` and `## |Heading` are
- * one place on screen and three in the document, and `- |[ ] task` sits between
- * a hidden bullet and a checkbox. Every bug this file exists for is a key
- * pressed at one of those positions doing something to characters nobody could
- * see:
+ * Rich text draws `- [ ] Task 1` as a checkbox and a sentence. The six
+ * characters in front of that sentence are still in the document, though, so
+ * without help the caret has six places to be along a stretch of screen with
+ * two — and four of them break the line if anything is typed or deleted there.
  *
- *     ## ⏎Heading      - ⏎[ ] task      ==phrase⏎==      ⌫ over a whole `## `
+ * So the line's head is one atom, and it has exactly two edges:
  *
- * Three rules, in the order they apply:
+ *     ▌- [ ] Task 1              - [ ] ▌Task 1
+ *      in front of the marker     behind it
  *
- *  1. **The in-between positions do not exist.** A caret landing anywhere
- *     strictly inside a line's hidden prefix snaps to the first character of
- *     the line's text — the only position there you can type at and get what
- *     you see. This is what makes Home, a click in the left margin and an
- *     arrow key agree with each other on a checklist line.
- *  2. **Enter never splits a construct.** Against a hidden inline delimiter the
- *     caret steps to the far side of it. At the start of a line's text, a
- *     heading goes down with its words and a list item gets an empty one of
- *     itself above — because markdown's own Enter leaves `## ` above a plain
- *     line of text, and trims the trailing space that makes `- [ ] ` a task.
- *  3. **Backspace and Delete take one layer at a time.** At the start of a
- *     line's text Backspace removes a blank line above before it removes the
- *     line's own prefix, so it undoes the Enter that made that space; and when
- *     the prefix does come off, all of it comes off at once, rather than the
- *     bullet leaving a literal `[ ]` behind. Delete at the end of a line is the
- *     same rule facing the other way.
+ * Which one you get is decided by the marker, not by the characters: click to
+ * the left of the checkbox and you are in front of it, click to the right and
+ * you are behind it, and the arrow keys step over the whole thing rather than
+ * through it. The two edges then mean different things, and that is the point
+ * of having both:
+ *
+ *   | | Enter | Backspace |
+ *   |---|---|---|
+ *   | in front | the line moves down, leaving space above | the line moves up |
+ *   | behind   | another item like this one, above | the marker comes off |
+ *
+ * A heading or a quote has no marker drawn for it, so there is nothing to be in
+ * front of and the two edges are one place: there, Enter moves the heading down
+ * with its words, and Backspace takes the blank line above before it takes the
+ * style off.
+ *
+ * Two smaller rules finish the job. Enter beside a hidden inline delimiter
+ * steps over it, so a line break never lands inside `==phrase==`. And typing at
+ * the front edge goes into the line's text rather than in front of its marker,
+ * because `x- [ ] Task 1` is not a checklist item at all.
+ *
+ * An ordered list is the exception to all of it: `1.` is on screen, so its
+ * caret positions are real and every key here leaves them alone.
  *
  * None of this applies in live preview or source mode, where the syntax is
  * visible and the caret means exactly what it looks like it means.
@@ -40,11 +45,20 @@ import {
   EditorSelection,
   EditorState,
   type Extension,
+  RangeSet,
+  RangeValue,
   type SelectionRange,
   type TransactionSpec,
 } from '@codemirror/state'
-import type { EditorView } from '@codemirror/view'
-import { parseLine, scanInline, setBlockStyle, toggleList, toggleQuote } from './format'
+import { EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view'
+import {
+  type LineParts,
+  parseLine,
+  scanInline,
+  setBlockStyle,
+  toggleList,
+  toggleQuote,
+} from './format'
 import { previewMode } from './livePreview'
 
 /** Is this position inside a code block, where markdown prefixes are text? */
@@ -56,50 +70,120 @@ function inCodeBlock(state: EditorState, pos: number): boolean {
   return false
 }
 
+/** The head of a line, and how much of it the reader cannot see. */
+export interface LineHead {
+  /** The front edge: the caret position ahead of the bullet or checkbox. */
+  from: number
+  /** The end of the hidden run — the first place a caret may sit again. */
+  hiddenTo: number
+  /** The back edge: where the line's own text begins. */
+  contentStart: number
+  /** True when something is actually drawn there to be in front of. */
+  hasMarker: boolean
+  parts: LineParts
+}
+
 /**
- * Where a line's text starts, when everything in front of it is hidden.
+ * What is hidden at the head of the line holding `pos`, if anything.
  *
- * Null when the line has no prefix, or when it is inside a code block — there
- * a leading `- ` is code and the caret has every right to be in the middle of
- * it.
+ * Null for a line with nothing hidden — including an ordered list item, whose
+ * `1.` is on screen and whose caret positions are therefore all real, and
+ * anything inside a code block, where a leading `- ` is code.
  */
-function contentStartOf(state: EditorState, pos: number): number | null {
+export function lineHead(state: EditorState, pos: number): LineHead | null {
   const line = state.doc.lineAt(pos)
   const p = parseLine(line.text)
   if (!p.contentFrom) return null
   if (inCodeBlock(state, line.from)) return null
-  return line.from + p.contentFrom
+
+  const hasMarker = !!p.task || p.markerKind === 'bullet'
+  if (!hasMarker && !p.quote && !p.headingMark) return null
+  /*
+   * An ordered marker is left on screen unless it carries a checkbox, so the
+   * hidden run stops in front of it — `> 1. item` hides the quote and nothing
+   * else, and the caret may still sit inside the `1. `.
+   */
+  const numbered = p.markerKind === 'number' && !p.task && !p.headingMark
+  const hiddenTo = numbered
+    ? line.from + p.indent.length + p.quote.length
+    : line.from + p.contentFrom
+  if (hiddenTo <= line.from) return null
+  return { from: line.from, hiddenTo, contentStart: line.from + p.contentFrom, hasMarker, parts: p }
 }
 
-/* ------------------------------------------------------- rule 1: the caret */
+/* ------------------------------------------------------ the head as an atom */
+
+class HiddenHead extends RangeValue {}
+const hiddenHead = new HiddenHead()
+
+function headAtoms(view: EditorView): RangeSet<HiddenHead> {
+  const ranges = []
+  for (const { from, to } of view.visibleRanges) {
+    for (let pos = from; pos <= to; ) {
+      const line = view.state.doc.lineAt(pos)
+      const head = lineHead(view.state, line.from)
+      if (head) ranges.push(hiddenHead.range(head.from, head.hiddenTo))
+      if (line.to >= to) break
+      pos = line.to + 1
+    }
+  }
+  return RangeSet.of(ranges, true)
+}
 
 /**
- * Pull a position out of the hidden prefix it landed in.
+ * The hidden head of every visible line, declared atomic as **one** range.
  *
- * The start of the line itself is deliberately left alone. It draws at the same
- * pixel too, but it is where a select-all begins and where a triple click puts
- * its edge, and moving it would quietly drop the `## ` out of every copy of a
- * heading.
+ * This is what gives the line its two edges and nothing in between, and doing
+ * it here rather than by hand is what makes every way of moving agree: an arrow
+ * key steps to the far edge because CodeMirror skips an atom in the direction
+ * of travel, a click lands on whichever edge it is nearer — which is to say, on
+ * the side of the checkbox you clicked — and a selection edge inside the head
+ * is pushed out to cover it, so copying a heading copies the `## `.
+ *
+ * The live-preview decorations are already atomic, but as separate ranges: the
+ * hidden `- `, then the checkbox widget. That leaves the seam between them a
+ * legal place to stand, which is where Home used to land and where Backspace
+ * used to take the bullet and leave a stranded `[ ]`.
+ */
+export const hiddenHeadAtoms = ViewPlugin.fromClass(
+  class {
+    atoms: RangeSet<HiddenHead>
+    constructor(view: EditorView) {
+      this.atoms = headAtoms(view)
+    }
+    update(u: ViewUpdate) {
+      if (u.docChanged || u.viewportChanged) this.atoms = headAtoms(u.view)
+    }
+  },
+  {
+    provide: (plugin) =>
+      EditorView.atomicRanges.of((view) => view.plugin(plugin)?.atoms ?? RangeSet.empty),
+  },
+)
+
+/**
+ * The backstop, for selections that arrive without having skipped the atom.
+ *
+ * Home is the one that matters: it moves to a *visual* line boundary, which on
+ * a checklist line is the seam behind the hidden bullet. Anything that does
+ * land inside the head goes to whichever edge is nearer — the same rule a click
+ * follows, so the two never disagree about the same pixel — and on a line with
+ * no marker drawn, where there is nothing to be in front of, to the text.
  */
 export function snapOutOfPrefix(state: EditorState, pos: number): number {
-  const line = state.doc.lineAt(pos)
-  if (pos === line.from) return pos
-  const contentStart = contentStartOf(state, pos)
-  return contentStart !== null && pos < contentStart ? contentStart : pos
+  const head = lineHead(state, pos)
+  if (!head || pos <= head.from || pos >= head.hiddenTo) return pos
+  if (!head.hasMarker) return head.hiddenTo
+  return pos - head.from < head.hiddenTo - pos ? head.from : head.hiddenTo
 }
 
 /**
- * Rule 1, as an extension.
- *
- * A filter rather than anything in the view, because the positions have to be
- * gone for *every* way of arriving at one: a pointer, Home, an arrow key, a
- * command dispatching a selection of its own.
- *
- * Only transactions that do nothing but move the selection are touched. A
- * selection that comes out of an edit was computed from that edit and is not
+ * A filter rather than anything in the view, because a selection can be set
+ * from anywhere. Only transactions that do nothing but move the selection are
+ * touched: one that comes out of an edit was computed from that edit and is not
  * this file's business — and skipping them means `startState` is the state the
- * positions belong to, so the syntax tree behind `contentStartOf` is the right
- * one and never has to be reparsed mid-transaction.
+ * positions belong to, so the syntax tree behind `lineHead` is the right one
+ * and never has to be reparsed mid-transaction.
  */
 export const caretOutOfPrefixes: Extension = EditorState.transactionFilter.of((tr) => {
   if (tr.docChanged || !tr.selection) return tr
@@ -115,19 +199,40 @@ export const caretOutOfPrefixes: Extension = EditorState.transactionFilter.of((t
   return moved ? [tr, { selection: EditorSelection.create(ranges, tr.selection.mainIndex) }] : tr
 })
 
-/* -------------------------------------------------------- rule 2: newlines */
+/**
+ * Typing at the front edge goes into the line's text.
+ *
+ * The front edge is a place to press Enter and Backspace, not a place to write:
+ * a character inserted there lands in front of the marker, and `x- [ ] Task 1`
+ * is a paragraph beginning with an x, not a checklist item. Nothing about that
+ * is visible until the checkbox disappears.
+ */
+export const typeIntoText: Extension = EditorView.inputHandler.of((view, from, to, text) => {
+  if (view.state.facet(previewMode) !== 'rich' || from !== to) return false
+  const head = lineHead(view.state, from)
+  if (!head || from !== head.from) return false
+  view.dispatch({
+    changes: { from: head.contentStart, insert: text },
+    selection: { anchor: head.contentStart + text.length },
+    userEvent: 'input.type',
+    scrollIntoView: true,
+  })
+  return true
+})
+
+/* ------------------------------------------------------------------- Enter */
 
 /**
  * What to do about the caret before a newline is inserted.
  *
  * `move` hands the line break back to the normal Enter command with the caret
  * somewhere sane. `break-above` opens a line above this one and leaves the
- * caret in the text where it was — carrying `prefix` up onto the new line, so a
- * checklist gets an empty checkbox above and a heading gets blank space.
+ * caret on the same edge of the line it was on, so pressing Enter again does
+ * the same thing again rather than something else.
  */
 export type EnterPlan =
   | { kind: 'move'; to: number }
-  | { kind: 'break-above'; prefix: string }
+  | { kind: 'break-above'; prefix: string; caret: 'front' | 'text' }
   | null
 
 /**
@@ -157,49 +262,59 @@ export function planEnter(state: EditorState): EnterPlan {
   if (!sel.empty) return null
   const pos = sel.from
   const line = state.doc.lineAt(pos)
-  if (inCodeBlock(state, line.from)) return null
+  const head = lineHead(state, pos)
 
-  const p = parseLine(line.text)
-  const contentStart = line.from + p.contentFrom
-
-  if (pos <= contentStart) {
-    /*
-     * Every position from the start of the line to the start of its text is the
-     * same pixel once the prefix is hidden, so they are all treated as the one
-     * the user could see. `contentStart < line.to` is what keeps an *empty*
-     * item out of it: there Enter should start the next line, or end the list,
-     * rather than push an empty marker around.
-     */
-    const hasText = contentStart < line.to
-    // A heading goes down with its words. Nothing is carried up: the line left
-    // behind is blank body text, which is what "space above the heading" is.
-    if (p.level > 0 && hasText) return { kind: 'break-above', prefix: '' }
-    /*
-     * A list item gets an empty one of itself above, marker copied verbatim.
-     *
-     * Verbatim matters for a checkbox: the ordinary markdown Enter trims the
-     * whitespace behind the caret, and `- [ ]` without its trailing space is
-     * not a task at all — it is a bullet with the characters `[ ]` in it, which
-     * in rich text shows up as exactly that. Ordered items are left to the
-     * markdown command, which renumbers the rest of the list as it goes.
-     */
-    if ((p.markerKind === 'check' || p.markerKind === 'bullet') && hasText)
-      return { kind: 'break-above', prefix: p.indent + p.quote + p.marker + p.task }
-    if (pos < contentStart) return { kind: 'move', to: contentStart }
+  if (head) {
+    const p = head.parts
+    // In front of the marker: the whole line goes down, and the caret rides
+    // with it — so a second Enter pushes it down again rather than splitting it.
+    if (pos === head.from) return { kind: 'break-above', prefix: '', caret: 'front' }
+    if (pos === head.contentStart) {
+      // A heading goes down with its words; the line left behind is blank body
+      // text, which is what "space above the heading" is. There is no marker to
+      // stand in front of, so this edge answers for both. An empty heading has
+      // nothing to carry down, and Enter simply starts the line below it.
+      if (p.level > 0 && head.contentStart < line.to)
+        return { kind: 'break-above', prefix: '', caret: 'text' }
+      /*
+       * A list item gets another one of itself above, marker copied verbatim —
+       * whether it has text yet or not. Markdown's own Enter treats an empty
+       * item as the end of the list, which is a keyboard way out of one, but
+       * here Backspace behind the marker is that way out and says so plainly:
+       * it takes the checkbox off and leaves the line. Left to markdown, an
+       * empty item at the end of a longer list got a blank line inserted above
+       * it instead, which is neither thing.
+       *
+       * Verbatim matters for a checkbox: markdown's Enter trims the whitespace
+       * behind the caret, and `- [ ]` without its trailing space is not a task
+       * at all — it is a bullet with the characters `[ ]` in it, which in rich
+       * text shows up as exactly that.
+       */
+      if (p.markerKind === 'check' || p.markerKind === 'bullet')
+        return { kind: 'break-above', prefix: p.indent + p.quote + p.marker + p.task, caret: 'text' }
+    }
+    // Anything left standing inside the head, from a source that skipped the
+    // atom, is treated as the text edge.
+    if (pos < head.contentStart) return { kind: 'move', to: head.contentStart }
   }
 
+  if (inCodeBlock(state, line.from)) return null
   const moved = line.from + outOfInlineMarks(line.text, pos - line.from)
   return moved === pos ? null : { kind: 'move', to: moved }
 }
 
-/** The `break-above` edit: the line moves down, the caret stays in its text. */
-export function breakAbove(state: EditorState, prefix: string): TransactionSpec {
+/** The `break-above` edit: the line moves down, the caret keeps its edge. */
+export function breakAbove(
+  state: EditorState,
+  prefix: string,
+  caret: 'front' | 'text' = 'text',
+): TransactionSpec {
   const line = state.doc.lineAt(state.selection.main.from)
   const contentStart = line.from + parseLine(line.text).contentFrom
   const insert = prefix + state.lineBreak
   return {
     changes: { from: line.from, insert },
-    selection: { anchor: contentStart + insert.length },
+    selection: { anchor: (caret === 'front' ? line.from : contentStart) + insert.length },
     userEvent: 'input',
     scrollIntoView: true,
   }
@@ -218,55 +333,18 @@ export function fixEnterPosition(view: EditorView): boolean {
   const plan = planEnter(view.state)
   if (!plan) return false
   if (plan.kind === 'break-above') {
-    view.dispatch(breakAbove(view.state, plan.prefix))
+    view.dispatch(breakAbove(view.state, plan.prefix, plan.caret))
     return true
   }
   view.dispatch({ selection: { anchor: plan.to }, userEvent: 'select' })
   return false
 }
 
-/* ------------------------------------------------------- rule 3: deletion */
+/* --------------------------------------------------------------- deletion */
 
-/** Is this line blank — the space markdown puts between two blocks? */
-function isBlank(state: EditorState, lineNumber: number): boolean {
-  return !state.doc.line(lineNumber).text.trim()
-}
-
-/**
- * Backspace at the first character of a line's text.
- *
- * A blank line above goes first. That line is the space Enter opened, and until
- * it is gone the caret has not actually reached the top of anything — taking
- * the heading off instead is the one thing that cannot be undone by pressing
- * the key again, and it is what made "delete in front of a heading strips the
- * formatting" a bug report rather than a feature.
- *
- * With no blank line above, one layer of prefix comes off, through the very
- * commands the format bar's own buttons run — so backspacing a heading and
- * pressing Body land on the same markdown, and `- [ ] ` leaves as the one thing
- * it is rather than as a bullet that strands a literal `[ ]`.
- *
- * Returns null everywhere else, including a caret merely *near* the start, so
- * ordinary backspacing over text is never touched.
- */
-export function planBackspace(state: EditorState): TransactionSpec | null {
-  const sel = state.selection.main
-  if (!sel.empty) return null
-  const line = state.doc.lineAt(sel.from)
-  const contentStart = contentStartOf(state, sel.from)
-  if (contentStart === null || sel.from !== contentStart) return null
-
-  if (line.number > 1 && isBlank(state, line.number - 1)) {
-    const prev = state.doc.line(line.number - 1)
-    return {
-      changes: { from: prev.from, to: line.from },
-      userEvent: 'delete.backward',
-      scrollIntoView: true,
-    }
-  }
-
-  const p = parseLine(line.text)
-  const peel =
+/** Take one layer of markup off the line, exactly as the format bar would. */
+function peel(state: EditorState, p: LineParts): TransactionSpec | null {
+  const spec =
     p.level > 0
       ? setBlockStyle(state, 'body')
       : p.markerKind
@@ -274,14 +352,61 @@ export function planBackspace(state: EditorState): TransactionSpec | null {
         : p.quote
           ? toggleQuote(state)
           : null
-  return peel && { ...peel, userEvent: 'delete.backward', scrollIntoView: true }
+  return spec && { ...spec, userEvent: 'delete.backward', scrollIntoView: true }
+}
+
+/**
+ * Backspace on either edge of a hidden head.
+ *
+ * In front of the marker the line comes *up* a line: the blank space above it
+ * goes, or, with a line of text up there instead, the two join — and a line
+ * that has joined another can only carry one style, so the marker goes with the
+ * break. Behind the marker the marker itself goes, whole, which is the only way
+ * `- [ ] ` leaves without stranding the `[ ]` half of itself.
+ *
+ * A heading has no marker drawn to be in front of, so its one edge does both,
+ * in that order: the blank line above first — until that is gone, Backspace has
+ * not reached the top of anything, and taking the style off instead is the one
+ * thing pressing the key again cannot undo.
+ */
+export function planBackspace(state: EditorState): TransactionSpec | null {
+  const sel = state.selection.main
+  if (!sel.empty) return null
+  const head = lineHead(state, sel.from)
+  if (!head) return null
+  const line = state.doc.lineAt(sel.from)
+  const front = sel.from === head.from
+  if (!front && sel.from !== head.contentStart) return null
+
+  const prev = line.number > 1 ? state.doc.line(line.number - 1) : null
+  const blankAbove = !!prev && !prev.text.trim()
+  const upALine = (): TransactionSpec | null => {
+    if (!prev) return null
+    if (blankAbove)
+      return {
+        changes: { from: prev.from, to: line.from },
+        userEvent: 'delete.backward',
+        scrollIntoView: true,
+      }
+    return {
+      changes: { from: prev.to, to: head.contentStart },
+      userEvent: 'delete.backward',
+      scrollIntoView: true,
+    }
+  }
+
+  if (front) return upALine()
+  // The text edge. On a line with a marker it is behind that marker, and only
+  // the marker is in question; on one without, it is the front of the line too.
+  if (head.hasMarker) return peel(state, head.parts)
+  return blankAbove ? upALine() : peel(state, head.parts)
 }
 
 /**
  * Delete at the end of a line, facing the line below.
  *
  * The same rule the other way round: a blank line between two blocks is removed
- * on its own, and only then does the line below come up — losing its prefix as
+ * on its own, and only then does the line below come up — losing its marker as
  * it does, because two lines becoming one can only carry the style of the line
  * they land on. Left to the default, both happened at once: one press on
  * `intro` turned `intro`, a blank line and `## Heading line` into the single
@@ -293,17 +418,17 @@ export function planDelete(state: EditorState): TransactionSpec | null {
   const line = state.doc.lineAt(sel.from)
   if (sel.from !== line.to || line.number >= state.doc.lines) return null
   const next = state.doc.line(line.number + 1)
-  const contentStart = contentStartOf(state, next.from)
+  const head = lineHead(state, next.from)
   const blankBelow = !next.text.trim()
   // Everything else deletes one character, exactly as it always did.
-  if (contentStart === null && !blankBelow) return null
+  if (!head && !blankBelow) return null
   /*
    * The line break, and only the line break, in the two cases where nothing
    * should come up with it: a blank line below is the space between two blocks
    * and goes on its own, and a line above with no text of its own has no style
    * to impose on whatever arrives, so that line keeps its own markers.
    */
-  const to = contentStart === null || line.from === line.to ? next.from : contentStart
+  const to = !head || line.from === line.to ? next.from : head.contentStart
   return { changes: { from: line.to, to }, userEvent: 'delete.forward', scrollIntoView: true }
 }
 

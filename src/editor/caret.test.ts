@@ -1,41 +1,109 @@
 /**
- * The caret, where the markup around it is invisible.
+ * The two edges of a line whose head is hidden, and what each key does on each.
  *
- * Same fixture notation as format.test.ts: `‸` is the caret. What is checked is
- * mostly where the caret is *taken* — before a newline goes in, or instead of
- * the characters a deletion would otherwise have eaten — because that is the
- * whole of the fix; the edits themselves are still markdown's own commands.
+ * Same fixture notation as format.test.ts: `‸` is the caret. `‸- [ ] Task` is
+ * the caret in front of the checkbox and `- [ ] ‸Task` is behind it — one place
+ * on screen each, and the whole point of this file is that they do not mean the
+ * same thing.
  */
 
 import { describe, expect, it } from 'vitest'
-import { EditorState } from '@codemirror/state'
+import { EditorState, type TransactionSpec } from '@codemirror/state'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
-import { breakAbove, planBackspace, planDelete, planEnter, snapOutOfPrefix } from './caret'
+import { breakAbove, lineHead, planBackspace, planDelete, planEnter, snapOutOfPrefix } from './caret'
 
 function st(fixture: string): EditorState {
   const caret = fixture.indexOf('‸')
   return EditorState.create({
     doc: fixture.replace('‸', ''),
     selection: caret < 0 ? undefined : { anchor: caret },
-    // The plan consults the syntax tree to leave code blocks alone.
+    // The plans consult the syntax tree to leave code blocks alone.
     extensions: [markdown({ base: markdownLanguage })],
   })
 }
 
-/** Where the caret ends up, marked in the resulting document. */
+/** The document after a plan is applied, with the caret marked. */
+function mark(state: EditorState, spec: TransactionSpec | null): string | null {
+  if (!spec) return null
+  const tr = state.update(spec)
+  const text = tr.state.doc.toString()
+  const at = tr.state.selection.main.from
+  return `${text.slice(0, at)}‸${text.slice(at)}`
+}
+
+/** Enter: where the caret ends up, marked in the resulting document. */
 function after(fixture: string): string {
   const state = st(fixture)
   const plan = planEnter(state)
   if (!plan) return fixture
-  if (plan.kind === 'break-above') {
-    const tr = state.update(breakAbove(state, plan.prefix))
-    const text = tr.state.doc.toString()
-    const at = tr.state.selection.main.from
-    return `${text.slice(0, at)}‸${text.slice(at)}`
-  }
+  if (plan.kind === 'break-above')
+    return mark(state, breakAbove(state, plan.prefix, plan.caret)) as string
   const text = state.doc.toString()
   return `${text.slice(0, plan.to)}‸${text.slice(plan.to)}`
 }
+
+const backspace = (fixture: string) => {
+  const state = st(fixture)
+  return mark(state, planBackspace(state))
+}
+
+const forwardDelete = (fixture: string) => {
+  const state = st(fixture)
+  const spec = planDelete(state)
+  return spec ? state.update(spec).state.doc.toString() : null
+}
+
+describe('lineHead', () => {
+  it('finds what is hidden at the head of a line', () => {
+    expect(lineHead(st('- [ ] ‸task'), 6)).toMatchObject({ from: 0, hiddenTo: 6, hasMarker: true })
+    expect(lineHead(st('## ‸Heading'), 3)).toMatchObject({ from: 0, hiddenTo: 3, hasMarker: false })
+    expect(lineHead(st('> ‸quoted'), 2)).toMatchObject({ from: 0, hiddenTo: 2, hasMarker: false })
+  })
+
+  /* An ordered list keeps its number on screen, so its positions are real. */
+  it('leaves a line with nothing hidden alone', () => {
+    expect(lineHead(st('1. ‸numbered'), 3)).toBe(null)
+    expect(lineHead(st('   ‸indented'), 3)).toBe(null)
+    expect(lineHead(st('plain ‸line'), 6)).toBe(null)
+    expect(lineHead(st('```\n- ‸[ ] not a task\n```'), 6)).toBe(null)
+  })
+
+  /* But the quote in front of that number is hidden, and it stops there. */
+  it('stops the hidden run where the visible markup starts', () => {
+    expect(lineHead(st('> 1. ‸numbered'), 5)).toMatchObject({ hiddenTo: 2, contentStart: 5 })
+  })
+})
+
+describe('snapOutOfPrefix', () => {
+  const snapped = (fixture: string) => {
+    const state = st(fixture)
+    const at = snapOutOfPrefix(state, state.selection.main.from)
+    const text = state.doc.toString()
+    return `${text.slice(0, at)}‸${text.slice(at)}`
+  }
+
+  /*
+   * The seam between the hidden `- ` and the checkbox widget, which is where
+   * Home lands. Whichever edge is nearer wins, which is the rule a click
+   * follows too — so the two never disagree about the same pixel.
+   */
+  it('takes a caret inside the head to the nearer edge', () => {
+    expect(snapped('- ‸[ ] Test task')).toBe('‸- [ ] Test task')
+    expect(snapped('- [ ]‸ Test task')).toBe('- [ ] ‸Test task')
+    expect(snapped('#‸# Heading line')).toBe('## ‸Heading line')
+  })
+
+  it('leaves both edges, and the text, alone', () => {
+    expect(snapped('‸- [ ] Test task')).toBe('‸- [ ] Test task')
+    expect(snapped('- [ ] ‸Test task')).toBe('- [ ] ‸Test task')
+    expect(snapped('## Heading ‸line')).toBe('## Heading ‸line')
+  })
+
+  it('leaves a visible number, and a code block, alone', () => {
+    expect(snapped('1.‸ numbered')).toBe('1.‸ numbered')
+    expect(snapped('```\n  ‸- not a bullet\n```')).toBe('```\n  ‸- not a bullet\n```')
+  })
+})
 
 describe('planEnter', () => {
   it('leaves the caret alone where nothing is hidden around it', () => {
@@ -43,6 +111,7 @@ describe('planEnter', () => {
     expect(planEnter(st('a plain ‸line'))).toBe(null)
     expect(planEnter(st('- [ ] a ‸task'))).toBe(null)
     expect(planEnter(st('- [ ] a task‸'))).toBe(null)
+    expect(planEnter(st('1. ‸numbered'))).toBe(null)
   })
 
   it('does nothing when there is a selection to replace', () => {
@@ -50,38 +119,46 @@ describe('planEnter', () => {
     expect(planEnter(s)).toBe(null)
   })
 
-  it('moves out of a line prefix onto the text', () => {
-    expect(after('> ‸thought')).toBe('> ‸thought')
-    expect(after('‸> thought')).toBe('> ‸thought')
-    expect(after('‸1. numbered')).toBe('1. ‸numbered')
+  /* In front of the marker: the line goes down, marker and all. */
+  it('moves the whole line down from the front edge', () => {
+    expect(after('‸- [ ] Task 1')).toBe('\n‸- [ ] Task 1')
+    expect(after('‸- a bullet')).toBe('\n‸- a bullet')
+    expect(after('‸## Heading line')).toBe('\n‸## Heading line')
   })
 
-  it('sends an empty item to the end of its own marker, so Enter ends the list', () => {
-    expect(after('- ‸[ ] ')).toBe('- [ ] ‸')
-    expect(planEnter(st('- [ ] ‸'))).toBe(null)
+  /* And the caret rides down with it, so a second Enter does the same again. */
+  it('keeps the caret on the front edge, ready to do it again', () => {
+    expect(after('\n‸- [ ] Task 1')).toBe('\n\n‸- [ ] Task 1')
+  })
+
+  /* Behind the marker: another item like this one, above. */
+  it('opens another item of the same kind from the text edge', () => {
+    expect(after('- [ ] ‸Task 1')).toBe('- [ ] \n- [ ] ‸Task 1')
+    expect(after('- ‸a bullet')).toBe('- \n- ‸a bullet')
+    expect(after('  - [x] ‸done')).toBe('  - [x] \n  - [x] ‸done')
   })
 
   /*
-   * The reported bug: the caret between a hidden `- ` and a hidden `[ ] `, two
-   * positions that draw at the same pixel, produced `- ⏎[ ] Test task`. The
-   * item gets an empty one of itself above — with the space after `[ ]` that
-   * markdown's own Enter would have trimmed, without which it is not a task.
+   * A heading has no marker drawn for it, so its one edge answers for both: the
+   * heading goes down with its words and leaves blank space above.
    */
-  it('opens an empty item of the same kind above a list item', () => {
-    expect(after('- ‸[ ] Test task')).toBe('- [ ] \n- [ ] ‸Test task')
-    expect(after('‸- [ ] Test task')).toBe('- [ ] \n- [ ] ‸Test task')
-    expect(after('- [ ] ‸Test task')).toBe('- [ ] \n- [ ] ‸Test task')
-    expect(after('  - ‸nested')).toBe('  - \n  - ‸nested')
-  })
-
-  /* A heading moves down with its words rather than being left behind. */
-  it('pushes a heading down when Enter is pressed at the start of its text', () => {
+  it('takes a heading down with its words from either edge', () => {
     expect(after('## ‸Heading line')).toBe('\n## ‸Heading line')
     expect(after('# ‸Title')).toBe('\n# ‸Title')
-    expect(after('‸## Heading line')).toBe('\n## ‸Heading line')
   })
 
-  it('starts a new line below an empty heading instead', () => {
+  /*
+   * An item with nothing in it yet is still an item: Enter behind its marker
+   * makes another one. Markdown's own Enter would end the list here, and that
+   * way out is Backspace instead — which is what says "no more checkboxes" in
+   * so many words.
+   */
+  it('opens another item from an empty one, rather than ending the list', () => {
+    expect(after('- [ ] ‸')).toBe('- [ ] \n- [ ] ‸')
+    expect(after('- ‸')).toBe('- \n- ‸')
+  })
+
+  it('leaves an empty heading to start the line below it', () => {
     expect(planEnter(st('## ‸'))).toBe(null)
   })
 
@@ -109,112 +186,84 @@ describe('planEnter', () => {
   })
 })
 
-describe('snapOutOfPrefix', () => {
-  /** The caret, marked where it would actually end up. */
-  const snapped = (fixture: string) => {
-    const state = st(fixture)
-    const at = snapOutOfPrefix(state, state.selection.main.from)
-    const text = state.doc.toString()
-    return `${text.slice(0, at)}‸${text.slice(at)}`
-  }
-
-  /*
-   * The position Home lands on in a checklist line: the bullet before it is
-   * hidden and the checkbox after it is a widget, so the first place with any
-   * geometry is between the two. Backspace there used to take the `- ` and
-   * leave `[ ] a task` — a bullet with the characters of a checkbox in it.
-   */
-  it('takes a caret inside a hidden prefix to the start of the text', () => {
-    expect(snapped('- ‸[ ] Test task')).toBe('- [ ] ‸Test task')
-    expect(snapped('#‸# Heading line')).toBe('## ‸Heading line')
-    expect(snapped('>‸ quoted')).toBe('> ‸quoted')
-  })
-
-  it('leaves the start of the line itself alone, so a copy still gets the prefix', () => {
-    expect(snapped('‸## Heading line')).toBe('‸## Heading line')
-  })
-
-  it('leaves alone a caret that is already in the text', () => {
-    expect(snapped('## Heading ‸line')).toBe('## Heading ‸line')
-    expect(snapped('plain ‸line')).toBe('plain ‸line')
-  })
-
-  it('leaves code blocks alone, where the indentation is code', () => {
-    expect(snapped('```\n  ‸- not a bullet\n```')).toBe('```\n  ‸- not a bullet\n```')
-  })
-})
-
 describe('planBackspace', () => {
-  /** The document after the deletion, or the fixture when there is none. */
-  const del = (fixture: string, plan: typeof planBackspace) => {
-    const state = st(fixture)
-    const spec = plan(state)
-    return spec ? state.update(spec).state.doc.toString() : null
-  }
+  /* In front of the marker: the line comes back up, marker and all. */
+  it('moves the whole line up from the front edge', () => {
+    expect(backspace('intro\n\n‸- [ ] Task 1')).toBe('intro\n‸- [ ] Task 1')
+    expect(backspace('\n‸- [ ] Task 1')).toBe('‸- [ ] Task 1')
+    expect(backspace('intro\n\n‸## Heading line')).toBe('intro\n‸## Heading line')
+  })
 
   /*
-   * The reported bug: the blank line an Enter opened above a heading stayed,
-   * and the heading itself came off instead — so Backspace could not undo the
-   * Enter that had just been pressed.
+   * With text directly above there is no space to take, so the lines join —
+   * and a line that has joined another can only carry one style.
    */
-  it('takes a blank line above before it takes the heading', () => {
-    expect(del('intro\n\n## ‸Heading line', planBackspace)).toBe('intro\n## Heading line')
-    expect(del('\n## ‸Heading line', planBackspace)).toBe('## Heading line')
-    expect(del('intro\n\n- [ ] ‸a task', planBackspace)).toBe('intro\n- [ ] a task')
+  it('joins with the line above when there is no space between them', () => {
+    expect(backspace('intro\n‸- [ ] Task 1')).toBe('intro‸Task 1')
   })
 
-  it('then takes one layer of prefix off, the way the format bar would', () => {
-    expect(del('## ‸Heading line', planBackspace)).toBe('Heading line')
-    expect(del('intro\n## ‸Heading line', planBackspace)).toBe('intro\nHeading line')
-    expect(del('> ## ‸Quoted heading', planBackspace)).toBe('> Quoted heading')
-    expect(del('> ‸quoted', planBackspace)).toBe('quoted')
+  it('has nothing to do at the very top of a note', () => {
+    expect(backspace('‸- [ ] Task 1')).toBe(null)
   })
 
-  /* All of `- [ ] `, not the bullet on its own: half of it is not anything. */
-  it('takes a whole checkbox off rather than stranding its brackets', () => {
-    expect(del('- [ ] ‸a task', planBackspace)).toBe('a task')
-    expect(del('- ‸a bullet', planBackspace)).toBe('a bullet')
+  /*
+   * Behind the marker: the marker itself, all of it. Half of `- [ ] ` is not
+   * anything — `- [ ]` without its trailing space is a bullet reading "[ ]".
+   */
+  it('takes the whole marker off from the text edge', () => {
+    expect(backspace('- [ ] ‸a task')).toBe('‸a task')
+    expect(backspace('- ‸a bullet')).toBe('‸a bullet')
+    expect(backspace('- [ ] ‸')).toBe('‸')
+    // Even with space above it: that edge is behind the marker, not in front.
+    expect(backspace('intro\n\n- [ ] ‸a task')).toBe('intro\n\n‸a task')
+  })
+
+  /*
+   * A heading has no marker to be behind, so its one edge does both, in that
+   * order — until the blank line above is gone, Backspace has not reached the
+   * top of anything, and taking the style off cannot be undone by the same key.
+   */
+  it('takes a blank line above a heading before it takes the heading', () => {
+    expect(backspace('intro\n\n## ‸Heading line')).toBe('intro\n## ‸Heading line')
+    expect(backspace('intro\n## ‸Heading line')).toBe('intro\n‸Heading line')
+    expect(backspace('## ‸Heading line')).toBe('‸Heading line')
+    expect(backspace('> ‸quoted')).toBe('‸quoted')
   })
 
   it('leaves every other position to the ordinary Backspace', () => {
-    expect(del('## Heading ‸line', planBackspace)).toBe(null)
-    expect(del('‸plain line', planBackspace)).toBe(null)
-    expect(del('plain ‸line', planBackspace)).toBe(null)
-    expect(del('```\n- ‸[ ] not a task\n```', planBackspace)).toBe(null)
+    expect(backspace('## Heading ‸line')).toBe(null)
+    expect(backspace('‸plain line')).toBe(null)
+    expect(backspace('plain ‸line')).toBe(null)
+    expect(backspace('1. ‸numbered')).toBe(null)
+    expect(backspace('```\n- ‸[ ] not a task\n```')).toBe(null)
   })
 })
 
 describe('planDelete', () => {
-  const del = (fixture: string) => {
-    const state = st(fixture)
-    const spec = planDelete(state)
-    return spec ? state.update(spec).state.doc.toString() : null
-  }
-
   /*
    * One press used to turn `intro`, a blank line and a heading into the single
    * paragraph `introHeading line` — a blank line and a paragraph style gone
    * together, with nothing on screen to say the second thing had happened.
    */
   it('takes the blank line first, leaving the heading below it', () => {
-    expect(del('intro‸\n\n## Heading line')).toBe('intro\n## Heading line')
+    expect(forwardDelete('intro‸\n\n## Heading line')).toBe('intro\n## Heading line')
     // The same one line break, with nothing at all under it.
-    expect(del('intro‸\n')).toBe('intro')
+    expect(forwardDelete('intro‸\n')).toBe('intro')
   })
 
   it('then pulls the line up, which can only carry one style', () => {
-    expect(del('intro‸\n## Heading line')).toBe('introHeading line')
-    expect(del('intro‸\n- [ ] a task')).toBe('introa task')
+    expect(forwardDelete('intro‸\n## Heading line')).toBe('introHeading line')
+    expect(forwardDelete('intro‸\n- [ ] a task')).toBe('introa task')
   })
 
   /* An empty line has no style to impose, so what comes up keeps its own. */
   it('lets a prefixed line keep its markers when it moves up into nothing', () => {
-    expect(del('‸\n## Heading line')).toBe('## Heading line')
+    expect(forwardDelete('‸\n## Heading line')).toBe('## Heading line')
   })
 
   it('leaves every other position to the ordinary Delete', () => {
-    expect(del('intro‸\nplain line')).toBe(null)
-    expect(del('int‸ro\n## Heading line')).toBe(null)
-    expect(del('last line‸')).toBe(null)
+    expect(forwardDelete('intro‸\nplain line')).toBe(null)
+    expect(forwardDelete('int‸ro\n## Heading line')).toBe(null)
+    expect(forwardDelete('last line‸')).toBe(null)
   })
 })
