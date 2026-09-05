@@ -423,6 +423,24 @@ export function Settings() {
                   <small>⌘⇧R toggles it at any time.</small>
                 </span>
               </label>
+              <label class="field">
+                <span>Clicking a day in the calendar</span>
+                <select
+                  value={s.calendarDayOpens}
+                  onChange={(e) =>
+                    update({ calendarDayOpens: (e.target as HTMLSelectElement).value as never })
+                  }
+                >
+                  <option value="filter">Shows what is filed on that day</option>
+                  <option value="daily">Opens that day's daily note</option>
+                </select>
+                <small>
+                  Either way the day is selected and its notes are listed. Opening the daily note
+                  asks first on a day that hasn't got one, and writes it to{' '}
+                  <code>Daily/YYYY-MM-DD.md</code> — the same note the{' '}
+                  <b>Create daily note</b> row makes.
+                </small>
+              </label>
             </>
           )}
 

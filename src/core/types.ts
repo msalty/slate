@@ -252,6 +252,20 @@ export interface AppSettings {
    */
   showDoneTasks: boolean
   /**
+   * What clicking a day in the calendar is for.
+   *
+   * `filter` reads the calendar as an index of what is already written: the
+   * note list narrows to that day, and clicking the day again takes the filter
+   * back off. `daily` reads it as a journal instead and opens that day's daily
+   * note — asking first, once, on a day that hasn't got one, because the guess
+   * behind the mode is that a click on an empty day is somebody starting to
+   * write about it rather than looking for what isn't there.
+   *
+   * Either way the day is selected and its notes are listed, so the mode
+   * changes what a click *adds*, never what it takes away.
+   */
+  calendarDayOpens: 'filter' | 'daily'
+  /**
    * Which of the sidebar's named sections are folded away.
    *
    * Three flags rather than one list, because settings are compared by value

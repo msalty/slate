@@ -678,6 +678,87 @@ try {
   check('the offer goes away once the day has one', (await page.locator('.daily-row, .day-create-row').count()) === 0)
   await otherDay.click() // clear the day filter again
   await page.waitForTimeout(200)
+
+  /* ---- the calendar as a journal ---------------------------------------
+   * The other reading of a click on a day, off by default: "write about this
+   * day" rather than "show me what is filed on it". The case the mode exists
+   * for is the day with nothing on it, so that is where it is checked — and
+   * it has to ask there rather than writing a file on a guess, which is the
+   * one way this could quietly litter somebody's vault.
+   */
+  await page.click('.pane-head .icon-btn[title^="Settings"]')
+  await page.waitForSelector('.dialog')
+  await page.click('.tab:has-text("Editor")')
+  await page.waitForTimeout(250)
+  const dayMode = page.locator('.dialog label.field:has-text("Clicking a day in the calendar") select')
+  check('Settings offers the two readings of a calendar day', (await dayMode.count()) === 1)
+  await dayMode.selectOption('daily')
+  await page.click('.dialog-foot .btn-primary')
+  await page.waitForTimeout(250)
+
+  const blankDay = page
+    .locator('.cal-day[data-outside="0"][data-today="0"]')
+    .filter({ hasNot: page.locator('.cal-dot') })
+    .first()
+  const blankLabel = await blankDay.getAttribute('aria-label')
+  await blankDay.click()
+  await page.waitForTimeout(300)
+  const asked = page.locator('.dialog:has-text("Start a note for this day?")')
+  check('an empty day asks before it writes anything', (await asked.count()) === 1, blankLabel)
+  check(
+    'and names the file it would write',
+    /Daily\/\d{4}-\d{2}-\d{2}\.md/.test(await asked.innerText().catch(() => '')),
+  )
+  await page.click('.dialog-foot .btn:not(.btn-primary)')
+  await page.waitForTimeout(300)
+  check(
+    'saying no leaves the day as empty as it found it',
+    (await page.locator('.list-pane .daily-row').count()) === 1,
+  )
+  check('but still selects the day, so its list is in front of you', (await page.locator('.list-pane .note-row').count()) === 0)
+
+  await blankDay.click()
+  await page.waitForTimeout(300)
+  await page.click('.dialog-foot .btn-primary')
+  await page.waitForTimeout(600)
+  const journalTitle = await page.locator('.editor-title-input').inputValue()
+  /*
+   * Named for the day that was clicked, not for today: the aria-label the cell
+   * announces is a `toDateString`, so the two are compared as dates rather than
+   * as strings written two different ways.
+   */
+  const clickedDay = new Date(blankLabel.split(',')[0]).toDateString()
+  check(
+    'saying yes opens a note named for that day',
+    new Date(`${journalTitle}T00:00:00`).toDateString() === clickedDay,
+    `${journalTitle} vs ${clickedDay}`,
+  )
+  check(
+    'and files it under that day rather than under today',
+    (await page.locator('.list-pane .note-row').count()) === 1,
+  )
+
+  // A day that has one already goes straight there, with nothing to answer.
+  await otherDay.click()
+  await page.waitForTimeout(400)
+  check('a day that already has one opens it without asking', (await page.locator('.scrim').count()) === 0)
+  check(
+    'and the note it opened is that day’s',
+    `${await page.locator('.editor-title-input').inputValue()}.md` === dailyName,
+  )
+
+  // Back to filtering, which is what the rest of the run assumes.
+  await page.click('.pane-head .icon-btn[title^="Settings"]')
+  await page.waitForSelector('.dialog')
+  await page.click('.tab:has-text("Editor")')
+  await page.waitForTimeout(250)
+  await dayMode.selectOption('filter')
+  await page.click('.dialog-foot .btn-primary')
+  await page.waitForTimeout(250)
+  // And out of the day the journal left selected, which now has a note in it,
+  // so the second click on it is a click on the day already showing.
+  await otherDay.click()
+  await page.waitForTimeout(200)
   // Put the note the rest of the run works on back in the editor, and take
   // focus back out of it — ⌘K is deliberately inert inside CodeMirror.
   await page.locator('.note-row').filter({ hasText: 'Lisbon Trip' }).first().click()

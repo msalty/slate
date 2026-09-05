@@ -18,8 +18,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 354 unit and two-device sync tests
-node scripts/smoke.mjs # 310-check browser smoke test against dist/
+npm test               # 405 unit and two-device sync tests
+node scripts/smoke.mjs # 358-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -444,6 +444,19 @@ under the day in the rail — which writes `Daily/YYYY-MM-DD.md` and opens it, s
 Thursday's note can be started on Saturday and still lands on Thursday. Below
 it, **Due**: the tasks that are due today and the ones already late. Ticking a
 box there edits the source note.
+
+**A calendar you can write in.** Settings → Editor → **Clicking a day in the
+calendar** switches the click from *shows what is filed on that day* to *opens
+that day's daily note*, for anyone whose calendar is a journal rather than an
+index. The setting exists for one guess about intent: somebody clicking a day
+with nothing on it is usually starting to write about it, not looking for what
+isn't there. So on an empty day the click asks — one dialog naming the file it
+would write, `Daily/YYYY-MM-DD.md` — rather than creating it, because a note
+written on a guess is a note somebody has to go and delete. The day is selected
+and its notes are listed either way, in both modes, so the setting changes what
+a click *adds* and never what it takes away; the difference is that only the
+filtering mode lets a second click on the same day take the filter back off,
+since where a click means "open this day's note" a second one means it again.
 
 The rail's list is narrowed on purpose. Every `- [ ]` in the vault is rolled up
 under **Tasks** in the sidebar, and repeating that list under a calendar made
@@ -1032,7 +1045,7 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 354 unit + two-device sync tests
+npm test                # 405 unit + two-device sync tests
 node scripts/smoke.mjs  # 335 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```

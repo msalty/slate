@@ -16,7 +16,7 @@ import {
 import { dailyNotePath } from '../core/daily'
 import { notesForSmartFolder, showsTasks, smartFolderById } from '../core/folders'
 import { settings } from '../core/settings'
-import type { NoteIndexEntry, TaskItem } from '../core/types'
+import type { AppSettings, NoteIndexEntry, TaskItem } from '../core/types'
 import { matchesAll, searchTerms, startOfDay } from '../core/util'
 import { layoutMode } from './layout'
 
@@ -206,6 +206,30 @@ export async function openDailyNote(day: number) {
   // `Daily/` carries. It was created to be written in, so it opens for that.
   openNote(path, { editing: created, caret })
   if (created) notify(`Created ${path}`)
+}
+
+/**
+ * What a click on a calendar day is asking for.
+ *
+ * `filter` — narrow the list to that day, the calendar as an index of what is
+ * already written. `clear` — the same click on the day already showing, which
+ * takes the filter back off. `open` — that day's daily note, in the mode where
+ * the calendar is a journal. `offer` — the same, on a day that hasn't got one:
+ * the note is not created until the question has been answered, because a click
+ * on an empty day is a guess about intent and a file written on a guess is a
+ * file somebody has to go and delete.
+ *
+ * Split out from the click handler, and pure, so the whole rule reads in one
+ * place and can be checked without a calendar to click on.
+ */
+export type DayIntent = 'filter' | 'clear' | 'open' | 'offer'
+
+export function calendarDayIntent(
+  mode: AppSettings['calendarDayOpens'],
+  day: { hasDaily: boolean; isSelected: boolean },
+): DayIntent {
+  if (mode === 'daily') return day.hasDaily ? 'open' : 'offer'
+  return day.isSelected ? 'clear' : 'filter'
 }
 
 export function closeMobileEditor() {
