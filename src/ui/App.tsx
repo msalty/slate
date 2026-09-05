@@ -11,6 +11,7 @@ import { ContextMenu } from './Menu'
 import { TagFolderDialog } from './TagFolderDialog'
 import { LinkDialog } from './LinkDialog'
 import { PromptDialog } from './PromptDialog'
+import { ConfirmDialog } from './ConfirmDialog'
 import { PaneResizer } from './PaneResizer'
 import { editLinkAtCaret, handleUriClick } from './linkActions'
 import { openDueMenu } from './DueMenu'
@@ -389,6 +390,7 @@ export function App() {
       <TagFolderDialog />
       <LinkDialog />
       <PromptDialog />
+      <ConfirmDialog />
       <Lightbox />
       <ContextMenu />
       <Toaster />

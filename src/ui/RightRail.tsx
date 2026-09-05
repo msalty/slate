@@ -20,9 +20,11 @@ import { Fragment } from 'preact'
 import { dueByToday, groupTasks, tasksDueOn } from '../core/taskgroups'
 import { settings, update } from '../core/settings'
 import { openMenu } from './Menu'
-import { dailyNoteFor } from '../core/daily'
+import { DAILY_FOLDER, dailyNoteFor } from '../core/daily'
 import { monthGrid, searchTerms, startOfDay, ymd } from '../core/util'
+import { openConfirm } from './ConfirmDialog'
 import {
+  calendarDayIntent,
   calendarMonth,
   matchingTasks,
   openDailyNote,
@@ -43,6 +45,41 @@ import {
 } from './Icons'
 
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+/**
+ * Ask before writing a file nobody named.
+ *
+ * Only the calendar's own click reaches here, and only in the mode where a
+ * click means "open this day's note". Every other way into a daily note — the
+ * row at the top of a day's list, the one under the day in the rail, the
+ * palette — says *Create* on the control itself, so the question has already
+ * been asked and answered by pressing it.
+ *
+ * The path is named in full because `Daily/` is almost never the folder you
+ * were looking at when you asked, and a file that appears somewhere you cannot
+ * see is a file you think you have lost.
+ */
+function offerDailyNote(day: number) {
+  const when = new Date(day).toLocaleDateString(undefined, {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+  })
+  openConfirm({
+    title: 'Start a note for this day?',
+    body: (
+      <>
+        Nothing is written for {when} yet. Creating one makes{' '}
+        <code>
+          {DAILY_FOLDER}/{ymd(day)}.md
+        </code>{' '}
+        and opens it ready to type in.
+      </>
+    ),
+    confirm: 'Create note',
+    onConfirm: () => void openDailyNote(day),
+  })
+}
 
 export function CalendarPanel({ big = false }: { big?: boolean }) {
   const anchor = calendarMonth.value
@@ -110,9 +147,21 @@ export function CalendarPanel({ big = false }: { big?: boolean }) {
               }
               onClick={() => {
                 selectedDay.value = day
-                // Tapping the selected day again clears the filter.
-                setScope(isSelected ? { kind: 'all' } : { kind: 'day', date: day })
                 if (outside) calendarMonth.value = day
+                const intent = calendarDayIntent(settings.value.calendarDayOpens, {
+                  hasDaily: dailyNoteFor(day) !== undefined,
+                  isSelected,
+                })
+                /*
+                 * The day is selected in every mode — the panel below is the
+                 * calendar read the other way round and has to follow it. Only
+                 * the filtering mode lets a second click take that back off:
+                 * where a click means "open this day's note", a second one
+                 * means it again.
+                 */
+                setScope(intent === 'clear' ? { kind: 'all' } : { kind: 'day', date: day })
+                if (intent === 'open') void openDailyNote(day)
+                if (intent === 'offer') offerDailyNote(day)
               }}
             >
               {/*
