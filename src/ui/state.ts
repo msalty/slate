@@ -56,6 +56,17 @@ export const calendarMonth = signal<number>(startOfDay(Date.now()))
 export const formatSheetOpen = signal(false)
 
 /**
+ * Whether the note's properties form is showing (rich text only).
+ *
+ * Closed for every note that opens, and not a saved preference: rich text is
+ * the mode where a note is a page, and a page does not start with its
+ * metadata. The date under the title is what opens it, and most notes have no
+ * frontmatter at all — a panel that stayed open would be an empty form at the
+ * top of every one of them.
+ */
+export const propertiesOpen = signal(false)
+
+/**
  * Focus mode: the note takes the whole window, and everything else stands down.
  *
  * A desktop idea only — a phone's editor is already the whole screen — so the
@@ -235,8 +246,9 @@ export function calendarDayIntent(
 export function closeMobileEditor() {
   mobileEditorOpen.value = false
   // Leaving the note leaves formatting too; otherwise the sheet is waiting,
-  // still open, the next time a note is opened.
+  // still open, the next time a note is opened. The same goes for properties.
   formatSheetOpen.value = false
+  propertiesOpen.value = false
 }
 
 /* ------------------------------------------------------------------ toasts */

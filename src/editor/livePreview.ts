@@ -925,3 +925,49 @@ export const tableField = StateField.define<DecorationSet>({
     EditorView.atomicRanges.of((view) => view.state.field(f, false) ?? Decoration.none),
   ],
 })
+
+/**
+ * Frontmatter, in rich text: not shown at all.
+ *
+ * The other two modes show the block because they are modes for looking at the
+ * file — live preview keeps the syntax of whatever you are editing, and source
+ * *is* the file. Rich text is the mode where a note is a page, and a page does
+ * not open on eight lines of YAML. The properties are still there and still
+ * editable: the date under the title opens a form over them (see
+ * ui/Properties.tsx), which is a better editor for a key and a value than a
+ * text buffer that will accept anything.
+ *
+ * A block decoration again, and again a StateField for it: a plugin may not
+ * supply one, and hiding whole lines is exactly what a block replacement is.
+ */
+const hiddenBlock = Decoration.replace({ block: true })
+
+function buildFrontmatterDecorations(state: EditorState): DecorationSet {
+  if (state.facet(previewMode) !== 'rich') return Decoration.none
+  const lines = frontmatterLines(state)
+  if (lines.length === 0) return Decoration.none
+  const first = state.doc.line(lines[0])
+  const last = state.doc.line(lines[lines.length - 1])
+  /*
+   * A note that is *only* frontmatter keeps it. Hiding every line a document
+   * has would leave an editor with nothing in it to click on and no line to
+   * put a caret in — an empty note with no way to start writing in it. One
+   * blank line under the block is enough: that line is somewhere to type.
+   */
+  if (lines[lines.length - 1] >= state.doc.lines) return Decoration.none
+  return RangeSet.of([hiddenBlock.range(first.from, last.to)])
+}
+
+export const frontmatterField = StateField.define<DecorationSet>({
+  create: buildFrontmatterDecorations,
+  update(value, tr) {
+    if (!tr.docChanged && !tr.reconfigured) return value
+    return buildFrontmatterDecorations(tr.state)
+  },
+  provide: (f) => [
+    EditorView.decorations.from(f),
+    // Hidden means hidden: the caret does not stop inside a block nobody can
+    // see, and Backspace at the top of the body does not eat the closing fence.
+    EditorView.atomicRanges.of((view) => view.state.field(f, false) ?? Decoration.none),
+  ],
+})
