@@ -462,14 +462,14 @@ export function EditorPane() {
     <div
       class="pane editor-pane"
       /*
-       * Focus mode keeps the text to a reading column whatever the Editor width
-       * preference says. That preference is about a pane sitting next to a list
-       * and a sidebar; with the whole window given over to the note, "full
-       * width" would mean a line of text the width of a desk, which is the one
-       * thing a distraction-free mode cannot do. The setting is untouched and
-       * comes back with the rest of the app.
+       * The Editor width preference, in every mode. Focus mode used to force
+       * the reading column on the theory that a full-width line across a whole
+       * screen is nobody's idea of distraction-free — but that is a decision
+       * the setting already exists to make, and overriding it meant the same
+       * app answered the same preference two different ways depending on which
+       * window the note was in.
        */
-      data-width={editorMaximized.value && !compact ? 'measure' : settings.value.editorWidth}
+      data-width={settings.value.editorWidth}
       data-scrolled={scrolled ? '1' : '0'}
       data-reading={reading ? '1' : '0'}
       data-format-open={rich && compact && formatSheetOpen.value ? '1' : '0'}

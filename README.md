@@ -501,9 +501,10 @@ else — it returns to the note list, which is the right thing for it to do.
 
 **Focus mode, and a note in a window of its own.** On a desktop the editor's
 header carries one more button. Press it (or ⌘⇧F) and the note takes the whole
-window — no sidebar, no list, no calendar, no status bar, and the text held to a
-reading column however wide the window is. Escape gives the app back, after the
-Escape that puts the caret down.
+window — no sidebar, no list, no calendar, no status bar. The text is laid out
+the way Settings → Editor → **Body width** says, the same as it is everywhere
+else: full width, or a centred reading column if that is what you have chosen.
+Escape gives the app back, after the Escape that puts the caret down.
 
 Hold **Shift** over that same button and it becomes a popout, exactly the way
 Gmail's compose window does it: click it and the note steps out into a small
@@ -546,9 +547,9 @@ space: drag the panels wider than the window can afford and they are the ones
 that yield.
 
 **⌘⇧F clears the rest of the screen away** — every panel and the status bar with
-them — and leaves the note in a reading column in the middle of the window. The
-panels are hidden rather than torn down, so the list comes back with its scroll
-position and its search exactly as you left them. Shift held over the same
+them — and gives the whole window to the note, laid out however **Body width**
+says. The panels are hidden rather than torn down, so the list comes back with
+its scroll position and its search exactly as you left them. Shift held over the same
 button pops the note into a window of its own instead; see *What it does*.
 
 The sidebar's three sections — **Folders**, **Tag Folders** and **Tags** — each

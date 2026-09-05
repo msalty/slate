@@ -1892,6 +1892,17 @@ try {
     'and takes every panel with it',
     !(await page.locator('.pane.sidebar').isVisible()) && (await page.locator('.statusbar').count()) === 0,
   )
+  /*
+   * Laid out however Settings → Editor → Body width says, which for this run is
+   * the default: full width. Focus mode briefly overrode that with a reading
+   * column of its own, which meant the same preference was answered two
+   * different ways depending on which window the note was in.
+   */
+  check(
+    'and leaves the body width to the setting',
+    (await page.getAttribute('.editor-pane', 'data-width')) === 'full',
+    await page.getAttribute('.editor-pane', 'data-width'),
+  )
   await page.screenshot({ path: join(SHOTS, '30-focus-mode.png') })
   await page.keyboard.press('Meta+Shift+f')
   await page.waitForTimeout(250)
