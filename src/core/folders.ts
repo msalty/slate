@@ -37,6 +37,7 @@ import {
   type QueryNode,
 } from './tagquery'
 import type { NoteIndexEntry, TaskItem } from './types'
+import { forgetFolder, forgetTagFolders, renameOpenFolder } from './disclosure'
 import { clearTemplateFolders, repointTemplateFolders } from './templates'
 import { mediaClass } from './util'
 import { resolveEmbed } from './vault'
@@ -180,6 +181,9 @@ export async function renameFolder(from: string, name: string): Promise<string> 
   // too — otherwise the folder is still there, still looks the same, and has
   // quietly stopped applying its template.
   await repointTemplateFolders(src, dest)
+  // Same reasoning for which rows in the sidebar are unfolded: the folder is
+  // the one you just had open, so it stays open under its new name.
+  renameOpenFolder(src, dest)
   return dest
 }
 
@@ -200,6 +204,7 @@ export async function deleteFolder(path: string): Promise<number> {
   )
   await persistFolders()
   await clearTemplateFolders(src)
+  forgetFolder(src)
   return inside.length
 }
 
@@ -306,6 +311,7 @@ export async function deleteSmartFolder(id: string): Promise<void> {
     .filter((s) => s.id !== id)
     .map((s) => (s.parentId === id ? { ...s, parentId: doomed?.parentId } : s))
   await persistSmartFolders()
+  forgetTagFolders([id])
 }
 
 /** Delete a folder and everything nested underneath it. */
@@ -313,6 +319,7 @@ export async function deleteSmartFolderTree(id: string): Promise<number> {
   const doomed = new Set<string>([id, ...descendantIds(id)])
   smartFolders.value = smartFolders.value.filter((s) => !doomed.has(s.id))
   await persistSmartFolders()
+  forgetTagFolders(doomed)
   return doomed.size
 }
 

@@ -23,6 +23,7 @@ import {
   smartFolderList,
   type SmartFolder,
 } from '../core/folders'
+import { setTagFolderOpen } from '../core/disclosure'
 import { describeQuery, parseQuery, type QueryNode } from '../core/tagquery'
 import { notify, setScope } from './state'
 import { IconClose } from './Icons'
@@ -143,6 +144,10 @@ export function TagFolderDialog() {
       shows,
     })
     editing.value = null
+    // Saved into a folded parent, it would land out of sight — so unfold the
+    // chain above it, which is the one case where opening a folder is not
+    // something the person did by hand.
+    for (const a of smartFolderAncestors(saved.id)) setTagFolderOpen(a.id, true)
     setScope({ kind: 'smart', id: saved.id })
     notify(draft.id ? 'Tag Folder updated' : 'Tag Folder created')
   }

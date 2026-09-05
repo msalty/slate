@@ -4,12 +4,16 @@ import { initVault as loadVault, ready } from '../core/vault'
 import { loadFolders, loadSmartFolders } from '../core/folders'
 import { loadTemplates } from '../core/templates'
 import { applySharedSettings, loadSettings, settings } from '../core/settings'
+import { loadDisclosure } from '../core/disclosure'
 import { requestPersistence } from '../core/db'
 import { setDeviceLabel } from '../core/sync'
 import { setLocalDevice } from '../core/devices'
 
 export async function initVault(): Promise<void> {
   await loadSettings()
+  // Which folders the sidebar had unfolded, so the tree comes back the shape
+  // it was left in rather than folding itself up on every reload.
+  await loadDisclosure()
   // Before the vault loads, so the device records it reads are folded into this
   // device's own entry rather than replacing it.
   setLocalDevice(settings.value.deviceId, settings.value.deviceName)

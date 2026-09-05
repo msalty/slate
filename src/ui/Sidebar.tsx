@@ -1,7 +1,12 @@
 /** Smart lists, the folder tree, Tag Folders, and tags. */
 
-import { useState } from 'preact/hooks'
 import { allTags, attachments, contentNotes, tasks, trashItems, unresolvedLinks } from '../core/vault'
+import {
+  isFolderOpen,
+  isTagFolderOpen,
+  setFolderOpen,
+  setTagFolderOpen,
+} from '../core/disclosure'
 import {
   createFolder,
   deleteFolder,
@@ -159,6 +164,9 @@ function folderMenu(node: FolderNode): MenuItem[] {
         const name = prompt(`New folder inside "${node.name}"`, '')
         if (!name?.trim()) return
         const path = await createFolder(node.path, name)
+        // A subfolder of a folded folder would be created out of sight, the
+        // same way one inside a folded section would be.
+        setFolderOpen(node.path, true)
         select({ kind: 'folder', path })
         notify(`Created ${path}`)
       },
@@ -195,8 +203,15 @@ function folderMenu(node: FolderNode): MenuItem[] {
   ]
 }
 
+/**
+ * Whether the row is unfolded is kept per folder rather than in this component:
+ * a row is unmounted whenever its parent or its whole section folds away, and
+ * `useState` would die with it — which is what made unfolding a section look
+ * like it unfolded everything inside it. See core/disclosure.
+ */
 function FolderRow({ node, depth }: { node: FolderNode; depth: number }) {
-  const [open, setOpen] = useState(depth < 1)
+  const open = isFolderOpen(node.path)
+  const setOpen = (want: boolean) => setFolderOpen(node.path, want)
   const hasKids = node.children.length > 0
   const longPress = useLongPress(() => folderMenu(node), () => node.name)
 
@@ -250,7 +265,8 @@ function FolderRow({ node, depth }: { node: FolderNode; depth: number }) {
  */
 function SmartFolderRow({ node }: { node: SmartNode }) {
   const sf = node.folder
-  const [open, setOpen] = useState(true)
+  const open = isTagFolderOpen(sf.id)
+  const setOpen = (want: boolean) => setTagFolderOpen(sf.id, want)
   const hasKids = node.children.length > 0
   const error = smartFolderError(sf)
   const group = isGroupFolder(sf.id)
