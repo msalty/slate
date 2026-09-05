@@ -42,6 +42,7 @@ import { markdown, markdownLanguage, insertNewlineContinueMarkup } from '@codemi
 import { codeLanguages } from './languages'
 import { editorTheme, highlighting } from './theme'
 import {
+  frontmatterField,
   livePreview,
   previewMode,
   tableField,
@@ -270,6 +271,12 @@ export function previewExtensions(mode: EditorMode): Extension {
          */
         hiddenHeadAtoms,
         caretOutOfPrefixes,
+        /*
+         * Frontmatter is a form in rich text, not eight lines of YAML at the
+         * top of the page: the block is hidden here and edited from the
+         * properties panel the note's date opens. See ui/Properties.tsx.
+         */
+        frontmatterField,
         typeIntoText,
         formatWatcher,
         cellTargetWatcher,

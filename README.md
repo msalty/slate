@@ -94,6 +94,25 @@ renderer passes through; highlight uses `==text==`. Everything else is ordinary
 CommonMark, and a note written in rich text opens as plain markdown anywhere
 else.
 
+**A note's properties are a form, not a wall of YAML.** The `---` block at the
+top of a file — the `date:`, `tags:` and `pinned:` the rest of the app reads —
+is hidden in rich text, and the date under the title is what opens it: click
+that and the block becomes one row per property, with its name, its value, and
+an icon saying what kind of value it is. Text, list, number, date or checkbox —
+pick a different one from that icon and the value in the file is rewritten to
+match, so a date gets a date field and a checkbox gets a checkbox. **Add
+property** adds one, the name is edited in place, and the **×** takes it away.
+Live preview and source still show the block exactly as it is written; they are
+the modes for looking at the file.
+
+**No note needs any of it.** Frontmatter is optional in a markdown file and
+optional here: a note that has none opens the form empty, nothing is written
+until a property is actually named, and deleting the last property takes the
+`---` block away with it, leaving the file the way it started. Each edit
+rewrites one line and nothing else — a property the form has no opinion about,
+a comment somebody left in the block, whether a list was written as `[a, b]` or
+one item per line, all come back out of the file exactly as they went in.
+
 **A note opens as a page to read.** No caret anywhere in it, which on a phone is
 the difference between opening a note and opening a note with a keyboard across
 the bottom half of it before you have read a word. Tap the text and that is
@@ -975,6 +994,7 @@ src/
 │  ├─ merge.ts        three-way merge (diff3)
 │  ├─ rebase.ts       folding a synced change into the buffer being typed in
 │  ├─ markdown.ts     frontmatter, links, tags, tasks, due dates
+│  ├─ properties.ts   the same frontmatter as an ordered, editable list
 │  ├─ tagquery.ts     the rule language behind Tag Folders, over notes or tasks
 │  ├─ folders.ts      nested folders + the Tag Folder tree and inheritance
 │  ├─ templates.ts    folder templates: the fields, and which folder uses what
@@ -1002,6 +1022,7 @@ src/
    ├─ popout.ts      a note in a window of its own, and what the windows tell
    │                 each other so one vault stays one vault
    ├─ PopoutWindow.tsx  the one-note shell that window boots into
+   ├─ Properties.tsx the frontmatter form the note's date opens
    ├─ Menu.tsx       popover on a pointer, bottom sheet on a phone
    ├─ DueMenu.tsx    the due-date picker that rides on it
    ├─ DueChip.tsx    a task's date, as a control rather than a caption

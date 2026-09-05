@@ -10,6 +10,7 @@ import {
   setDoc,
 } from '../editor/setup'
 import { FormatBar } from './FormatBar'
+import { Properties } from './Properties'
 import {
   backlinkMap,
   getEntry,
@@ -39,6 +40,7 @@ import {
   notify,
   openNote,
   opensForWriting,
+  propertiesOpen,
   takeOpenCaret,
   readingMode,
 } from './state'
@@ -182,8 +184,10 @@ export function EditorPane() {
     const caret = takeOpenCaret()
     readingMode.value = !writing
     // The Format sheet belongs to the note that was being formatted, and the
-    // note that has just opened is being read.
+    // note that has just opened is being read. Properties belong to the note
+    // as well, and start hidden on every one of them.
     formatSheetOpen.value = false
+    propertiesOpen.value = false
 
     const state = createEditorState({
       doc: text,
@@ -697,15 +701,52 @@ export function EditorPane() {
 
       {/*
         * Apple Notes' one piece of chrome inside the page: when the note was
-        * last touched, centred, faint, and nowhere near anything clickable.
+        * last touched, centred and faint.
+        *
+        * In rich text it is also the way in to the note's properties, which
+        * are hidden there rather than sitting at the top of the page as YAML.
+        * The date is the right place for it — it is already the line that says
+        * what this note *is* rather than what it says, and a permanent
+        * "Properties" button over every note would be chrome the other two
+        * modes manage without.
         */}
       {file && (
-        <div class="editor-date" title={`Created ${longDateTime(file.ctime)}`}>
-          {longDateTime(file.mtime)}
+        <div key="date" class="editor-date" title={`Created ${longDateTime(file.ctime)}`}>
+          {rich && !trashed ? (
+            <button
+              class="editor-date-button"
+              aria-expanded={propertiesOpen.value}
+              title={`Created ${longDateTime(file.ctime)} — click for the note's properties`}
+              onClick={() => (propertiesOpen.value = !propertiesOpen.value)}
+            >
+              {longDateTime(file.mtime)}
+            </button>
+          ) : (
+            longDateTime(file.mtime)
+          )}
         </div>
       )}
 
-      <div class="editor-body">
+      {rich && !trashed && propertiesOpen.value && (
+        <Properties
+          key="properties"
+          path={path}
+          getText={() => viewRef.current?.state.doc.toString() ?? getRaw(path)?.text ?? ''}
+          getView={() => viewRef.current}
+        />
+      )}
+
+      {/*
+        * Keyed, along with the date and the properties panel above it.
+        *
+        * Preact matches unkeyed children by tag, so a <div> that appears or
+        * changes shape above this one is otherwise matched against *this* div:
+        * the element the editor is mounted in gets handed to the panel, and the
+        * note is emptied out of the DOM. It does not come back either — the
+        * editor is built once per note and reconfigured in place, so nothing
+        * would rebuild it. A key at each end of the mix-up is what prevents it.
+        */}
+      <div key="body" class="editor-body">
         <div class="editor-host" ref={hostRef} />
       </div>
 

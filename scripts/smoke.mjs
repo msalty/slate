@@ -3831,6 +3831,168 @@ try {
     JSON.stringify(plain.slice(-120)),
   )
 
+  /* ---- the note's properties, as a form ----------------------------------
+   *
+   * Rich text does not show a `---` block: it hides it and puts a form over it,
+   * opened from the date under the title. Everything the form does has to be
+   * checked against the file, the same as the rest of rich text — the whole
+   * point of it is that the YAML is never on screen to read back.
+   */
+  await page.evaluate(async () => {
+    const notes = [
+      [
+        'Properties note.md',
+        '---\ntitle: Properties note\npinned: true\nnights: 4\ntags: [travel, lisbon]\npeople:\n  - Ana\n  - Bo\n---\n\n# Properties note\n\nBody nobody should touch.\n',
+      ],
+      // Frontmatter is optional; this note has never had any.
+      ['Plain note.md', '# Plain note\n\nNothing but prose in here.\n'],
+    ]
+    const db = await new Promise((res, rej) => {
+      const r = indexedDB.open('slate')
+      r.onsuccess = () => res(r.result)
+      r.onerror = () => rej(r.error)
+    })
+    const tx = db.transaction('files', 'readwrite')
+    notes.forEach(([path, text], i) => {
+      tx.objectStore('files').put({
+        path, kind: 'note', text, mime: 'text/markdown', size: text.length,
+        hash: `prop${i}`, mtime: Date.now() + 20_000 - i * 100, ctime: Date.now(),
+        dirty: true, dirtyFlag: 1, sync: {},
+      })
+    })
+    await new Promise((res) => { tx.oncomplete = res })
+  })
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForSelector('.note-row')
+
+  /*
+   * Whatever mode the run has drifted into, this section needs rich text — and
+   * the date being a button is exactly what says it is in it, since that is the
+   * only mode where the date opens anything.
+   */
+  const intoRichText = async () => {
+    for (let i = 0; i < 3 && (await page.locator('.editor-date-button').count()) === 0; i++) {
+      await page.keyboard.press('Control+Shift+m')
+      await page.waitForTimeout(350)
+    }
+  }
+
+  await page.locator('.note-row').filter({ hasText: 'Properties note' }).first().click()
+  await page.waitForTimeout(500)
+  await intoRichText()
+  const hiddenFm = await page.locator('.cm-content').innerText()
+  check(
+    'rich text shows no frontmatter at all',
+    !hiddenFm.includes('tags:') && !hiddenFm.includes('---'),
+    hiddenFm.slice(0, 60).replace(/\n/g, ' / '),
+  )
+  check('and still shows the note', hiddenFm.includes('Body nobody should touch'))
+  check('the properties form is closed until it is asked for', (await page.locator('.properties').count()) === 0)
+
+  await page.locator('.editor-date-button').click()
+  await page.waitForTimeout(300)
+  const propKeys = await page.locator('.property-key').evaluateAll((els) => els.map((e) => e.value))
+  check(
+    'the date opens the block as one row per property, in file order',
+    propKeys.join(',') === 'title,pinned,nights,tags,people',
+    propKeys.join(','),
+  )
+  check(
+    'each row says what kind of value it holds',
+    (await page.locator('.property-check').count()) === 1,
+    `${await page.locator('.property-check').count()} checkbox rows`,
+  )
+  await page.screenshot({ path: join(SHOTS, '22-properties.png') })
+
+  /** The row for a property, found by the name in its key field. */
+  const propertyRow = async (key) => {
+    const keys = await page.locator('.property-key').evaluateAll((els) => els.map((e) => e.value))
+    return page.locator('.property-row').nth(keys.indexOf(key))
+  }
+
+  await (await propertyRow('nights')).locator('.property-value').fill('6')
+  await page.waitForTimeout(700)
+  let props = await noteAfterEdit('Body nobody should touch', 'nights: 6')
+  check('editing a value rewrites that line and nothing else', props.includes('nights: 6'), JSON.stringify(props.slice(0, 90)))
+  check(
+    'a list keeps the shape it was written in',
+    props.includes('tags: [travel, lisbon]') && props.includes('people:\n  - Ana\n  - Bo'),
+    JSON.stringify(props.slice(0, 130)),
+  )
+
+  await page.locator('.property-check input').first().click()
+  await page.waitForTimeout(700)
+  props = await noteAfterEdit('Body nobody should touch', 'pinned: false')
+  check('a checkbox writes true or false', props.includes('pinned: false'))
+
+  await page.locator('.property-add').click()
+  await page.waitForTimeout(250)
+  await page.keyboard.type('status')
+  await page.keyboard.press('Enter')
+  await page.waitForTimeout(400)
+  await page.keyboard.type('draft')
+  await page.waitForTimeout(800)
+  props = await noteAfterEdit('Body nobody should touch', 'status: draft')
+  check('a new property is appended to the block', props.includes('status: draft'))
+
+  await (await propertyRow('status')).locator('.property-kind').click()
+  await page.waitForTimeout(250)
+  await page.locator('.menu-item', { hasText: 'List' }).first().click()
+  await page.waitForTimeout(700)
+  props = await noteAfterEdit('Body nobody should touch', 'status: [draft]')
+  check('changing what kind of value it is rewrites the value', props.includes('status: [draft]'))
+
+  await (await propertyRow('status')).locator('.property-remove').click()
+  await page.waitForTimeout(800)
+  props = await noteContaining('Body nobody should touch')
+  check('removing a property takes it out of the file', !props.includes('status'), JSON.stringify(props.slice(0, 120)))
+  check(
+    'and the note itself was never touched',
+    props.trimEnd().endsWith('# Properties note\n\nBody nobody should touch.'),
+    JSON.stringify(props.slice(-60)),
+  )
+
+  /*
+   * A note with no frontmatter. Opening the form on one is how you give it
+   * some — and until a property is actually named, the file is left alone.
+   */
+  await page.locator('.note-row').filter({ hasText: 'Plain note' }).first().click()
+  await page.waitForTimeout(500)
+  await intoRichText()
+  await page.locator('.editor-date-button').click()
+  await page.waitForTimeout(300)
+  check('a note without frontmatter opens the form empty', (await page.locator('.properties-empty').count()) === 1)
+  await page.locator('.property-add').click()
+  await page.waitForTimeout(250)
+  await page.keyboard.type('Due date')
+  await page.keyboard.press('Enter')
+  await page.waitForTimeout(400)
+  await page.keyboard.type('2026-09-30')
+  await page.waitForTimeout(800)
+  let plainNote = await noteAfterEdit('Nothing but prose', 'Due-date')
+  check(
+    'naming one writes the block the note never had',
+    plainNote.startsWith('---\nDue-date: 2026-09-30\n---\n\n# Plain note'),
+    JSON.stringify(plainNote.slice(0, 60)),
+  )
+  check(
+    'and a date value gets a date field',
+    (await page.locator('.property-row .property-value').getAttribute('type')) === 'date',
+  )
+
+  await page.locator('.property-remove').first().click()
+  await page.waitForTimeout(800)
+  plainNote = await noteContaining('Nothing but prose')
+  check(
+    'taking the last property away takes the block with it',
+    plainNote.startsWith('# Plain note'),
+    JSON.stringify(plainNote.slice(0, 40)),
+  )
+
+  await page.locator('.editor-date-button').click()
+  await page.waitForTimeout(250)
+  check('and the date closes the form again', (await page.locator('.properties').count()) === 0)
+
   /* ---- persistence across a reload ------------------------------------ */
   const beforeCount = await page.evaluate(
     () => document.querySelectorAll('.note-row').length,

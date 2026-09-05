@@ -916,6 +916,172 @@ body.resizing .pane-resizer::after {
   margin: 0 auto;
 }
 
+/* ---- the note's properties (rich text) ---------------------------------
+ *
+ * The frontmatter block, as a form. Rich text hides the raw `---` block
+ * (editor/livePreview.ts) and this opens over the top of the note from the
+ * date, so a note that has no properties — which is most of them — shows
+ * nothing at all until somebody asks. See ui/Properties.tsx.
+ */
+
+.editor-date-button {
+  padding: 2px 9px;
+  color: inherit;
+  border-radius: 7px;
+  transition:
+    color var(--dur),
+    background var(--dur);
+}
+.editor-date-button:hover {
+  color: var(--text-muted);
+  background: var(--row-hover);
+}
+.editor-date-button[aria-expanded='true'] {
+  color: var(--accent);
+}
+
+.properties {
+  flex: 0 0 auto;
+  /* Long lists scroll inside the panel rather than pushing the note away. */
+  max-height: 42%;
+  overflow-y: auto;
+  padding: 4px 16px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.editor-pane[data-width='measure'] .properties-inner {
+  max-width: var(--editor-measure);
+  margin: 0 auto;
+}
+.properties-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  /*
+   * A form, not the note: a value field that ran the full width of a wide pane
+   * would be a text box the size of a paragraph holding the word "draft".
+   */
+  max-width: 640px;
+}
+.properties-empty {
+  margin: 2px 2px 8px;
+  max-width: 46em;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-faint);
+}
+.property-row {
+  display: grid;
+  grid-template-columns: 22px minmax(80px, 170px) minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 4px;
+  border-radius: 7px;
+}
+.property-row:hover {
+  background: var(--row-hover);
+}
+.property-kind {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 26px;
+  border-radius: 5px;
+  color: var(--text-faint);
+}
+button.property-kind:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+.property-key,
+.property-value {
+  min-width: 0;
+  padding: 5px 6px;
+  font-size: 13px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  outline: none;
+}
+.property-key {
+  color: var(--text-muted);
+}
+.property-key:hover,
+.property-value:hover {
+  border-color: var(--border);
+}
+.property-key:focus,
+.property-value:focus {
+  border-color: var(--accent);
+  background: var(--bg);
+}
+.property-key::placeholder,
+.property-value::placeholder {
+  color: var(--text-faint);
+}
+.property-hint {
+  padding: 5px 7px;
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+.property-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 7px;
+  font-size: 13px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.property-check input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+/*
+ * Removing a property is one click with no confirmation behind it, so the
+ * button waits for the pointer to be on the row it belongs to rather than
+ * sitting there being clickable. Keyboard focus brings it back, and a touch
+ * screen — which has no hover to offer — keeps it on.
+ */
+.property-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  color: var(--text-faint);
+  opacity: 0;
+  transition: opacity var(--dur);
+}
+.property-row:hover .property-remove,
+.property-remove:focus-visible {
+  opacity: 1;
+}
+.property-remove:hover {
+  color: var(--danger);
+  background: var(--row-hover);
+}
+.property-add {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  margin-top: 3px;
+  padding: 5px 7px;
+  font-size: 12.5px;
+  color: var(--text-faint);
+  border-radius: 7px;
+}
+.property-add:hover {
+  color: var(--text);
+  background: var(--row-hover);
+}
+.property-add:disabled {
+  opacity: 0.5;
+}
+
 /* ---- a note that is out in a window of its own -------------------------
  *
  * What the pane shows while a popped-out window has the note. Deliberately a
@@ -2228,6 +2394,15 @@ body.resizing .pane-resizer::after {
   ::-webkit-scrollbar {
     width: 0;
     height: 0;
+  }
+  /* No hover to reveal it with. */
+  .property-remove {
+    opacity: 1;
+  }
+  .property-key,
+  .property-value {
+    /* Anything under 16px makes iOS Safari zoom the viewport on focus. */
+    font-size: 16px;
   }
   .icon-btn {
     width: 40px;

@@ -335,3 +335,29 @@ export const IconRichText = (p: P) => (
     <path d="M4 6h16M4 12h11M4 18h7" />
   </Svg>
 )
+
+/* ---- note properties ---------------------------------------------------
+ *
+ * The kind of value a frontmatter property holds, shown at the head of its row
+ * in the properties form. Small — 14px there — so each one is a couple of
+ * strokes and nothing else.
+ */
+
+export const IconText = (p: P) => (
+  <Svg {...p}>
+    <path d="M4 7h16M4 12h12M4 17h8" />
+  </Svg>
+)
+
+export const IconHash = (p: P) => (
+  <Svg {...p}>
+    <path d="M10 4 8 20M17 4l-2 16M4 9.5h16M3 14.5h16" />
+  </Svg>
+)
+
+export const IconCheckbox = (p: P) => (
+  <Svg {...p}>
+    <rect x="3.5" y="3.5" width="17" height="17" rx="4" />
+    <path d="m8 12.3 2.8 2.8L16.5 9" />
+  </Svg>
+)
