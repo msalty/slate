@@ -972,6 +972,276 @@ try {
     `${wide.shown} → ${backAgain.shown} groups`,
   )
 
+  /* ---- rich text, where the caret is in markup it cannot see -------------
+   * Every check here is a position that draws at the same pixel as another
+   * one: after a highlight's text and before its hidden `==`, at the start of
+   * `## Heading` and in front of the `#`, between a hidden `- ` and the
+   * checkbox after it. Each of them used to split the construct in half, and
+   * none of it is visible on screen — so the file is what gets asserted.
+   */
+  await page.evaluate(async (text) => {
+    const db = await new Promise((res, rej) => {
+      const r = indexedDB.open('slate')
+      r.onsuccess = () => res(r.result)
+      r.onerror = () => rej(r.error)
+    })
+    const tx = db.transaction('files', 'readwrite')
+    tx.objectStore('files').put({
+      path: 'Hidden Markup.md',
+      kind: 'note',
+      text,
+      mime: 'text/markdown',
+      size: text.length,
+      hash: 'hidden',
+      mtime: Date.now() + 30_000,
+      ctime: Date.now(),
+      dirty: true,
+      dirtyFlag: 1,
+      sync: {},
+    })
+    await new Promise((res) => {
+      tx.oncomplete = res
+    })
+  }, ['==Highlighted phrase==', '', '## Heading line', '', '- [ ] Test task', '', 'Some ==sample== words', '', '```js', 'const a = 1', '```', '', '## Deletable heading', '', '- [ ] second task', '', '## Cut me', '', 'joinable', '', '## Pulled up', ''].join('\n'))
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForSelector('.note-row')
+  await page.locator('.note-row', { hasText: 'Hidden Markup' }).first().click()
+  await page.waitForTimeout(600)
+  await startEditing()
+  check('the editor mode survives a reload', (await page.locator('.fmt-bar').count()) === 1)
+
+  /** The box of the rendered line holding some text, for clicking into. */
+  const lineBox = (needle) =>
+    page.locator('.cm-content .cm-line', { hasText: needle }).first().boundingBox()
+
+  /*
+   * The fence, which rich text hides everywhere else. It is where the language
+   * is written, and the language is the whole of whether the block is
+   * highlighted — so it comes back for the caret, exactly as a link's URL does.
+   */
+  const codeBox = await lineBox('const a = 1')
+  await page.mouse.click(codeBox.x + 20, codeBox.y + codeBox.height / 2)
+  await page.waitForTimeout(350)
+  check(
+    'a code fence shows itself while the caret is in the block',
+    (await page.locator('.cm-content').innerText()).includes('```js'),
+  )
+  check(
+    'and the language on it is syntax highlighted',
+    (await page.locator('.cm-line.cm-codeblock span').count()) > 2,
+  )
+
+  const phraseBox = await lineBox('Highlighted phrase')
+  await page.mouse.click(phraseBox.x + phraseBox.width - 4, phraseBox.y + phraseBox.height / 2)
+  await page.waitForTimeout(250)
+  check(
+    'the fence hides again once the caret leaves',
+    !(await page.locator('.cm-content').innerText()).includes('```'),
+  )
+
+  await page.keyboard.press('Enter')
+  check(
+    'Enter after a highlighted phrase breaks after the highlight, not through it',
+    (await noteAfterEdit('Highlighted phrase', '==Highlighted phrase==\n')).includes(
+      '==Highlighted phrase==\n',
+    ),
+  )
+
+  const headingBox = await lineBox('Heading line')
+  await page.mouse.click(headingBox.x + 1, headingBox.y + headingBox.height / 2)
+  await page.waitForTimeout(250)
+  await page.keyboard.press('Enter')
+  check(
+    'Enter at the start of a heading takes the heading down with its words',
+    (await noteAfterEdit('Heading line', '\n\n## Heading line')).includes('\n\n## Heading line'),
+  )
+
+  /*
+   * A checklist line has two caret positions on one stretch of screen — in
+   * front of the checkbox and behind it — and they mean different things.
+   * `clickCheckbox` aims at one of them the way a person does: to the left of
+   * the box, or to the right of it.
+   */
+  const clickCheckbox = async (needle, side) => {
+    const line = await lineBox(needle)
+    const box = await page
+      .locator('.cm-content .cm-line', { hasText: needle })
+      .first()
+      .locator('.cm-task-checkbox')
+      .first()
+      .boundingBox()
+    const x = side === 'front' ? Math.max(line.x + 1, box.x - 4) : box.x + box.width + 3
+    await page.mouse.click(x, line.y + line.height / 2)
+    await page.waitForTimeout(300)
+  }
+
+  await clickCheckbox('Test task', 'front')
+  await page.keyboard.press('Enter')
+  check(
+    'Enter in front of a checkbox takes the whole item down a line',
+    (await noteAfterEdit('Test task', '\n\n\n- [ ] Test task')).includes('\n\n\n- [ ] Test task'),
+    JSON.stringify((await noteContaining('Test task')).slice(0, 70)),
+  )
+  await page.keyboard.press('Backspace')
+  check(
+    'and Backspace in front of it brings the item back up, checkbox and all',
+    !(await noteAfterEdit('Test task', 'line\n\n- [ ] Test task')).includes(
+      '\n\n\n- [ ] Test task',
+    ) && (await noteContaining('Test task')).includes('- [ ] Test task'),
+    JSON.stringify((await noteContaining('Test task')).slice(0, 70)),
+  )
+
+  await clickCheckbox('Test task', 'back')
+  await page.keyboard.press('Enter')
+  check(
+    'Enter behind a checkbox opens another checkbox above it',
+    (await noteAfterEdit('Test task', '- [ ] \n- [ ] Test task')).includes('- [ ] \n- [ ] Test task'),
+  )
+
+  /*
+   * The toggle has to be an exact round trip. Off and on again used to give
+   * back two characters less every time, so the third press here is the one
+   * that matters: it wrapped `mple` when the fix was not in.
+   */
+  await page.locator('.cm-content .cm-highlight', { hasText: 'sample' }).first().dblclick()
+  await page.waitForTimeout(250)
+  await clickFormat('Highlight (⌘⇧H)')
+  await page.waitForTimeout(350)
+  const unhighlighted = await noteAfterEdit('sample', 'Some sample words')
+  check('a highlight comes off the words it was on', unhighlighted.includes('Some sample words'))
+  await clickFormat('Highlight (⌘⇧H)')
+  await page.waitForTimeout(350)
+  check(
+    'and goes back on exactly the same ones',
+    (await noteAfterEdit('sample', '==sample==')).includes('Some ==sample== words'),
+  )
+
+  /*
+   * And what leaves on the clipboard carries the markup the mode is hiding —
+   * selecting the word inside a highlight can only ever land on the word,
+   * since the `==` around it is atomic and the selection is merely against it.
+   */
+  const copiedMark = await page.evaluate(() => {
+    const dt = new DataTransfer()
+    document
+      .querySelector('.cm-content')
+      .dispatchEvent(
+        new ClipboardEvent('copy', { clipboardData: dt, bubbles: true, cancelable: true }),
+      )
+    return dt.getData('text/plain')
+  })
+  check(
+    'copying a highlighted word takes the highlight with it',
+    copiedMark === '==sample==',
+    JSON.stringify(copiedMark),
+  )
+
+  /*
+   * The same pixel, now with the deletion keys and the clipboard.
+   *
+   * A heading can only be selected from the first character of its text, since
+   * the `## ` in front of that has no geometry to drag across — so the copy
+   * used to come out plain and a cut used to leave the `## ` behind on a line
+   * of its own. Backspace from that same position used to take the heading off
+   * while leaving the blank line above it, which is to say it could not undo
+   * the Enter that had just made that blank line.
+   */
+  const headBox = await lineBox('Deletable heading')
+  await page.mouse.click(headBox.x + 20, headBox.y + headBox.height / 2)
+  await page.waitForTimeout(300)
+  await page.keyboard.press('Home')
+  await page.keyboard.press('Shift+End')
+  await page.waitForTimeout(200)
+  const copiedHeading = await page.evaluate(() => {
+    const dt = new DataTransfer()
+    document
+      .querySelector('.cm-content')
+      .dispatchEvent(
+        new ClipboardEvent('copy', { clipboardData: dt, bubbles: true, cancelable: true }),
+      )
+    return dt.getData('text/plain')
+  })
+  check(
+    'copying a heading takes the markers that make it one',
+    copiedHeading === '## Deletable heading',
+    JSON.stringify(copiedHeading),
+  )
+
+  await page.keyboard.press('Home')
+  await page.waitForTimeout(200)
+  await page.keyboard.press('Backspace')
+  check(
+    'Backspace at the start of a heading takes the blank line above it first',
+    (await noteAfterEdit('Deletable heading', '```\n## Deletable heading')).includes(
+      '```\n## Deletable heading',
+    ),
+  )
+  await page.keyboard.press('Backspace')
+  check(
+    'and the heading itself only on the press after that',
+    (await noteAfterEdit('Deletable heading', '```\nDeletable heading')).includes(
+      '```\nDeletable heading',
+    ),
+  )
+
+  /*
+   * Behind the checkbox, Backspace takes the checkbox — all of it. The bullet
+   * and the box are two separate hidden things in the document, and taking only
+   * the first left `[ ] second task`: a bullet with the characters of a
+   * checkbox in it, which is not a task and does not render as one.
+   */
+  await clickCheckbox('second task', 'back')
+  await page.keyboard.press('Backspace')
+  check(
+    'Backspace behind a checkbox takes the whole thing off',
+    (await noteAfterEdit('second task', '\nsecond task')).includes('\nsecond task') &&
+      !(await noteContaining('second task')).includes('[ ] second task'),
+    (await noteContaining('second task')).split('\n').slice(-3).join(' / '),
+  )
+
+  /* Cutting takes the markers out with the words, rather than stranding them. */
+  const cutBox = await lineBox('Cut me')
+  await page.mouse.click(cutBox.x + 20, cutBox.y + cutBox.height / 2)
+  await page.waitForTimeout(300)
+  await page.keyboard.press('Home')
+  await page.keyboard.press('Shift+End')
+  await page.waitForTimeout(200)
+  const cutText = await page.evaluate(() => {
+    const dt = new DataTransfer()
+    document
+      .querySelector('.cm-content')
+      .dispatchEvent(
+        new ClipboardEvent('cut', { clipboardData: dt, bubbles: true, cancelable: true }),
+      )
+    return dt.getData('text/plain')
+  })
+  check('cutting a heading takes its markers too', cutText === '## Cut me', JSON.stringify(cutText))
+  check(
+    'and leaves an empty line rather than a bare "## "',
+    !(await noteAfterEdit('joinable', '\n\n\njoinable')).includes('## \n'),
+    JSON.stringify((await noteContaining('joinable')).slice(-40)),
+  )
+
+  /*
+   * Delete at the end of a line, the same rule facing the other way: one press
+   * used to take a blank line and a heading's markers together, turning three
+   * lines into the single paragraph `joinablePulled up`.
+   */
+  const joinBox = await lineBox('joinable')
+  await page.mouse.click(joinBox.x + 20, joinBox.y + joinBox.height / 2)
+  await page.waitForTimeout(300)
+  await page.keyboard.press('End')
+  await page.keyboard.press('Delete')
+  check(
+    'Delete at the end of a line takes the blank line below before the heading under it',
+    (await noteAfterEdit('joinable', 'joinable\n## Pulled up')).includes('joinable\n## Pulled up'),
+  )
+  await page.keyboard.press('Delete')
+  check(
+    'and pulls the line up on the press after that',
+    (await noteAfterEdit('joinable', 'joinablePulled up')).includes('joinablePulled up'),
+  )
+
   await page.keyboard.press('Control+Shift+m')
   await page.waitForTimeout(300)
   check('cycling lands back in live preview', (await page.locator('.fmt-bar').count()) === 0)

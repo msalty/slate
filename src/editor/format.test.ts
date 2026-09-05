@@ -9,6 +9,7 @@
 import { describe, expect, it } from 'vitest'
 import { EditorState, type TransactionSpec } from '@codemirror/state'
 import {
+  expandToMarkup,
   indentList,
   inspect,
   parseLine,
@@ -185,6 +186,28 @@ describe('inline marks', () => {
     expect(out(s, toggleInline(s, 'bold'))).toBe('make th‸is bold')
   })
 
+  /*
+   * The toggle has to be an exact round trip. It was not: unwrapping left the
+   * anchor where it stood while the text moved back two characters under it,
+   * so highlighting and unhighlighting the same phrase repeatedly ate it two
+   * characters at a time, without the user touching the selection.
+   */
+  it('gives back exactly the selection it wrapped', () => {
+    let s = st('«Some» sample words')
+    for (let i = 0; i < 4; i++) {
+      expect(out(s, toggleInline(s, 'highlight'))).toBe('==«Some»== sample words')
+      s = s.update(toggleInline(s, 'highlight')).state
+      expect(out(s, toggleInline(s, 'highlight'))).toBe('«Some» sample words')
+      s = s.update(toggleInline(s, 'highlight')).state
+    }
+  })
+
+  it('keeps a caret against the same character when the wrapper goes', () => {
+    expect(out(st('a **bo‸ld** b'), toggleInline(st('a **bo‸ld** b'), 'bold'))).toBe('a bo‸ld b')
+    expect(out(st('a **‸bold** b'), toggleInline(st('a **‸bold** b'), 'bold'))).toBe('a ‸bold b')
+    expect(out(st('a **bold‸** b'), toggleInline(st('a **bold‸** b'), 'bold'))).toBe('a bold‸ b')
+  })
+
   it('wraps the word under a bare caret', () => {
     const s = st('make thi‸s bold')
     expect(text(s, toggleInline(s, 'italic'))).toBe('make *this* bold')
@@ -214,6 +237,54 @@ describe('inline marks', () => {
 
   it('treats code content as literal', () => {
     expect(scanInline('`a *b* c`').map((s) => s.mark)).toEqual(['code'])
+  })
+})
+
+describe('expandToMarkup', () => {
+  const range = (fixture: string) => {
+    const s = st(fixture)
+    const { from, to } = s.selection.main
+    const g = expandToMarkup(s, from, to)
+    const doc = s.doc.toString()
+    return `${doc.slice(0, g.from)}«${doc.slice(g.from, g.to)}»${doc.slice(g.to)}`
+  }
+
+  it('takes in the delimiters a selection sits exactly inside', () => {
+    expect(range('a ==«word»== b')).toBe('a «==word==» b')
+    expect(range('a **«word»** b')).toBe('a «**word**» b')
+  })
+
+  it('unwraps nested marks one layer at a time', () => {
+    expect(range('**==«word»==**')).toBe('«**==word==**»')
+  })
+
+  it('leaves a selection that covers only part of a span', () => {
+    expect(range('a ==w«or»d== b')).toBe('a ==w«or»d== b')
+    expect(range('a «==word==» b')).toBe('a «==word==» b')
+    expect(range('«a ==word== b»')).toBe('«a ==word== b»')
+  })
+
+  /*
+   * The line's own markers, for the same reason: Home-then-Shift-End on a
+   * heading can only ever select the words, so the copy came out plain and a
+   * cut left the `## ` behind on a line of its own.
+   */
+  it('takes in the markers at the head of the line', () => {
+    expect(range('## «Heading line»')).toBe('«## Heading line»')
+    expect(range('- [ ] «a task»')).toBe('«- [ ] a task»')
+    expect(range('> «quoted»')).toBe('«> quoted»')
+    expect(range('## «Heading line\nand the line below»')).toBe(
+      '«## Heading line\nand the line below»',
+    )
+  })
+
+  it('and both at once, when the whole line is one highlight', () => {
+    expect(range('## ==«Heading line»==')).toBe('«## ==Heading line==»')
+  })
+
+  it('leaves a selection that starts inside the line alone', () => {
+    expect(range('## Heading «line»')).toBe('## Heading «line»')
+    expect(range('## «Heading» line')).toBe('## «Heading» line')
   })
 })
 

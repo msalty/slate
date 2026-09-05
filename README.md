@@ -18,8 +18,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 405 unit and two-device sync tests
-node scripts/smoke.mjs # 358-check browser smoke test against dist/
+npm test               # 451 unit and two-device sync tests
+node scripts/smoke.mjs # 385-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -39,14 +39,37 @@ so nothing is ever silently rewritten:
   lights up to show what the caret is sitting in. On a phone the same controls
   open as a Format sheet from the **Aa** button. Markdown still works while you
   type — `# ` at the start of a line is still a Title, and the marker vanishes
-  the moment it becomes one — and backspacing at the start of a styled line
-  takes the style off, because the hidden marks behave as single characters.
-  Applying a marker leaves the caret after it, so a new checklist item is ready
-  to be typed into rather than in front of its own checkbox. The bar also
-  inserts the two things markdown makes tedious by hand: a **link**, through a
-  dialog with the words and the address as separate fields, and a **table**,
-  which then offers add/remove row and column from the same button, along with
-    *Copy table* for getting one into a spreadsheet. A table cell
+  the moment it becomes one. Applying a marker leaves the caret after it, so a
+  new checklist item is ready to be typed into rather than in front of its own
+  checkbox.
+
+  **Every key is measured against what you can see**, rather than against the
+  characters behind it. A checklist line has two caret positions on one stretch
+  of screen — in front of the checkbox and behind it — and they do different
+  things, which is the point of having both:
+
+  |  | Enter | Backspace |
+  | --- | --- | --- |
+  | in front of the checkbox | the item moves down a line | the item moves back up |
+  | behind it | another checkbox, above | the checkbox comes off |
+
+  Click either side of the box to get the one you want; the arrow keys step
+  over the whole marker rather than through it, and typing in front of a
+  checkbox puts the words in the item rather than in front of its markup. A
+  bullet works the same way. A heading has no marker drawn for it, so its two
+  positions are one place: Enter there takes the heading down with its words and
+  leaves blank space above, and Backspace takes that space back before it takes
+  the style off — so it undoes the Enter that made it. Delete at the end of a
+  line is the same rule facing the other way. Elsewhere on a line the same idea
+  holds: Enter at the end of a highlighted phrase lands after the highlight
+  rather than through it. And what you copy carries what you cannot see with it:
+  a highlighted word arrives somewhere else still highlighted, a heading still a
+  heading, and cutting one leaves an empty line rather than a stray `## `.
+
+  The bar also inserts the two things markdown makes tedious by hand: a
+  **link**, through a dialog with the words and the address as separate fields,
+  and a **table**, which then offers add/remove row and column from the same
+  button, along with *Copy table* for getting one into a spreadsheet. A table cell
   is typed into directly, and on a phone it stays outlined while the Format
   sheet is up — the sheet only opens once the keyboard is down, so the cell has
   necessarily lost its focus, and "add a row below" has to be beside a row you
@@ -244,6 +267,14 @@ does.
 pointer, always visible on a touch screen, and it works while a note is being
 read, which is where it is wanted most. It copies the code without its fences,
 and without the indentation of a block nested in a list.
+
+The fence itself comes back the moment the caret is in the block, in rich text
+as well as live preview. The language written on it — ` ```js ` — is what turns
+the syntax highlighting on, and it lives in that one place with no picker
+anywhere else, so a permanently hidden fence would be a block you could not
+label and could not find the ends of. Everything else about a code block stays
+hidden in rich text; this is a fence, a link's URL and a callout's `[!type]`
+being the same kind of thing.
 
 **A note names itself, if you let it.** A note made with *New note here* — and
 every note started from a template — is called `Untitled`, so typing a heading
@@ -953,6 +984,8 @@ src/
 ├─ adapters/      webdav.ts · gdrive.ts · memory.ts (tests)
 ├─ editor/        CodeMirror 6: live preview, widgets, completion, paste
 │  ├─ format.ts     the formatting commands behind the rich-text bar
+│  ├─ caret.ts      the two edges of a line whose markup is hidden, and what
+│  │                 Enter, Backspace and Delete do on each of them
 │  ├─ links.ts      external URI recognition, opening and editing
 │  ├─ linkClicks.ts following a link from the text — clicks and taps alike
 │  ├─ table.ts      the pipe-table grid: parse, edit rows/columns, print

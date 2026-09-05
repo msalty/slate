@@ -61,6 +61,14 @@ import {
   formatSnapshot,
   inspect,
 } from './format'
+import {
+  backspaceInRichText,
+  caretOutOfPrefixes,
+  deleteInRichText,
+  fixEnterPosition,
+  hiddenHeadAtoms,
+  typeIntoText,
+} from './caret'
 import { clipboardHandler } from './paste'
 import { editableCompartment, editableFacet } from './reading'
 import { WikiLink } from './wikilink-syntax'
@@ -133,16 +141,38 @@ const formattingKeymap = [
   { key: 'Mod-]', run: applyIndent(1) },
   { key: 'Mod-[', run: applyIndent(-1) },
   { key: 'Mod-/', run: toggleComment },
-  // Continue lists and quotes on Enter — the single highest-value markdown
-  // affordance, so it takes precedence over the default newline command.
-  //
-  // It must hand off to the completion popup first, though. This binding sits
-  // at high precedence, so without the explicit check it swallows Enter while a
-  // wikilink suggestion is open and inserts a newline instead of accepting it.
+]
+
+/**
+ * The three keys that have to be answered before markdown's own keymap.
+ *
+ * `markdown()` installs Enter and Backspace of its own at `Prec.high` — the
+ * same precedence as the formatting keymap above, and registered ahead of it,
+ * so it wins every tie. That is exactly right for a paragraph and wrong for
+ * anything rich text is hiding: its Enter continues a list before the caret has
+ * been taken out of markup nobody can see, and its Backspace takes a marker off
+ * before the blank line above it. Sitting at the top and handing back
+ * everything they do not claim is the only ordering that works, and the cost of
+ * getting it wrong is silent — the binding simply never runs.
+ *
+ * Enter still defers to the completion popup by hand. It has to: at this
+ * precedence it would otherwise answer the Enter that was accepting a wikilink
+ * suggestion, and insert a newline instead.
+ */
+const hiddenMarkupKeymap = [
   {
     key: 'Enter',
-    run: (view: EditorView) => acceptCompletion(view) || insertNewlineContinueMarkup(view),
+    run: (view: EditorView) =>
+      acceptCompletion(view) || fixEnterPosition(view) || insertNewlineContinueMarkup(view),
   },
+  /*
+   * The deletion keys, for the positions they can reach hidden markup from:
+   * either edge of a line's hidden head, and the end of the line above one.
+   * Both fall through everywhere else, which is everywhere the caret is among
+   * characters the user can see. See editor/caret.ts.
+   */
+  { key: 'Backspace', run: backspaceInRichText },
+  { key: 'Delete', run: deleteInRichText },
 ]
 
 /** The three ways the same markdown can be presented. */
@@ -233,6 +263,14 @@ export function previewExtensions(mode: EditorMode): Extension {
     ? [
         previewMode.of('rich'),
         ...shared,
+        /*
+         * Rich text is the only mode that hides the head of a line, so it is
+         * the only one that has to say where the caret may stand in it, and
+         * what happens when something is typed there. See editor/caret.ts.
+         */
+        hiddenHeadAtoms,
+        caretOutOfPrefixes,
+        typeIntoText,
         formatWatcher,
         cellTargetWatcher,
         /*
@@ -290,6 +328,7 @@ export function createEditorState(opts: EditorOptions): EditorState {
       EditorView.theme({ '&': { '--editor-font-size': `${opts.fontSize}px` } } as never),
     ),
     clipboardHandler,
+    Prec.highest(keymap.of(hiddenMarkupKeymap)),
     Prec.high(keymap.of(formattingKeymap)),
     keymap.of([
       ...closeBracketsKeymap,

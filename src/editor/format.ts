@@ -387,17 +387,23 @@ export function toggleInline(state: EditorState, mark: InlineMark): TransactionS
   return state.changeByRange((range) => {
     const existing = spanAround(state, mark, range.from, range.to)
     if (existing) {
-      const shift = (pos: number) =>
-        pos - (pos > existing.innerFrom ? open.length : 0) - (pos > existing.innerTo ? close.length : 0)
+      /*
+       * Both ends of the range sit within the span's inner text — that is what
+       * `spanAround` matched on — so the only delimiter removed from in front
+       * of them is the opening one, and both move back by exactly its length.
+       *
+       * Getting this wrong is not cosmetic. An off-by-one here left the anchor
+       * where it was, so a highlight toggled off and on again came back two
+       * characters shorter every time: the selection crept forward through its
+       * own text while the user held still.
+       */
+      const shift = (pos: number) => pos - open.length
       return {
         changes: [
           { from: existing.from, to: existing.innerFrom, insert: '' },
           { from: existing.innerTo, to: existing.to, insert: '' },
         ],
-        range: EditorSelection.range(
-          Math.max(existing.from, shift(range.from)),
-          Math.max(existing.from, shift(range.to)),
-        ),
+        range: EditorSelection.range(shift(range.anchor), shift(range.head)),
       }
     }
 
@@ -427,6 +433,52 @@ export function toggleInline(state: EditorState, mark: InlineMark): TransactionS
         : EditorSelection.cursor(from + open.length),
     }
   })
+}
+
+/**
+ * Grow a range outward over the markup it covers the whole of but cannot see.
+ *
+ * In rich text the syntax is hidden, so a selection can only ever be made of
+ * the visible text: double-clicking a highlighted word lands on `word` and not
+ * `==word==`, and Home-then-Shift-End on a heading takes `Heading` and not
+ * `## Heading` — the hidden characters are atomic, and CodeMirror pushes a
+ * selection edge out of an atomic range it is *inside*, never off one it is
+ * merely against. Both then leave on the clipboard as plain text, and a cut
+ * leaves the orphaned `## ` or `====` behind in the note.
+ *
+ * Two widenings, in that order: inline delimiters the selection sits exactly
+ * inside — one layer at a time, so `**==word==**` comes back whole — and then
+ * the markers at the head of the line, when the selection covers all of that
+ * line's text.
+ *
+ * Deliberately exact: a selection covering only part of a construct is left
+ * alone, because there is no honest way to widen it — the user picked those
+ * characters, and quietly adding markup around them would be worse than losing
+ * it.
+ */
+export function expandToMarkup(
+  state: EditorState,
+  from: number,
+  to: number,
+): { from: number; to: number } {
+  if (from === to) return { from, to }
+  const line = state.doc.lineAt(from)
+
+  if (to <= line.to) {
+    const spans = scanInline(line.text, line.from)
+    for (;;) {
+      const hit = spans.find((s) => s.innerFrom === from && s.innerTo === to)
+      if (!hit) break
+      from = hit.from
+      to = hit.to
+    }
+  }
+
+  // `to >= line.to` rather than `===`: a selection running on into the lines
+  // below still took the whole of this line's text with it.
+  const p = parseLine(line.text)
+  if (p.contentFrom && from === line.from + p.contentFrom && to >= line.to) from = line.from
+  return { from, to }
 }
 
 /* -------------------------------------------------------------- inspection */

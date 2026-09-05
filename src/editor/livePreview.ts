@@ -574,8 +574,22 @@ function buildDecorations(view: EditorView): DecorationSet {
           const parent = node.node.parent
           const scopeFrom = parent ? parent.from : node.from
           const scopeTo = parent ? parent.to : node.to
-          // Link brackets are structure: the URL they hide has to be reachable.
-          const kind = name === 'LinkMark' || name === 'WikiLinkMark' ? 'structure' : 'format'
+          /*
+           * Link brackets are structure: the URL they hide has to be reachable.
+           *
+           * So is a code fence, for the same reason. The language on it — the
+           * whole of whether a block is syntax highlighted — is written into
+           * the opening fence and nowhere else, and there is no picker for it.
+           * A permanently hidden fence leaves a block you cannot label, cannot
+           * see the ends of, and cannot get the caret past without counting
+           * lines. Inline code's backticks stay formatting: they carry nothing.
+           */
+          const kind =
+            name === 'LinkMark' ||
+            name === 'WikiLinkMark' ||
+            (name === 'CodeMark' && parent?.name === 'FencedCode')
+              ? 'structure'
+              : 'format'
           const reveal =
             name === 'HeaderMark' || name === 'QuoteMark'
               ? lineTouched(state, scopeFrom, scopeTo, kind)
