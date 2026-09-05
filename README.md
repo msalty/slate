@@ -490,6 +490,15 @@ guaranteed minimum width in all of them, so when space runs short a side panel
 is dropped rather than the writing surface squeezed. Crossing a breakpoint never
 opens or closes anything by itself.
 
+**Back and forward.** Two arrows to the left of the note's title, over the notes
+this window has opened — a vault is a web of links, and three notes into
+following one you want the one you started from, which a list sorted by date
+cannot give you. Each arrow's tooltip names the note it would take you to, so
+"back" is answerable without pressing it first, and a note that has since been
+renamed or deleted is stepped over rather than offered. Desktop only: a phone's
+editor header already has a back arrow in that spot and it means something
+else — it returns to the note list, which is the right thing for it to do.
+
 **Focus mode, and a note in a window of its own.** On a desktop the editor's
 header carries one more button. Press it (or ⌘⇧F) and the note takes the whole
 window — no sidebar, no list, no calendar, no status bar, and the text held to a
@@ -934,6 +943,8 @@ src/
 │  └─ pickImage.ts   camera / photo library / file insertion
 └─ ui/            Preact components
    ├─ layout.ts      the three layout modes and panel visibility
+   ├─ backForward.ts the trail behind the two arrows, kept by watching what
+   │                 is open rather than by every caller remembering to say
    ├─ popout.ts      a note in a window of its own, and what the windows tell
    │                 each other so one vault stays one vault
    ├─ PopoutWindow.tsx  the one-note shell that window boots into

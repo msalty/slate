@@ -133,6 +133,32 @@ const showDay = async (offset) => {
   return cell
 }
 
+/**
+ * A point in the open note that is text rather than a control.
+ *
+ * Which note is in front of these checks depends on what earlier sections
+ * touched last, and a note that opens on a task line has controls where the
+ * text would be: the checkbox ticks and the date chip opens its picker, both
+ * deliberately *instead* of starting to edit, so that reading through a note
+ * never drops you into the editor. Pressing one of those and calling it a
+ * failure to start editing tests the opposite of the rule. Falls back to the
+ * empty space under the last line, which the editor answers the same way.
+ */
+const noteTextPoint = (scope = '') =>
+  page.evaluate((s) => {
+    const controls =
+      'input, .cm-due-chip, .cm-task-checkbox, .cm-embed, .cm-code-copy, .cm-table-wrap, a'
+    const plain = [...document.querySelectorAll(`${s} .cm-line`)].find(
+      (l) => l.textContent.trim() && !l.querySelector(controls),
+    )
+    if (plain) {
+      const r = plain.getBoundingClientRect()
+      return { x: r.left + Math.min(24, r.width / 2), y: r.top + r.height / 2 }
+    }
+    const r = document.querySelector(`${s} .cm-scroller`).getBoundingClientRect()
+    return { x: r.left + r.width / 2, y: r.bottom - 24 }
+  }, scope)
+
 const startEditing = async () => {
   const edit = page.locator('.editor-pane [aria-label="Edit note"]')
   if (await edit.count()) {
@@ -411,6 +437,36 @@ try {
   /* ---- backlinks ----------------------------------------------------- */
   const backlinks = await page.locator('.backlinks .backlink-row').count()
   check('backlink is recorded', backlinks > 0, `${backlinks} linked mentions`)
+
+  /* ---- back and forward ------------------------------------------------
+   *
+   * Straight after a link has been followed, which is the whole reason the two
+   * arrows exist: the note list is sorted by date and cannot tell you where you
+   * have just been.
+   */
+  if (linkCount > 0) {
+    const cameFrom = 'Packing List'
+    check(
+      'Back offers the note the link was followed from',
+      (await page.getAttribute('.editor-nav [aria-label="Back"]', 'title')) === `Back to “${cameFrom}”`,
+      await page.getAttribute('.editor-nav [aria-label="Back"]', 'title'),
+    )
+    check('Forward has nowhere to go yet', await page.locator('.editor-nav [aria-label="Forward"]').isDisabled())
+
+    await page.click('.editor-nav [aria-label="Back"]')
+    await page.waitForTimeout(350)
+    check(
+      'Back returns to it',
+      (await page.locator('.editor-title-input').inputValue()) === cameFrom,
+    )
+
+    await page.click('.editor-nav [aria-label="Forward"]')
+    await page.waitForTimeout(350)
+    check(
+      'and Forward comes back again',
+      (await page.locator('.editor-title-input').inputValue()) === 'Lisbon Trip',
+    )
+  }
 
   /* ---- paste an image ------------------------------------------------ */
   await page.locator('.cm-content').click()
@@ -2090,7 +2146,8 @@ try {
       !phoneOpened.focused.includes('cm-content'),
     `reading=${phoneOpened.flag}, contenteditable=${phoneOpened.editable}, focused ${phoneOpened.focused || 'nothing'}`,
   )
-  await page.locator('.editor-overlay .cm-line').first().tap()
+  const tapAt = await noteTextPoint('.editor-overlay')
+  await page.touchscreen.tap(tapAt.x, tapAt.y)
   await page.waitForTimeout(300)
   const phoneTapped = await readingState()
   check(
@@ -2116,7 +2173,8 @@ try {
   await chooseMode('Rich text')
   await startEditing()
   check('the phone can switch to rich text', (await page.locator('.fmt-open').count()) === 1)
-  await page.locator('.cm-line').first().click()
+  const richAt = await noteTextPoint('.editor-overlay')
+  await page.mouse.click(richAt.x, richAt.y)
   await page.waitForTimeout(250)
   check(
     'tapping the note focuses it for typing',
@@ -2150,7 +2208,8 @@ try {
   check('the caret stays visible with the editor blurred', fmt?.cursorShown === 'block', fmt?.cursorShown)
   await page.screenshot({ path: join(SHOTS, '18-phone-format.png') })
 
-  await page.locator('.cm-line').first().click()
+  const backToTyping = await noteTextPoint('.editor-overlay')
+  await page.mouse.click(backToTyping.x, backToTyping.y)
   await page.waitForTimeout(400)
   check('touching the note closes the sheet', (await page.locator('.fmt-sheet').count()) === 0)
   check(
@@ -2259,7 +2318,8 @@ try {
     'and hands the cell back for typing',
     (await page.evaluate(() => document.activeElement?.className)) === 'cm-table-cell',
   )
-  await page.locator('.cm-line').first().tap()
+  const outOfTheTable = await noteTextPoint('.editor-overlay')
+  await page.touchscreen.tap(outOfTheTable.x, outOfTheTable.y)
   await page.waitForTimeout(300)
 
   /* ---- tapping a link on a phone -----------------------------------------

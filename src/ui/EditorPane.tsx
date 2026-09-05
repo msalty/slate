@@ -76,6 +76,7 @@ import {
   IconTrash,
 } from './Icons'
 import { openMenu, type MenuItem } from './Menu'
+import { NoteNav } from './NoteNav'
 import { hasCamera, pickAndInsert } from '../editor/pickImage'
 
 export function EditorPane() {
@@ -350,6 +351,9 @@ export function EditorPane() {
     return (
       <div class="pane editor-pane">
         <div class="pane-head">
+          {/* Back still means something with nothing open — a note deleted a
+              moment ago is exactly when you want the one before it. */}
+          {!compact && <NoteNav />}
           <span class="spacer" />
           {!detached && (
             <button
@@ -380,6 +384,7 @@ export function EditorPane() {
     return (
       <div class="pane editor-pane">
         <div class="pane-head editor-head">
+          {!compact && <NoteNav />}
           <span class="editor-title-input">{entry.title}</span>
           <span class="spacer" />
         </div>
@@ -470,10 +475,12 @@ export function EditorPane() {
       data-format-open={rich && compact && formatSheetOpen.value ? '1' : '0'}
     >
       <div class="pane-head editor-head">
-        {compact && (
+        {compact ? (
           <button class="icon-btn" onClick={closeMobileEditor} aria-label="Back">
             <IconChevronLeft size={20} />
           </button>
+        ) : (
+          <NoteNav />
         )}
         {trashed ? (
           <span class="editor-title-input" aria-label="Deleted note">

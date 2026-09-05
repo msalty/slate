@@ -854,6 +854,21 @@ body.resizing .pane-resizer::after {
 .editor-pane[data-scrolled='1'] .editor-head {
   border-bottom-color: var(--border);
 }
+/*
+ * Back and forward. A tight pair rather than two buttons that happen to be
+ * next to each other — they are one control, and the header's 4px gap between
+ * everything else is what would make them read as two.
+ */
+.editor-nav {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex: 0 0 auto;
+  margin-right: 2px;
+}
+.editor-nav .icon-btn {
+  width: 28px;
+}
 .editor-title-input {
   border: none;
   background: none;
