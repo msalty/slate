@@ -1529,6 +1529,52 @@ try {
   check('folders persist across a reload', (await page.locator('.side-row:has-text("Clients")').count()) > 0)
   await page.screenshot({ path: join(SHOTS, '08-tag-folders.png') })
 
+  /* ---- the folder tree remembers its shape ------------------------------
+   *
+   * Which rows are unfolded is per folder and kept in this device's own store,
+   * so it has to be exercised in a real browser: the case that matters is a row
+   * that gets unmounted — by its parent folding, or by the whole section — and
+   * has to come back the way it was rather than at some default. An exact name
+   * match, because "Folders" is also a substring of "Tag Folders".
+   */
+  const folderGroup = page.locator('.side-group', {
+    has: page.locator('.side-group-name', { hasText: /^Folders$/ }),
+  })
+  const folderRow = (name) =>
+    folderGroup
+      .locator('.side-row')
+      .filter({ has: page.locator('.side-name', { hasText: new RegExp(`^${name}$`) }) })
+  const shown = async (name) => (await folderRow(name).count()) > 0
+  const foldFolder = async (name) => {
+    await folderRow(name).locator('.disclose').first().click()
+    await page.waitForTimeout(250)
+  }
+  const foldSection = async () => {
+    await folderGroup.locator('.side-group-toggle').first().click()
+    await page.waitForTimeout(250)
+  }
+
+  check('a folder unfolded to make a subfolder stays unfolded over a reload', await shown('Acme'))
+
+  promptReply = 'Roadmap'
+  await folderRow('Acme').click({ button: 'right' })
+  await page.waitForTimeout(250)
+  await page.locator('.menu-item:has-text("New subfolder")').click()
+  await page.waitForTimeout(450)
+  check('a third level can be created', await shown('Roadmap'))
+
+  await foldFolder('Acme')
+  check('folding a folder hides what is inside it', !(await shown('Roadmap')))
+
+  await foldSection()
+  check('folding the section hides the tree', !(await shown('Clients')))
+  await foldSection()
+  check('unfolding the section brings back the tree', await shown('Clients'))
+  check('with the shape it had, not everything unfolded', (await shown('Acme')) && !(await shown('Roadmap')))
+
+  await foldFolder('Acme')
+  check('and a folder unfolds again to what it was', await shown('Roadmap'))
+
 
 
   /* ---- tables render properly -------------------------------------------

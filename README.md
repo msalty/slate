@@ -570,6 +570,13 @@ fold away from their header, and a folded one carries the count of what is
 inside it. Which are folded is a preference like any other, so it survives a
 reload and follows the vault to your other devices.
 
+Folders inside those sections keep their own shape. A folder is unfolded
+because you unfolded it, so unfolding a section — or a folder — never unfolds
+everything beneath it, and folding one and opening it again brings back exactly
+the tree you left rather than a fresh default. That shape is about the window in
+front of you rather than the vault, so it stays on this device and survives a
+reload here.
+
 **Search filters the list in front of you.** In Files it searches files, in
 Deleted it searches deleted things, in Tasks it searches tasks — the header and
 the placeholder both name which, so a screen of five results never goes on
