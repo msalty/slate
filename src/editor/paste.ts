@@ -14,7 +14,7 @@ import { addAttachment } from '../core/vault'
 import { attachmentPath, imagesFromDataTransfer, optimizeImage } from '../core/images'
 import { settings } from '../core/settings'
 import { uid } from '../core/util'
-import { expandToMarks } from './format'
+import { expandToMarkup } from './format'
 import { previewMode } from './livePreview'
 import { cellText, currentTable, renderTable, tableRowsInSelection } from './table'
 import { gridToHtml, looksLikeGrid, parseDelimited, tableFromGrid } from './tsv'
@@ -197,16 +197,16 @@ async function writeBothFlavours(text: string, html: string): Promise<boolean> {
 /**
  * The selection to put on the clipboard, when it is not the one the user made.
  *
- * Rich text hides the `==` around a highlight, so double-clicking the word
- * inside one selects the word and nothing else — and the copy comes out plain.
- * Null when the selection already covers whatever it is inside, which is every
- * other mode and nearly every selection in this one.
+ * Rich text hides the `==` around a highlight and the `## ` in front of a
+ * heading, so a selection can only ever be the visible text between them — and
+ * the copy comes out plain. Null when the selection already covers whatever it
+ * is inside, which is every other mode and nearly every selection in this one.
  */
 function markedSelection(view: EditorView): { from: number; to: number } | null {
   if (view.state.facet(previewMode) !== 'rich') return null
   const { main } = view.state.selection
   if (main.empty) return null
-  const grown = expandToMarks(view.state, main.from, main.to)
+  const grown = expandToMarkup(view.state, main.from, main.to)
   return grown.from === main.from && grown.to === main.to ? null : grown
 }
 

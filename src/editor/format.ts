@@ -436,35 +436,49 @@ export function toggleInline(state: EditorState, mark: InlineMark): TransactionS
 }
 
 /**
- * Grow a range outward over any inline delimiters it exactly encloses.
+ * Grow a range outward over the markup it covers the whole of but cannot see.
  *
- * In rich text the delimiters are hidden, so selecting a highlighted word —
- * double-clicking it, most often — lands the selection on `word` and not on
- * `==word==`: the `==` is atomic, and CodeMirror only pushes a selection edge
- * out of an atomic range it is *inside*, never off one it is merely against.
- * Copying then produces bare text, and the highlight is lost on the way out of
- * the note. Nested marks unwrap one layer at a time, so `**==word==**` comes
- * back whole.
+ * In rich text the syntax is hidden, so a selection can only ever be made of
+ * the visible text: double-clicking a highlighted word lands on `word` and not
+ * `==word==`, and Home-then-Shift-End on a heading takes `Heading` and not
+ * `## Heading` — the hidden characters are atomic, and CodeMirror pushes a
+ * selection edge out of an atomic range it is *inside*, never off one it is
+ * merely against. Both then leave on the clipboard as plain text, and a cut
+ * leaves the orphaned `## ` or `====` behind in the note.
  *
- * Deliberately exact: a selection that covers only part of a span is left
+ * Two widenings, in that order: inline delimiters the selection sits exactly
+ * inside — one layer at a time, so `**==word==**` comes back whole — and then
+ * the markers at the head of the line, when the selection covers all of that
+ * line's text.
+ *
+ * Deliberately exact: a selection covering only part of a construct is left
  * alone, because there is no honest way to widen it — the user picked those
- * characters, and quietly adding two more to each end would be worse than
- * losing the mark.
+ * characters, and quietly adding markup around them would be worse than losing
+ * it.
  */
-export function expandToMarks(
+export function expandToMarkup(
   state: EditorState,
   from: number,
   to: number,
 ): { from: number; to: number } {
+  if (from === to) return { from, to }
   const line = state.doc.lineAt(from)
-  if (from === to || to > line.to) return { from, to }
-  const spans = scanInline(line.text, line.from)
-  for (;;) {
-    const hit = spans.find((s) => s.innerFrom === from && s.innerTo === to)
-    if (!hit) return { from, to }
-    from = hit.from
-    to = hit.to
+
+  if (to <= line.to) {
+    const spans = scanInline(line.text, line.from)
+    for (;;) {
+      const hit = spans.find((s) => s.innerFrom === from && s.innerTo === to)
+      if (!hit) break
+      from = hit.from
+      to = hit.to
+    }
   }
+
+  // `to >= line.to` rather than `===`: a selection running on into the lines
+  // below still took the whole of this line's text with it.
+  const p = parseLine(line.text)
+  if (p.contentFrom && from === line.from + p.contentFrom && to >= line.to) from = line.from
+  return { from, to }
 }
 
 /* -------------------------------------------------------------- inspection */

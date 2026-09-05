@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'vitest'
 import { EditorState, type TransactionSpec } from '@codemirror/state'
 import {
-  expandToMarks,
+  expandToMarkup,
   indentList,
   inspect,
   parseLine,
@@ -240,11 +240,11 @@ describe('inline marks', () => {
   })
 })
 
-describe('expandToMarks', () => {
+describe('expandToMarkup', () => {
   const range = (fixture: string) => {
     const s = st(fixture)
     const { from, to } = s.selection.main
-    const g = expandToMarks(s, from, to)
+    const g = expandToMarkup(s, from, to)
     const doc = s.doc.toString()
     return `${doc.slice(0, g.from)}«${doc.slice(g.from, g.to)}»${doc.slice(g.to)}`
   }
@@ -262,6 +262,29 @@ describe('expandToMarks', () => {
     expect(range('a ==w«or»d== b')).toBe('a ==w«or»d== b')
     expect(range('a «==word==» b')).toBe('a «==word==» b')
     expect(range('«a ==word== b»')).toBe('«a ==word== b»')
+  })
+
+  /*
+   * The line's own markers, for the same reason: Home-then-Shift-End on a
+   * heading can only ever select the words, so the copy came out plain and a
+   * cut left the `## ` behind on a line of its own.
+   */
+  it('takes in the markers at the head of the line', () => {
+    expect(range('## «Heading line»')).toBe('«## Heading line»')
+    expect(range('- [ ] «a task»')).toBe('«- [ ] a task»')
+    expect(range('> «quoted»')).toBe('«> quoted»')
+    expect(range('## «Heading line\nand the line below»')).toBe(
+      '«## Heading line\nand the line below»',
+    )
+  })
+
+  it('and both at once, when the whole line is one highlight', () => {
+    expect(range('## ==«Heading line»==')).toBe('«## ==Heading line==»')
+  })
+
+  it('leaves a selection that starts inside the line alone', () => {
+    expect(range('## Heading «line»')).toBe('## Heading «line»')
+    expect(range('## «Heading» line')).toBe('## «Heading» line')
   })
 })
 

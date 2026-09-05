@@ -18,8 +18,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 405 unit and two-device sync tests
-node scripts/smoke.mjs # 358-check browser smoke test against dist/
+npm test               # 447 unit and two-device sync tests
+node scripts/smoke.mjs # 383-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -39,20 +39,26 @@ so nothing is ever silently rewritten:
   lights up to show what the caret is sitting in. On a phone the same controls
   open as a Format sheet from the **Aa** button. Markdown still works while you
   type — `# ` at the start of a line is still a Title, and the marker vanishes
-  the moment it becomes one — and backspacing at the start of a styled line
-  takes the style off, because the hidden marks behave as single characters.
-  Applying a marker leaves the caret after it, so a new checklist item is ready
-  to be typed into rather than in front of its own checkbox. Enter is measured
-  against what you can see rather than against the characters behind it: at the
-  start of a heading the heading goes down with its words and leaves blank space
-  above, in front of a checkbox it opens an empty checkbox above, and at the end
-  of a highlighted phrase the break lands after the highlight instead of through
-  it. Copying that phrase takes the highlight with it, for the same reason. The
-  bar also
-  inserts the two things markdown makes tedious by hand: a **link**, through a
-  dialog with the words and the address as separate fields, and a **table**,
-  which then offers add/remove row and column from the same button, along with
-    *Copy table* for getting one into a spreadsheet. A table cell
+  the moment it becomes one. Applying a marker leaves the caret after it, so a
+  new checklist item is ready to be typed into rather than in front of its own
+  checkbox.
+
+  **Every key is measured against what you can see**, rather than against the
+  characters behind it. Enter at the start of a heading takes the heading down
+  with its words and leaves blank space above; in front of a checkbox it opens
+  an empty checkbox above; at the end of a highlighted phrase the break lands
+  after the highlight instead of through it. Backspace at the start of a line
+  takes that blank space back before it takes anything else, so it undoes the
+  Enter that made it — and only then does the line's own style come off, all of
+  it at once. Delete at the end of a line is the same rule facing the other way.
+  And what you copy carries what you cannot see with it: a highlighted word
+  arrives somewhere else still highlighted, a heading still a heading, and
+  cutting one leaves an empty line rather than a stray `## `.
+
+  The bar also inserts the two things markdown makes tedious by hand: a
+  **link**, through a dialog with the words and the address as separate fields,
+  and a **table**, which then offers add/remove row and column from the same
+  button, along with *Copy table* for getting one into a spreadsheet. A table cell
   is typed into directly, and on a phone it stays outlined while the Format
   sheet is up — the sheet only opens once the keyboard is down, so the cell has
   necessarily lost its focus, and "add a row below" has to be beside a row you
@@ -967,7 +973,8 @@ src/
 ├─ adapters/      webdav.ts · gdrive.ts · memory.ts (tests)
 ├─ editor/        CodeMirror 6: live preview, widgets, completion, paste
 │  ├─ format.ts     the formatting commands behind the rich-text bar
-│  ├─ enter.ts      Enter where the markup it would split is invisible
+│  ├─ caret.ts      where the caret can be, and what Enter, Backspace and
+│  │                 Delete do about markup nobody can see
 │  ├─ links.ts      external URI recognition, opening and editing
 │  ├─ linkClicks.ts following a link from the text — clicks and taps alike
 │  ├─ table.ts      the pipe-table grid: parse, edit rows/columns, print

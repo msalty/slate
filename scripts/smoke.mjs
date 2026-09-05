@@ -1002,7 +1002,7 @@ try {
     await new Promise((res) => {
       tx.oncomplete = res
     })
-  }, ['==Highlighted phrase==', '', '## Heading line', '', '- [ ] Test task', '', 'Some ==sample== words', '', '```js', 'const a = 1', '```', ''].join('\n'))
+  }, ['==Highlighted phrase==', '', '## Heading line', '', '- [ ] Test task', '', 'Some ==sample== words', '', '```js', 'const a = 1', '```', '', '## Deletable heading', '', '- [ ] second task', '', '## Cut me', '', 'joinable', '', '## Pulled up', ''].join('\n'))
   await page.reload({ waitUntil: 'networkidle' })
   await page.waitForSelector('.note-row')
   await page.locator('.note-row', { hasText: 'Hidden Markup' }).first().click()
@@ -1101,6 +1101,116 @@ try {
     'copying a highlighted word takes the highlight with it',
     copiedMark === '==sample==',
     JSON.stringify(copiedMark),
+  )
+
+  /*
+   * The same pixel, now with the deletion keys and the clipboard.
+   *
+   * A heading can only be selected from the first character of its text, since
+   * the `## ` in front of that has no geometry to drag across — so the copy
+   * used to come out plain and a cut used to leave the `## ` behind on a line
+   * of its own. Backspace from that same position used to take the heading off
+   * while leaving the blank line above it, which is to say it could not undo
+   * the Enter that had just made that blank line.
+   */
+  const headBox = await lineBox('Deletable heading')
+  await page.mouse.click(headBox.x + 20, headBox.y + headBox.height / 2)
+  await page.waitForTimeout(300)
+  await page.keyboard.press('Home')
+  await page.keyboard.press('Shift+End')
+  await page.waitForTimeout(200)
+  const copiedHeading = await page.evaluate(() => {
+    const dt = new DataTransfer()
+    document
+      .querySelector('.cm-content')
+      .dispatchEvent(
+        new ClipboardEvent('copy', { clipboardData: dt, bubbles: true, cancelable: true }),
+      )
+    return dt.getData('text/plain')
+  })
+  check(
+    'copying a heading takes the markers that make it one',
+    copiedHeading === '## Deletable heading',
+    JSON.stringify(copiedHeading),
+  )
+
+  await page.keyboard.press('Home')
+  await page.waitForTimeout(200)
+  await page.keyboard.press('Backspace')
+  check(
+    'Backspace at the start of a heading takes the blank line above it first',
+    (await noteAfterEdit('Deletable heading', '```\n## Deletable heading')).includes(
+      '```\n## Deletable heading',
+    ),
+  )
+  await page.keyboard.press('Backspace')
+  check(
+    'and the heading itself only on the press after that',
+    (await noteAfterEdit('Deletable heading', '```\nDeletable heading')).includes(
+      '```\nDeletable heading',
+    ),
+  )
+
+  /*
+   * Home on a checklist line lands between the hidden bullet and the checkbox
+   * widget — the first place on that line with any geometry. Backspace there
+   * took the `- ` and left `[ ] second task`: a bullet with the characters of a
+   * checkbox in it, which is not a task and does not render as one.
+   */
+  const taskBox2 = await lineBox('second task')
+  await page.mouse.click(taskBox2.x + 40, taskBox2.y + taskBox2.height / 2)
+  await page.waitForTimeout(300)
+  await page.keyboard.press('Home')
+  await page.keyboard.press('Backspace')
+  await page.keyboard.press('Backspace')
+  check(
+    'Backspace takes a whole checkbox off rather than stranding its brackets',
+    (await noteAfterEdit('second task', '\nsecond task')).includes('\nsecond task') &&
+      !(await noteContaining('second task')).includes('[ ] second task'),
+    (await noteContaining('second task')).split('\n').slice(-3).join(' / '),
+  )
+
+  /* Cutting takes the markers out with the words, rather than stranding them. */
+  const cutBox = await lineBox('Cut me')
+  await page.mouse.click(cutBox.x + 20, cutBox.y + cutBox.height / 2)
+  await page.waitForTimeout(300)
+  await page.keyboard.press('Home')
+  await page.keyboard.press('Shift+End')
+  await page.waitForTimeout(200)
+  const cutText = await page.evaluate(() => {
+    const dt = new DataTransfer()
+    document
+      .querySelector('.cm-content')
+      .dispatchEvent(
+        new ClipboardEvent('cut', { clipboardData: dt, bubbles: true, cancelable: true }),
+      )
+    return dt.getData('text/plain')
+  })
+  check('cutting a heading takes its markers too', cutText === '## Cut me', JSON.stringify(cutText))
+  check(
+    'and leaves an empty line rather than a bare "## "',
+    !(await noteAfterEdit('joinable', '\n\n\njoinable')).includes('## \n'),
+    JSON.stringify((await noteContaining('joinable')).slice(-40)),
+  )
+
+  /*
+   * Delete at the end of a line, the same rule facing the other way: one press
+   * used to take a blank line and a heading's markers together, turning three
+   * lines into the single paragraph `joinablePulled up`.
+   */
+  const joinBox = await lineBox('joinable')
+  await page.mouse.click(joinBox.x + 20, joinBox.y + joinBox.height / 2)
+  await page.waitForTimeout(300)
+  await page.keyboard.press('End')
+  await page.keyboard.press('Delete')
+  check(
+    'Delete at the end of a line takes the blank line below before the heading under it',
+    (await noteAfterEdit('joinable', 'joinable\n## Pulled up')).includes('joinable\n## Pulled up'),
+  )
+  await page.keyboard.press('Delete')
+  check(
+    'and pulls the line up on the press after that',
+    (await noteAfterEdit('joinable', 'joinablePulled up')).includes('joinablePulled up'),
   )
 
   await page.keyboard.press('Control+Shift+m')
