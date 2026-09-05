@@ -356,6 +356,13 @@ export function excerptOf(text: string, bodyStart = 0): string {
     if (/^(-{3,}|\*{3,}|_{3,})$/.test(line)) continue
     if (/^```/.test(line)) continue
     const clean = line
+      /*
+       * A callout's `[!NOTE]` is a marker, not the note's first words: the
+       * app draws it as an icon, and a list row that led with "[!NOTE] In one
+       * line" would be reading out the punctuation. Taken off before the
+       * blockquote `>` goes, so the pattern can still see which line it is on.
+       */
+      .replace(/^>\s*\[![A-Za-z]+\][+-]?\s*/, '')
       .replace(/!?\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/g, (_, t, a) => a || t)
       .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
       .replace(/[*_~`>]/g, '')
