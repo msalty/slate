@@ -85,6 +85,7 @@ export function PromptDialog() {
             <span>{d.label}</span>
             <input
               ref={ref}
+              class="prompt-input"
               type="text"
               value={value}
               placeholder={d.placeholder}

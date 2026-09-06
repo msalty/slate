@@ -207,6 +207,12 @@ Live preview keeps its own contract: clicking a table there puts the caret in
 the pipe source, the same way the caret reveals every other construct it sits
 in.
 
+**Columns align from the same menu** that adds and removes them: *Align
+column…* names what the one you are in does now and offers default, left,
+centre and right. It writes GFM's own `:--`, `:--:` and `--:` into the
+delimiter row — the row both rendered modes hide, which is why this needed a
+menu item rather than the two characters it comes down to.
+
 **A spreadsheet range pastes as a table.** Copy cells in Excel, Numbers, Sheets
 or Calc and paste: you get a GFM table with the columns lined up, not a wall of
 tabs. Excel puts *three* things on the clipboard — a `<table>` under
@@ -281,6 +287,16 @@ exists only in rich text while the syntax works in all three modes. Omit the
 title and the callout announces its own type instead. Put the caret on that
 line and the raw `[!warning]` comes back to be edited, the same way a link's URL
 does.
+
+**A callout folds** from the chevron beside its icon, leaving its title and a
+count of the lines it is hiding. The fold is Obsidian's `-` written into the
+marker — `> [!note]- Title` — rather than a state the editor holds, which is
+the only place it could live and still be true: state in the editor would be
+gone on reload, differ between two windows onto the same note, and never reach
+another device. In the marker it survives everything the text survives, and a
+note folded here opens folded in Obsidian. Unfolding takes the character back
+out rather than leaving a `+` behind, so a callout nobody has folded and one
+somebody has unfolded read the same.
 
 **Code blocks have a copy button** in the top right corner — on hover with a
 pointer, always visible on a touch screen, and it works while a note is being
@@ -421,9 +437,11 @@ Editor offers to make it, and that button is the only thing in the app that
 does; it writes a set of templates to start from, so there is something to look
 at — and something to use — rather than an empty folder. Once templates exist,
 a folder's context menu gains **Use a template…**, and names the one it is
-using afterwards — or says
-*missing* if that note has since been renamed or deleted, rather than looking
-configured while quietly applying nothing.
+using afterwards — or says *missing* if that note has since been deleted or
+moved out of `Templates/`, rather than looking configured while quietly
+applying nothing. Renaming either end — the folder or the template note — is
+followed, so the assignment only breaks when the template genuinely stops being
+one.
 
 ```
 Templates/
@@ -655,6 +673,16 @@ the tree you left rather than a fresh default. That shape is about the window in
 front of you rather than the vault, so it stays on this device and survives a
 reload here.
 
+**Search is exact substring matching**, on titles and bodies, in whatever case
+you type. It is not fuzzy on purpose: a word you know is in a note is a word
+that finds it, and nothing else turns up beside it. Behind that, an index over
+the vault's vocabulary keeps a large vault from having every note read on every
+keystroke — it decides which notes are worth scoring and nothing else, so what
+you get back is what the plain scan would have found, in the same order. It
+builds in the app's idle time after boot rather than inside your first
+keystroke, and until it is ready searching simply reads everything, which is
+what it always did.
+
 **Search filters the list in front of you.** In Files it searches files, in
 Deleted it searches deleted things, in Tasks it searches tasks — the header and
 the placeholder both name which, so a screen of five results never goes on
@@ -670,8 +698,24 @@ a note's opening line usually says nothing about it. A word that appears only
 in the title keeps its ordinary excerpt: there is nothing in the body to point
 at, and the marked title has already said why the note is there.
 
-Long-press or right-click a Tag Folder for *New folder inside…*, *Move…*, and
-the two delete variants.
+**A folder is made from the + on the Folders header**, or from *New
+subfolder…* on any folder, and renamed from its own menu — each of them a
+one-field dialog in the app rather than a browser `prompt()`, which on a phone
+is a system alert thrown over the whole screen. Renaming moves every note
+underneath and says so before you commit to it; wikilinks are unaffected,
+because they point at a note's name rather than its path.
+
+Long-press or right-click a Tag Folder for *New folder inside…*, *Move up* and
+*Move down*, *Move…*, and the two delete variants. Siblings sit in the order
+they were made until you move one, and the order lives in `backstage/` with the
+folders themselves, so it follows you to your other devices. Up and down rather
+than a drag: the sidebar is a tree on a phone as well, where a drag is a scroll,
+and a subtree travels with its parent either way.
+
+**A note can be dragged onto a folder** to move it there, *All Notes* included
+for the vault root — the pointer shorthand for *Move to…* in the note's own
+menu, which is still what touch uses and still what a keyboard reaches. A folder
+lights up only for a note it does not already hold.
 
 On a phone the editor opens full-screen over whichever tab you came from, so
 tapping a note in Tasks and pressing back returns you to Tasks. Android's back
@@ -1025,6 +1069,7 @@ src/
 │  ├─ properties.ts   the same frontmatter as an ordered, editable list
 │  ├─ tagquery.ts     the rule language behind Tag Folders, over notes or tasks
 │  ├─ folders.ts      nested folders + the Tag Folder tree and inheritance
+│  ├─ searchindex.ts  what stops a search from reading every note
 │  ├─ templates.ts    folder templates: the fields, and which folder uses what
 │  ├─ starters.ts     the seven templates `Templates/` is created with
 │  ├─ devices.ts      per-device write registry, for version attribution
@@ -1053,6 +1098,7 @@ src/
    ├─ PopoutWindow.tsx  the one-note shell that window boots into
    ├─ Properties.tsx the frontmatter form the note's date opens
    ├─ Menu.tsx       popover on a pointer, bottom sheet on a phone
+   ├─ dragNote.ts    dragging a note onto a folder, with a pointer
    ├─ DueMenu.tsx    the due-date picker that rides on it
    ├─ DueChip.tsx    a task's date, as a control rather than a caption
    └─ Mobile.tsx     phone tab bar and full-screen tab views
@@ -1079,27 +1125,15 @@ line in `src/app/backend.ts` — no changes to the engine.
 
 Being honest about what isn't done, roughly in the order I'd tackle it:
 
-- **Folder names are still collected with `prompt()`.** Creating and renaming a
-  folder works and is undoable, but the input itself is a browser dialog rather
-  than a proper inline field. The note actions and Tag Folder editor are real UI;
-  this one corner isn't yet.
-- **No drag-and-drop between folders.** Moving a note is long-press (or
-  right-click) → *Move to…*, which works identically on touch and desktop. Drag
-  would be nicer with a mouse.
-- **No manual reordering of Tag Folders.** Siblings sit in creation order; the
-  underlying `reorderSmartFolders` exists but nothing calls it yet.
 - **A Tag Folder can't live inside a real folder.** The two hierarchies are
   separate — use `folder:Work` in the rule to pin one to a folder.
-- **Renaming a template breaks the folders pointing at it.** Renaming or moving
-  the *folder* is followed correctly; renaming the template note itself is not,
-  and the folder's menu then reads *Template: missing*. Re-picking it takes two
-  clicks, and the failure is at least visible rather than silent.
-- **Callouts can't be folded.** Obsidian's `[!note]-` and `[!note]+` are parsed
-  and their fold character is hidden rather than left on screen as a stray
-  dash, but nothing collapses yet.
-- **Table columns can't be aligned from the UI.** Cells are edited in place and
-  rows and columns come and go from the toolbar, but `:--:` alignment still has
-  to be typed into the delimiter row by hand, in live preview or source.
+- **Dragging a note only works with a pointer.** A folder row takes a dropped
+  note, but a drag with a finger is a scroll, so touch keeps long-press →
+  *Move to…* — which is also still what a keyboard reaches.
+- **A folded callout is folded everywhere.** The fold is a `-` in the marker
+  rather than a per-window state, which is what makes it survive a reload and a
+  sync — and also means folding one on the laptop folds it on the phone. That
+  is the right trade for a note you keep, but it is a trade.
 - **A popped-out note on its own doesn't sync.** The window that opened it is
   the one with the backend connected, and a popout deliberately doesn't run a
   second sync engine racing the first. It saves to the same local database
@@ -1107,8 +1141,10 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
   open, and what you write there goes up the next time the app itself is. The
   fix is a leader election between the windows, which is more machinery than
   the case deserves for now.
-- **Search is a linear scan.** Fast and predictable to a few thousand notes; past
-  that it wants an inverted index.
+- **The search index is rebuilt from nothing each session.** It builds in idle
+  time after boot and is never waited for, so this costs nobody a stall — but a
+  very large vault does the same work every time it opens, and the index could
+  as well be persisted in IndexedDB beside the notes.
 - **No encryption at rest.** Notes are plain files on your server. Per-file
   encryption before upload would fit cleanly behind the adapter interface.
 - **iOS PWA storage can be evicted** after ~7 days of not opening the app, which
@@ -1128,15 +1164,14 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
   name from a global so more than one can coexist in a profile.
 - **Tag Folder rules over dates** — `created:<2026-01-01`, `due:overdue` — which
   the parser is already shaped to accept.
-- **Full-text index** if the vault grows past a few thousand notes.
 
 ---
 
 ## Testing
 
 ```bash
-npm test                # 405 unit + two-device sync tests
-node scripts/smoke.mjs  # 335 checks in headless Chromium against dist/
+npm test                # 535 unit + two-device sync tests
+node scripts/smoke.mjs  # 430 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 
@@ -1159,6 +1194,20 @@ also holds the reading mode to its promise on both layouts: a note opened from
 the list has no `contenteditable` anywhere in it and nothing focused, a table in
 it has no typeable cells, and the tap that ends that is the one that puts the
 caret in the word it landed on.
+
+Four more sections exist because the answer is only true in a browser. A note
+is *dragged* onto a folder with real drag events, which is the whole of that
+feature. A callout is folded from its chevron and the note on disk is read back
+to prove the `-` landed in the marker — and that the press left no caret on the
+line, which would have revealed the marker and taken the chevron with it. A
+column is aligned from the phone's Format sheet, because the delimiter row it
+writes to is the one thing neither rendered mode shows. And the same searches
+run twice, before and after the search index has finished building in the
+background, asserting the two answer identically — including a term that starts
+in the middle of a word, which is what an index over words rather than runs
+would quietly stop finding. A browser dialog is now a *failure* in the folder
+section: naming a folder is the app's own dialog, and `prompt()` is what that
+used to be.
 
 Three of its sections are there because the browser is the only place the answer
 exists. The spreadsheet paste is driven through a real `ClipboardEvent` carrying every
