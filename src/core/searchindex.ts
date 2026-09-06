@@ -13,6 +13,10 @@
  * reason an index is worth having here at all. An index that is *nearly* right
  * about which notes contain a word is a search you cannot trust.
  *
+ * So the narrowing is allowed to be *loose* but never *wrong*: it may hand over
+ * a note the scan then rejects, and may decline to narrow at all, but a note
+ * that matches is never left out. See `searchCandidates`.
+ *
  * **How it can be exact.** The index is over *runs of non-whitespace*: the
  * lowercased text cut at every space, tab and newline, with no stemming, no
  * punctuation stripping and no word rules. A query is cut the same way, so no
@@ -204,19 +208,33 @@ function remove(path: string): void {
 }
 
 /**
- * The paths that can possibly match every one of these terms, or undefined when
- * the index has nothing to say and the caller should read everything.
+ * The paths worth scoring for these terms, or undefined for "read everything".
  *
- * A superset is not good enough and is not what this returns: a path is here if
- * and only if each term appears somewhere in that note's text or title, which
- * is the same question the scan asks. It is still the scan that decides where
- * the match was, what it scores and what the snippet says.
+ * The index **narrows**; the scan still decides. What comes back is a set the
+ * matching notes are guaranteed to be inside — usually exactly them, and never
+ * missing one — because every term is checked again per note by the scan that
+ * follows. That guarantee is the whole contract: a filter that can *drop* a
+ * matching note is a search you cannot trust, while one that occasionally
+ * hands over a few extra notes only costs the time to read them.
+ *
+ * `ceiling` is what that licence is for. A term in half the vault narrows
+ * nothing, and building a set of every note to say so is pure loss — the scan
+ * has to read them all either way. So a term whose posting lists run past the
+ * ceiling is abandoned mid-union and simply left to the scan; if every term is
+ * like that, this returns undefined and nothing is built at all. Which is the
+ * honest shape of it: the index is worth its bookkeeping for the word you
+ * remember writing once, and worth nothing for the word you write constantly.
  */
-export function searchCandidates(terms: readonly string[]): Set<string> | undefined {
+export function searchCandidates(
+  terms: readonly string[],
+  ceiling = Number.POSITIVE_INFINITY,
+): Set<string> | undefined {
   if (phase !== 'ready' || !terms.length) return undefined
   let out: Set<string> | undefined
   for (const [slot, term] of terms.entries()) {
-    const hit = pathsContaining(term, slot)
+    const hit = pathsContaining(term, slot, out ? Number.POSITIVE_INFINITY : ceiling)
+    // Over the ceiling: this term is no use as a filter, but another might be.
+    if (!hit) continue
     if (!out) out = hit
     else for (const p of out) if (!hit.has(p)) out.delete(p)
     // Every term has to match, so an empty intersection is a finished answer.
@@ -225,10 +243,19 @@ export function searchCandidates(terms: readonly string[]): Set<string> | undefi
   return out
 }
 
-function pathsContaining(term: string, slot: number): Set<string> {
+/**
+ * Undefined once the union passes `ceiling` — abandoned rather than finished,
+ * because the answer past that point is not worth what it costs to assemble.
+ * An intersection against a set already in hand has no ceiling: it can only
+ * shrink, and shrinking is the whole point.
+ */
+function pathsContaining(term: string, slot: number, ceiling: number): Set<string> | undefined {
   const out = new Set<string>()
   for (const run of runsContaining(term, slot)) {
-    for (const path of postings.get(run) ?? []) out.add(path)
+    for (const path of postings.get(run) ?? []) {
+      out.add(path)
+      if (out.size > ceiling) return undefined
+    }
   }
   return out
 }

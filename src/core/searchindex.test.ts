@@ -141,6 +141,51 @@ describe('finding exactly what the scan would', () => {
   })
 })
 
+/*
+ * An index earns its place or it does not get built. Both of these are about
+ * the cases where it does not, because an index that costs more than the scan
+ * it replaces is the failure mode nobody notices — the answers stay right and
+ * everything is quietly slower.
+ */
+describe('knowing when not to bother', () => {
+  it('leaves a small vault alone entirely', async () => {
+    const v = await fresh()
+    for (const [folder, title, text] of CORPUS) await v.createNote(folder, title, text)
+    const idx = await import('./searchindex')
+
+    // Searching a five-note vault reads five notes; there is nothing to save.
+    expect(found(v, 'budget')).toEqual(['Sprint planning.md'])
+    expect(idx.searchIndexReady()).toBe(false)
+    expect(idx.searchIndexBuilding()).toBe(false)
+    expect(idx.searchIndexSize()).toBe(0)
+  })
+
+  it('declines to narrow a term that is in most of the vault', async () => {
+    const v = await fresh()
+    for (let i = 0; i < 40; i++) {
+      await v.createNote('', `Note ${i}`, `Every note says meeting. Note ${i} also says word${i}.\n`)
+    }
+    v.warmSearchIndex(true)
+    const idx = await import('./searchindex')
+    const ceiling = 10
+
+    // In every note: enumerating them all would be the scan's work done twice.
+    expect(idx.searchCandidates(['meeting'], ceiling)).toBeUndefined()
+    // In one: exactly what the index is for.
+    expect(idx.searchCandidates(['word7'], ceiling)).toEqual(new Set(['Note 7.md']))
+    /*
+     * And a query with one of each still narrows on the one that can: giving
+     * up on a common term must not throw away a rare term's answer.
+     */
+    expect(idx.searchCandidates(['meeting', 'word7'], ceiling)).toEqual(new Set(['Note 7.md']))
+
+    // Declining changes nothing about the results, only about the work.
+    agree(v, 'meeting')
+    agree(v, 'meeting word7')
+    expect(found(v, 'meeting word7')).toEqual(['Note 7.md'])
+  })
+})
+
 describe('keeping up with the vault', () => {
   it('finds a note written after the index was built', async () => {
     const v = await seeded()

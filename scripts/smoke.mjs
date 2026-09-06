@@ -796,6 +796,12 @@ try {
    * same searches run twice: immediately, and again after the build has had
    * time to land. A word from the middle of another word is the case a
    * word-based index would quietly lose.
+   *
+   * A vault this size never builds one — an index earns its place past a
+   * thousand notes and is worse than nothing below that — so the threshold is
+   * dropped to nothing first, the same way the tests drop the database name.
+   * Without it the second half of this section would be the scan agreeing with
+   * itself.
    */
   const searchResults = async (q) => {
     await page.fill('.search-box input', q)
@@ -803,19 +809,28 @@ try {
     return (await page.locator('.note-row-title').allInnerTexts()).sort().join(',')
   }
   const QUERIES = ['tram', 'ram', 'lisbon', 'lisbon tram', 'zeppelin']
+
+  // First pass: this vault is far below the threshold, so this is the scan.
   const cold = {}
   for (const q of QUERIES) cold[q] = await searchResults(q)
   check('search finds body text', cold.tram.length > 0, cold.tram)
   check('and a word it is in the middle of', cold.ram === cold.tram, `"${cold.ram}" vs "${cold.tram}"`)
   check('and nothing for a word nothing contains', cold.zeppelin === '')
 
+  // Now drop the threshold and let the next search build an index. Five notes
+  // is one slice of work, so a second is more than the build can need.
   await page.fill('.search-box input', '')
-  // Long enough for the idle build of the index to have run.
+  await page.evaluate(() => {
+    window.__SLATE_INDEX_FROM__ = { notes: 1, bytes: 1 }
+  })
+  await searchResults('tram')
+  await page.fill('.search-box input', '')
   await page.waitForTimeout(1200)
   for (const q of QUERIES) {
     const warm = await searchResults(q)
     check(`the index answers "${q}" exactly as the scan did`, warm === cold[q], `"${warm}" vs "${cold[q]}"`)
   }
+
   await page.fill('.search-box input', '')
   await page.waitForTimeout(200)
 
@@ -1809,7 +1824,18 @@ try {
    * on a phone is a system alert over the whole screen.
    */
   const nameFolder = async (value) => {
-    await page.waitForSelector('.dialog .prompt-input', { timeout: 4000 })
+    /*
+     * Waiting for the *focus*, not just the field. The dialog seeds its value
+     * in an effect and focuses on the frame after that, so a fill that lands
+     * between the two is overwritten by the seed — the field goes back to
+     * empty, Create stays disabled, and the click waits forever for a button
+     * that will never enable. Focus is the signal that both have happened.
+     */
+    await page.waitForFunction(
+      () => document.activeElement?.classList?.contains('prompt-input'),
+      null,
+      { timeout: 5000 },
+    )
     await page.fill('.dialog .prompt-input', value)
     await page.click('.dialog-foot .btn-primary')
     await page.waitForTimeout(400)

@@ -268,15 +268,55 @@ function searchableText(entry: NoteIndexEntry, f: VaultFile | undefined): string
 }
 
 /**
+ * The vault a linear scan stops being free on.
+ *
+ * Under this, reading every note is a millisecond or two and an index is worse
+ * than nothing: it would cost a fresh build of CPU at every cold start, and
+ * memory for the whole session, to save time that was never being spent. Two
+ * gates because either can be the expensive one — a thousand ordinary notes,
+ * or a few hundred very long ones.
+ */
+const INDEX_FROM_NOTES = 1000
+const INDEX_FROM_BYTES = 4_000_000
+
+/**
+ * Both overridable, the same way `db.ts` takes its database name from a
+ * global: a browser test cannot conjure a thousand notes to prove the index
+ * works in a browser, and asserting it against a vault too small to have one
+ * is asserting nothing.
+ */
+const indexFrom = () => {
+  const g = globalThis as { __SLATE_INDEX_FROM__?: { notes?: number; bytes?: number } }
+  return {
+    notes: g.__SLATE_INDEX_FROM__?.notes ?? INDEX_FROM_NOTES,
+    bytes: g.__SLATE_INDEX_FROM__?.bytes ?? INDEX_FROM_BYTES,
+  }
+}
+
+/** Big enough that reading every note on every keystroke is worth avoiding. */
+function worthIndexing(): boolean {
+  const min = indexFrom()
+  if (indexMap.size >= min.notes) return true
+  let bytes = 0
+  for (const e of indexMap.values()) {
+    bytes += e.size
+    if (bytes >= min.bytes) return true
+  }
+  return false
+}
+
+/**
  * Start building the search index, in the time the app is not using.
  *
- * Called after boot and again by the first search of a session, and a no-op
- * once either has done it. Nothing waits for the result: until it is ready,
- * searching reads every note exactly as it always did, which is why this can
- * afford to take its time. `immediate` builds it here and now, for tests.
+ * Called after boot and again by every search, and a no-op once one of them has
+ * done it — or for a vault small enough not to want it at all, which is most
+ * of them. Nothing waits for the result: until it is ready, searching reads
+ * every note exactly as it always did, which is why this can afford to take its
+ * time. `immediate` builds it here and now, for tests.
  */
 export function warmSearchIndex(immediate = false): void {
   if (searchIndexReady() || searchIndexBuilding()) return
+  if (!immediate && !worthIndexing()) return
   const snapshot = new Map<string, string>()
   for (const e of indexMap.values()) snapshot.set(e.path, searchableText(e, files.get(e.path)))
   startSearchIndex(snapshot)
@@ -1268,19 +1308,26 @@ function searchScope(terms: string[]): NoteIndexEntry[] {
    * frozen at whatever the first search of a session returned.
    */
   revision.value
-  // Somebody is searching, so the index is worth having. It will not be ready
-  // for this query and is not waited for; this one reads everything.
+  // Somebody is searching, so build the index if this vault is big enough to
+  // want one. It will not be ready for this query and is not waited for; this
+  // one reads everything.
   warmSearchIndex()
-  const paths = searchCandidates(terms)
+  /*
+   * A term in a quarter of the vault is not a filter, and the index is told
+   * not to bother building a set to prove it — the scan reads those notes
+   * either way, and paying to enumerate them first is how an index makes a
+   * search slower than no index at all.
+   */
+  const paths = searchCandidates(terms, Math.max(64, notes.value.length >> 2))
   if (!paths) return notes.value
-  const out: NoteIndexEntry[] = []
-  for (const p of paths) {
-    const e = indexMap.get(p)
-    // Backstage is not searchable, exactly as it is not listed: `notes` hides
-    // it, and this list has to mean the same thing that one does.
-    if (e && !isHidden(e.path)) out.push(e)
-  }
-  return out.sort((a, b) => b.mtime - a.mtime)
+  /*
+   * Filtered out of `notes` rather than assembled from the paths, which costs
+   * one set lookup per note and buys two things: backstage stays hidden and
+   * newest stays first, both because they already are in the list this walks.
+   * Sorting a rebuilt list would be the same answer for more work, and would
+   * be a second place for "what order do results come in" to be decided.
+   */
+  return notes.value.filter((n) => paths.has(n.path))
 }
 
 /** Where a note's own prose starts: past frontmatter, and past its heading. */

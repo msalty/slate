@@ -675,13 +675,23 @@ reload here.
 
 **Search is exact substring matching**, on titles and bodies, in whatever case
 you type. It is not fuzzy on purpose: a word you know is in a note is a word
-that finds it, and nothing else turns up beside it. Behind that, an index over
-the vault's vocabulary keeps a large vault from having every note read on every
-keystroke — it decides which notes are worth scoring and nothing else, so what
-you get back is what the plain scan would have found, in the same order. It
-builds in the app's idle time after boot rather than inside your first
-keystroke, and until it is ready searching simply reads everything, which is
-what it always did.
+that finds it, and nothing else turns up beside it.
+
+Behind that, a **large** vault gets an index over its vocabulary so that not
+every note is read on every keystroke. It decides which notes are worth scoring
+and nothing else — what you get back is what the plain scan would have found,
+in the same order — and it is allowed to be loose rather than exact in one
+direction only: it may hand the scan a note the scan then rejects, and it may
+decline to narrow at all, but a note that matches is never left out.
+
+Three things keep it from costing more than it saves. It is only built past a
+thousand notes (or four megabytes), because below that reading everything is a
+millisecond or two and an index would be pure overhead. It builds in the app's
+idle time a few milliseconds at a time rather than inside your first keystroke,
+and searching reads everything until it is ready — nothing waits for it. And a
+word that is in a quarter of your notes is abandoned rather than indexed
+against, because enumerating half the vault to say "look at half the vault" is
+the scan's work done twice. The word you wrote once is what an index is for.
 
 **Search filters the list in front of you.** In Files it searches files, in
 Deleted it searches deleted things, in Tasks it searches tasks — the header and
@@ -1141,10 +1151,16 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
   open, and what you write there goes up the next time the app itself is. The
   fix is a leader election between the windows, which is more machinery than
   the case deserves for now.
-- **The search index is rebuilt from nothing each session.** It builds in idle
-  time after boot and is never waited for, so this costs nobody a stall — but a
-  very large vault does the same work every time it opens, and the index could
-  as well be persisted in IndexedDB beside the notes.
+- **The search index is rebuilt from nothing each session** — it lives in
+  memory, so a reload, or an installed app the OS has evicted, starts again. It
+  is only built by vaults big enough to want one, it runs in idle slices and
+  nothing waits for it, so the cost is invisible rather than free: roughly a
+  third of a second of background CPU per cold start at three thousand notes.
+  Persisting it in IndexedDB is the obvious answer and probably the wrong one —
+  reading a few megabytes back and proving it still matches the vault is not
+  clearly cheaper than rebuilding from text already in memory, and a stale
+  index is a search that is quietly wrong. Making the *build* cheaper is the
+  better lever if it ever matters.
 - **No encryption at rest.** Notes are plain files on your server. Per-file
   encryption before upload would fit cleanly behind the adapter interface.
 - **iOS PWA storage can be evicted** after ~7 days of not opening the app, which
