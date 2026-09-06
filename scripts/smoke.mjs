@@ -3142,6 +3142,59 @@ try {
     kb.bodyEndsAt <= kb.keyboardTop,
     `note ends at ${kb.bodyEndsAt}, keyboard starts at ${kb.keyboardTop}`,
   )
+
+  /*
+   * The same rule for a sheet you type into. A bottom sheet and a keyboard
+   * want the same edge of the screen, and the file picker shrinks as its list
+   * narrows — so with the inset ignored, typing a filename walked the results
+   * and then the search box itself down behind the keys. Checked with the
+   * keyboard still simulated above.
+   */
+  await page.locator('[aria-label="Insert photo or file"]').click()
+  await page.waitForTimeout(300)
+  await page.locator('.menu-item:has-text("File in Slate")').click()
+  await page.waitForSelector('.file-picker')
+  await page.waitForTimeout(350)
+  const sheetOverKeyboard = () =>
+    page.evaluate((keyboardTop) => {
+      const box = document.querySelector('.file-picker').getBoundingClientRect()
+      const input = document.querySelector('.file-picker-search input').getBoundingClientRect()
+      const rows = [...document.querySelectorAll('.file-pick-row')]
+      return {
+        top: Math.round(box.top),
+        bottom: Math.round(box.bottom),
+        inputTop: Math.round(input.top),
+        rows: rows.length,
+        rowsAbove: rows.filter((r) => r.getBoundingClientRect().bottom <= keyboardTop + 1).length,
+      }
+    }, kb.keyboardTop)
+  const overKeys = await sheetOverKeyboard()
+  check(
+    'the file picker sits on top of the keyboard, not under it',
+    overKeys.bottom <= kb.keyboardTop && overKeys.top >= 0,
+    `sheet ${overKeys.top}-${overKeys.bottom}, keyboard starts at ${kb.keyboardTop}`,
+  )
+  check(
+    'and every row it lists is above the keyboard',
+    overKeys.rows > 0 && overKeys.rowsAbove === overKeys.rows,
+    `${overKeys.rowsAbove} of ${overKeys.rows} rows`,
+  )
+
+  await page.locator('.file-picker-search input').fill('IMG_0421')
+  await page.waitForTimeout(300)
+  const narrowedKeys = await sheetOverKeyboard()
+  check(
+    'narrowing it does not walk the last result down behind the keys',
+    narrowedKeys.rows === 1 &&
+      narrowedKeys.rowsAbove === 1 &&
+      narrowedKeys.inputTop >= 0 &&
+      narrowedKeys.bottom <= kb.keyboardTop,
+    `sheet ${narrowedKeys.top}-${narrowedKeys.bottom}, ${narrowedKeys.rowsAbove} of ${narrowedKeys.rows} rows above ${kb.keyboardTop}`,
+  )
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(300)
+  check('the picker leaves the phone editor as it found it', (await page.locator('.file-picker').count()) === 0)
+
   await page.evaluate(() => document.documentElement.style.removeProperty('--kb-inset'))
 
   /* ---- editing a table from the phone's Format sheet ----------------------

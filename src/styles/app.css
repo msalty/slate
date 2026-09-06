@@ -2701,21 +2701,33 @@ button.property-kind:hover {
     font-size: 13px;
     padding: 16px 8px 6px;
   }
+  /*
+   * A sheet sits at the bottom of the screen and so does the keyboard, and the
+   * layout viewport does not shrink when the keyboard opens — only the visual
+   * viewport does. Without the inset, a palette you type into to filter puts
+   * its results behind the keys you are filtering with: the box stays visible
+   * because Safari scrolls it into view, and everything under it does not.
+   * `--kb-inset` is published by the keyboard watcher in layout.ts and is 0
+   * whenever there is no keyboard, so this is the full sheet the rest of the
+   * time. It has to move the sheet up AND take the same height off it — moving
+   * it alone would push its head off the top of the screen.
+   */
   .scrim {
-    padding: 0;
+    padding: 0 0 var(--kb-inset, 0px);
     align-items: flex-end;
   }
   .dialog,
   .palette {
     width: 100%;
     max-width: none;
-    max-height: 92vh;
+    max-height: calc(92vh - var(--kb-inset, 0px));
     border-radius: 16px 16px 0 0;
     border-bottom: none;
-    padding-bottom: env(safe-area-inset-bottom);
+    /* The home indicator is covered by the keyboard, so its inset is redundant. */
+    padding-bottom: max(0px, calc(env(safe-area-inset-bottom, 0px) - var(--kb-inset, 0px)));
   }
   .palette {
-    max-height: 82vh;
+    max-height: calc(82vh - var(--kb-inset, 0px));
   }
   .dialog-foot {
     padding-bottom: calc(12px + env(safe-area-inset-bottom));
