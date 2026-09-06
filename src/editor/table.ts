@@ -160,6 +160,22 @@ export function insertColumn(t: TableModel, at: number): TableModel {
   }
 }
 
+/**
+ * Set one column's alignment, which lives in the delimiter row: `:--`, `:--:`,
+ * `--:`, and a plain `---` for "however the renderer likes".
+ *
+ * The only property of a table that was still source-only. Nothing about it is
+ * hard — it is one character at each end of one cell — but it had to be typed
+ * into a row that both rendered modes hide, which in rich text meant switching
+ * modes to right-align a column of numbers.
+ */
+export function setAlign(t: TableModel, at: number, align: Align): TableModel {
+  if (at < 0 || at >= t.align.length) return t
+  const next = [...t.align]
+  next[at] = align
+  return { ...t, align: next }
+}
+
 export function deleteColumn(t: TableModel, at: number): TableModel {
   if (t.align.length <= 1 || at < 0 || at >= t.align.length) return t
   const align = [...t.align]
@@ -390,11 +406,13 @@ export const tableContext = computed(() => {
   if (!c) return null
   const m = parseTable(c.source)
   if (!m) return null
+  const col = Math.min(c.col, m.align.length - 1)
   return {
     row: Math.min(c.row, m.rows.length - 1),
-    col: Math.min(c.col, m.align.length - 1),
+    col,
     rows: m.rows.length,
     cols: m.align.length,
+    align: m.align[col] ?? '',
   }
 })
 
@@ -416,7 +434,19 @@ export type TableOp =
   | 'col-left'
   | 'col-right'
   | 'col-delete'
+  | 'align-default'
+  | 'align-left'
+  | 'align-center'
+  | 'align-right'
   | 'delete'
+
+/** The alignment an `align-*` op asks for. Undefined for every other op. */
+const ALIGNMENTS: Partial<Record<TableOp, Align>> = {
+  'align-default': '',
+  'align-left': 'left',
+  'align-center': 'center',
+  'align-right': 'right',
+}
 
 export interface TableEditOptions {
   /**
@@ -488,18 +518,21 @@ export function applyTableOp(
     return true
   }
 
+  const align = ALIGNMENTS[op]
   const next =
-    op === 'row-above'
-      ? insertRow(cur.model, cur.row)
-      : op === 'row-below'
-        ? insertRow(cur.model, cur.row + 1)
-        : op === 'row-delete'
-          ? deleteRow(cur.model, cur.row)
-          : op === 'col-left'
-            ? insertColumn(cur.model, cur.col)
-            : op === 'col-right'
-              ? insertColumn(cur.model, cur.col + 1)
-              : deleteColumn(cur.model, cur.col)
+    align !== undefined
+      ? setAlign(cur.model, cur.col, align)
+      : op === 'row-above'
+        ? insertRow(cur.model, cur.row)
+        : op === 'row-below'
+          ? insertRow(cur.model, cur.row + 1)
+          : op === 'row-delete'
+            ? deleteRow(cur.model, cur.row)
+            : op === 'col-left'
+              ? insertColumn(cur.model, cur.col)
+              : op === 'col-right'
+                ? insertColumn(cur.model, cur.col + 1)
+                : deleteColumn(cur.model, cur.col)
 
   const insert = renderTable(next)
 
@@ -514,6 +547,11 @@ export function applyTableOp(
       'col-left': [cur.row, cur.col],
       'col-right': [cur.row, cur.col + 1],
       'col-delete': [cur.row, Math.min(cur.col, cols - 1)],
+      // Aligning moves nothing: you carry on typing in the cell you were in.
+      'align-default': [cur.row, cur.col],
+      'align-left': [cur.row, cur.col],
+      'align-center': [cur.row, cur.col],
+      'align-right': [cur.row, cur.col],
     }
     const row = Math.min(at[op][0], rows - 1)
     const col = Math.min(at[op][1], cols - 1)

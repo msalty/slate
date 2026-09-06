@@ -16,6 +16,7 @@ import {
   isDelimiterRow,
   parseTable,
   renderTable,
+  setAlign,
   tableAt,
 } from './table'
 
@@ -99,6 +100,32 @@ describe('editing', () => {
   it('refuses to delete the only column', () => {
     const one = parseTable('| a |\n| --- |\n| 1 |')!
     expect(deleteColumn(one, 0)).toBe(one)
+  })
+
+  /*
+   * Alignment is one character at each end of one delimiter cell, and it was
+   * the last property of a table that could only be set by typing into a row
+   * both rendered modes hide.
+   */
+  it('sets a column\'s alignment in the delimiter row', () => {
+    const t = parseTable(SRC)!
+    expect(renderTable(setAlign(t, 1, 'right')).split('\n')[1]).toBe('| --- | -----: |')
+    expect(renderTable(setAlign(t, 0, 'center')).split('\n')[1]).toBe('| :-: | ------ |')
+    expect(renderTable(setAlign(t, 0, 'left')).split('\n')[1]).toBe('| :-- | ------ |')
+  })
+
+  it('clears an alignment back to plain dashes', () => {
+    const t = parseTable('| A | B |\n| :-: | --: |\n| 1 | 2 |')!
+    expect(t.align).toEqual(['center', 'right'])
+    const out = renderTable(setAlign(setAlign(t, 0, ''), 1, ''))
+    expect(out.split('\n')[1]).toBe('| --- | --- |')
+  })
+
+  it('changes nothing but the alignment, and only for a column that exists', () => {
+    const t = parseTable(SRC)!
+    expect(renderTable(setAlign(t, 1, 'center')).split('\n')[0]).toBe('| Day | Plan   |')
+    expect(setAlign(t, 5, 'right')).toBe(t)
+    expect(setAlign(t, -1, 'right')).toBe(t)
   })
 
   it('renders a blank table that parses back', () => {

@@ -27,9 +27,9 @@ import {
   formatSnapshot,
 } from '../editor/format'
 import type { EditorView } from '@codemirror/view'
-import { applyTableOp, insertTable, tableContext } from '../editor/table'
+import { applyTableOp, insertTable, tableContext, type Align } from '../editor/table'
 import { editLinkAtCaret } from './linkActions'
-import { openMenu, type MenuItem } from './Menu'
+import { menuAnchor, openMenu, type MenuItem } from './Menu'
 import { copyTable } from '../editor/paste'
 import { notify } from './state'
 import {
@@ -138,6 +138,32 @@ export function FormatBar({ getView, variant }: FormatBarProps) {
         if (v) applyTableOp(v, id, opts)
       },
     })
+
+    /*
+     * Alignment, as a second menu rather than four more rows on this one.
+     *
+     * It is the one property of a column rather than of the table, it is set
+     * far less often than a row or column is added, and it is the only place
+     * here that has a *current value* worth showing — so it gets a submenu with
+     * a tick against what the column is doing now.
+     */
+    const alignMenu = (): MenuItem[] =>
+      (
+        [
+          ['Default', 'align-default', ''],
+          ['Left', 'align-left', 'left'],
+          ['Centre', 'align-center', 'center'],
+          ['Right', 'align-right', 'right'],
+        ] as Array<[string, Parameters<typeof applyTableOp>[1], Align]>
+      ).map(([label, id, value], i) => ({
+        label,
+        separated: i === 1,
+        checked: (table?.align ?? '') === value,
+        onSelect: () => {
+          const v = getView()
+          if (v) applyTableOp(v, id, opts)
+        },
+      }))
     openMenu(
       at,
       [
@@ -161,10 +187,15 @@ export function FormatBar({ getView, variant }: FormatBarProps) {
         op('Insert row below', 'row-below'),
         op('Insert column left', 'col-left'),
         op('Insert column right', 'col-right'),
+        {
+          label: `Align column: ${ALIGN_NAMES[table.align]}…`,
+          onSelect: () =>
+            openMenu(menuAnchor(), alignMenu(), `Align column ${table.col + 1}`),
+        } as MenuItem,
         op('Delete row', 'row-delete', true),
         op('Delete column', 'col-delete', true),
         op('Delete table', 'delete', true),
-      ].map((item, i) => (i === 1 || i === 5 ? { ...item, separated: true } : item)),
+      ].map((item, i) => (i === 1 || i === 5 || i === 6 ? { ...item, separated: true } : item)),
       `Table · row ${table.row + 1} of ${table.rows}, column ${table.col + 1} of ${table.cols}`,
     )
   }
@@ -425,6 +456,14 @@ export function FormatBar({ getView, variant }: FormatBarProps) {
 
 /** A press that isn't aimed anywhere: the commands that act at once ignore it. */
 const ORIGIN: At = { clientX: 0, clientY: 0 }
+
+/** What the table menu calls each alignment, so the item names the current one. */
+const ALIGN_NAMES: Record<Align, string> = {
+  '': 'default',
+  left: 'left',
+  center: 'centre',
+  right: 'right',
+}
 
 /**
  * The bar, and the "…" that appears when it runs out of room.
