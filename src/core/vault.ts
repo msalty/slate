@@ -51,6 +51,16 @@ import {
   writerFor,
 } from './devices'
 import {
+  buildSearchIndexSlice,
+  dropNote as dropFromSearchIndex,
+  indexNote as addToSearchIndex,
+  resetSearchIndex,
+  searchCandidates,
+  searchIndexBuilding,
+  searchIndexReady,
+  startSearchIndex,
+} from './searchindex'
+import {
   basename,
   dirname,
   extname,
@@ -145,6 +155,7 @@ export async function adoptFromStorage(paths: readonly string[]): Promise<void> 
       if (!held) continue
       files.delete(path)
       indexMap.delete(path)
+      dropFromSearchIndex(path)
       releaseUrl(path)
       changed = true
       continue
@@ -223,8 +234,16 @@ function buildEntry(f: VaultFile): NoteIndexEntry | undefined {
 function reindex(path: string) {
   const f = files.get(path)
   const e = f ? buildEntry(f) : undefined
-  if (e) indexMap.set(path, e)
-  else indexMap.delete(path)
+  if (e) {
+    indexMap.set(path, e)
+    // The search index follows the note index exactly, so that every path one
+    // of them knows about is one the other can answer for. It only does the
+    // work once something has actually searched; see core/searchindex.ts.
+    addToSearchIndex(path, searchableText(e, f))
+  } else {
+    indexMap.delete(path)
+    dropFromSearchIndex(path)
+  }
 }
 
 function reindexAll() {
@@ -233,6 +252,50 @@ function reindexAll() {
     const e = buildEntry(f)
     if (e) indexMap.set(f.path, e)
   }
+  // A whole vault arriving at once is cheaper to index again from nothing than
+  // to fold in a note at a time — and cheapest of all not to, until asked.
+  resetSearchIndex()
+}
+
+/**
+ * What a note is searched over: its title and its text.
+ *
+ * The title is not in the file — it is the name of the file — and searching
+ * finds notes by it, so it has to be indexed alongside the body it isn't in.
+ */
+function searchableText(entry: NoteIndexEntry, f: VaultFile | undefined): string {
+  return `${entry.title}\n${f?.text ?? ''}`
+}
+
+/**
+ * Start building the search index, in the time the app is not using.
+ *
+ * Called after boot and again by the first search of a session, and a no-op
+ * once either has done it. Nothing waits for the result: until it is ready,
+ * searching reads every note exactly as it always did, which is why this can
+ * afford to take its time. `immediate` builds it here and now, for tests.
+ */
+export function warmSearchIndex(immediate = false): void {
+  if (searchIndexReady() || searchIndexBuilding()) return
+  const snapshot = new Map<string, string>()
+  for (const e of indexMap.values()) snapshot.set(e.path, searchableText(e, files.get(e.path)))
+  startSearchIndex(snapshot)
+  if (immediate) {
+    while (!buildSearchIndexSlice(Number.POSITIVE_INFINITY));
+    return
+  }
+  const step = () => {
+    if (!buildSearchIndexSlice()) soon(step)
+  }
+  soon(step)
+}
+
+/** The next moment nobody is waiting on, or failing that the next tick. */
+function soon(fn: () => void): void {
+  const idle = (globalThis as { requestIdleCallback?: (cb: () => void, o?: object) => void })
+    .requestIdleCallback
+  if (idle) idle(() => fn(), { timeout: 1000 })
+  else setTimeout(fn, 0)
 }
 
 /* --------------------------------------------------------- derived signals */
@@ -1003,6 +1066,7 @@ export async function tombstone(path: string): Promise<void> {
   files.set(path, next)
   await putFile(next)
   indexMap.delete(path)
+  dropFromSearchIndex(path)
   releaseUrl(path)
   bump()
 }
@@ -1011,6 +1075,7 @@ export async function tombstone(path: string): Promise<void> {
 export async function forget(path: string): Promise<void> {
   files.delete(path)
   indexMap.delete(path)
+  dropFromSearchIndex(path)
   await deleteFileRow(path)
   releaseUrl(path)
   bump()
@@ -1120,16 +1185,21 @@ export interface SearchHit {
 }
 
 /**
- * Substring search over titles and bodies. Deliberately not a fuzzy index: at
- * a few thousand notes a linear scan is well under a frame, and exact
- * substring matching is far more predictable to use than fuzzy ranking.
+ * Substring search over titles and bodies. Deliberately not fuzzy: exact
+ * substring matching is far more predictable to use than fuzzy ranking, and a
+ * word you know is in a note is a word that finds it.
+ *
+ * The scan below is the whole of the behaviour — what matches, what it scores,
+ * what the snippet says. The index only decides *which notes it runs over*, and
+ * answers that question with exactly the notes the scan would have kept. See
+ * `searchScope`.
  */
 export function search(query: string, limit = 200): SearchHit[] {
   const q = query.trim().toLowerCase()
   if (!q) return []
   const terms = q.split(/\s+/).filter(Boolean)
   const hits: SearchHit[] = []
-  for (const e of notes.value) {
+  for (const e of searchScope(terms)) {
     const f = files.get(e.path)
     const text = f?.text ?? ''
     const body = text.toLowerCase()
@@ -1176,6 +1246,41 @@ export function search(query: string, limit = 200): SearchHit[] {
     hits.push({ entry: e, score, snippet: snippetAt(text, snipAt, snipLen, Math.max(prose, 0)) })
   }
   return hits.sort((a, b) => b.score - a.score).slice(0, limit)
+}
+
+/**
+ * The notes a query has to be scored against.
+ *
+ * Every note, until the index can narrow it — which it can as soon as it has
+ * been built, and it is built here, on the first search of a session. The order
+ * is the one `notes` is already in, newest first, because the sort that ranks
+ * the hits is stable and two notes scoring the same should come out in the
+ * order they always did.
+ */
+function searchScope(terms: string[]): NoteIndexEntry[] {
+  /*
+   * Read even when the index answers without it.
+   *
+   * `search` is called from computed signals, and a computed only recomputes
+   * when something it *read* has changed. The scan used to read `notes` — and
+   * so `revision` — on every call; narrowing to a handful of paths would have
+   * quietly cost the search box its dependency on the vault, and left results
+   * frozen at whatever the first search of a session returned.
+   */
+  revision.value
+  // Somebody is searching, so the index is worth having. It will not be ready
+  // for this query and is not waited for; this one reads everything.
+  warmSearchIndex()
+  const paths = searchCandidates(terms)
+  if (!paths) return notes.value
+  const out: NoteIndexEntry[] = []
+  for (const p of paths) {
+    const e = indexMap.get(p)
+    // Backstage is not searchable, exactly as it is not listed: `notes` hides
+    // it, and this list has to mean the same thing that one does.
+    if (e && !isHidden(e.path)) out.push(e)
+  }
+  return out.sort((a, b) => b.mtime - a.mtime)
 }
 
 /** Where a note's own prose starts: past frontmatter, and past its heading. */
