@@ -1,3 +1,4 @@
+import { forceParsing } from '@codemirror/language'
 import { StateEffect, StateField } from '@codemirror/state'
 import { Decoration, EditorView, type DecorationSet } from '@codemirror/view'
 
@@ -34,6 +35,9 @@ export const taskHighlightExtension = [
 export function highlightTask(view: EditorView, line: number) {
   if (!Number.isInteger(line) || line < 0 || line >= view.state.doc.lines) return
   const target = view.state.doc.line(line + 1)
+  // A distant line can be outside the initial parse. Prepare its rich-text
+  // syntax before scrolling; background parsing handles notes beyond this budget.
+  forceParsing(view, target.to, 100)
   view.dispatch({
     effects: [setTaskHighlight.of(target.from), EditorView.scrollIntoView(target.from, { y: 'center' })],
   })

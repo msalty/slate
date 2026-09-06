@@ -275,7 +275,7 @@ export function EditorPane() {
       notify('This note changed elsewhere while you were typing — both edits are marked in place')
   }, [path, rev])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const view = viewRef.current
     if (!view || popped || !taskTarget || taskTarget.path !== path) return
     readingMode.value = true

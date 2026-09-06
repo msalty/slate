@@ -792,7 +792,10 @@ export const livePreview = ViewPlugin.fromClass(
     }
 
     update(u: ViewUpdate) {
-      if (u.docChanged || u.selectionSet || u.viewportChanged || u.focusChanged) {
+      if (
+        u.docChanged || u.selectionSet || u.viewportChanged || u.focusChanged ||
+        syntaxTree(u.startState) !== syntaxTree(u.state)
+      ) {
         this.decorations = buildDecorations(u.view)
       }
     }
