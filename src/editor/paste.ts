@@ -77,6 +77,26 @@ export function insertFiles(view: EditorView, files: File[]) {
 }
 
 /**
+ * Embed files the vault already holds, at the caret.
+ *
+ * The counterpart to `insertFiles` for the picker: nothing to ingest, nothing
+ * to wait for, so the embed goes straight in. Same `![[path]]` syntax a paste
+ * ends up producing, which is what makes an inserted file resizable and
+ * lightboxable like every other embed — and what lets the same file be used by
+ * two notes instead of being uploaded twice.
+ */
+export function insertVaultFiles(view: EditorView, paths: string[]): void {
+  if (!paths.length) return
+  const text = `${paths.map((p) => `![[${p}]]`).join('\n')}\n`
+  const head = view.state.selection.main
+  view.dispatch({
+    changes: { from: head.from, to: head.to, insert: text },
+    selection: { anchor: head.from + text.length },
+    scrollIntoView: true,
+  })
+}
+
+/**
  * A spreadsheet range on the clipboard, as GFM.
  *
  * The `<table>` in the HTML flavour is the discriminator and nothing more — see

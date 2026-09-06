@@ -78,10 +78,13 @@ import {
   IconRail,
   IconRichText,
   IconTrash,
+  IconUpload,
 } from './Icons'
 import { openMenu, type MenuItem } from './Menu'
 import { NoteNav } from './NoteNav'
-import { hasCamera, pickAndInsert } from '../editor/pickImage'
+import { hasCamera, hasPhotoLibrary, pickAndInsert } from '../editor/pickImage'
+import { openFilePicker } from './pickFile'
+import { insertVaultFiles } from '../editor/paste'
 
 export function EditorPane() {
   const hostRef = useRef<HTMLDivElement>(null)
@@ -445,31 +448,57 @@ export function EditorPane() {
     onSelect: () => update({ editorMode: m.id }),
   }))
 
-  /** Camera / library / any file — all land in the note as resizable embeds. */
+  /**
+   * Where a file can come from: the vault, the camera, or the device.
+   *
+   * "Photo Library" and "Choose File" were two spellings of the same native
+   * upload on a desktop, where there is no photo library to open — so the
+   * library only appears on the devices whose OS actually offers one, and the
+   * slot that freed up goes to the thing that was missing: the files already
+   * in Slate. Every route ends in the same `![[…]]` embed.
+   */
   const insertMenu = (e: { clientX: number; clientY: number }) => {
     const view = viewRef.current
     if (!view) return
-    const items: MenuItem[] = []
+    const upload = () => pickAndInsert(view, 'file')
+    const items: MenuItem[] = [
+      {
+        label: 'File in Slate…',
+        icon: <IconPaperclip size={16} />,
+        onSelect: () =>
+          openFilePicker({
+            onPick: (p) => {
+              view.focus()
+              insertVaultFiles(view, [p])
+            },
+            onUpload: upload,
+            // Nothing inserted, so put the caret back where they left it.
+            onCancel: () => view.focus(),
+          }),
+      },
+    ]
     if (hasCamera()) {
       items.push({
         label: 'Take Photo',
         icon: <IconCamera size={16} />,
+        separated: true,
         onSelect: () => pickAndInsert(view, 'camera'),
       })
     }
-    items.push(
-      {
+    if (hasPhotoLibrary()) {
+      items.push({
         label: 'Photo Library',
         icon: <IconImagePlus size={16} />,
+        separated: !hasCamera(),
         onSelect: () => pickAndInsert(view, 'library'),
-      },
-      {
-        label: 'Choose File…',
-        icon: <IconPaperclip size={16} />,
-        separated: true,
-        onSelect: () => pickAndInsert(view, 'file'),
-      },
-    )
+      })
+    }
+    items.push({
+      label: 'Upload a File…',
+      icon: <IconUpload size={16} />,
+      separated: !hasCamera() && !hasPhotoLibrary(),
+      onSelect: upload,
+    })
     openMenu(e, items, 'Insert')
   }
 

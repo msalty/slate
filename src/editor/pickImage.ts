@@ -5,7 +5,9 @@
  * photo taken on a phone gets the same re-encoding, the same dated attachment
  * folder, and the same resizable, lightboxable embed as a pasted screenshot.
  *
- * The three sources differ only by the attributes on a throwaway <input>:
+ * The three sources differ only by the attributes on a throwaway <input>. A
+ * file the vault already holds does not come through here at all — that is the
+ * picker in ui/FilePicker.tsx, which needs no upload to insert anything:
  *
  *   - `capture="environment"` asks the OS for the camera directly. iOS and
  *     Android honour it; a desktop browser ignores it and shows a file dialog,
@@ -74,4 +76,19 @@ export function hasCamera(): boolean {
     'capture' in document.createElement('input') &&
     window.matchMedia?.('(pointer: coarse)').matches === true
   )
+}
+
+/**
+ * True where the OS has a photo library that is a different place from its
+ * file browser — which is to say, on a phone or a tablet.
+ *
+ * On a desktop `accept="image/*"` opens the same file dialog as accepting
+ * anything, only with the other files greyed out, so offering both "Photo
+ * Library" and an upload there is offering the same command twice under two
+ * names. The same coarse-pointer proxy `hasCamera` uses, minus the camera:
+ * a tablet with no usable camera still has a photo library.
+ */
+export function hasPhotoLibrary(): boolean {
+  if (typeof window === 'undefined') return false
+  return window.matchMedia?.('(pointer: coarse)').matches === true
 }

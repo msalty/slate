@@ -779,7 +779,8 @@ body.resizing .pane-resizer::after {
  * takes an underline instead — still obviously marked, and legible in both
  * themes, where a second hue picked to beat one background would not be.
  */
-.note-row[aria-current='true'] .hit {
+.note-row[aria-current='true'] .hit,
+.palette-row[data-sel='1'] .hit {
   color: inherit;
   text-decoration: underline;
   text-decoration-thickness: 1.5px;
@@ -1911,6 +1912,103 @@ button.property-kind:hover {
 }
 .palette-row[data-sel='1'] small {
   color: color-mix(in srgb, var(--text-on-accent) 70%, transparent);
+}
+
+/* ------------------------------------------------------- the file picker
+
+   A palette, so the box you type in is the first thing under the cursor and
+   the list below it is the answer. The rows are taller than a command row
+   because each one carries a thumbnail: the name gets you to the file, the
+   picture confirms you got the right one. */
+
+.file-picker {
+  max-height: 70vh;
+}
+.file-picker-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-faint);
+}
+.file-picker-search > svg {
+  margin-left: 16px;
+  flex: 0 0 auto;
+}
+.file-picker .file-picker-search input {
+  flex: 1;
+  min-width: 0;
+  padding: 15px 0;
+  border-bottom: none;
+  color: var(--text);
+}
+
+.file-pick-row {
+  gap: 11px;
+  padding: 7px 10px;
+  align-items: center;
+}
+.file-pick-thumb {
+  width: 38px;
+  height: 38px;
+  border-radius: 7px;
+  object-fit: cover;
+  background: var(--surface-2);
+  flex: 0 0 auto;
+}
+/* Whatever has no picture says what it is instead, so the column still reads
+   as a column rather than as a ragged left edge. */
+.file-pick-kind {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+  color: var(--text-faint);
+}
+.palette-row[data-sel='1'] .file-pick-kind {
+  color: var(--text-on-accent);
+  background: color-mix(in srgb, var(--text-on-accent) 18%, transparent);
+}
+.file-pick-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.file-pick-name,
+.file-pick-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-pick-sub {
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+.palette-row[data-sel='1'] .file-pick-sub {
+  color: color-mix(in srgb, var(--text-on-accent) 75%, transparent);
+}
+
+.file-picker-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px 9px 16px;
+  border-top: 1px solid var(--border);
+}
+.file-picker-count {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.file-picker-foot .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .dialog {

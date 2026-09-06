@@ -18,6 +18,7 @@ import { useEffect } from 'preact/hooks'
 import { EditorPane, newNoteInFolder } from './EditorPane'
 import { ContextMenu } from './Menu'
 import { LinkDialog } from './LinkDialog'
+import { FilePicker } from './FilePicker'
 import { PromptDialog } from './PromptDialog'
 import { Lightbox } from './Lightbox'
 import { VersionHistory } from './VersionHistory'
@@ -173,6 +174,7 @@ export function PopoutWindow() {
       </div>
       <VersionHistory />
       <LinkDialog />
+      <FilePicker />
       <PromptDialog />
       <Lightbox />
       <ContextMenu />

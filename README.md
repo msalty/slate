@@ -156,14 +156,18 @@ autocomplete over every note; picking one that doesn't exist yet offers to creat
 it. Clicking a broken link creates the note on the spot. Renaming a note rewrites
 every link that pointed at it. Each note lists its own backlinks underneath.
 
-**Images and files.** Paste, drop, or use the toolbar's insert button — **Take
-Photo**, **Photo Library**, or **Choose File**. On a phone, Take Photo opens the
-camera directly. Every route lands in the same place: images are re-encoded on
-the way in — a 1.4 MB screenshot becomes 11 KB of WebP, a 122× reduction, with
-no visible difference at reading size — and every image is resizable by dragging
-its right edge (the width is written back into the markdown as
-`![[img.png|400]]`) and opens in the lightbox on click. PDFs, video, audio and
-text files can live in the vault too.
+**Images and files.** Paste, drop, or use the toolbar's insert button — **File
+in Slate**, **Take Photo**, **Photo Library**, or **Upload a File**. File in
+Slate opens a picker over everything already in the vault: type to filter it by
+name or folder, arrow through the results, Enter to embed the one you meant — so
+the image you attached last week goes into a second note without being uploaded
+a second time. Take Photo and Photo Library only appear on the devices that have
+them; on a desktop they were two names for the same file dialog. Every route
+lands in the same place: images are re-encoded on the way in — a 1.4 MB
+screenshot becomes 11 KB of WebP, a 122× reduction, with no visible difference
+at reading size — and every image is resizable by dragging its right edge (the
+width is written back into the markdown as `![[img.png|400]]`) and opens in the
+lightbox on click. PDFs, video, audio and text files can live in the vault too.
 
 In the lightbox a picture is handled rather than operated: pinch to zoom around
 whatever is between your fingers, drag to move around it — it stops with its
@@ -1126,6 +1130,8 @@ src/
    ├─ dragNote.ts    dragging a note onto a folder, with a pointer
    ├─ DueMenu.tsx    the due-date picker that rides on it
    ├─ DueChip.tsx    a task's date, as a control rather than a caption
+   ├─ FilePicker.tsx the vault's own files, as somewhere to insert one from
+   ├─ pickFile.ts    what that picker matches on, and the order it answers in
    └─ Mobile.tsx     phone tab bar and full-screen tab views
 ```
 
@@ -1209,8 +1215,8 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 550 unit + two-device sync tests
-node scripts/smoke.mjs  # 442 checks in headless Chromium against dist/
+npm test                # 559 unit + two-device sync tests
+node scripts/smoke.mjs  # 450 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 
@@ -1225,14 +1231,16 @@ nothing else's content contained one. The table section asserts inline elements
 inside cells one by one — `strong`, `em`, `code`, `del`, a wikilink, a link, a
 tag — rather than eyeballing text, and the photo-insert section drives the real
 native file picker and checks the result was re-encoded, named and made
-resizable exactly like a paste. The phone section formats a table from the
-Format sheet with real taps — the cell stays marked, the note stays put, and the
-keyboard stays down — and taps a link in both rendered modes, because a tap that
-only summons the keyboard is exactly what a synthesised click looks like. It
-also holds the reading mode to its promise on both layouts: a note opened from
-the list has no `contenteditable` anywhere in it and nothing focused, a table in
-it has no typeable cells, and the tap that ends that is the one that puts the
-caret in the word it landed on.
+resizable exactly like a paste, then inserts that same file a second time from
+the in-vault picker — filtered by typing, chosen with Enter — and checks the
+note gained an embed while the vault gained no second copy. The phone section
+formats a table from the Format sheet with real taps — the cell stays marked,
+the note stays put, and the keyboard stays down — and taps a link in both
+rendered modes, because a tap that only summons the keyboard is exactly what a
+synthesised click looks like. It also holds the reading mode to its promise on
+both layouts: a note opened from the list has no `contenteditable` anywhere in
+it and nothing focused, a table in it has no typeable cells, and the tap that
+ends that is the one that puts the caret in the word it landed on.
 
 Four more sections exist because the answer is only true in a browser. A note
 is *dragged* onto a folder with real drag events, which is the whole of that

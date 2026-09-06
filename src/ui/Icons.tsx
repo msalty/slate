@@ -172,6 +172,13 @@ export const IconDownload = (p: P) => (
   </Svg>
 )
 
+export const IconUpload = (p: P) => (
+  <Svg {...p}>
+    <path d="M12 15.5v-12M7.5 8 12 3.5 16.5 8" />
+    <path d="M4 17.5v1.5a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1.5" />
+  </Svg>
+)
+
 export const IconLink = (p: P) => (
   <Svg {...p}>
     <path d="M10.5 13.5a4 4 0 0 0 5.7 0l2.8-2.8a4 4 0 0 0-5.7-5.7l-1.6 1.6" />

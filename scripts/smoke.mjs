@@ -2188,8 +2188,16 @@ try {
   await page.waitForTimeout(300)
   const insertItems = await page.locator('.menu-item').allInnerTexts()
   check(
-    'the insert menu offers a library and a file option',
-    insertItems.some((t) => /Photo Library/i.test(t)) && insertItems.some((t) => /Choose File/i.test(t)),
+    'the insert menu offers the vault and an upload',
+    insertItems.some((t) => /File in Slate/i.test(t)) && insertItems.some((t) => /Upload a File/i.test(t)),
+    insertItems.join(' / '),
+  )
+  // Touch is on for the whole run, so this context is a coarse pointer and the
+  // photo library belongs in the menu. On a desktop it is dropped entirely —
+  // there it opened the same file dialog as the upload, under a second name.
+  check(
+    'a touch device is still offered its photo library',
+    insertItems.some((t) => /Photo Library/i.test(t)),
     insertItems.join(' / '),
   )
 
@@ -2214,7 +2222,7 @@ try {
 
   const [chooser] = await Promise.all([
     page.waitForEvent('filechooser'),
-    page.locator('.menu-item:has-text("Photo Library")').click(),
+    page.locator('.menu-item:has-text("Upload a File")').click(),
   ])
   await chooser.setFiles({
     name: 'IMG_0421.png',
@@ -2261,6 +2269,87 @@ try {
   check('the inserted photo opens in the lightbox', await page.locator('.lightbox').isVisible())
   await page.keyboard.press('Escape')
   await page.waitForTimeout(300)
+
+  /* ---- insert a file the vault already has -------------------------------
+   *
+   * The other half of Insert, and the half that used to be missing: the file
+   * is already in Slate, so there is nothing to upload and nothing to
+   * re-encode. Typing is the whole interface, so what is checked is that the
+   * box filters, that it says so when nothing matches, and that Enter embeds
+   * the row under the highlight rather than the first one in the vault.
+   */
+  await page.locator('[aria-label="Insert photo or file"]').click()
+  await page.waitForTimeout(300)
+  await page.locator('.menu-item:has-text("File in Slate")').click()
+  await page.waitForSelector('.file-picker')
+  await page.waitForTimeout(300)
+  const pickerRows = await page.locator('.file-pick-row').count()
+  check('the picker lists what is already in the vault', pickerRows >= 1, `${pickerRows} rows`)
+  await page.screenshot({ path: join(SHOTS, '17b-file-picker.png') })
+
+  await page.locator('.file-picker-search input').fill('no-such-file-anywhere')
+  await page.waitForTimeout(250)
+  check(
+    'the picker says so when nothing matches',
+    (await page.locator('.file-pick-row').count()) === 0 &&
+      (await page.locator('.file-picker .empty').count()) === 1,
+  )
+
+  await page.locator('.file-picker-search input').fill('IMG_0421')
+  await page.waitForTimeout(250)
+  const narrowed = await page.locator('.file-pick-name').allInnerTexts()
+  check(
+    'typing a filename narrows the picker to it',
+    narrowed.length === 1 && /IMG_0421/.test(narrowed[0]),
+    narrowed.join(' / '),
+  )
+
+  const vaultAttachments = () =>
+    page.evaluate(async () => {
+      const req = indexedDB.open('slate')
+      return new Promise((resolve) => {
+        req.onsuccess = () => {
+          const all = req.result.transaction('files', 'readonly').objectStore('files').getAll()
+          all.onsuccess = () =>
+            resolve(all.result.filter((f) => f.kind === 'attachment' && !f.deleted).length)
+        }
+      })
+    })
+  const filesBefore = await vaultAttachments()
+  const embedsBefore = await page.locator('.cm-embed img').count()
+  await page.keyboard.press('Enter')
+  await page.waitForTimeout(800)
+  check('the picker closes once something is chosen', (await page.locator('.file-picker').count()) === 0)
+  const embedsAfter = await page.locator('.cm-embed img').count()
+  check(
+    'a file already in the vault is embedded without being uploaded again',
+    embedsAfter === embedsBefore + 1,
+    `${embedsBefore} -> ${embedsAfter} embeds`,
+  )
+  // Nothing new on disk: the same attachment is now used twice.
+  const filesAfter = await vaultAttachments()
+  check(
+    'inserting from the vault adds no second copy',
+    filesAfter === filesBefore,
+    `${filesBefore} -> ${filesAfter} attachments`,
+  )
+
+  // Escape gets out with nothing inserted, from a picker that was opened and
+  // thought better of.
+  await page.locator('[aria-label="Insert photo or file"]').click()
+  await page.waitForTimeout(300)
+  await page.locator('.menu-item:has-text("File in Slate")').click()
+  await page.waitForSelector('.file-picker')
+  await page.waitForTimeout(300)
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(400)
+  const stillOpen = await page.locator('.file-picker').count()
+  const embedsNow = await page.locator('.cm-embed img').count()
+  check(
+    'Escape leaves the picker with the note untouched',
+    stillOpen === 0 && embedsNow === embedsAfter,
+    `${stillOpen} pickers, ${embedsNow} embeds (was ${embedsAfter})`,
+  )
 
   /* ---- PDFs -------------------------------------------------------------
    *
@@ -2316,7 +2405,7 @@ try {
   await page.waitForTimeout(300)
   const [pdfChooser] = await Promise.all([
     page.waitForEvent('filechooser'),
-    page.locator('.menu-item:has-text("Choose File")').click(),
+    page.locator('.menu-item:has-text("Upload a File")').click(),
   ])
   await pdfChooser.setFiles({ name: 'spec.pdf', mimeType: 'application/pdf', buffer: pdfBytes })
   await page.waitForTimeout(2000)
