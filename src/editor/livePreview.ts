@@ -39,6 +39,7 @@ import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate
 import type { SyntaxNodeRef } from '@lezer/common'
 import {
   BulletWidget,
+  CalloutFoldWidget,
   CalloutWidget,
   CheckboxWidget,
   CopyCodeWidget,
@@ -318,14 +319,20 @@ function buildDecorations(view: EditorView): DecorationSet {
            * one — same line-by-line walk, a different class. Nothing about the
            * text changes, which is what keeps the file a plain blockquote that
            * any other renderer will still show.
+           *
+           * Folded, the head line is the whole of the box: the lines under it
+           * are replaced by the field above and never drawn, so the head has to
+           * carry both edges or the callout would end in an open corner.
            */
+          const folded = calloutFolded(state, first.to)
           const base = `cm-callout cm-callout-${callout.spec.kind}`
           starts.forEach((at, i) => {
             if (seenLines.has(at)) return
             seenLines.add(at)
+            if (folded && i > 0) return
             const edges =
               (i === 0 ? ' cm-callout-first' : '') +
-              (i === starts.length - 1 ? ' cm-callout-last' : '')
+              (folded || i === starts.length - 1 ? ' cm-callout-last' : '')
             out.push(lineDeco(base + edges).range(at))
           })
 
@@ -348,6 +355,8 @@ function buildDecorations(view: EditorView): DecorationSet {
                 widget: new CalloutWidget(
                   callout.spec.icon,
                   callout.title ? '' : callout.spec.label,
+                  folded,
+                  starts.length > 1,
                 ),
               }).range(from, to),
             )
@@ -799,6 +808,81 @@ export const livePreview = ViewPlugin.fromClass(
       EditorView.atomicRanges.of((view) => view.plugin(plugin)?.decorations ?? Decoration.none),
   },
 )
+
+/* -------------------------------------------------------------- callouts */
+
+/**
+ * Callouts that are folded, and the body each one is hiding.
+ *
+ * A StateField rather than part of the plugin above, for the same reason the
+ * table is one: replacing a range that spans line breaks is not something a
+ * view plugin may do. It is also the right home for it — the fold is a property
+ * of the *document*, since it lives in the `-` after the marker, so every view
+ * onto that document folds the same way without being told.
+ *
+ * A whole-document line scan on each change, like the table scan below it. The
+ * gate is a substring test that almost every line fails immediately.
+ */
+function foldedCallouts(state: EditorState): Array<{ from: number; to: number; lines: number }> {
+  const out: Array<{ from: number; to: number; lines: number }> = []
+  const total = state.doc.lines
+  for (let n = 1; n <= total; n++) {
+    const line = state.doc.line(n)
+    if (!line.text.includes('[!')) continue
+    if (parseCallout(line.text)?.fold !== '-') continue
+    let end = n
+    while (end + 1 <= total && /^[ \t]*>/.test(state.doc.line(end + 1).text)) end++
+    // Nothing underneath is nothing to fold: a one-line callout keeps its
+    // chevron off and its `-` does nothing until it has a body.
+    if (end === n) continue
+    n = end
+    const to = state.doc.line(end).to
+    /*
+     * Never fold a selection out of sight. The caret cannot normally get in
+     * here — the range is atomic — but Select All reaches everywhere, and a
+     * fold that swallowed the caret would be text you could type into and not
+     * see.
+     */
+    if (touched(state, line.to + 1, to)) continue
+    out.push({ from: line.to, to, lines: end - line.number })
+  }
+  return out
+}
+
+function buildCalloutFolds(state: EditorState): DecorationSet {
+  return RangeSet.of(
+    foldedCallouts(state).map((f) =>
+      Decoration.replace({ widget: new CalloutFoldWidget(f.lines) }).range(f.from, f.to),
+    ),
+    true,
+  )
+}
+
+export const calloutFoldField = StateField.define<DecorationSet>({
+  create: buildCalloutFolds,
+  update(value, tr) {
+    const focusChanged = tr.effects.some((e) => e.is(setFocused))
+    if (!tr.docChanged && !tr.selection && !tr.reconfigured && !focusChanged)
+      return value.map(tr.changes)
+    return buildCalloutFolds(tr.state)
+  },
+  provide: (f) => [
+    EditorView.decorations.from(f),
+    // Folded means folded: the caret does not stop inside lines nobody can see.
+    EditorView.atomicRanges.of((view) => view.state.field(f, false) ?? Decoration.none),
+  ],
+})
+
+/** Whether the callout whose head line ends here has its body folded away. */
+function calloutFolded(state: EditorState, headTo: number): boolean {
+  const set = state.field(calloutFoldField, false)
+  if (!set) return false
+  let hit = false
+  set.between(headTo, headTo, (from) => {
+    if (from === headTo) hit = true
+  })
+  return hit
+}
 
 /**
  * Rendered tables.

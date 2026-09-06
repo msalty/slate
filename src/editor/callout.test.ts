@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { ICONS, parseCallout } from './callout'
+import { ICONS, parseCallout, withCalloutFold } from './callout'
 
 describe('recognition', () => {
   it('reads GitHub\'s five alert types', () => {
@@ -89,6 +89,53 @@ describe('the marker range', () => {
     expect(marker('> > [!TIP] Nested')).toBe('[!TIP] ')
     expect(marker('>[!TIP] Tight')).toBe('[!TIP] ')
     expect(marker('  > [!TIP] Indented')).toBe('[!TIP] ')
+  })
+})
+
+/*
+ * The fold lives in the line, which is the only place it could live without
+ * inventing state: a fold kept in the editor would be gone on reload, differ
+ * between two windows onto the same note, and never reach another device.
+ */
+describe('the fold character', () => {
+  it('reads Obsidian\'s two, and their absence', () => {
+    expect(parseCallout('> [!NOTE]- Folded')?.fold).toBe('-')
+    expect(parseCallout('> [!NOTE]+ Open')?.fold).toBe('+')
+    expect(parseCallout('> [!NOTE] Plain')?.fold).toBe('')
+  })
+
+  it('points at where the character is, or would go', () => {
+    const at = (line: string) => parseCallout(line)!.foldAt
+    expect('> [!NOTE]- x'.slice(at('> [!NOTE]- x'))).toBe('- x')
+    expect('> [!NOTE] x'.slice(at('> [!NOTE] x'))).toBe(' x')
+  })
+
+  it('folds a callout by writing the character in', () => {
+    expect(withCalloutFold('> [!NOTE] Remember', '-')).toBe('> [!NOTE]- Remember')
+    expect(withCalloutFold('> [!NOTE]+ Remember', '-')).toBe('> [!NOTE]- Remember')
+    expect(withCalloutFold('> > [!TIP]', '-')).toBe('> > [!TIP]-')
+  })
+
+  /*
+   * Unfolding removes the character rather than writing a `+`. A callout
+   * nobody has folded and one somebody has unfolded are the same callout, and
+   * a `+` would leave every callout ever collapsed marked for life.
+   */
+  it('unfolds by taking it out again', () => {
+    expect(withCalloutFold('> [!NOTE]- Remember', '')).toBe('> [!NOTE] Remember')
+    expect(withCalloutFold('> [!NOTE]+ Remember', '')).toBe('> [!NOTE] Remember')
+  })
+
+  it('leaves a line it cannot parse exactly as it found it', () => {
+    expect(withCalloutFold('> [!nonsense] x', '-')).toBe('> [!nonsense] x')
+    expect(withCalloutFold('plain text', '-')).toBe('plain text')
+    // Already in the state asked for: not a rewrite, the same string.
+    expect(withCalloutFold('> [!NOTE]- x', '-')).toBe('> [!NOTE]- x')
+  })
+
+  it('round-trips through both states', () => {
+    const line = '> [!WARNING] Friday deploys'
+    expect(withCalloutFold(withCalloutFold(line, '-'), '')).toBe(line)
   })
 })
 

@@ -83,9 +83,10 @@ const TAP_MS = 600
 /**
  * The parts of a note that answer a tap themselves: a link goes somewhere, a
  * checkbox ticks, an image opens full screen, a code block's copy button puts
- * the code on the clipboard, a task's date chip opens its picker. None of them
- * is a request to start writing, and a note you cannot read through without
- * falling into the editor is not a reading mode.
+ * the code on the clipboard, a task's date chip opens its picker, a callout's
+ * chevron folds it away. None of them is a request to start writing, and a note
+ * you cannot read through without falling into the editor is not a reading
+ * mode.
  *
  * The date chip belongs here for the same reason the checkbox does: reading is
  * not read-only, and giving a task a date while reading through a note is the
@@ -98,7 +99,8 @@ const TAP_MS = 600
  * so a control that swallows `mousedown` is still, as far as this is
  * concerned, a tap on the note.
  */
-const SELF_HANDLED = '.cm-task-checkbox, .cm-embed, .cm-code-copy, .cm-due-chip'
+const SELF_HANDLED =
+  '.cm-task-checkbox, .cm-embed, .cm-code-copy, .cm-due-chip, .cm-callout-fold'
 
 /** A table is content, not a control — but it places its own caret. */
 const TABLE = '.cm-table-wrap'

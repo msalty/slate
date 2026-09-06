@@ -165,6 +165,44 @@ export const editorTheme = EditorView.theme({
   /* An author's own title takes the type's colour, like the label would. */
   '.cm-callout-title': { color: 'var(--callout-accent)', fontWeight: '650' },
 
+  /*
+   * The fold chevron, at the head of the icon.
+   *
+   * Out of the way until it is wanted: with a pointer, a note full of callouts
+   * should not be a note full of buttons, so it appears on hover — except when
+   * the callout is folded. See the media query below.
+   */
+  '.cm-callout-fold': {
+    display: 'inline-flex',
+    alignItems: 'center',
+    marginRight: '0.35em',
+    cursor: 'pointer',
+    opacity: '0.75',
+    transition: 'opacity var(--dur), transform var(--dur)',
+    // Down when the callout is open, right when it is folded — the direction
+    // every disclosure triangle in the app points.
+    transform: 'rotate(90deg)',
+  },
+  '.cm-callout-fold[data-folded="1"]': { transform: 'none' },
+  '.cm-callout-fold svg': { width: '0.85em', height: '0.85em' },
+  /*
+   * With a pointer it is hidden until hovered, on the same terms as the code
+   * block's copy button — see the one media query further down, which both of
+   * them share. A folded callout keeps its chevron everywhere.
+   */
+  /* What stands in for the body of a folded callout: how much of it there is. */
+  '.cm-callout-folded': {
+    marginLeft: '0.6em',
+    padding: '0 6px',
+    borderRadius: '5px',
+    fontSize: '0.82em',
+    fontFamily: 'var(--font-body)',
+    fontWeight: '500',
+    color: 'var(--callout-accent)',
+    backgroundColor: 'color-mix(in srgb, var(--callout-accent) 14%, transparent)',
+    verticalAlign: '0.05em',
+  },
+
   '.cm-line.cm-codeblock': {
     backgroundColor: 'var(--code-bg)',
     fontFamily: 'var(--font-mono)',
@@ -225,6 +263,11 @@ export const editorTheme = EditorView.theme({
     '.cm-line.cm-codeblock-first:hover .cm-code-copy': { opacity: '0.75' },
     '.cm-line.cm-codeblock-first:hover .cm-code-copy:hover': { opacity: '1' },
     '.cm-code-copy[data-copied]': { opacity: '1' },
+    // The callout's fold chevron keeps the same bargain, for the same reason.
+    '.cm-callout-fold': { opacity: '0' },
+    '.cm-line:hover .cm-callout-fold': { opacity: '0.75' },
+    '.cm-callout-fold:hover': { opacity: '1' },
+    '.cm-callout-fold[data-folded="1"]': { opacity: '0.75' },
   },
   '.cm-line.cm-codeblock-last': {
     borderRadius: '0 0 8px 8px',

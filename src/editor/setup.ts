@@ -42,6 +42,7 @@ import { markdown, markdownLanguage, insertNewlineContinueMarkup } from '@codemi
 import { codeLanguages } from './languages'
 import { editorTheme, highlighting } from './theme'
 import {
+  calloutFoldField,
   frontmatterField,
   livePreview,
   previewMode,
@@ -258,6 +259,13 @@ export function previewExtensions(mode: EditorMode): Extension {
     interactedField,
     livePreview,
     tableField,
+    /*
+     * A folded callout hides whole lines, which is a state field's job rather
+     * than the plugin's. In both rendered modes: a fold is a way of reading,
+     * and both of these are modes for reading. Source mode gets none of it —
+     * it shows the file, and the `-` in the marker is part of the file.
+     */
+    calloutFoldField,
     linkClicks,
   ]
   return mode === 'rich'

@@ -20,6 +20,10 @@
  *
  * A name that isn't in the table is deliberately *not* a callout: it renders as
  * the plain blockquote it is, exactly as GitHub does with an unknown alert.
+ *
+ * One thing here is Obsidian's rather than GitHub's: the `-` after the marker
+ * that means "collapsed". It is the only place a fold could live without
+ * inventing state — see `Callout.fold`.
  */
 
 /** The five colour families. Everything else aliases onto one of these. */
@@ -101,6 +105,20 @@ export interface Callout {
    */
   markerFrom: number
   markerTo: number
+  /**
+   * Obsidian's fold character, as written: `-` collapsed, `+` expanded, and
+   * `''` for a callout nobody has folded yet.
+   *
+   * Which is also *where the fold lives*. It could have been editor state, and
+   * then a note would fold itself back up on every reload, look different in
+   * two windows onto the same file, and lose the shape you left it in the
+   * moment it synced to another device. Obsidian writes it into the line, the
+   * file stays a plain blockquote everywhere else, and the fold survives
+   * everything the text survives.
+   */
+  fold: '' | '-' | '+'
+  /** Offset within the line where the fold character sits, or would go. */
+  foldAt: number
   /** The author's own title, if they wrote one after the marker. */
   title: string
 }
@@ -109,11 +127,11 @@ export interface Callout {
  * `> [!type]` with the quote markers in front of it.
  *
  * The prefix repeats so a callout nested inside another blockquote is still
- * recognised, and the fold character Obsidian writes (`[!note]-`) is matched
- * and swallowed rather than left behind as a stray dash — folding itself is not
- * implemented, but showing its syntax would be worse than ignoring it.
+ * recognised, and the fold character Obsidian writes (`[!note]-`) is captured
+ * rather than left on screen as a stray dash: it says whether the callout is
+ * collapsed, and the live preview both honours it and writes it.
  */
-const CALLOUT = /^((?:[ \t]*>)+[ \t]?)[ \t]*(\[!([A-Za-z][A-Za-z0-9_-]*)\][-+]?)([ \t]*)(.*)$/
+const CALLOUT = /^((?:[ \t]*>)+[ \t]?)[ \t]*(\[!([A-Za-z][A-Za-z0-9_-]*)\]([-+]?))([ \t]*)(.*)$/
 
 /** Read the first line of a blockquote. Undefined when it isn't a callout. */
 export function parseCallout(line: string): Callout | undefined {
@@ -123,8 +141,33 @@ export function parseCallout(line: string): Callout | undefined {
   // An unknown name stays an ordinary blockquote, exactly as GitHub renders it.
   if (!spec) return undefined
   const markerFrom = line.indexOf(m[2], m[1].length)
-  const markerTo = markerFrom + m[2].length + Math.min(m[4].length, 1)
-  return { spec, name: m[3], markerFrom, markerTo, title: m[5].trim() }
+  const markerTo = markerFrom + m[2].length + Math.min(m[5].length, 1)
+  const fold = m[4] as '' | '-' | '+'
+  return {
+    spec,
+    name: m[3],
+    markerFrom,
+    markerTo,
+    fold,
+    // The `]` of the marker is the last thing before it, fold character or not.
+    foldAt: markerFrom + m[2].length - fold.length,
+    title: m[6].trim(),
+  }
+}
+
+/**
+ * The same line with its fold character set to what you ask for.
+ *
+ * `''` removes it, which is what "unfold" writes rather than a `+`: a callout
+ * nobody has folded and one somebody has unfolded are the same callout, and
+ * leaving a `+` behind would mean every callout ever collapsed carried a mark
+ * saying so for the rest of its life. `+` is still read on the way in, because
+ * other apps write it.
+ */
+export function withCalloutFold(line: string, fold: '' | '-' | '+'): string {
+  const c = parseCallout(line)
+  if (!c || c.fold === fold) return line
+  return line.slice(0, c.foldAt) + fold + line.slice(c.foldAt + c.fold.length)
 }
 
 /** Inner SVG for each glyph, drawn on a 24×24 grid with `currentColor`. */

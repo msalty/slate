@@ -9,7 +9,7 @@
 import { EditorView, WidgetType } from '@codemirror/view'
 import { attachmentUrl, getRaw } from '../core/vault'
 import { fencedBody } from './codeblock'
-import { ICONS } from './callout'
+import { ICONS, withCalloutFold } from './callout'
 import { renderInline } from './inline'
 import { dueLabel, dueTone, formatBytes, mediaClass, startOfDay } from '../core/util'
 import { requestDueMenu, requestLightbox } from './context'
@@ -80,15 +80,24 @@ export class CalloutWidget extends WidgetType {
     readonly icon: string,
     /** The fallback title, or "" when the author wrote their own. */
     readonly label: string,
+    /** True when the callout's body is collapsed behind this line. */
+    readonly folded: boolean,
+    /** False for a one-line callout: there is nothing under it to fold. */
+    readonly foldable: boolean,
   ) {
     super()
   }
 
   eq(other: CalloutWidget) {
-    return other.icon === this.icon && other.label === this.label
+    return (
+      other.icon === this.icon &&
+      other.label === this.label &&
+      other.folded === this.folded &&
+      other.foldable === this.foldable
+    )
   }
 
-  toDOM() {
+  toDOM(view: EditorView) {
     const el = document.createElement('span')
     el.className = 'cm-callout-mark'
     el.setAttribute('contenteditable', 'false')
@@ -109,9 +118,97 @@ export class CalloutWidget extends WidgetType {
       text.textContent = this.label
       el.appendChild(text)
     }
+    if (this.foldable) el.appendChild(this.chevron(view))
     return el
   }
 
+  /**
+   * The fold control: a chevron after the icon, which is the whole of the
+   * gesture.
+   *
+   * It writes Obsidian's `-` into the marker rather than holding a fold in the
+   * editor — so the state travels with the note, and a folded callout opened in
+   * Obsidian is folded there too. The line is rewritten as one change, which
+   * also means undo puts it straight back.
+   *
+   * Kept out of the tab order and hidden until hover, except when the callout
+   * is folded — then it is the only sign there is anything underneath, and has
+   * to be visible on its own.
+   */
+  private chevron(view: EditorView): HTMLElement {
+    /*
+     * A real `<button>`, not a span with a role. Inside a contenteditable a
+     * button takes the click's focus itself, which is what stops the press from
+     * also landing a caret on the line — and a caret on the line reveals the
+     * raw marker, taking this chevron with it. Preventing the default is not
+     * enough on its own; the element type is.
+     */
+    const btn = document.createElement('button')
+    btn.className = 'cm-callout-fold'
+    btn.type = 'button'
+    btn.dataset.folded = this.folded ? '1' : '0'
+    // Chrome on the button, not the note: tabbing through a note moves through
+    // the note, the same rule the code block's copy button follows.
+    btn.tabIndex = -1
+    btn.title = this.folded ? 'Unfold callout' : 'Fold callout'
+    btn.setAttribute('aria-label', btn.title)
+    btn.appendChild(glyph('cm-callout-chevron', '<path d="m9 5 7 7-7 7"/>'))
+    /*
+     * Cancelled on the way down, acted on the way up — the copy button's
+     * split, and for a sharper reason here. The press must not place a caret,
+     * because a caret on this line reveals the raw `[!warning]` and takes this
+     * widget with it. And the fold cannot happen *during* the press either:
+     * folding rebuilds the widget, so the button would be destroyed out from
+     * under the click and the editor would take the focus the button had.
+     */
+    btn.addEventListener('mousedown', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+    })
+    btn.addEventListener('click', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const line = view.state.doc.lineAt(view.posAtDOM(btn))
+      const next = withCalloutFold(line.text, this.folded ? '' : '-')
+      if (next === line.text) return
+      view.dispatch({
+        changes: { from: line.from, to: line.to, insert: next },
+        // Keep the caret where it was, exactly as the checkbox does: folding
+        // is not editing the line, and a caret landing on it would reveal the
+        // marker the chevron is attached to — taking the chevron with it.
+        selection: view.state.selection,
+        scrollIntoView: false,
+      })
+    })
+    return btn
+  }
+
+  ignoreEvent() {
+    return false
+  }
+}
+
+/**
+ * What a folded callout shows where its body was: how many lines are hidden.
+ *
+ * A count rather than an ellipsis, because the one question a collapsed thing
+ * has to answer is how much of it there is.
+ */
+export class CalloutFoldWidget extends WidgetType {
+  constructor(readonly lines: number) {
+    super()
+  }
+  eq(other: CalloutFoldWidget) {
+    return other.lines === this.lines
+  }
+  toDOM() {
+    const el = document.createElement('span')
+    el.className = 'cm-callout-folded'
+    el.setAttribute('contenteditable', 'false')
+    el.textContent = `${this.lines} more line${this.lines === 1 ? '' : 's'}`
+    el.title = 'Folded — use the chevron to open'
+    return el
+  }
   ignoreEvent() {
     return true
   }
