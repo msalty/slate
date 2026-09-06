@@ -1,6 +1,64 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import preact from '@preact/preset-vite'
 import { VitePWA } from 'vite-plugin-pwa'
+import { readFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
+
+/**
+ * pdf.js's worker and its WebAssembly decoders, served and shipped under one
+ * fixed path.
+ *
+ * Neither can be an ordinary `?url` import, for the same reason: pdf.js builds
+ * these URLs itself, by name, from a directory it is handed, so the filenames
+ * have to survive the build unhashed — which is what `emitFile` with an
+ * explicit `fileName` does. The dev server never sees a build, so it is given a
+ * matching route.
+ *
+ * The worker is renamed from `.mjs` to `.js` on the way through, and that is
+ * not tidying. A module worker is refused unless it is served as JavaScript,
+ * and `dist/` is built to be dropped onto any static host — including ones
+ * whose mime.types predate `.mjs` and would hand the browser
+ * `application/octet-stream`. `.js` is the one extension every one of them
+ * knows.
+ *
+ * The decoders are what read the image formats a PDF can carry and a browser
+ * cannot: JBIG2 and JPEG 2000, which is what a scanner puts in a scanned
+ * document, and qcms, which is what makes an embedded colour profile come out
+ * the right colour. Without them those pages come out blank or wrong, so they
+ * are worth their 450KB — unlike pdf.js's fourth wasm file, quickjs, which
+ * exists to run JavaScript embedded in PDF form fields, is larger than these
+ * three together, and is not something a notes app should be executing.
+ */
+const PDF_DIR = 'pdfjs'
+const PDF_FILES: Record<string, string> = {
+  'pdf.worker.js': 'pdfjs-dist/legacy/build/pdf.worker.min.mjs',
+  'jbig2.wasm': 'pdfjs-dist/wasm/jbig2.wasm',
+  'openjpeg.wasm': 'pdfjs-dist/wasm/openjpeg.wasm',
+  'qcms_bg.wasm': 'pdfjs-dist/wasm/qcms_bg.wasm',
+}
+
+function pdfAssets(): Plugin {
+  const require = createRequire(import.meta.url)
+  const read = (name: string) => readFile(require.resolve(PDF_FILES[name]))
+  return {
+    name: 'slate:pdf-assets',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const name = req.url?.split('?')[0]?.replace(`/${PDF_DIR}/`, '')
+        if (!name || !(name in PDF_FILES) || !req.url?.startsWith(`/${PDF_DIR}/`)) return next()
+        void read(name).then((body) => {
+          res.setHeader('Content-Type', name.endsWith('.wasm') ? 'application/wasm' : 'text/javascript')
+          res.end(body)
+        }, next)
+      })
+    },
+    async buildStart() {
+      for (const name of Object.keys(PDF_FILES)) {
+        this.emitFile({ type: 'asset', fileName: `${PDF_DIR}/${name}`, source: await read(name) })
+      }
+    },
+  }
+}
 
 export default defineConfig({
   /*
@@ -28,6 +86,7 @@ export default defineConfig({
   },
   plugins: [
     preact(),
+    pdfAssets(),
     VitePWA({
       registerType: 'prompt',
       injectRegister: null,
@@ -120,8 +179,17 @@ export default defineConfig({
         ],
       },
       workbox: {
-        // The app shell is precached so a cold start works with no network at all.
-        globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
+        /*
+         * The app shell is precached so a cold start works with no network at
+         * all, and `wasm` is in the list because the PDF viewer is part of that
+         * promise. pdf.js — its worker, its library chunk and its image
+         * decoders — is the largest thing the app ships: about two megabytes,
+         * downloaded once, in exchange for a PDF that opens on a plane.
+         * Fetching it on demand instead would be a smaller install and a
+         * document that refuses to open exactly when the notes around it
+         * still do.
+         */
+        globPatterns: ['**/*.{js,css,html,svg,png,woff2,wasm}'],
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         cleanupOutdatedCaches: true,
         navigateFallback: 'index.html',

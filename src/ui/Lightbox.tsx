@@ -5,6 +5,8 @@ import { attachmentUrl, getRaw } from '../core/vault'
 import { basename, formatBytes, mediaClass } from '../core/util'
 import { lightboxPath } from './state'
 import { IconClose, IconDownload } from './Icons'
+import { PdfView } from './PdfView'
+import { clampZoom } from './pdfLayout'
 import { clampView, FIT, pan, pinch, zoomTo, type Box, type Point, type View } from './zoom'
 
 /** A finger or the mouse pointer, and where it was when we last heard from it. */
@@ -29,6 +31,12 @@ const TAP_SLOP = 8
 
 export function Lightbox() {
   const path = lightboxPath.value
+  /*
+   * Known before the hooks below, because the zoom keys and the toolbar have
+   * to behave differently for a document than for a picture, and both are
+   * wired up before the early return that needs a path.
+   */
+  const kind = path ? mediaClass(path) : undefined
   const [view, setView] = useState<View>(FIT)
   const [gesturing, setGesturing] = useState(false)
   const stageRef = useRef<HTMLDivElement | null>(null)
@@ -59,6 +67,12 @@ export function Lightbox() {
 
   /** Zoom about a point on screen, or about the middle of the stage. */
   const zoomBy = (factor: number, at?: Point) => {
+    // A document keeps only the scale: it is zoomed by getting wider inside its
+    // own scroller, so there is no transform here for the offsets to belong to.
+    if (kind === 'pdf') {
+      setView((v) => ({ ...v, scale: clampZoom(v.scale * factor) }))
+      return
+    }
     setView((v) => {
       const f = measure(v)
       if (!f) return v
@@ -103,11 +117,12 @@ export function Lightbox() {
     }
   }, [path])
 
-  if (!path) return null
+  if (!path || !kind) return null
   const file = getRaw(path)
   const url = attachmentUrl(path)
-  const kind = mediaClass(path)
   const zoomable = kind === 'image' && !!url
+  /** A picture and a document are both zoomed; nothing else on the stage is. */
+  const scalable = kind === 'image' || kind === 'pdf'
 
   const download = () => {
     if (!url) return
@@ -189,21 +204,23 @@ export function Lightbox() {
         <span class="lightbox-name">{basename(path)}</span>
         <span class="lightbox-meta">
           {file ? formatBytes(file.size) : ''}
-          {kind === 'image' && view.scale !== 1 ? ` · ${Math.round(view.scale * 100)}%` : ''}
+          {scalable && view.scale !== 1 ? ` · ${Math.round(view.scale * 100)}%` : ''}
         </span>
         <span class="spacer" style={{ flex: 1 }} />
         {/*
-          * Hidden on a phone, where fingers do this better: pinch to zoom, drag
-          * to move, tap to go back to the fit. A row of 30px buttons is a poor
-          * substitute for that, and the space is worth more to the file name.
+          * Hidden on a phone, where fingers do this better: pinch to zoom, and
+          * on a picture drag to move and tap to go back to the fit. A row of
+          * 30px buttons is a poor substitute for that, and the space is worth
+          * more to the file name.
           */}
-        {kind === 'image' && (
+        {scalable && (
           <>
             <button class="icon-btn lightbox-zoom" onClick={() => zoomBy(1 / 1.25)} title="Zoom out (−)">
               −
             </button>
             <button class="icon-btn lightbox-zoom" onClick={() => setView(FIT)} title="Fit (0)">
-              1:1
+              {/* A picture's fit *is* 1:1; a document's is the width of the page. */}
+              {kind === 'pdf' ? 'Fit' : '1:1'}
             </button>
             <button class="icon-btn lightbox-zoom" onClick={() => zoomBy(1.25)} title="Zoom in (+)">
               +
@@ -225,6 +242,7 @@ export function Lightbox() {
       <div
         class="lightbox-stage"
         ref={stageRef}
+        data-kind={kind}
         data-zoomable={zoomable ? '1' : '0'}
         onClick={(e) => e.stopPropagation()}
         onPointerDown={onPointerDown}
@@ -253,7 +271,12 @@ export function Lightbox() {
         ) : kind === 'audio' ? (
           <audio src={url} controls autoplay style={{ width: 'min(600px, 90%)' }} />
         ) : kind === 'pdf' ? (
-          <iframe src={url} title={basename(path)} />
+          <PdfView
+            url={url}
+            zoom={view.scale}
+            onZoom={(scale) => setView((v) => ({ ...v, scale }))}
+            onDownload={download}
+          />
         ) : kind === 'text' ? (
           <TextPreview path={path} />
         ) : (

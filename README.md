@@ -18,8 +18,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 504 unit and two-device sync tests
-node scripts/smoke.mjs # 404-check browser smoke test against dist/
+npm test               # 550 unit and two-device sync tests
+node scripts/smoke.mjs # 442-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -172,6 +172,21 @@ to go from fitted to 2× and back. A pointer gets the same gestures (drag to pan
 click to zoom) plus the `−` / `1:1` / `+` buttons and the `-`, `0`, `+` keys;
 those buttons are hidden on a phone, where fingers do the job better and the
 space is worth more to the file name.
+
+**PDFs are drawn by the app rather than by the browser**, which is not a
+preference: pointing an `<iframe>` at a PDF — the usual trick, and what this
+used to do — gives you page one as a still picture on iOS, with no scrolling to
+page two and no pinch, and a blank rectangle on Android Chrome, which has no PDF
+plugin for frames at all. So the app draws the pages itself, all of them, in one
+column that scrolls. Pinch to zoom and the pages are *redrawn* at the new size
+rather than magnified; on a desktop the `−` / `Fit` / `+` buttons and the `-`,
+`0`, `+` keys do the same, as does ctrl-scroll or a trackpad pinch. The words stay real
+text laid over the picture, so they can still be selected, copied and found with
+the browser's own search. Only the pages near the screen hold a canvas, so a
+three-hundred-page scan does not cost three hundred pages of memory. And it
+works with the network off like the rest of the app: pdf.js, its worker and its
+image decoders are precached — about two megabytes of a three-and-a-half
+megabyte install, which is the honest price of a PDF that opens on a plane.
 
 In rich text an image stays an image: putting the caret beside one never swaps
 it back for `![[img.png]]`, and it takes no margin of its own, so a line of
@@ -1161,6 +1176,14 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
   clearly cheaper than rebuilding from text already in memory, and a stale
   index is a search that is quietly wrong. Making the *build* cheaper is the
   better lever if it ever matters.
+- **Two kinds of PDF are shipped short.** A PDF whose text is encoded through a
+  CJK character map needs pdf.js's `cmaps`, and a PDF with JavaScript in its
+  form fields needs its `quickjs` runtime; neither is bundled — 1.7MB and 460KB
+  respectively, against a viewer that is already the largest thing here, and the
+  second is a JavaScript interpreter this app has no business carrying. Such a
+  document opens and scrolls; some of its text may come out as boxes, and a form
+  will not calculate. The three decoders that matter for ordinary and scanned
+  documents — JBIG2, JPEG 2000 and colour profiles — *are* bundled.
 - **No encryption at rest.** Notes are plain files on your server. Per-file
   encryption before upload would fit cleanly behind the adapter interface.
 - **iOS PWA storage can be evicted** after ~7 days of not opening the app, which
@@ -1186,8 +1209,8 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 535 unit + two-device sync tests
-node scripts/smoke.mjs  # 430 checks in headless Chromium against dist/
+npm test                # 550 unit + two-device sync tests
+node scripts/smoke.mjs  # 442 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 
