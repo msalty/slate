@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { expect, it, vi } from 'vitest'
 import { EditorView } from '@codemirror/view'
-import { forceParsing, syntaxTree } from '@codemirror/language'
+import { forceParsing, syntaxTree, syntaxTreeAvailable } from '@codemirror/language'
 import { createEditorState } from './setup'
 import { livePreview, previewMode } from './livePreview'
 import { highlightTask } from './taskHighlight'
@@ -26,6 +26,26 @@ it('refreshes rich text when background parsing advances without a document or s
     expect(view.state.facet(previewMode)).toBe('rich')
     expect(view.state.facet(EditorView.editable)).toBe(false)
     expect(view.state.doc.toString()).toBe(doc)
+  } finally {
+    view.destroy()
+  }
+})
+
+
+it('prepares the content below a task before centering it, without parsing the whole note', () => {
+  const doc = '# Note\n\n' + '- [ ] **Task** with a [link](https://example.com)\n'.repeat(5000)
+  const onChange = vi.fn()
+  const view = new EditorView({ state: createEditorState({
+    doc, path: 'note.md', mode: 'rich', fontSize: 16, editable: false, onChange,
+  }) })
+  try {
+    highlightTask(view, 250)
+    // The task lands in the middle of the viewport, not at its bottom.
+    expect(syntaxTreeAvailable(view.state, view.state.doc.line(300).to)).toBe(true)
+    expect(syntaxTree(view.state).length).toBeLessThan(doc.length)
+    expect(view.state.doc.toString()).toBe(doc)
+    expect(onChange).not.toHaveBeenCalled()
+    expect(view.state.facet(previewMode)).toBe('rich')
   } finally {
     view.destroy()
   }
