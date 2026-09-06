@@ -25,7 +25,6 @@ export const taskHighlightExtension = [
   EditorView.baseTheme({
     '.cm-line.cm-task-target': {
       backgroundColor: 'color-mix(in srgb, #e9b949 28%, transparent)',
-      boxShadow: 'inset 3px 0 #c89116',
       borderRadius: '4px',
     },
   }),
