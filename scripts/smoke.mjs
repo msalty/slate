@@ -39,6 +39,7 @@ const MIME = {
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.webmanifest': 'application/manifest+json',
+  '.wasm': 'application/wasm',
   '.map': 'application/json',
 }
 
@@ -2260,6 +2261,201 @@ try {
   check('the inserted photo opens in the lightbox', await page.locator('.lightbox').isVisible())
   await page.keyboard.press('Escape')
   await page.waitForTimeout(300)
+
+  /* ---- PDFs -------------------------------------------------------------
+   *
+   * The app draws PDFs itself rather than handing them to an <iframe>, because
+   * a framed PDF is a still picture of page one on iOS and nothing at all on
+   * Android (see PdfView.tsx). So the things checked here are exactly the ones
+   * a frame could not do: every page laid out, ink on the canvas, words that
+   * can be selected, a pinch that makes the pages bigger rather than blurrier,
+   * and a canvas given back once its page is far enough away.
+   *
+   * The document is written out by hand — four pages, a line of Helvetica and
+   * a rectangle on each — so the test does not need a fixture file or a
+   * library to make one.
+   */
+  const pdfBytes = (() => {
+    const w = 612
+    const h = 792
+    const objs = []
+    const add = (body) => (objs.push(body), objs.length)
+    const font = add('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>')
+    const tree = add('')
+    const pageObjs = []
+    for (let i = 1; i <= 4; i++) {
+      const content =
+        `BT /F1 36 Tf 72 ${h - 120} Td (Page ${i} of 4) Tj ET\n` +
+        `2 w 0 0 1 RG 60 ${h - 200} 300 120 re S`
+      const stream = add(`<< /Length ${content.length} >>\nstream\n${content}\nendstream`)
+      pageObjs.push(
+        add(
+          `<< /Type /Page /Parent ${tree} 0 R /MediaBox [0 0 ${w} ${h}] ` +
+            `/Resources << /Font << /F1 ${font} 0 R >> >> /Contents ${stream} 0 R >>`,
+        ),
+      )
+    }
+    objs[tree - 1] = `<< /Type /Pages /Count 4 /Kids [${pageObjs.map((n) => `${n} 0 R`).join(' ')}] >>`
+    const root = add(`<< /Type /Catalog /Pages ${tree} 0 R >>`)
+
+    let out = '%PDF-1.4\n'
+    const offsets = []
+    for (let i = 0; i < objs.length; i++) {
+      offsets.push(out.length)
+      out += `${i + 1} 0 obj\n${objs[i]}\nendobj\n`
+    }
+    const startxref = out.length
+    out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n`
+    for (const o of offsets) out += `${String(o).padStart(10, '0')} 00000 n \n`
+    out += `trailer\n<< /Size ${objs.length + 1} /Root ${root} 0 R >>\nstartxref\n${startxref}\n%%EOF\n`
+    return Buffer.from(out, 'latin1')
+  })()
+
+  await startEditing()
+  await page.locator('[aria-label="Insert photo or file"]').click()
+  await page.waitForTimeout(300)
+  const [pdfChooser] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    page.locator('.menu-item:has-text("Choose File")').click(),
+  ])
+  await pdfChooser.setFiles({ name: 'spec.pdf', mimeType: 'application/pdf', buffer: pdfBytes })
+  await page.waitForTimeout(2000)
+
+  const pdfCard = page.locator('.cm-embed-card:has-text("spec.pdf")')
+  check('a PDF is inserted as a card rather than a picture', (await pdfCard.count()) >= 1)
+
+  await pdfCard.first().click()
+  await page.waitForSelector('.pdf-page canvas', { timeout: 20000 }).catch(() => {})
+  const pdfPages = await page.locator('.pdf-page').count()
+  check('every page of a multi-page PDF is laid out', pdfPages === 4, `${pdfPages} pages`)
+
+  // Pages arrive as they are drawn, so wait for ink rather than for an element.
+  await page
+    .waitForFunction(
+      () => {
+        const c = document.querySelector('.pdf-page canvas')
+        return c && c.width > 0
+      },
+      null,
+      { timeout: 20000 },
+    )
+    .catch(() => {})
+
+  const painted = await page.evaluate(() => {
+    const c = document.querySelector('.pdf-page canvas')
+    if (!c?.width) return { width: 0 }
+    const d = c.getContext('2d').getImageData(0, 0, c.width, Math.min(c.height, 400)).data
+    let ink = 0
+    for (let i = 0; i < d.length; i += 4) if (d[i] < 200 || d[i + 1] < 200 || d[i + 2] < 200) ink++
+    return { width: c.width, ink }
+  })
+  check('the first page is drawn, not framed', painted.width > 0 && painted.ink > 100, JSON.stringify(painted))
+
+  const pdfWords = await page.locator('.pdf-page .pdf-text').first().innerText().catch(() => '')
+  check(
+    'the words on the page can be selected and searched',
+    /Page 1 of 4/.test(pdfWords.replace(/\s+/g, ' ')),
+    pdfWords.slice(0, 40),
+  )
+
+  const column = () =>
+    page.evaluate(() => {
+      const col = document.querySelector('.pdf-column')
+      const doc = document.querySelector('.pdf-doc')
+      const shown = [...document.querySelectorAll('.pdf-page')].find((el) => {
+        const r = el.getBoundingClientRect()
+        const s = doc.getBoundingClientRect()
+        return r.bottom > s.top && r.top < s.bottom
+      })
+      return {
+        width: col.getBoundingClientRect().width,
+        stage: doc.clientWidth,
+        scale: Number(getComputedStyle(col).getPropertyValue('--total-scale-factor')),
+        backing: shown?.querySelector('canvas').width ?? 0,
+        tall: doc.scrollHeight > doc.clientHeight * 2,
+      }
+    })
+
+  const fitted = await column()
+  check(
+    'a PDF opens fitted, and no wider than a page is worth reading at',
+    fitted.width === Math.min(fitted.stage, 900) && fitted.tall,
+    JSON.stringify(fitted),
+  )
+
+  const scrolledPdf = await page.evaluate(async () => {
+    const doc = document.querySelector('.pdf-doc')
+    doc.scrollTop = doc.scrollHeight
+    await new Promise((r) => setTimeout(r, 1200))
+    return {
+      at: doc.scrollTop,
+      first: document.querySelector('.pdf-page canvas').width,
+      last: [...document.querySelectorAll('.pdf-page canvas')].pop().width,
+    }
+  })
+  check('scrolling reaches the last page and draws it', scrolledPdf.at > 0 && scrolledPdf.last > 0, JSON.stringify(scrolledPdf))
+  check('and the pages left behind give their canvas back', scrolledPdf.first === 0, `${scrolledPdf.first}px`)
+
+  // Back to the top, then two fingers on it. The gesture is dispatched through
+  // CDP for the same reason the picture's is: nothing else puts two fingers down.
+  await page.evaluate(() => {
+    document.querySelector('.pdf-doc').scrollTop = 0
+  })
+  await page.waitForTimeout(800)
+  const before = await column()
+  const pdfMid = await page.evaluate(() => {
+    const r = document.querySelector('.pdf-doc').getBoundingClientRect()
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
+  })
+  const pdfCdp = await page.context().newCDPSession(page)
+  const pdfTouch = (type, points) =>
+    pdfCdp.send('Input.dispatchTouchEvent', {
+      type,
+      touchPoints: points.map((p, i) => ({ x: Math.round(p.x), y: Math.round(p.y), id: i + 1 })),
+    })
+  const from = [
+    { x: pdfMid.x - 60, y: pdfMid.y },
+    { x: pdfMid.x + 60, y: pdfMid.y },
+  ]
+  const to = [
+    { x: pdfMid.x - 120, y: pdfMid.y },
+    { x: pdfMid.x + 120, y: pdfMid.y },
+  ]
+  await pdfTouch('touchStart', from)
+  for (let i = 1; i <= 10; i++) {
+    const t = i / 10
+    await pdfTouch(
+      'touchMove',
+      from.map((p, k) => ({ x: p.x + (to[k].x - p.x) * t, y: p.y + (to[k].y - p.y) * t })),
+    )
+  }
+  await pdfTouch('touchEnd', [])
+  await page.waitForTimeout(900)
+
+  const pinchedPdf = await column()
+  check(
+    'pinching a document widens it by how far the fingers spread',
+    Math.abs(pinchedPdf.width / before.width - 2) < 0.3,
+    `${(pinchedPdf.width / before.width).toFixed(2)}×`,
+  )
+  check(
+    'the words are rescaled with the pages, not left behind',
+    Math.abs(pinchedPdf.scale / before.scale - pinchedPdf.width / before.width) < 0.02,
+    `${before.scale.toFixed(3)} -> ${pinchedPdf.scale.toFixed(3)}`,
+  )
+  check(
+    'and the pages are redrawn bigger rather than magnified',
+    pinchedPdf.backing > before.backing,
+    `${before.backing} -> ${pinchedPdf.backing}`,
+  )
+
+  await page.keyboard.press('0')
+  await page.waitForTimeout(500)
+  check('0 fits the document again', (await column()).width === fitted.width)
+
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(300)
+  check('Escape closes the PDF viewer', (await page.locator('.lightbox').count()) === 0)
 
   /* ---- nested Tag Folders -----------------------------------------------
    *

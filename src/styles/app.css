@@ -2159,9 +2159,7 @@ button.property-kind:hover {
   user-select: none;
   -webkit-user-drag: none;
 }
-.lightbox-stage video,
-.lightbox-stage iframe,
-.lightbox-stage embed {
+.lightbox-stage video {
   width: 100%;
   height: 100%;
   border: none;
@@ -2176,6 +2174,133 @@ button.property-kind:hover {
   max-width: 900px;
   width: 100%;
   align-self: flex-start;
+}
+
+/* ---- the PDF viewer ----------------------------------------------------
+ *
+ * A document is the one thing on the stage that is not a single object to be
+ * centred in it: it is a column that scrolls, so the stage stops being a flex
+ * box and stops holding the scrollbar, and the viewer fills it edge to edge.
+ * See PdfView.tsx for why the app draws PDFs itself rather than framing them.
+ */
+.lightbox-stage[data-kind='pdf'] {
+  display: block;
+  padding: 0;
+  overflow: hidden;
+}
+.pdf-doc {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  /*
+   * One finger is the browser's — native scrolling is what gives a long
+   * document its momentum — and two are the viewer's. Naming the pans is what
+   * says that: it leaves scrolling alone while taking pinch-zoom away from the
+   * browser, so a two-finger gesture reaches the viewer instead of blowing up
+   * the whole app around it. (iOS decides its page zoom above this, which is
+   * what the gesture events in Lightbox.tsx are for.)
+   */
+  touch-action: pan-x pan-y;
+}
+/* Width is written in by the viewer — it is the zoom — and the pages follow it. */
+.pdf-column {
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.pdf-page {
+  position: relative;
+  background: #fff;
+  box-shadow: 0 1px 8px rgba(0, 0, 0, 0.45);
+}
+.pdf-page canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.pdf-note {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 100%;
+  color: #bbb;
+  text-align: center;
+}
+
+/*
+ * The text layer: every word of the page as real, invisible, selectable text,
+ * laid over the picture of it.
+ *
+ * This is pdf.js's own contract rather than a free hand — it positions each
+ * span as a percentage of the page and leaves the *size* to these variables,
+ * which is exactly what makes one layer correct at every zoom the column
+ * reaches. `--total-scale-factor` is set on the column by the viewer; the rest
+ * is trimmed from pdf_viewer.css and should be kept in step with it.
+ */
+.pdf-text {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  opacity: 1;
+  line-height: 1;
+  text-align: initial;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  z-index: 1;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+  --scale-round-x: 1px;
+  --scale-round-y: 1px;
+}
+.pdf-text span,
+.pdf-text br {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.pdf-text > :not(.markedContent),
+.pdf-text .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --font-height: 0;
+  --scale-x: 1;
+  --rotate: 0deg;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+.pdf-text .markedContent {
+  display: contents;
+}
+.pdf-text span[role='img'] {
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+.pdf-text ::selection {
+  background: rgba(0, 110, 255, 0.3);
+  color: transparent;
+}
+.pdf-text .endOfContent {
+  display: block;
+  position: absolute;
+  inset: 100% 0 0;
+  z-index: 0;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.pdf-text.selecting .endOfContent {
+  top: 0;
 }
 
 /* ---- toast ------------------------------------------------------------- */

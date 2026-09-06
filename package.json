@@ -38,6 +38,7 @@
     "@lezer/markdown": "^1.4.2",
     "@preact/signals": "^2.11.1",
     "idb": "^8.0.2",
+    "pdfjs-dist": "^6.3.289",
     "preact": "^10.26.4"
   },
   "devDependencies": {
