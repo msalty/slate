@@ -24,6 +24,7 @@ import {
   getRaw,
   isTemplatePath,
   notes,
+  onPathMoved,
   readBackstage,
   TEMPLATES_FOLDER,
   UNTITLED,
@@ -134,6 +135,49 @@ export async function repointTemplateFolders(from: string, to: string): Promise<
   assignments.value = next
   await persist()
 }
+
+/**
+ * Follow a *template* that has been renamed or moved.
+ *
+ * The mirror of the fixup above, for the other half of the pair. An assignment
+ * is a folder path pointing at a note path, and either end can move: renaming
+ * `Templates/Meeting` to `Templates/Meeting notes` used to leave every folder
+ * that used it pointing at a note that no longer existed, and the folder's menu
+ * reading *Template: missing*. Renaming a template is now as safe as renaming
+ * anything else the app keeps a reference to.
+ *
+ * Both ends have to still be inside `Templates/` for this to fire, which is
+ * what keeps it from following the two moves that genuinely *should* break the
+ * assignment: a template dragged out of the folder stops being a template, and
+ * one that is deleted goes to `backstage/trash/` and stops being one too. Those
+ * leave the assignment where it was, still resolving to nothing, which is what
+ * `resolvedTemplate` exists to say out loud.
+ */
+export async function repointTemplateNote(from: string, to: string): Promise<void> {
+  const src = normPath(from)
+  const dest = normPath(to)
+  if (src === dest || !isTemplatePath(src) || !isTemplatePath(dest)) return
+  let touched = false
+  const next: Record<string, string> = {}
+  for (const [folder, path] of Object.entries(assignments.value)) {
+    // A folder inside Templates/ can be renamed too, taking every template
+    // under it along — so this matches the subtree, not just the one path.
+    const moved = path === src || path.startsWith(`${src}/`)
+    if (moved) touched = true
+    next[folder] = moved ? `${dest}${path.slice(src.length)}` : path
+  }
+  if (!touched) return
+  assignments.value = next
+  await persist()
+}
+
+/*
+ * Registered as the module loads rather than from `loadTemplates`, so an
+ * assignment made in a session that never had one to load still follows its
+ * template. The vault calls it from `movePath`, which every rename and move in
+ * the app goes through.
+ */
+onPathMoved(repointTemplateNote)
 
 /** Forget a folder's assignment, for when the folder itself is deleted. */
 export async function clearTemplateFolders(path: string): Promise<void> {

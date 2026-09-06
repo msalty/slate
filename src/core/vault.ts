@@ -684,6 +684,24 @@ export async function renameNote(path: string, newTitle: string): Promise<string
   return next
 }
 
+/**
+ * Told whenever a file changes path — a rename, a move between folders, a trip
+ * to the trash and back.
+ *
+ * Anything that *records* a path rather than holding the file itself has to
+ * follow it or go quietly stale, and the two things that do — the folder
+ * templates, and whatever comes after them — live in modules that import this
+ * one. So the notification goes this way rather than the import: `movePath` is
+ * the single funnel every rename and move goes through, and a listener here
+ * cannot be forgotten at one of its call sites.
+ */
+const moveListeners = new Set<(from: string, to: string) => void | Promise<void>>()
+
+export function onPathMoved(fn: (from: string, to: string) => void | Promise<void>): () => void {
+  moveListeners.add(fn)
+  return () => moveListeners.delete(fn)
+}
+
 /** Move a file to a new path, preserving history and sync bookkeeping. */
 export async function movePath(from: string, to: string): Promise<void> {
   const f = files.get(from)
@@ -698,6 +716,7 @@ export async function movePath(from: string, to: string): Promise<void> {
   await tombstone(from)
   reindex(to)
   bump()
+  for (const fn of moveListeners) await fn(from, to)
 }
 
 async function rewriteLinksTo(oldTitle: string, newTitle: string): Promise<void> {

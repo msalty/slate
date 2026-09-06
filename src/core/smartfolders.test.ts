@@ -245,6 +245,78 @@ describe('tree integrity', () => {
   })
 })
 
+/*
+ * Sibling order is the flat list's order, so reordering is a swap of two
+ * entries rather than an index stored on every folder — which is what keeps a
+ * subtree travelling with its parent for nothing.
+ */
+describe('reordering', () => {
+  const names = (m: Mods) => m.folders.smartFolderTree.value.map((n) => n.folder.name)
+
+  it('moves a folder past its sibling, in both directions', async () => {
+    const m = await fresh()
+    const a = await m.folders.saveSmartFolder({ name: 'A', query: '#a' })
+    const b = await m.folders.saveSmartFolder({ name: 'B', query: '#b' })
+    await m.folders.saveSmartFolder({ name: 'C', query: '#c' })
+
+    expect(await m.folders.nudgeSmartFolder(b.id, -1)).toBe(true)
+    expect(names(m)).toEqual(['B', 'A', 'C'])
+    expect(await m.folders.nudgeSmartFolder(a.id, 1)).toBe(true)
+    expect(names(m)).toEqual(['B', 'C', 'A'])
+  })
+
+  it('goes nowhere at either end, and says so', async () => {
+    const m = await fresh()
+    const a = await m.folders.saveSmartFolder({ name: 'A', query: '#a' })
+    const b = await m.folders.saveSmartFolder({ name: 'B', query: '#b' })
+
+    expect(m.folders.canNudgeSmartFolder(a.id, -1)).toBe(false)
+    expect(await m.folders.nudgeSmartFolder(a.id, -1)).toBe(false)
+    expect(m.folders.canNudgeSmartFolder(b.id, 1)).toBe(false)
+    expect(await m.folders.nudgeSmartFolder(b.id, 1)).toBe(false)
+    expect(names(m)).toEqual(['A', 'B'])
+  })
+
+  it('only ever swaps siblings, never across parents', async () => {
+    const m = await fresh()
+    const a = await m.folders.saveSmartFolder({ name: 'A', query: '#a' })
+    const child = await m.folders.saveSmartFolder({ name: 'A1', query: '#a1', parentId: a.id })
+    await m.folders.saveSmartFolder({ name: 'B', query: '#b' })
+
+    // The child is an only child: there is nothing beside it to swap with,
+    // however many folders sit above it in the flat list.
+    expect(m.folders.canNudgeSmartFolder(child.id, -1)).toBe(false)
+    expect(m.folders.canNudgeSmartFolder(child.id, 1)).toBe(false)
+    expect(names(m)).toEqual(['A', 'B'])
+  })
+
+  it('takes a subtree with it', async () => {
+    const m = await fresh()
+    const a = await m.folders.saveSmartFolder({ name: 'A', query: '#a' })
+    await m.folders.saveSmartFolder({ name: 'A1', query: '#a1', parentId: a.id })
+    const b = await m.folders.saveSmartFolder({ name: 'B', query: '#b' })
+
+    await m.folders.nudgeSmartFolder(b.id, -1)
+    expect(names(m)).toEqual(['B', 'A'])
+    expect(m.folders.smartFolderList.value.map((n) => `${n.depth}:${n.folder.name}`)).toEqual([
+      '0:B',
+      '0:A',
+      '1:A1',
+    ])
+  })
+
+  it('writes the new order to the vault', async () => {
+    const m = await fresh()
+    const a = await m.folders.saveSmartFolder({ name: 'A', query: '#a' })
+    const b = await m.folders.saveSmartFolder({ name: 'B', query: '#b' })
+    await m.folders.nudgeSmartFolder(b.id, -1)
+
+    await m.folders.loadSmartFolders()
+    expect(names(m)).toEqual(['B', 'A'])
+    expect(m.folders.smartFolders.value.map((f) => f.id)).toEqual([b.id, a.id])
+  })
+})
+
 describe('persistence', () => {
   it('round-trips the hierarchy through the vault', async () => {
     const m = await fresh()

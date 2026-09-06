@@ -13,16 +13,18 @@ import { parseYmd } from './util'
 
 type Vault = typeof import('./vault')
 type Templates = typeof import('./templates')
+type Folders = typeof import('./folders')
 
 let seq = 0
 
-async function fresh(): Promise<{ vault: Vault; t: Templates }> {
+async function fresh(): Promise<{ vault: Vault; t: Templates; folders: Folders }> {
   vi.resetModules()
   ;(globalThis as { __SLATE_DB__?: string }).__SLATE_DB__ = `slate-tpl-${++seq}`
   const vault = await import('./vault')
   await vault.initVault()
   const t = await import('./templates')
-  return { vault, t }
+  const folders = await import('./folders')
+  return { vault, t, folders }
 }
 
 // A Tuesday, so the weekday tokens are checkable.
@@ -190,10 +192,56 @@ describe('applying one to a folder', () => {
     await t.setFolderTemplate('Work', path)
     expect(t.resolvedTemplate('Work')?.title).toBe('Meeting')
 
-    await vault.renameNote(path, 'Meeting notes')
+    // Out of Templates/ is out of the feature: the assignment is still there
+    // and points at a note that is no longer a template.
+    await vault.movePath(path, 'Work/Meeting.md')
     expect(t.assignedTemplate('Work')).toBe(path)
     expect(t.resolvedTemplate('Work')).toBeUndefined()
     expect(t.templateBodyFor('Work', 'x')).toBeUndefined()
+  })
+
+  /*
+   * The other half of the pair the folder fixup handles. An assignment is one
+   * path pointing at another, and either end can move — a template that is
+   * renamed used to leave every folder using it reading "Template: missing".
+   */
+  it('follows a template that gets renamed', async () => {
+    const { vault, t } = await fresh()
+    const path = await vault.createNote('Templates', 'Meeting', '# {{title}}\n')
+    await t.setFolderTemplate('Work', path)
+
+    const next = await vault.renameNote(path, 'Meeting notes')
+    expect(next).toBe('Templates/Meeting notes.md')
+    expect(t.assignedTemplate('Work')).toBe(next)
+    expect(t.resolvedTemplate('Work')?.title).toBe('Meeting notes')
+    expect(t.templateBodyFor('Work', 'Call')?.text).toBe('# Call\n')
+  })
+
+  it('follows a template folder that gets renamed, and every template under it', async () => {
+    const { vault, t, folders } = await fresh()
+    const meeting = await vault.createNote('Templates/Work', 'Meeting', 'M\n')
+    const person = await vault.createNote('Templates/Work', 'Person', 'P\n')
+    await t.setFolderTemplate('Clients', meeting)
+    await t.setFolderTemplate('People', person)
+
+    await folders.renameFolder('Templates/Work', 'Office')
+    expect(t.assignedTemplate('Clients')).toBe('Templates/Office/Meeting.md')
+    expect(t.assignedTemplate('People')).toBe('Templates/Office/Person.md')
+    expect(t.resolvedTemplate('Clients')?.title).toBe('Meeting')
+  })
+
+  /*
+   * A deleted template goes to backstage/trash, which is not a template path —
+   * so the assignment stays exactly where it was rather than following the note
+   * into the bin and quietly resolving to a trashed file.
+   */
+  it('does not follow a template into the trash', async () => {
+    const { vault, t } = await fresh()
+    const path = await vault.createNote('Templates', 'Meeting', 'M\n')
+    await t.setFolderTemplate('Work', path)
+    await vault.deleteNote(path)
+    expect(t.assignedTemplate('Work')).toBe(path)
+    expect(t.resolvedTemplate('Work')).toBeUndefined()
   })
 
   it('goes quiet rather than wrong when the template is deleted', async () => {

@@ -339,6 +339,49 @@ export async function reorderSmartFolders(ids: string[]): Promise<void> {
   await persistSmartFolders()
 }
 
+/**
+ * The folders sitting beside this one, in the order the sidebar draws them.
+ *
+ * The tree is built by filtering the flat list, so its sibling order *is* the
+ * flat list's order — which is what makes reordering a swap of two entries
+ * rather than a stored index on every folder.
+ */
+export function smartFolderSiblings(id: string): SmartFolder[] {
+  const self = smartFolders.value.find((s) => s.id === id)
+  if (!self) return []
+  return childrenOf(self.parentId ?? undefined)
+}
+
+/**
+ * Move a Tag Folder one place up or down among its siblings.
+ *
+ * Up and down rather than a drag: the sidebar is a tree on a phone as well, a
+ * drag there is a scroll, and two menu items do the same job on every device
+ * and from the keyboard. Whole subtrees travel with their parent for free —
+ * children are found by parent, not by position, so only the two swapped rows
+ * move at all.
+ */
+export async function nudgeSmartFolder(id: string, delta: -1 | 1): Promise<boolean> {
+  const siblings = smartFolderSiblings(id)
+  const at = siblings.findIndex((s) => s.id === id)
+  const swap = siblings[at + delta]
+  if (at < 0 || !swap) return false
+  const order = smartFolders.value.map((s) => s.id)
+  const i = order.indexOf(id)
+  const j = order.indexOf(swap.id)
+  order[i] = swap.id
+  order[j] = id
+  await reorderSmartFolders(order)
+  return true
+}
+
+/** Whether that nudge would go anywhere, for the menu items that offer it. */
+export function canNudgeSmartFolder(id: string, delta: -1 | 1): boolean {
+  const siblings = smartFolderSiblings(id)
+  const at = siblings.findIndex((s) => s.id === id)
+  return at >= 0 && !!siblings[at + delta]
+}
+
 /* ---------------------------------------------------------- the hierarchy */
 
 export interface SmartNode {
