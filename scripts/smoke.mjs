@@ -3337,6 +3337,41 @@ try {
   check('and editing it', (await page.locator('.menu-item:has-text("Edit link")').count()) === 1)
   await page.screenshot({ path: join(SHOTS, '20-phone-link-tap.png') })
 
+  /*
+   * The same sheet with the keyboard up, which is the state a link is usually
+   * tapped in: you were typing a second ago. A sheet and a keyboard both want
+   * the bottom of the screen, and the layout viewport does not shrink for the
+   * keyboard — so ignoring the inset put every choice on this sheet, Cancel
+   * included, underneath the keys. Simulated the same way as the editor's own
+   * keyboard check above, headless Chromium having no soft keyboard.
+   */
+  await page.evaluate(() => document.documentElement.style.setProperty('--kb-inset', '336px'))
+  await page.waitForTimeout(300)
+  const linkSheet = await page.evaluate(() => {
+    const line = window.innerHeight - 336
+    const r = document.querySelector('.menu-sheet').getBoundingClientRect()
+    const items = [...document.querySelectorAll('.menu-sheet .menu-item')]
+    return {
+      line,
+      top: Math.round(r.top),
+      bottom: Math.round(r.bottom),
+      items: items.length,
+      above: items.filter((i) => i.getBoundingClientRect().bottom <= line + 1).length,
+    }
+  })
+  check(
+    'the link sheet sits on top of the keyboard, not under it',
+    linkSheet.bottom <= linkSheet.line && linkSheet.top >= 0,
+    `sheet ${linkSheet.top}-${linkSheet.bottom}, keyboard starts at ${linkSheet.line}`,
+  )
+  check(
+    'and every choice on it can still be tapped',
+    linkSheet.items > 0 && linkSheet.above === linkSheet.items,
+    `${linkSheet.above} of ${linkSheet.items} items`,
+  )
+  await page.evaluate(() => document.documentElement.style.removeProperty('--kb-inset'))
+  await page.waitForTimeout(250)
+
   /* ---- opening it from a Home Screen app ---------------------------------
    * A web app installed on iOS has no tab to open a link in, so `window.open`
    * there opens an empty view *inside the app*, hands the URL to Safari, and
