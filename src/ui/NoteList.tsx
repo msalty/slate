@@ -53,6 +53,7 @@ import { openMenu, useLongPress, type MenuItem } from './Menu'
 import { SwipeRow, type SwipeAction } from './SwipeRow'
 import { Highlight } from './Highlight'
 import { openPrompt } from './PromptDialog'
+import { noteDragProps } from './dragNote'
 import { layoutMode, toggleSidebar } from './layout'
 import { MobileScopeBar } from './Mobile'
 import { IconImage, IconNewNote, IconPin, IconPlus, IconSearch, IconSidebar, IconClose, IconDots } from './Icons'
@@ -97,6 +98,12 @@ function NoteRow({ entry }: { entry: NoteIndexEntry }) {
         e.preventDefault()
         openMenu(e, noteMenu(entry), entry.title)
       }}
+      /*
+       * Dragging a row onto a folder in the sidebar moves the note — the
+       * pointer shorthand for the *Move to…* below, which is still what touch
+       * uses and still what the menu offers.
+       */
+      {...noteDragProps(entry.path)}
       {...longPress}
     >
       <span class="note-row-main">

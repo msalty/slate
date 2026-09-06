@@ -432,6 +432,19 @@ textarea {
 .side-row[aria-current='true'] .side-count {
   color: color-mix(in srgb, currentColor 65%, transparent);
 }
+/*
+ * A folder row a dragged note is over. An outline rather than a fill: the row
+ * underneath may already be the selected one, and a second background colour
+ * would read as the selection moving rather than as a target.
+ */
+.side-row[data-drop='1'] {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.note-row[draggable='true'] {
+  -webkit-user-drag: element;
+}
 
 .disclose {
   width: 14px;

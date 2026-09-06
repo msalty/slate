@@ -326,7 +326,17 @@ try {
     clear: document.querySelectorAll('.due-clear').length,
   }))
   check('clicking a chip opens the picker', picker.open === 1)
-  check('it leads with one-tap presets', picker.presets.length >= 3, picker.presets.join(' · '))
+  /*
+   * Three, except on a Sunday: "Next week" is the coming Monday, which is
+   * *tomorrow*, and the picker drops a preset that duplicates one above it
+   * rather than offering the same date twice. Asserting a flat three made this
+   * a check that failed one day in seven for being right.
+   */
+  check(
+    'it leads with one-tap presets',
+    picker.presets.length >= (new Date().getDay() === 0 ? 2 : 3),
+    picker.presets.join(' · '),
+  )
   check('Today and Tomorrow are always among them', /^Today/.test(picker.presets[0]) && /^Tomorrow/.test(picker.presets[1]))
   check('a full month grid sits under them', picker.days >= 28, `${picker.days} cells`)
   check('and a date already set can be cleared', picker.clear === 1)
@@ -778,11 +788,49 @@ try {
     await page.keyboard.press('Escape')
   }
 
-  /* ---- search --------------------------------------------------------- */
-  await page.fill('.search-box input', 'tram')
-  await page.waitForTimeout(400)
-  const found = await page.locator('.note-row').count()
-  check('search finds body text', found > 0, `${found} results`)
+  /* ---- search ----------------------------------------------------------
+   *
+   * Searching reads every note until the index has finished building in the
+   * background, and reads the index afterwards — and the two have to answer
+   * identically, which is the one thing an index here is allowed to do. So the
+   * same searches run twice: immediately, and again after the build has had
+   * time to land. A word from the middle of another word is the case a
+   * word-based index would quietly lose.
+   *
+   * A vault this size never builds one — an index earns its place past a
+   * thousand notes and is worse than nothing below that — so the threshold is
+   * dropped to nothing first, the same way the tests drop the database name.
+   * Without it the second half of this section would be the scan agreeing with
+   * itself.
+   */
+  const searchResults = async (q) => {
+    await page.fill('.search-box input', q)
+    await page.waitForTimeout(400)
+    return (await page.locator('.note-row-title').allInnerTexts()).sort().join(',')
+  }
+  const QUERIES = ['tram', 'ram', 'lisbon', 'lisbon tram', 'zeppelin']
+
+  // First pass: this vault is far below the threshold, so this is the scan.
+  const cold = {}
+  for (const q of QUERIES) cold[q] = await searchResults(q)
+  check('search finds body text', cold.tram.length > 0, cold.tram)
+  check('and a word it is in the middle of', cold.ram === cold.tram, `"${cold.ram}" vs "${cold.tram}"`)
+  check('and nothing for a word nothing contains', cold.zeppelin === '')
+
+  // Now drop the threshold and let the next search build an index. Five notes
+  // is one slice of work, so a second is more than the build can need.
+  await page.fill('.search-box input', '')
+  await page.evaluate(() => {
+    window.__SLATE_INDEX_FROM__ = { notes: 1, bytes: 1 }
+  })
+  await searchResults('tram')
+  await page.fill('.search-box input', '')
+  await page.waitForTimeout(1200)
+  for (const q of QUERIES) {
+    const warm = await searchResults(q)
+    check(`the index answers "${q}" exactly as the scan did`, warm === cold[q], `"${warm}" vs "${cold[q]}"`)
+  }
+
   await page.fill('.search-box input', '')
   await page.waitForTimeout(200)
 
@@ -1357,7 +1405,8 @@ try {
   )
   check(
     'the marker is replaced by an icon rather than shown',
-    (await page.locator('.cm-callout-mark svg').count()) === 2 &&
+    // Its own svg, not the fold chevron's, which is a child of the same widget.
+    (await page.locator('.cm-callout-mark > svg').count()) === 2 &&
       !(await page.locator('.cm-content').innerText()).includes('[!WARNING]'),
   )
   check(
@@ -1381,6 +1430,37 @@ try {
       (await page.locator('.cm-callout-mark').count()) === 2,
     `${await page.locator('.cm-line.cm-quote').count()} plain quote lines`,
   )
+  /* ---- folding a callout ------------------------------------------------
+   *
+   * The fold is a `-` written into the marker, not editor state, so this
+   * checks both ends of that: the lines under the head go away and are counted,
+   * and the note on disk now says `[!WARNING]-`. Clicking the chevron must not
+   * place a caret either — a caret on that line reveals the raw marker and
+   * takes the chevron with it.
+   */
+  const foldChevron = page.locator('.cm-callout-fold').first()
+  check('a callout with a body offers a fold control', (await foldChevron.count()) === 1)
+  const calloutLinesBefore = await page.locator('.cm-line.cm-callout').count()
+  await foldChevron.click()
+  await page.waitForTimeout(400)
+  const folded = await page.locator('.cm-callout-folded').count()
+  const calloutLinesAfter = await page.locator('.cm-line.cm-callout').count()
+  check('folding hides the body and says how much of it there is', folded === 1 && calloutLinesAfter < calloutLinesBefore, `${calloutLinesBefore} → ${calloutLinesAfter} lines, ${folded} placeholder`)
+  check('the marker is still an icon, so the chevron is still there to click', (await page.locator('.cm-callout-fold[data-folded="1"]').count()) === 1)
+  // Saves are debounced, so this waits for the write rather than sleeping past it.
+  check(
+    'and the fold is written into the note itself',
+    /\[!WARNING\]-/.test(await noteAfterEdit('# Heading one', '[!WARNING]-')),
+  )
+
+  await page.locator('.cm-callout-fold[data-folded="1"]').first().click()
+  await page.waitForTimeout(400)
+  check('unfolding brings the body back', (await page.locator('.cm-callout-folded').count()) === 0 && (await page.locator('.cm-line.cm-callout').count()) === calloutLinesBefore)
+  check(
+    'and takes the character back out rather than leaving a "+"',
+    !/\[!WARNING\][-+]/.test(await noteAfterEdit('# Heading one', '[!WARNING] ')),
+  )
+
   await page.screenshot({ path: join(SHOTS, '07-kitchen-sink.png') })
 
   /* ---- the copy button on a code block ---------------------------------
@@ -1737,22 +1817,52 @@ try {
   await page.reload({ waitUntil: 'networkidle' })
   await page.waitForSelector('.note-row')
 
-  // --- create a nested folder structure via the sidebar -------------------
-  let promptReply = 'Clients'
-  page.on('dialog', (d) => d.accept(promptReply))
+  /* --- create a nested folder structure via the sidebar -------------------
+   *
+   * A folder is named in the app's own dialog, not `prompt()`. Anything that
+   * fails to find that field is a regression back to a browser dialog, which
+   * on a phone is a system alert over the whole screen.
+   */
+  const nameFolder = async (value) => {
+    /*
+     * Waiting for the *focus*, not just the field. The dialog seeds its value
+     * in an effect and focuses on the frame after that, so a fill that lands
+     * between the two is overwritten by the seed — the field goes back to
+     * empty, Create stays disabled, and the click waits forever for a button
+     * that will never enable. Focus is the signal that both have happened.
+     */
+    await page.waitForFunction(
+      () => document.activeElement?.classList?.contains('prompt-input'),
+      null,
+      { timeout: 5000 },
+    )
+    await page.fill('.dialog .prompt-input', value)
+    await page.click('.dialog-foot .btn-primary')
+    await page.waitForTimeout(400)
+  }
+  /*
+   * Every browser dialog is still accepted — the destructive actions use
+   * `confirm()` and are right to — but a *prompt* is now a failure: naming a
+   * folder is the app's own dialog, and a browser one is what that used to be.
+   */
+  let sawBrowserPrompt = false
+  page.on('dialog', (d) => {
+    if (d.type() === 'prompt') sawBrowserPrompt = true
+    d.accept()
+  })
 
   await page.click('.side-group-label:has-text("Folders") .side-add')
-  await page.waitForTimeout(400)
+  await nameFolder('Clients')
   check('creating a folder works', (await page.locator('.side-row:has-text("Clients")').count()) > 0)
+  check('and asks for the name in the app, not a browser dialog', !sawBrowserPrompt)
 
-  promptReply = 'Acme'
   await page.locator('.side-row:has-text("Clients")').first().click({ button: 'right' })
   await page.waitForTimeout(250)
   const subMenu = await page.locator('.menu-item:has-text("New subfolder")').count()
   check('right-click opens a real folder menu', subMenu > 0)
   if (subMenu) {
     await page.locator('.menu-item:has-text("New subfolder")').click()
-    await page.waitForTimeout(450)
+    await nameFolder('Acme')
     check('nested folders can be created', (await page.locator('.side-row:has-text("Acme")').count()) > 0)
   }
 
@@ -1826,11 +1936,10 @@ try {
 
   check('a folder unfolded to make a subfolder stays unfolded over a reload', await shown('Acme'))
 
-  promptReply = 'Roadmap'
   await folderRow('Acme').click({ button: 'right' })
   await page.waitForTimeout(250)
   await page.locator('.menu-item:has-text("New subfolder")').click()
-  await page.waitForTimeout(450)
+  await nameFolder('Roadmap')
   check('a third level can be created', await shown('Roadmap'))
 
   await foldFolder('Acme')
@@ -1844,6 +1953,38 @@ try {
 
   await foldFolder('Acme')
   check('and a folder unfolds again to what it was', await shown('Roadmap'))
+
+  /* ---- dragging a note into a folder ------------------------------------
+   *
+   * The pointer half of *Move to…*, and only exercisable in a real browser:
+   * the whole thing is HTML5 drag events, and the row being dragged is known
+   * from a signal because a browser hides the payload during `dragover`.
+   * Dragged out to the vault root again afterwards, so the rest of the suite
+   * finds the note where it left it.
+   */
+  await page.locator('.side-row:has-text("All Notes")').first().click()
+  await page.waitForTimeout(350)
+  await page.locator('.note-row', { hasText: 'Retro' }).first().dragTo(folderRow('Clients'))
+  await page.waitForTimeout(500)
+  await folderRow('Clients').click()
+  await page.waitForTimeout(400)
+  const dropped = await page.locator('.note-row-title').allInnerTexts()
+  check('a note dragged onto a folder moves into it', dropped.includes('Retro'), dropped.join(','))
+
+  await page
+    .locator('.note-row', { hasText: 'Retro' })
+    .first()
+    .dragTo(page.locator('.side-row:has-text("All Notes")').first())
+  await page.waitForTimeout(500)
+  await folderRow('Clients').click()
+  await page.waitForTimeout(400)
+  check(
+    'and dragging it onto All Notes puts it back at the vault root',
+    (await page.locator('.note-row-title').allInnerTexts()).join(',') === '',
+    (await page.locator('.note-row-title').allInnerTexts()).join(','),
+  )
+  await page.locator('.side-row:has-text("All Notes")').first().click()
+  await page.waitForTimeout(350)
 
 
 
@@ -2246,6 +2387,79 @@ try {
   await page.waitForSelector('.side-row')
   await page.waitForTimeout(400)
   check('the promoted child persists across a reload', (await tagFolderRow('Urgent').count()) === 1)
+
+  /* ---- Tag Folders in the order you want them ---------------------------
+   *
+   * Siblings sit in creation order until somebody moves one. The order lives
+   * in the same file the folders do, so the check that matters is that it
+   * survives a reload — an order kept only in this tab is not an order.
+   */
+  const tagOrder = () => tagFolderGroup.locator('.side-row .side-name').allInnerTexts()
+
+  // A folder of its own to move, so this does not depend on what the sections
+  // above happened to leave behind. A new one goes last.
+  await page.click('.side-group-label:has-text("Tag Folders") .side-add')
+  await ruleDialogReady()
+  await page.fill('.dialog input[type="text"]', 'Zebra')
+  await page.fill('.rule-input', '#zebra')
+  await page.waitForTimeout(300)
+  await page.click('.dialog-foot .btn-primary')
+  await page.waitForTimeout(450)
+
+  const beforeMove = await tagOrder()
+  check('a new Tag Folder goes to the end', beforeMove[beforeMove.length - 1] === 'Zebra', beforeMove.join(','))
+
+  await tagFolderRow('Zebra').click({ button: 'right' })
+  await page.waitForTimeout(250)
+  const moveUp = page.locator('.menu-item:has-text("Move up")')
+  check('a Tag Folder offers to move up', (await moveUp.count()) === 1 && !(await moveUp.isDisabled()))
+  await moveUp.click()
+  await page.waitForTimeout(450)
+  const afterMove = await tagOrder()
+  /*
+   * Above the sibling it was under — which is not always the row directly
+   * above it, because a sibling with children takes them with it. That is the
+   * behaviour, so the check is that it rose and that nothing else appeared or
+   * vanished, and then that moving it back down undoes it exactly.
+   */
+  check(
+    'moving one up lifts it past the sibling above',
+    afterMove.indexOf('Zebra') < beforeMove.indexOf('Zebra') &&
+      [...afterMove].sort().join(',') === [...beforeMove].sort().join(','),
+    `${beforeMove.join(',')} → ${afterMove.join(',')}`,
+  )
+
+  await tagFolderRow('Zebra').click({ button: 'right' })
+  await page.waitForTimeout(250)
+  await page.locator('.menu-item:has-text("Move down")').click()
+  await page.waitForTimeout(450)
+  check(
+    'and moving it back down puts the order back',
+    (await tagOrder()).join(',') === beforeMove.join(','),
+    (await tagOrder()).join(','),
+  )
+  await tagFolderRow('Zebra').click({ button: 'right' })
+  await page.waitForTimeout(250)
+  await page.locator('.menu-item:has-text("Move up")').click()
+  await page.waitForTimeout(450)
+
+  await tagFolderRow(afterMove[0]).click({ button: 'right' })
+  await page.waitForTimeout(250)
+  check(
+    'and at the top there is nowhere further to go',
+    await page.locator('.menu-item:has-text("Move up")').isDisabled(),
+  )
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(250)
+
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForSelector('.side-row')
+  await page.waitForTimeout(400)
+  check(
+    'the order survives a reload',
+    (await tagOrder()).join(',') === afterMove.join(','),
+    (await tagOrder()).join(','),
+  )
   await page.screenshot({ path: join(SHOTS, '15-nested-tag-folders.png') })
 
   /* ---- layout: resizing must not rearrange anything --------------------- */
@@ -2506,7 +2720,12 @@ try {
   check('flush to the bottom edge', dueSheet.atBottom === 0, `${dueSheet.atBottom}px off`)
   check('and full width', dueSheet.width >= 99, `${dueSheet.width}%`)
   check('its day cells are thumb-sized', dueSheet.dayHeight >= 40, `${dueSheet.dayHeight}px`)
-  check('with the same presets on top', dueSheet.presets >= 3, `${dueSheet.presets}`)
+  // Same count as the popover's, and the same Sunday caveat — see above.
+  check(
+    'with the same presets on top',
+    dueSheet.presets >= (new Date().getDay() === 0 ? 2 : 3),
+    `${dueSheet.presets}`,
+  )
   await page.screenshot({ path: join(SHOTS, '11b-phone-due.png') })
 
   const beforePick = await page.locator('.task-row .due-chip').first().innerText()
@@ -2715,6 +2934,40 @@ try {
     'the note still holds a plain GFM table',
     /\| a +\| b +\| c +\|/.test(await noteContaining('# Heading one')),
   )
+
+  /* ---- aligning a column from the sheet ---------------------------------
+   *
+   * The alignment is `:--:` in the delimiter row, which both rendered modes
+   * hide — so before this it was the one property of a table that could only
+   * be set by switching to source and typing it.
+   */
+  await page.locator('.fmt-sheet .fmt-btn[aria-label="Table rows and columns"]').tap()
+  await page.waitForTimeout(350)
+  const alignItem = (await page.locator('.menu-item', { hasText: 'Align column' }).innerText()).trim()
+  check(
+    'the table menu offers alignment, naming what the column does now',
+    /^Align column: (default|left|centre|right)…$/.test(alignItem),
+    alignItem,
+  )
+  await page.locator('.menu-item', { hasText: 'Align column' }).tap()
+  await page.waitForTimeout(300)
+  const ticked = (await page.locator('.menu-item[data-checked="1"]').innerText()).trim()
+  check(
+    'and ticks the one it is on',
+    alignItem.toLowerCase() === `align column: ${ticked.toLowerCase()}…`,
+    `${alignItem} / ${ticked}`,
+  )
+  await page.locator('.menu-item', { hasText: 'Right' }).tap()
+  await page.waitForTimeout(500)
+  check(
+    'aligning a column writes it into the delimiter row',
+    /\|\s*-+:\s*\|/.test(await noteAfterEdit('# Heading one', ':')),
+  )
+  const aligned = await page.evaluate(
+    () =>
+      getComputedStyle(document.querySelector('.cm-table-cell[data-col="1"]')).textAlign,
+  )
+  check('and the rendered table follows it', aligned === 'right', aligned)
   await page.screenshot({ path: join(SHOTS, '19-phone-table-format.png') })
 
   // Back to typing. The sheet and the keyboard swap places rather than sharing
@@ -2897,7 +3150,8 @@ try {
   await page.waitForTimeout(400)
   check(
     'moving off the line turns the marker into its icon',
-    (await page.locator('.cm-callout-mark svg').count()) === 1 &&
+    // The icon itself: the fold chevron is a second svg inside the same widget.
+    (await page.locator('.cm-callout-mark > svg').count()) === 1 &&
       !(await page.locator('.cm-content').innerText()).includes('[!warning]'),
   )
   check(

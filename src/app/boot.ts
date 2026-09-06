@@ -1,6 +1,6 @@
 /** Boot helpers, kept out of main.tsx so the ordering there stays readable. */
 
-import { initVault as loadVault, ready } from '../core/vault'
+import { initVault as loadVault, ready, warmSearchIndex } from '../core/vault'
 import { loadFolders, loadSmartFolders } from '../core/folders'
 import { loadTemplates } from '../core/templates'
 import { applySharedSettings, loadSettings, settings } from '../core/settings'
@@ -25,6 +25,10 @@ export async function initVault(): Promise<void> {
   await loadTemplates()
   setDeviceLabel(settings.value.deviceName)
   ready.value = true
+  // Nothing waits for this: it fills the search index a few milliseconds at a
+  // time while the app is idle, and searching works — reading every note, as it
+  // always did — from the moment the vault is up. See core/searchindex.ts.
+  warmSearchIndex()
 }
 
 /**

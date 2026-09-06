@@ -8,6 +8,7 @@ import {
   setTagFolderOpen,
 } from '../core/disclosure'
 import {
+  canNudgeSmartFolder,
   createFolder,
   deleteFolder,
   deleteSmartFolder,
@@ -15,6 +16,7 @@ import {
   folderTree,
   isGroupFolder,
   moveSmartFolder,
+  nudgeSmartFolder,
   renameFolder,
   showsTasks,
   smartFolderAncestors,
@@ -30,6 +32,8 @@ import { parseQuery, tagsInQuery, folderInQuery } from '../core/tagquery'
 import { notify, scope, setScope, type Scope } from './state'
 import { menuAnchor, openMenu, useLongPress, type MenuItem } from './Menu'
 import { openTagFolderDialog } from './TagFolderDialog'
+import { openPrompt } from './PromptDialog'
+import { folderDropProps } from './dragNote'
 import { closeDrawer } from './layout'
 import {
   IconCheck,
@@ -73,6 +77,7 @@ function Row({
   name,
   count,
   indent = 0,
+  drop,
   onContextMenu,
   longPress,
   children,
@@ -82,6 +87,8 @@ function Row({
   name: preact.ComponentChildren
   count?: number
   indent?: number
+  /** Folder path a dragged note lands in, for the rows that take one. */
+  drop?: string
   onContextMenu?: (e: MouseEvent) => void
   longPress?: ReturnType<typeof useLongPress>
   children?: preact.ComponentChildren
@@ -94,6 +101,7 @@ function Row({
       style={{ paddingLeft: `${10 + indent * 15}px` }}
       onClick={() => select(target)}
       onContextMenu={onContextMenu}
+      {...(drop !== undefined ? folderDropProps(drop) : {})}
       {...(longPress ?? {})}
     >
       {children}
@@ -160,31 +168,44 @@ function folderMenu(node: FolderNode): MenuItem[] {
       : []),
     {
       label: 'New subfolder…',
-      onSelect: async () => {
-        const name = prompt(`New folder inside "${node.name}"`, '')
-        if (!name?.trim()) return
-        const path = await createFolder(node.path, name)
-        // A subfolder of a folded folder would be created out of sight, the
-        // same way one inside a folded section would be.
-        setFolderOpen(node.path, true)
-        select({ kind: 'folder', path })
-        notify(`Created ${path}`)
-      },
+      onSelect: () =>
+        openPrompt({
+          title: `New folder inside "${node.name}"`,
+          label: 'Name',
+          value: '',
+          placeholder: 'Folder name',
+          confirm: 'Create',
+          onSubmit: async (name) => {
+            const path = await createFolder(node.path, name)
+            // A subfolder of a folded folder would be created out of sight, the
+            // same way one inside a folded section would be.
+            setFolderOpen(node.path, true)
+            select({ kind: 'folder', path })
+            notify(`Created ${path}`)
+          },
+        }),
     },
     {
       label: 'Rename…',
       separated: true,
-      onSelect: async () => {
-        const name = prompt('Rename folder', node.name)
-        if (!name?.trim() || name === node.name) return
-        try {
-          const dest = await renameFolder(node.path, name)
-          select({ kind: 'folder', path: dest })
-          notify('Folder renamed')
-        } catch (e) {
-          notify((e as Error).message, 'error')
-        }
-      },
+      onSelect: () =>
+        openPrompt({
+          title: 'Rename folder',
+          label: 'Name',
+          value: node.name,
+          confirm: 'Rename',
+          hint: 'Every note inside moves with it. Wikilinks are unaffected.',
+          onSubmit: async (name) => {
+            if (name === node.name) return
+            try {
+              const dest = await renameFolder(node.path, name)
+              select({ kind: 'folder', path: dest })
+              notify('Folder renamed')
+            } catch (e) {
+              notify((e as Error).message, 'error')
+            }
+          },
+        }),
     },
     {
       label: 'Delete folder',
@@ -223,6 +244,7 @@ function FolderRow({ node, depth }: { node: FolderNode; depth: number }) {
         name={node.name}
         count={node.count}
         indent={depth}
+        drop={node.path}
         longPress={longPress}
         onContextMenu={(e) => {
           e.preventDefault()
@@ -297,9 +319,25 @@ function SmartFolderRow({ node }: { node: SmartNode }) {
         await newNoteInFolder(folderInQuery(parsed.node) ?? '', 'Untitled', { seed: body })
       },
     },
+    /*
+     * Siblings sit in the order they were made until somebody says otherwise,
+     * and "otherwise" is these two items rather than a drag: the sidebar is a
+     * tree on a phone as well, where a drag is a scroll. A subtree travels with
+     * its parent, so moving a folder up moves everything under it.
+     */
+    {
+      label: 'Move up',
+      separated: true,
+      disabled: !canNudgeSmartFolder(sf.id, -1),
+      onSelect: () => void nudgeSmartFolder(sf.id, -1),
+    },
+    {
+      label: 'Move down',
+      disabled: !canNudgeSmartFolder(sf.id, 1),
+      onSelect: () => void nudgeSmartFolder(sf.id, 1),
+    },
     {
       label: sf.parentId ? 'Move…' : 'Move into…',
-      separated: true,
       onSelect: () => {
         // Every folder except this one and its own descendants is a legal home.
         const options = smartFolderList.value
@@ -499,6 +537,8 @@ export function Sidebar() {
           icon={<IconNotes size={15} />}
           name="All Notes"
           count={contentNotes.value.length}
+          /* The vault root is a folder like any other as far as a drop goes. */
+          drop=""
         />
         <Row target={{ kind: 'tasks' }} icon={<IconCheck size={15} />} name="Tasks" count={openTasks} />
         <Row
@@ -530,15 +570,21 @@ export function Sidebar() {
         count={tree.children.length}
         add={{
           label: 'New folder',
-          onSelect: async () => {
-            const name = prompt('New folder', '')
-            if (!name?.trim()) return
-            const path = await createFolder('', name)
-            // A new folder inside a folded section would be created out of
-            // sight, so making one unfolds it.
-            update({ collapseFolders: false })
-            select({ kind: 'folder', path })
-          },
+          onSelect: () =>
+            openPrompt({
+              title: 'New folder',
+              label: 'Name',
+              value: '',
+              placeholder: 'Folder name',
+              confirm: 'Create',
+              onSubmit: async (name) => {
+                const path = await createFolder('', name)
+                // A new folder inside a folded section would be created out of
+                // sight, so making one unfolds it.
+                update({ collapseFolders: false })
+                select({ kind: 'folder', path })
+              },
+            }),
         }}
       >
         {tree.children.length === 0 ? (
