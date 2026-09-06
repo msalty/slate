@@ -282,9 +282,12 @@ function TaskRow({
         class="task-text"
         role="button"
         tabIndex={0}
-        onClick={() => openNote(t.path)}
+        onClick={() => openNote(t.path, { taskLine: t.line })}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') openNote(t.path)
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            openNote(t.path, { taskLine: t.line })
+          }
         }}
       >
         {t.text ? <Highlight text={t.text} terms={terms} /> : <em class="dim">Untitled task</em>}

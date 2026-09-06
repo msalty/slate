@@ -1,3 +1,4 @@
+import { highlightTask } from '../editor/taskHighlight'
 /** Right-of-centre column: the note itself. */
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks'
@@ -42,6 +43,7 @@ import {
   opensForWriting,
   propertiesOpen,
   takeOpenCaret,
+  taskNavigation,
   readingMode,
 } from './state'
 import {
@@ -86,6 +88,7 @@ export function EditorPane() {
   const viewRef = useRef<EditorView | null>(null)
   const pathRef = useRef<string | undefined>(undefined)
   const [scrolled, setScrolled] = useState(false)
+  const taskTarget = taskNavigation.value
   const path = activePath.value
   const compact = layoutMode.value === 'compact'
   /*
@@ -271,6 +274,14 @@ export function EditorPane() {
     if (r.conflicted)
       notify('This note changed elsewhere while you were typing — both edits are marked in place')
   }, [path, rev])
+
+  useLayoutEffect(() => {
+    const view = viewRef.current
+    if (!view || popped || !taskTarget || taskTarget.path !== path) return
+    readingMode.value = true
+    endEditing(view)
+    highlightTask(view, taskTarget.line)
+  }, [path, popped, taskTarget])
 
   /*
    * On a phone, the keyboard and the Format sheet never share the screen.

@@ -146,6 +146,9 @@ let openForWriting: string | undefined
 let openCaret: number | undefined
 let takenCaret: number | undefined
 
+/** A fresh object also retriggers navigation within the already-open note. */
+export const taskNavigation = signal<{ path: string; line: number } | undefined>(undefined)
+
 /**
  * Open a note from anywhere. On a phone this also pushes the editor over the
  * current tab, so tapping a note in Tasks or the calendar goes straight to the
@@ -154,7 +157,8 @@ let takenCaret: number | undefined
  * `editing` is for a note that was just created to be typed into: it opens with
  * the caret in it, because there is nothing in it to read yet.
  */
-export function openNote(path: string, opts?: { editing?: boolean; caret?: number }) {
+export function openNote(path: string, opts?: { editing?: boolean; caret?: number; taskLine?: number }) {
+  taskNavigation.value = opts?.taskLine === undefined ? undefined : { path, line: opts.taskLine }
   openForWriting = opts?.editing ? path : undefined
   openCaret = opts?.editing ? opts.caret : undefined
   activePath.value = path
