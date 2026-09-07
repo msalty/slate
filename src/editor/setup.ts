@@ -80,7 +80,12 @@ import { noteContext, requestLinkDialog } from './context'
 import { setDueAtCaret } from './due'
 import { focusedCell } from './table'
 import { minimalEdit } from '../core/rebase'
-import { calloutCompletion, tagCompletion, wikiCompletion } from './completion'
+import {
+  calloutCompletion,
+  snippetCompletion,
+  tagCompletion,
+  wikiCompletion,
+} from './completion'
 
 export const previewCompartment = new Compartment()
 export const contextCompartment = new Compartment()
@@ -329,6 +334,7 @@ export function createEditorState(opts: EditorOptions): EditorState {
     markdownLanguage.data.of({ autocomplete: wikiCompletion }),
     markdownLanguage.data.of({ autocomplete: tagCompletion }),
     markdownLanguage.data.of({ autocomplete: calloutCompletion }),
+    markdownLanguage.data.of({ autocomplete: snippetCompletion }),
     autocompletion({
       activateOnTyping: true,
       closeOnBlur: true,
@@ -377,6 +383,18 @@ export function createEditorState(opts: EditorOptions): EditorState {
     clipboardHandler,
     Prec.highest(keymap.of(hiddenMarkupKeymap)),
     Prec.high(keymap.of(formattingKeymap)),
+    /*
+     * Tab takes a suggestion, and indents when there is none to take.
+     *
+     * `acceptCompletion` returns false with no list open, so this falls
+     * through to `indentWithTab` below and Tab keeps meaning Tab. Above that
+     * binding rather than beside it, because the first match in a keymap wins
+     * and indenting the line would otherwise eat the keystroke. Enter accepts
+     * too (see the Enter binding above), but Tab is the reflex people bring
+     * from every other editor — and for snippets, whose trigger is an
+     * ordinary word, Enter is genuinely ambiguous with wanting a new line.
+     */
+    Prec.high(keymap.of([{ key: 'Tab', run: acceptCompletion }])),
     keymap.of([
       ...closeBracketsKeymap,
       ...defaultKeymap,

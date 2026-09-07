@@ -4485,6 +4485,177 @@ try {
     JSON.stringify(fromLink),
   )
 
+  /* ---- text snippets ------------------------------------------------------
+   * Opt-in the same way templates are, and checked in the same order: a vault
+   * that has never made `Snippets.md` must show no sign of the feature, and
+   * nothing creates that note but the button in Settings. Then the thing
+   * itself — a trigger typed in a note, Tab, and the phrase in its place.
+   */
+  await page.click('[title^="New note"]')
+  await page.waitForTimeout(600)
+  await page.locator('.cm-content').click()
+  await page.locator('.cm-content').pressSequentially('wik', { delay: 25 })
+  await page.waitForTimeout(500)
+  check(
+    'a vault with no Snippets note offers no snippets',
+    (await page.locator('.cm-tooltip-autocomplete').count()) === 0,
+  )
+  await page.keyboard.press('Escape')
+
+  await page.click('.pane-head .icon-btn[title^="Settings"]')
+  await page.waitForSelector('.dialog')
+  await page.click('.tab:has-text("Editor")')
+  await page.waitForTimeout(300)
+  const snipOptIn = page.locator('.dialog .btn:has-text("Create the Snippets note")')
+  check('Settings offers to start using snippets', (await snipOptIn.count()) === 1)
+  await snipOptIn.click()
+  await page.waitForTimeout(900)
+  const snippetsNote = await page.evaluate(async () => {
+    const req = indexedDB.open('slate')
+    return new Promise((r) => {
+      req.onsuccess = () => {
+        const all = req.result.transaction('files', 'readonly').objectStore('files').getAll()
+        all.onsuccess = () => r(all.result.find((f) => f.path === 'Snippets.md')?.text ?? '')
+      }
+    })
+  })
+  check(
+    'and creating it writes a few to start from',
+    /^## wiki$/m.test(snippetsNote) && /^## sig$/m.test(snippetsNote) && /^## today$/m.test(snippetsNote),
+    JSON.stringify(snippetsNote.slice(0, 60)),
+  )
+
+  // Now use one, in a different note.
+  await page.click('[title^="New note"]')
+  await page.waitForTimeout(600)
+  await page.locator('.cm-content').click()
+  await page.locator('.cm-content').pressSequentially('See wik', { delay: 25 })
+  await page.waitForTimeout(600)
+  const snipList = await page.locator('.cm-tooltip-autocomplete li').allInnerTexts()
+  check(
+    'typing a trigger offers the snippet, with what it inserts beside it',
+    snipList.length === 1 && /wiki/.test(snipList[0]) && /wikipedia/.test(snipList[0]),
+    snipList.join(' / ') || 'nothing offered',
+  )
+  await page.keyboard.press('Tab')
+  await page.waitForTimeout(500)
+  const snipExpanded = await page.evaluate(() => document.querySelector('.cm-content').textContent)
+  check(
+    'and Tab puts the phrase in its place',
+    snipExpanded.includes('See https://en.wikipedia.org/wiki/') && !snipExpanded.includes('See wik\n'),
+    snipExpanded.slice(-40),
+  )
+
+  /*
+   * The other two things a snippet has to do: keep its line breaks, and fill
+   * in the same fields a template can. `{{cursor}}` is what makes a multi-line
+   * one usable — the caret ends up where the writing continues, not after the
+   * block.
+   */
+  await page.keyboard.press('Control+End')
+  await page.locator('.cm-content').pressSequentially('\nsig', { delay: 25 })
+  await page.waitForTimeout(500)
+  await page.keyboard.press('Tab')
+  await page.waitForTimeout(500)
+  const snipMulti = await page.evaluate(() => {
+    const view = document.querySelector('.cm-content')
+    const sel = document.getSelection()
+    return { text: view.textContent, atEnd: sel?.focusNode ? null : null }
+  })
+  check('a multi-line snippet keeps its shape', snipMulti.text.includes('Thanks,'), snipMulti.text.slice(-24))
+
+  await page.locator('.cm-content').pressSequentially('\ntoday', { delay: 25 })
+  await page.waitForTimeout(500)
+  await page.keyboard.press('Tab')
+  await page.waitForTimeout(500)
+  const snipDated = await page.evaluate(() => document.querySelector('.cm-content').textContent)
+  const snipYear = String(new Date().getFullYear())
+  check(
+    'and a date field is filled in the way a template fills it',
+    snipDated.includes(snipYear) && !snipDated.includes('{{'),
+    snipDated.slice(-40),
+  )
+
+  // Tab still means Tab when there is no list to accept.
+  await page.keyboard.press('Control+End')
+  await page.locator('.cm-content').pressSequentially('\nplain', { delay: 25 })
+  await page.waitForTimeout(300)
+  await page.keyboard.press('Home')
+  await page.keyboard.press('Tab')
+  await page.waitForTimeout(400)
+  const snipIndented = await page.evaluate(() => document.querySelector('.cm-content').textContent)
+  check(
+    'Tab with no suggestion open still indents',
+    /\s{2,}plain/.test(snipIndented),
+    JSON.stringify(snipIndented.slice(-14)),
+  )
+
+  // And an ordinary word is not a trigger, which is what makes it bearable.
+  await page.keyboard.press('Control+End')
+  await page.locator('.cm-content').pressSequentially(' designing', { delay: 20 })
+  await page.waitForTimeout(500)
+  check(
+    'an ordinary word raises nothing',
+    (await page.locator('.cm-tooltip-autocomplete').count()) === 0,
+  )
+  await page.keyboard.press('Escape')
+
+  /*
+   * And the phone, which has no Tab key: the suggestion is a tap target, and
+   * that is the whole answer. Checked with the keyboard simulated, since a
+   * snippet is reached mid-sentence with the keys up by definition.
+   */
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.waitForTimeout(600)
+  // A phone shows the note list until a row is tapped; the editor is an
+  // overlay over it rather than a pane beside it.
+  if (!(await page.locator('.editor-overlay').count())) {
+    await page.locator('.note-row').first().tap()
+    await page.waitForTimeout(700)
+  }
+  await page.evaluate(() => document.documentElement.style.setProperty('--kb-inset', '336px'))
+  await startEditing()
+  await page.waitForSelector('.editor-overlay .cm-content')
+  await page.locator('.editor-overlay .cm-content').tap()
+  await page.waitForTimeout(400)
+  await page.keyboard.press('Control+End')
+  await page.locator('.editor-overlay .cm-content').pressSequentially('\nSee wik', { delay: 30 })
+  await page.waitForTimeout(700)
+  const phoneSnip = await page.evaluate(() => {
+    const tip = document.querySelector('.cm-tooltip-autocomplete')
+    if (!tip) return null
+    const box = tip.getBoundingClientRect()
+    const rows = [...tip.querySelectorAll('li')]
+    return {
+      keys: window.innerHeight - 336,
+      bottom: Math.round(box.bottom),
+      rows: rows.length,
+      shortest: Math.round(Math.min(...rows.map((r) => r.getBoundingClientRect().height))),
+    }
+  })
+  check(
+    'a snippet is offered on a phone, above the keyboard and thumb-sized',
+    !!phoneSnip &&
+      phoneSnip.rows === 1 &&
+      phoneSnip.bottom <= phoneSnip.keys &&
+      phoneSnip.shortest >= 44,
+    phoneSnip
+      ? `bottom ${phoneSnip.bottom}, keys at ${phoneSnip.keys}, row ${phoneSnip.shortest}px`
+      : 'nothing offered',
+  )
+  const snipRow = await page.locator('.cm-tooltip-autocomplete li').first().boundingBox()
+  await page.touchscreen.tap(snipRow.x + snipRow.width / 2, snipRow.y + snipRow.height / 2)
+  await page.waitForTimeout(600)
+  const tapped = await page.evaluate(() => document.querySelector('.cm-content').textContent)
+  check(
+    'and a tap expands it, no Tab key required',
+    tapped.includes('See https://en.wikipedia.org/wiki/'),
+    tapped.slice(-40),
+  )
+  await page.evaluate(() => document.documentElement.style.removeProperty('--kb-inset'))
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.waitForTimeout(500)
+
   /* ---- pasting a spreadsheet range -------------------------------------
    * Excel, Numbers, Sheets and Calc all put two flavours on the clipboard: a
    * `<table>` under text/html and the same cells tab-separated under

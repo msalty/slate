@@ -527,6 +527,46 @@ covers ⌘N with no folder selected, and **a note created from a broken
 `[[link]]`** — which always lands there, and is named for the link text. That
 is the case `{{title}}` is really for.
 
+**Text snippets, if you want those.** The addresses and phrases you type over
+and over, behind a word you choose. Type `wiki` in any note and press Tab — or
+tap the suggestion — and it becomes whatever you said it stands for.
+
+They live in **one ordinary note**. `Snippets.md` at the vault root, where a
+`##` heading is the trigger and everything under it is what the trigger expands
+to, so a snippet is written, edited, searched and synced like anything else and
+there is no snippet format to learn:
+
+```markdown
+## wiki
+https://en.wikipedia.org/wiki/
+
+## sig
+Thanks,
+{{cursor}}
+```
+
+One rule, so a multi-line snippet costs nothing and no character has to be
+escaped — a `|` or an em dash in a phrase would break a table or a list.
+Snippets fill in the same fields templates do (`{{date}}`, `{{time}}`,
+`{{weekday}}`), and `{{cursor}}` says where to leave the caret afterwards.
+
+**There is no sigil**, because a leading punctuation mark is a keyboard-layer
+switch away on a phone — a strange toll on the feature whose whole purpose is
+typing less. The trigger is whatever the heading says: name one `;sig` and you
+type that instead. What keeps the list off ordinary prose is a single rule —
+**what you have typed since the last space must be the start of a trigger you
+wrote down.** Everything that would otherwise be a special case falls out of
+it: `[[wik` and `#wik` are a note and a tag being named, no trigger begins with
+a bracket or a hash, so snippets stay out of those lists; `design` is not
+`sig`, because the run is the whole word rather than its tail.
+
+Nothing happens until you ask, the same way: `Snippets.md` is never created for
+you, and Settings → Editor offers to write it with a few in it to start from.
+
+Tab accepts any suggestion, not just a snippet — it falls through to indenting
+when no list is open. On a phone, where there is no Tab key, tapping the
+suggestion is the same gesture it always was.
+
 **Templates stay out of the roll-ups.** They are real notes, so without care
 every view that adds your notes up would count them — and a template is
 boilerplate for a note that does not exist yet. Its `- [ ]` is a blank to fill
@@ -779,6 +819,7 @@ bar above the list carries an **Edit** next to the **Close**.
 | ⌘⌥D *(on a task line)* | Set a due date |
 | ⌘⇧9 | Block quote |
 | ⌘] / ⌘[ | Indent / outdent a list item |
+| Tab | Accept a suggestion — a link, a tag, a snippet; indents when there is none |
 
 ---
 
@@ -1104,6 +1145,7 @@ src/
 │  ├─ searchindex.ts  what stops a search from reading every note
 │  ├─ templates.ts    folder templates: the fields, and which folder uses what
 │  ├─ starters.ts     the seven templates `Templates/` is created with
+│  ├─ snippets.ts     `Snippets.md`, parsed into triggers and what they expand to
 │  ├─ devices.ts      per-device write registry, for version attribution
 │  ├─ images.ts       paste- and capture-time re-encoding
 │  └─ settings.ts     device-local vs vault-wide preferences
@@ -1218,8 +1260,8 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 566 unit + two-device sync tests
-node scripts/smoke.mjs  # 465 checks in headless Chromium against dist/
+npm test                # 586 unit + two-device sync tests
+node scripts/smoke.mjs  # 476 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 
