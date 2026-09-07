@@ -13,6 +13,7 @@ import {
   type Transaction,
 } from '@codemirror/state'
 import {
+  tooltips,
   EditorView,
   ViewPlugin,
   type ViewUpdate,
@@ -79,7 +80,12 @@ import { noteContext, requestLinkDialog } from './context'
 import { setDueAtCaret } from './due'
 import { focusedCell } from './table'
 import { minimalEdit } from '../core/rebase'
-import { calloutCompletion, tagCompletion, wikiCompletion } from './completion'
+import {
+  calloutCompletion,
+  snippetCompletion,
+  tagCompletion,
+  wikiCompletion,
+} from './completion'
 
 export const previewCompartment = new Compartment()
 export const contextCompartment = new Compartment()
@@ -328,12 +334,42 @@ export function createEditorState(opts: EditorOptions): EditorState {
     markdownLanguage.data.of({ autocomplete: wikiCompletion }),
     markdownLanguage.data.of({ autocomplete: tagCompletion }),
     markdownLanguage.data.of({ autocomplete: calloutCompletion }),
+    markdownLanguage.data.of({ autocomplete: snippetCompletion }),
     autocompletion({
       activateOnTyping: true,
       closeOnBlur: true,
       maxRenderedOptions: 60,
       icons: false,
       defaultKeymap: true,
+    }),
+    /*
+     * Keep a completion list out from under the phone's keyboard.
+     *
+     * CodeMirror fits a tooltip into the window, and the window does not
+     * shrink when the keyboard opens — so a list opened with the caret near
+     * the bottom of the note, which is where anybody typing has it, was drawn
+     * straight into the keys: two of three suggestions unreachable. Told the
+     * real space instead, it flips the list above the caret.
+     *
+     * The inset is read from the CSS variable the keyboard watcher publishes
+     * (ui/layout.ts) rather than imported: the editor does not depend on the
+     * shell anywhere else, and a popped-out window has no keyboard to dodge —
+     * its document carries no variable, which reads as 0 and is correct.
+     */
+    tooltips({
+      tooltipSpace: (view) => {
+        const doc = view.dom.ownerDocument
+        const win = doc.defaultView ?? window
+        const raw = getComputedStyle(doc.documentElement).getPropertyValue('--kb-inset')
+        const keyboard = Math.max(0, Number.parseFloat(raw) || 0)
+        const pad = 4
+        return {
+          top: pad,
+          left: pad,
+          right: win.innerWidth - pad,
+          bottom: win.innerHeight - keyboard - pad,
+        }
+      },
     }),
     editorTheme,
     taskHighlightExtension,
@@ -347,6 +383,18 @@ export function createEditorState(opts: EditorOptions): EditorState {
     clipboardHandler,
     Prec.highest(keymap.of(hiddenMarkupKeymap)),
     Prec.high(keymap.of(formattingKeymap)),
+    /*
+     * Tab takes a suggestion, and indents when there is none to take.
+     *
+     * `acceptCompletion` returns false with no list open, so this falls
+     * through to `indentWithTab` below and Tab keeps meaning Tab. Above that
+     * binding rather than beside it, because the first match in a keymap wins
+     * and indenting the line would otherwise eat the keystroke. Enter accepts
+     * too (see the Enter binding above), but Tab is the reflex people bring
+     * from every other editor — and for snippets, whose trigger is an
+     * ordinary word, Enter is genuinely ambiguous with wanting a new line.
+     */
+    Prec.high(keymap.of([{ key: 'Tab', run: acceptCompletion }])),
     keymap.of([
       ...closeBracketsKeymap,
       ...defaultKeymap,

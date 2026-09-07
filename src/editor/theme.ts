@@ -603,6 +603,20 @@ export const editorTheme = EditorView.theme({
   '.cm-completionLabel': { fontWeight: '500' },
   '.cm-completionDetail': { color: 'var(--text-faint)', fontStyle: 'normal', marginLeft: '8px' },
   'li[aria-selected] .cm-completionDetail': { color: 'rgba(255,255,255,.75)' },
+  /*
+   * A suggestion is a tap target on a touch screen, and a 26px row is not one.
+   * The rest of the app holds itself to 44px; this list is reached with a
+   * thumb like everything else, so it does too.
+   */
+  '@media (pointer: coarse)': {
+    '.cm-tooltip.cm-tooltip-autocomplete > ul': { fontSize: '15px' },
+    '.cm-tooltip.cm-tooltip-autocomplete > ul > li': {
+      minHeight: '44px',
+      padding: '0 14px',
+      display: 'flex',
+      alignItems: 'center',
+    },
+  },
 
   /* --- find in note -------------------------------------------------- */
   '.cm-searchMatch': {

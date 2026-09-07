@@ -20,6 +20,7 @@ import {
   templateNotes,
 } from '../core/templates'
 import { STARTER_TEMPLATES } from '../core/starters'
+import { hasSnippets, snippets, SNIPPETS_NOTE } from '../core/snippets'
 import { openNote } from './state'
 
 type Tab = 'sync' | 'editor' | 'files' | 'about'
@@ -53,6 +54,40 @@ async function startTemplates() {
   notify(
     `Templates/ created, with ${STARTER_TEMPLATES.length} to start from. Edit any of them, then pick one from a folder’s menu.`,
   )
+}
+
+/**
+ * Write `Snippets.md`, with a few in it, and open it.
+ *
+ * The examples matter more than the button does. An empty note under a heading
+ * that says "Snippets" leaves somebody who just asked for text expansion
+ * exactly where they were: knowing the feature exists and not what the file is
+ * supposed to look like. Three of them show the format, the multi-line case
+ * and a date token in one glance — and they are ordinary markdown, so the
+ * answer to "not like that" is to type over them.
+ */
+const STARTER_SNIPPETS = `# Snippets
+
+Each \`##\` heading is a trigger. Type it in any note and press Tab — or tap the
+suggestion — and it turns into whatever is written under it. Rewrite these,
+delete them, add your own.
+
+## wiki
+https://en.wikipedia.org/wiki/
+
+## sig
+Thanks,
+{{cursor}}
+
+## today
+{{date:DDDD, D MMMM YYYY}}
+`
+
+async function startSnippets() {
+  const path = await createNote('', 'Snippets', STARTER_SNIPPETS)
+  settingsOpen.value = false
+  openNote(path)
+  notify('Snippets.md created. Edit it like any other note — triggers work as soon as you save.')
 }
 
 export function Settings() {
@@ -427,6 +462,42 @@ export function Settings() {
                       onClick={() => void startTemplates()}
                     >
                       Create the Templates folder
+                    </button>
+                  </>
+                )}
+              </div>
+              <div class="field">
+                <span>Snippets</span>
+                {hasSnippets.value ? (
+                  <>
+                    <small>
+                      {snippets.value.length} snippet{snippets.value.length === 1 ? '' : 's'} in{' '}
+                      <code>{SNIPPETS_NOTE}</code>: {snippets.value.map((x) => x.trigger).join(', ')}.
+                      Type a trigger in any note and press Tab — or tap the suggestion — to expand
+                      it. The note is an ordinary note; open it and edit it like any other.
+                    </small>
+                    <small>
+                      A snippet can fill in the same fields a template can —{' '}
+                      <code>{'{{date}}'}</code>, <code>{'{{time}}'}</code>,{' '}
+                      <code>{'{{weekday}}'}</code> — and <code>{'{{cursor}}'}</code> says where to
+                      leave the caret once it has expanded.
+                    </small>
+                  </>
+                ) : (
+                  <>
+                    <small>
+                      The addresses and phrases you type over and over, behind a word you
+                      choose. They live in a single note — <code>{SNIPPETS_NOTE}</code>, where a{' '}
+                      <code>##</code> heading is the trigger and everything under it is what it
+                      expands to — so there is no snippet format and nothing new to learn, and
+                      nothing at all happens until you make that note.
+                    </small>
+                    <button
+                      class="btn"
+                      style={{ alignSelf: 'flex-start' }}
+                      onClick={() => void startSnippets()}
+                    >
+                      Create the Snippets note
                     </button>
                   </>
                 )}

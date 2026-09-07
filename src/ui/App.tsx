@@ -10,6 +10,7 @@ import { Lightbox } from './Lightbox'
 import { ContextMenu } from './Menu'
 import { TagFolderDialog } from './TagFolderDialog'
 import { LinkDialog } from './LinkDialog'
+import { FilePicker } from './FilePicker'
 import { PromptDialog } from './PromptDialog'
 import { ConfirmDialog } from './ConfirmDialog'
 import { PaneResizer } from './PaneResizer'
@@ -389,6 +390,7 @@ export function App() {
       <VersionHistory />
       <TagFolderDialog />
       <LinkDialog />
+      <FilePicker />
       <PromptDialog />
       <ConfirmDialog />
       <Lightbox />

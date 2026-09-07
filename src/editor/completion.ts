@@ -1,5 +1,6 @@
 /**
- * Autocomplete for `[[wikilinks]]`, `![[embeds]]`, `#tags` and callout types.
+ * Autocomplete for `[[wikilinks]]`, `![[embeds]]`, `#tags`, callout types and
+ * text snippets.
  *
  * Linking is only as good as how fast you can reach for it, so the completion
  * fires on the opening `[[` with no keystroke delay and ranks by how the note
@@ -10,6 +11,7 @@
 import type { Completion, CompletionContext, CompletionResult } from '@codemirror/autocomplete'
 import type { EditorView } from '@codemirror/view'
 import { allTags, attachments, notes } from '../core/vault'
+import { expandSnippet, matchSnippets, previewOf, type Snippet } from '../core/snippets'
 import { basename, mediaClass, relativeTime } from '../core/util'
 import { CALLOUT_NAMES, calloutSpec } from './callout'
 
@@ -113,6 +115,70 @@ export function wikiCompletion(context: CompletionContext): CompletionResult | n
     from,
     options: options.slice(0, 60),
     validFor: /^[^\]\n|]*$/,
+  }
+}
+
+/**
+ * Text snippets: a trigger you wrote in `Snippets.md`, and what it stands for.
+ *
+ * The only completion here with no opening character of its own, which is the
+ * whole point — a sigil is a keyboard-layer switch away on a phone, a strange
+ * toll to build into the feature whose job is typing less.
+ *
+ * One rule holds it together: **what has been typed since the last space must
+ * be the start of a trigger.** A vault with no snippets never sees a list, a
+ * vault with three sees one for three words, and everything that would
+ * otherwise need a special case falls out of it —
+ *
+ *   - `[[wik`, `![[wik` and `#wik` are a note, a file and a tag being named.
+ *     The run includes the marker, no trigger begins with one, so this source
+ *     stays out of a list it has no business in.
+ *   - `design` is not `sig`. The run is the whole word, not its tail.
+ *   - `;sig` reaches a snippet named `;sig`, for anyone who wants their
+ *     triggers to look like triggers. The sigil is part of the name, not a
+ *     syntax this has to know about.
+ *
+ * The cost of the same rule is that punctuation glued to the front — `("wiki`
+ * — is part of the run and so matches nothing. That is the right way round: a
+ * trigger is a thing you type on its own, and the alternative is a list of
+ * characters to treat as invisible, which is where the special cases come back.
+ */
+export function snippetCompletion(context: CompletionContext): CompletionResult | null {
+  const before = context.matchBefore(/\S+/)
+  if (!before) return null
+
+  const hits = matchSnippets(before.text)
+  if (!hits.length) return null
+
+  return {
+    from: before.from,
+    options: hits.map((s) => ({
+      label: s.trigger,
+      detail: previewOf(s.body),
+      apply: applySnippet(s),
+      // Above a note or a tag that happens to share the name: those are things
+      // the vault has, this is a rule you wrote down, and the rule is meant.
+      boost: 40,
+    })),
+    validFor: /^\S*$/,
+  }
+}
+
+/**
+ * Swap the trigger for the text, and put the caret where the snippet says.
+ *
+ * `{{cursor}}` is honoured mid-note exactly as it is in a new note from a
+ * template — a snippet that expands to a mail header wants the caret on the
+ * empty line under it, not at the end of the block.
+ */
+function applySnippet(s: Snippet) {
+  return (view: EditorView, _c: Completion, from: number, to: number) => {
+    const { text, caret } = expandSnippet(s)
+    view.dispatch({
+      changes: { from, to, insert: text },
+      selection: { anchor: from + caret },
+      userEvent: 'input.complete',
+    })
   }
 }
 

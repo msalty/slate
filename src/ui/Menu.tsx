@@ -8,7 +8,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks'
 import { signal } from '@preact/signals'
-import { layoutMode } from './layout'
+import { keyboardInset, layoutMode } from './layout'
 import { IconCheck } from './Icons'
 
 export interface MenuItem {
@@ -121,7 +121,10 @@ export function ContextMenu() {
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
   const sheet = layoutMode.value === 'compact'
 
-  // Flip the popover back on-screen once its real size is known.
+  // Flip the popover back on-screen once its real size is known. "On screen"
+  // stops where the keyboard starts: a tablet's keyboard covers the bottom of
+  // the layout viewport without shrinking it, and a menu flipped to fit that
+  // taller rectangle lands underneath it.
   useLayoutEffect(() => {
     if (!state || sheet || !ref.current) {
       setPos(null)
@@ -131,9 +134,9 @@ export function ContextMenu() {
     const pad = 8
     setPos({
       left: Math.min(state.x, window.innerWidth - r.width - pad),
-      top: Math.min(state.y, window.innerHeight - r.height - pad),
+      top: Math.max(pad, Math.min(state.y, window.innerHeight - keyboardInset.value - r.height - pad)),
     })
-  }, [state, sheet])
+  }, [state, sheet, keyboardInset.value])
 
   useEffect(() => {
     if (!state) return

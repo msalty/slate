@@ -2188,8 +2188,16 @@ try {
   await page.waitForTimeout(300)
   const insertItems = await page.locator('.menu-item').allInnerTexts()
   check(
-    'the insert menu offers a library and a file option',
-    insertItems.some((t) => /Photo Library/i.test(t)) && insertItems.some((t) => /Choose File/i.test(t)),
+    'the insert menu offers the vault and an upload',
+    insertItems.some((t) => /File in Slate/i.test(t)) && insertItems.some((t) => /Upload a File/i.test(t)),
+    insertItems.join(' / '),
+  )
+  // Touch is on for the whole run, so this context is a coarse pointer and the
+  // photo library belongs in the menu. On a desktop it is dropped entirely —
+  // there it opened the same file dialog as the upload, under a second name.
+  check(
+    'a touch device is still offered its photo library',
+    insertItems.some((t) => /Photo Library/i.test(t)),
     insertItems.join(' / '),
   )
 
@@ -2214,7 +2222,7 @@ try {
 
   const [chooser] = await Promise.all([
     page.waitForEvent('filechooser'),
-    page.locator('.menu-item:has-text("Photo Library")').click(),
+    page.locator('.menu-item:has-text("Upload a File")').click(),
   ])
   await chooser.setFiles({
     name: 'IMG_0421.png',
@@ -2261,6 +2269,87 @@ try {
   check('the inserted photo opens in the lightbox', await page.locator('.lightbox').isVisible())
   await page.keyboard.press('Escape')
   await page.waitForTimeout(300)
+
+  /* ---- insert a file the vault already has -------------------------------
+   *
+   * The other half of Insert, and the half that used to be missing: the file
+   * is already in Slate, so there is nothing to upload and nothing to
+   * re-encode. Typing is the whole interface, so what is checked is that the
+   * box filters, that it says so when nothing matches, and that Enter embeds
+   * the row under the highlight rather than the first one in the vault.
+   */
+  await page.locator('[aria-label="Insert photo or file"]').click()
+  await page.waitForTimeout(300)
+  await page.locator('.menu-item:has-text("File in Slate")').click()
+  await page.waitForSelector('.file-picker')
+  await page.waitForTimeout(300)
+  const pickerRows = await page.locator('.file-pick-row').count()
+  check('the picker lists what is already in the vault', pickerRows >= 1, `${pickerRows} rows`)
+  await page.screenshot({ path: join(SHOTS, '17b-file-picker.png') })
+
+  await page.locator('.file-picker-search input').fill('no-such-file-anywhere')
+  await page.waitForTimeout(250)
+  check(
+    'the picker says so when nothing matches',
+    (await page.locator('.file-pick-row').count()) === 0 &&
+      (await page.locator('.file-picker .empty').count()) === 1,
+  )
+
+  await page.locator('.file-picker-search input').fill('IMG_0421')
+  await page.waitForTimeout(250)
+  const narrowed = await page.locator('.file-pick-name').allInnerTexts()
+  check(
+    'typing a filename narrows the picker to it',
+    narrowed.length === 1 && /IMG_0421/.test(narrowed[0]),
+    narrowed.join(' / '),
+  )
+
+  const vaultAttachments = () =>
+    page.evaluate(async () => {
+      const req = indexedDB.open('slate')
+      return new Promise((resolve) => {
+        req.onsuccess = () => {
+          const all = req.result.transaction('files', 'readonly').objectStore('files').getAll()
+          all.onsuccess = () =>
+            resolve(all.result.filter((f) => f.kind === 'attachment' && !f.deleted).length)
+        }
+      })
+    })
+  const filesBefore = await vaultAttachments()
+  const embedsBefore = await page.locator('.cm-embed img').count()
+  await page.keyboard.press('Enter')
+  await page.waitForTimeout(800)
+  check('the picker closes once something is chosen', (await page.locator('.file-picker').count()) === 0)
+  const embedsAfter = await page.locator('.cm-embed img').count()
+  check(
+    'a file already in the vault is embedded without being uploaded again',
+    embedsAfter === embedsBefore + 1,
+    `${embedsBefore} -> ${embedsAfter} embeds`,
+  )
+  // Nothing new on disk: the same attachment is now used twice.
+  const filesAfter = await vaultAttachments()
+  check(
+    'inserting from the vault adds no second copy',
+    filesAfter === filesBefore,
+    `${filesBefore} -> ${filesAfter} attachments`,
+  )
+
+  // Escape gets out with nothing inserted, from a picker that was opened and
+  // thought better of.
+  await page.locator('[aria-label="Insert photo or file"]').click()
+  await page.waitForTimeout(300)
+  await page.locator('.menu-item:has-text("File in Slate")').click()
+  await page.waitForSelector('.file-picker')
+  await page.waitForTimeout(300)
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(400)
+  const stillOpen = await page.locator('.file-picker').count()
+  const embedsNow = await page.locator('.cm-embed img').count()
+  check(
+    'Escape leaves the picker with the note untouched',
+    stillOpen === 0 && embedsNow === embedsAfter,
+    `${stillOpen} pickers, ${embedsNow} embeds (was ${embedsAfter})`,
+  )
 
   /* ---- PDFs -------------------------------------------------------------
    *
@@ -2316,7 +2405,7 @@ try {
   await page.waitForTimeout(300)
   const [pdfChooser] = await Promise.all([
     page.waitForEvent('filechooser'),
-    page.locator('.menu-item:has-text("Choose File")').click(),
+    page.locator('.menu-item:has-text("Upload a File")').click(),
   ])
   await pdfChooser.setFiles({ name: 'spec.pdf', mimeType: 'application/pdf', buffer: pdfBytes })
   await page.waitForTimeout(2000)
@@ -3053,6 +3142,189 @@ try {
     kb.bodyEndsAt <= kb.keyboardTop,
     `note ends at ${kb.bodyEndsAt}, keyboard starts at ${kb.keyboardTop}`,
   )
+
+  /*
+   * The same rule for a sheet you type into. A bottom sheet and a keyboard
+   * want the same edge of the screen, and the file picker shrinks as its list
+   * narrows — so with the inset ignored, typing a filename walked the results
+   * and then the search box itself down behind the keys. Checked with the
+   * keyboard still simulated above.
+   */
+  await page.locator('[aria-label="Insert photo or file"]').click()
+  await page.waitForTimeout(300)
+  await page.locator('.menu-item:has-text("File in Slate")').click()
+  await page.waitForSelector('.file-picker')
+  await page.waitForTimeout(350)
+  const sheetOverKeyboard = () =>
+    page.evaluate((keyboardTop) => {
+      const box = document.querySelector('.file-picker').getBoundingClientRect()
+      const input = document.querySelector('.file-picker-search input').getBoundingClientRect()
+      const rows = [...document.querySelectorAll('.file-pick-row')]
+      return {
+        top: Math.round(box.top),
+        bottom: Math.round(box.bottom),
+        inputTop: Math.round(input.top),
+        rows: rows.length,
+        rowsAbove: rows.filter((r) => r.getBoundingClientRect().bottom <= keyboardTop + 1).length,
+      }
+    }, kb.keyboardTop)
+  const overKeys = await sheetOverKeyboard()
+  check(
+    'the file picker sits on top of the keyboard, not under it',
+    overKeys.bottom <= kb.keyboardTop && overKeys.top >= 0,
+    `sheet ${overKeys.top}-${overKeys.bottom}, keyboard starts at ${kb.keyboardTop}`,
+  )
+  check(
+    'and every row it lists is above the keyboard',
+    overKeys.rows > 0 && overKeys.rowsAbove === overKeys.rows,
+    `${overKeys.rowsAbove} of ${overKeys.rows} rows`,
+  )
+
+  await page.locator('.file-picker-search input').fill('IMG_0421')
+  await page.waitForTimeout(300)
+  const narrowedKeys = await sheetOverKeyboard()
+  check(
+    'narrowing it does not walk the last result down behind the keys',
+    narrowedKeys.rows === 1 &&
+      narrowedKeys.rowsAbove === 1 &&
+      narrowedKeys.inputTop >= 0 &&
+      narrowedKeys.bottom <= kb.keyboardTop,
+    `sheet ${narrowedKeys.top}-${narrowedKeys.bottom}, ${narrowedKeys.rowsAbove} of ${narrowedKeys.rows} rows above ${kb.keyboardTop}`,
+  )
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(300)
+  check('the picker leaves the phone editor as it found it', (await page.locator('.file-picker').count()) === 0)
+
+  /* ---- typing an embed out by hand, in rich text -------------------------
+   * The other way to reach a file: `![[` and the autocomplete. Rich text used
+   * to swap the markup for the widget the moment `![[a]]` parsed, which took
+   * the target out from under the completion — one letter went in, the range
+   * went atomic, and the note was left with `![[a]]` and no way to finish the
+   * name. So what is checked is that the markup survives being typed into and
+   * the list is still narrowing while it happens.
+   */
+  const typed = async (s) => {
+    await page.keyboard.type(s)
+    await page.waitForTimeout(350)
+  }
+  await page.locator('.cm-content').click()
+  await page.keyboard.press('Control+End')
+  await typed('![[')
+  await typed('I')
+  const oneChar = await page.evaluate(() => document.querySelector('.cm-content').textContent)
+  check(
+    'one character into an embed, the markup is still there to type into',
+    oneChar.includes('![[I]]'),
+    oneChar.slice(-24),
+  )
+  await typed('MG_04')
+  const sixChars = await page.evaluate(() => document.querySelector('.cm-content').textContent)
+  const suggestions = await page.locator('.cm-tooltip-autocomplete li').allInnerTexts()
+  check(
+    'and the rest of the name goes in after it',
+    sixChars.includes('![[IMG_04]]'),
+    sixChars.slice(-24),
+  )
+  check(
+    'with the autocomplete still narrowing to the file',
+    suggestions.some((t) => /IMG_0421/.test(t)),
+    suggestions.join(' / ') || 'no suggestions',
+  )
+  /*
+   * Accept it, and the finished embed becomes a picture like any other.
+   * Counted from just before the keystroke rather than from the earlier
+   * total: typing at the end of the note scrolled the first embeds out of
+   * CodeMirror's rendered range, and what is not rendered is not in the DOM.
+   */
+  const embedsShown = await page.locator('.cm-embed img').count()
+  await page.keyboard.press('Enter')
+  await page.waitForTimeout(900)
+  const embedsFromTyping = await page.locator('.cm-embed img').count()
+  const docAfterAccept = await page.evaluate(() => document.querySelector('.cm-content').textContent)
+  check(
+    'accepting the suggestion embeds the file',
+    embedsFromTyping === embedsShown + 1 && !docAfterAccept.includes('![['),
+    `${embedsShown} -> ${embedsFromTyping} embeds, markup ${docAfterAccept.includes('![[') ? 'left behind' : 'gone'}`,
+  )
+  for (let i = 0; i < 6; i++) await page.keyboard.press('Control+z')
+  await page.waitForTimeout(500)
+
+  /*
+   * And the completion list, which is a tooltip rather than a sheet and so
+   * gets its room a different way — CodeMirror fits one into the window, and
+   * the window does not shrink for the keyboard. With the caret near the
+   * bottom of a note, which is where anybody typing has it, the list was drawn
+   * into the keys with most of it unreachable. It also has to be tappable:
+   * Tab is the desktop way to accept one, a thumb is the only way here.
+   */
+  await page.keyboard.press('Control+End')
+  // Push the caret to the bottom of the shortened editor, which is where a
+  // note being typed into actually leaves it — and the only place the list
+  // has nowhere to go but into the keys. Without this the caret sits high
+  // enough that the list fits below it either way and the check proves
+  // nothing; the assertion under it holds the test to that.
+  await page.keyboard.type('\n'.repeat(24))
+  await page.waitForTimeout(300)
+  await page.keyboard.type('[[')
+  await page.waitForTimeout(600)
+  const { caretY, keysAt } = await page.evaluate(() => {
+    const c = document.querySelector('.cm-cursor-primary')?.getBoundingClientRect()
+    return { caretY: c ? Math.round(c.bottom) : null, keysAt: window.innerHeight - 336 }
+  })
+  check(
+    'the caret is down by the keyboard, where this is worth checking',
+    caretY !== null && caretY > keysAt - 140,
+    `caret at ${caretY}, keys at ${keysAt}`,
+  )
+  const list = await page.evaluate(() => {
+    const tip = document.querySelector('.cm-tooltip-autocomplete')
+    if (!tip) return null
+    const line = window.innerHeight - 336
+    const box = tip.getBoundingClientRect()
+    const rows = [...tip.querySelectorAll('li')]
+    return {
+      line,
+      top: Math.round(box.top),
+      bottom: Math.round(box.bottom),
+      rows: rows.length,
+      /*
+       * Rows the list is actually showing that fall past the keyboard line.
+       * A long list scrolls inside its own box, so the rows below that box
+       * are reachable and their geometry says nothing about the keyboard —
+       * only the ones on screen count.
+       */
+      hidden: rows.filter((r) => {
+        const rect = r.getBoundingClientRect()
+        return rect.top < box.bottom && rect.bottom > line
+      }).length,
+      shortest: Math.round(Math.min(...rows.map((r) => r.getBoundingClientRect().height))),
+    }
+  })
+  check('typing `[[` on a phone offers the notes to link to', !!list && list.rows > 0, `${list?.rows ?? 0} suggestions`)
+  check(
+    'the suggestions sit above the keyboard rather than under it',
+    !!list && list.hidden === 0 && list.bottom <= list.line,
+    list ? `list ${list.top}-${list.bottom}, keys at ${list.line}, ${list.hidden} hidden` : 'no list',
+  )
+  check(
+    'and each one is big enough to tap',
+    !!list && list.shortest >= 44,
+    `shortest row ${list?.shortest}px`,
+  )
+
+  // Accepting one with a tap, since there is no Tab key here.
+  const firstRow = await page.locator('.cm-tooltip-autocomplete li').first().boundingBox()
+  await page.touchscreen.tap(firstRow.x + firstRow.width / 2, firstRow.y + firstRow.height / 2)
+  await page.waitForTimeout(500)
+  const linked = await page.evaluate(() => document.querySelector('.cm-content').textContent)
+  check(
+    'a tap accepts a suggestion the way Tab would',
+    /\[\[[^\]]+\]\]/.test(linked) && (await page.locator('.cm-tooltip-autocomplete').count()) === 0,
+    linked.slice(-24),
+  )
+  for (let i = 0; i < 30; i++) await page.keyboard.press('Control+z')
+  await page.waitForTimeout(500)
+
   await page.evaluate(() => document.documentElement.style.removeProperty('--kb-inset'))
 
   /* ---- editing a table from the phone's Format sheet ----------------------
@@ -3194,6 +3466,41 @@ try {
   check('the choice includes opening it', (await page.locator('.menu-item:has-text("Open link")').count()) === 1)
   check('and editing it', (await page.locator('.menu-item:has-text("Edit link")').count()) === 1)
   await page.screenshot({ path: join(SHOTS, '20-phone-link-tap.png') })
+
+  /*
+   * The same sheet with the keyboard up, which is the state a link is usually
+   * tapped in: you were typing a second ago. A sheet and a keyboard both want
+   * the bottom of the screen, and the layout viewport does not shrink for the
+   * keyboard — so ignoring the inset put every choice on this sheet, Cancel
+   * included, underneath the keys. Simulated the same way as the editor's own
+   * keyboard check above, headless Chromium having no soft keyboard.
+   */
+  await page.evaluate(() => document.documentElement.style.setProperty('--kb-inset', '336px'))
+  await page.waitForTimeout(300)
+  const linkSheet = await page.evaluate(() => {
+    const line = window.innerHeight - 336
+    const r = document.querySelector('.menu-sheet').getBoundingClientRect()
+    const items = [...document.querySelectorAll('.menu-sheet .menu-item')]
+    return {
+      line,
+      top: Math.round(r.top),
+      bottom: Math.round(r.bottom),
+      items: items.length,
+      above: items.filter((i) => i.getBoundingClientRect().bottom <= line + 1).length,
+    }
+  })
+  check(
+    'the link sheet sits on top of the keyboard, not under it',
+    linkSheet.bottom <= linkSheet.line && linkSheet.top >= 0,
+    `sheet ${linkSheet.top}-${linkSheet.bottom}, keyboard starts at ${linkSheet.line}`,
+  )
+  check(
+    'and every choice on it can still be tapped',
+    linkSheet.items > 0 && linkSheet.above === linkSheet.items,
+    `${linkSheet.above} of ${linkSheet.items} items`,
+  )
+  await page.evaluate(() => document.documentElement.style.removeProperty('--kb-inset'))
+  await page.waitForTimeout(250)
 
   /* ---- opening it from a Home Screen app ---------------------------------
    * A web app installed on iOS has no tab to open a link in, so `window.open`
@@ -4177,6 +4484,177 @@ try {
     fromLink.includes('\n# Highway 9\n') && fromLink.includes('\nname: Highway 9\n'),
     JSON.stringify(fromLink),
   )
+
+  /* ---- text snippets ------------------------------------------------------
+   * Opt-in the same way templates are, and checked in the same order: a vault
+   * that has never made `Snippets.md` must show no sign of the feature, and
+   * nothing creates that note but the button in Settings. Then the thing
+   * itself — a trigger typed in a note, Tab, and the phrase in its place.
+   */
+  await page.click('[title^="New note"]')
+  await page.waitForTimeout(600)
+  await page.locator('.cm-content').click()
+  await page.locator('.cm-content').pressSequentially('wik', { delay: 25 })
+  await page.waitForTimeout(500)
+  check(
+    'a vault with no Snippets note offers no snippets',
+    (await page.locator('.cm-tooltip-autocomplete').count()) === 0,
+  )
+  await page.keyboard.press('Escape')
+
+  await page.click('.pane-head .icon-btn[title^="Settings"]')
+  await page.waitForSelector('.dialog')
+  await page.click('.tab:has-text("Editor")')
+  await page.waitForTimeout(300)
+  const snipOptIn = page.locator('.dialog .btn:has-text("Create the Snippets note")')
+  check('Settings offers to start using snippets', (await snipOptIn.count()) === 1)
+  await snipOptIn.click()
+  await page.waitForTimeout(900)
+  const snippetsNote = await page.evaluate(async () => {
+    const req = indexedDB.open('slate')
+    return new Promise((r) => {
+      req.onsuccess = () => {
+        const all = req.result.transaction('files', 'readonly').objectStore('files').getAll()
+        all.onsuccess = () => r(all.result.find((f) => f.path === 'Snippets.md')?.text ?? '')
+      }
+    })
+  })
+  check(
+    'and creating it writes a few to start from',
+    /^## wiki$/m.test(snippetsNote) && /^## sig$/m.test(snippetsNote) && /^## today$/m.test(snippetsNote),
+    JSON.stringify(snippetsNote.slice(0, 60)),
+  )
+
+  // Now use one, in a different note.
+  await page.click('[title^="New note"]')
+  await page.waitForTimeout(600)
+  await page.locator('.cm-content').click()
+  await page.locator('.cm-content').pressSequentially('See wik', { delay: 25 })
+  await page.waitForTimeout(600)
+  const snipList = await page.locator('.cm-tooltip-autocomplete li').allInnerTexts()
+  check(
+    'typing a trigger offers the snippet, with what it inserts beside it',
+    snipList.length === 1 && /wiki/.test(snipList[0]) && /wikipedia/.test(snipList[0]),
+    snipList.join(' / ') || 'nothing offered',
+  )
+  await page.keyboard.press('Tab')
+  await page.waitForTimeout(500)
+  const snipExpanded = await page.evaluate(() => document.querySelector('.cm-content').textContent)
+  check(
+    'and Tab puts the phrase in its place',
+    snipExpanded.includes('See https://en.wikipedia.org/wiki/') && !snipExpanded.includes('See wik\n'),
+    snipExpanded.slice(-40),
+  )
+
+  /*
+   * The other two things a snippet has to do: keep its line breaks, and fill
+   * in the same fields a template can. `{{cursor}}` is what makes a multi-line
+   * one usable — the caret ends up where the writing continues, not after the
+   * block.
+   */
+  await page.keyboard.press('Control+End')
+  await page.locator('.cm-content').pressSequentially('\nsig', { delay: 25 })
+  await page.waitForTimeout(500)
+  await page.keyboard.press('Tab')
+  await page.waitForTimeout(500)
+  const snipMulti = await page.evaluate(() => {
+    const view = document.querySelector('.cm-content')
+    const sel = document.getSelection()
+    return { text: view.textContent, atEnd: sel?.focusNode ? null : null }
+  })
+  check('a multi-line snippet keeps its shape', snipMulti.text.includes('Thanks,'), snipMulti.text.slice(-24))
+
+  await page.locator('.cm-content').pressSequentially('\ntoday', { delay: 25 })
+  await page.waitForTimeout(500)
+  await page.keyboard.press('Tab')
+  await page.waitForTimeout(500)
+  const snipDated = await page.evaluate(() => document.querySelector('.cm-content').textContent)
+  const snipYear = String(new Date().getFullYear())
+  check(
+    'and a date field is filled in the way a template fills it',
+    snipDated.includes(snipYear) && !snipDated.includes('{{'),
+    snipDated.slice(-40),
+  )
+
+  // Tab still means Tab when there is no list to accept.
+  await page.keyboard.press('Control+End')
+  await page.locator('.cm-content').pressSequentially('\nplain', { delay: 25 })
+  await page.waitForTimeout(300)
+  await page.keyboard.press('Home')
+  await page.keyboard.press('Tab')
+  await page.waitForTimeout(400)
+  const snipIndented = await page.evaluate(() => document.querySelector('.cm-content').textContent)
+  check(
+    'Tab with no suggestion open still indents',
+    /\s{2,}plain/.test(snipIndented),
+    JSON.stringify(snipIndented.slice(-14)),
+  )
+
+  // And an ordinary word is not a trigger, which is what makes it bearable.
+  await page.keyboard.press('Control+End')
+  await page.locator('.cm-content').pressSequentially(' designing', { delay: 20 })
+  await page.waitForTimeout(500)
+  check(
+    'an ordinary word raises nothing',
+    (await page.locator('.cm-tooltip-autocomplete').count()) === 0,
+  )
+  await page.keyboard.press('Escape')
+
+  /*
+   * And the phone, which has no Tab key: the suggestion is a tap target, and
+   * that is the whole answer. Checked with the keyboard simulated, since a
+   * snippet is reached mid-sentence with the keys up by definition.
+   */
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.waitForTimeout(600)
+  // A phone shows the note list until a row is tapped; the editor is an
+  // overlay over it rather than a pane beside it.
+  if (!(await page.locator('.editor-overlay').count())) {
+    await page.locator('.note-row').first().tap()
+    await page.waitForTimeout(700)
+  }
+  await page.evaluate(() => document.documentElement.style.setProperty('--kb-inset', '336px'))
+  await startEditing()
+  await page.waitForSelector('.editor-overlay .cm-content')
+  await page.locator('.editor-overlay .cm-content').tap()
+  await page.waitForTimeout(400)
+  await page.keyboard.press('Control+End')
+  await page.locator('.editor-overlay .cm-content').pressSequentially('\nSee wik', { delay: 30 })
+  await page.waitForTimeout(700)
+  const phoneSnip = await page.evaluate(() => {
+    const tip = document.querySelector('.cm-tooltip-autocomplete')
+    if (!tip) return null
+    const box = tip.getBoundingClientRect()
+    const rows = [...tip.querySelectorAll('li')]
+    return {
+      keys: window.innerHeight - 336,
+      bottom: Math.round(box.bottom),
+      rows: rows.length,
+      shortest: Math.round(Math.min(...rows.map((r) => r.getBoundingClientRect().height))),
+    }
+  })
+  check(
+    'a snippet is offered on a phone, above the keyboard and thumb-sized',
+    !!phoneSnip &&
+      phoneSnip.rows === 1 &&
+      phoneSnip.bottom <= phoneSnip.keys &&
+      phoneSnip.shortest >= 44,
+    phoneSnip
+      ? `bottom ${phoneSnip.bottom}, keys at ${phoneSnip.keys}, row ${phoneSnip.shortest}px`
+      : 'nothing offered',
+  )
+  const snipRow = await page.locator('.cm-tooltip-autocomplete li').first().boundingBox()
+  await page.touchscreen.tap(snipRow.x + snipRow.width / 2, snipRow.y + snipRow.height / 2)
+  await page.waitForTimeout(600)
+  const tapped = await page.evaluate(() => document.querySelector('.cm-content').textContent)
+  check(
+    'and a tap expands it, no Tab key required',
+    tapped.includes('See https://en.wikipedia.org/wiki/'),
+    tapped.slice(-40),
+  )
+  await page.evaluate(() => document.documentElement.style.removeProperty('--kb-inset'))
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.waitForTimeout(500)
 
   /* ---- pasting a spreadsheet range -------------------------------------
    * Excel, Numbers, Sheets and Calc all put two flavours on the clipboard: a

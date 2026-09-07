@@ -779,7 +779,8 @@ body.resizing .pane-resizer::after {
  * takes an underline instead — still obviously marked, and legible in both
  * themes, where a second hue picked to beat one background would not be.
  */
-.note-row[aria-current='true'] .hit {
+.note-row[aria-current='true'] .hit,
+.palette-row[data-sel='1'] .hit {
   color: inherit;
   text-decoration: underline;
   text-decoration-thickness: 1.5px;
@@ -1913,6 +1914,103 @@ button.property-kind:hover {
   color: color-mix(in srgb, var(--text-on-accent) 70%, transparent);
 }
 
+/* ------------------------------------------------------- the file picker
+
+   A palette, so the box you type in is the first thing under the cursor and
+   the list below it is the answer. The rows are taller than a command row
+   because each one carries a thumbnail: the name gets you to the file, the
+   picture confirms you got the right one. */
+
+.file-picker {
+  max-height: 70vh;
+}
+.file-picker-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-faint);
+}
+.file-picker-search > svg {
+  margin-left: 16px;
+  flex: 0 0 auto;
+}
+.file-picker .file-picker-search input {
+  flex: 1;
+  min-width: 0;
+  padding: 15px 0;
+  border-bottom: none;
+  color: var(--text);
+}
+
+.file-pick-row {
+  gap: 11px;
+  padding: 7px 10px;
+  align-items: center;
+}
+.file-pick-thumb {
+  width: 38px;
+  height: 38px;
+  border-radius: 7px;
+  object-fit: cover;
+  background: var(--surface-2);
+  flex: 0 0 auto;
+}
+/* Whatever has no picture says what it is instead, so the column still reads
+   as a column rather than as a ragged left edge. */
+.file-pick-kind {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+  color: var(--text-faint);
+}
+.palette-row[data-sel='1'] .file-pick-kind {
+  color: var(--text-on-accent);
+  background: color-mix(in srgb, var(--text-on-accent) 18%, transparent);
+}
+.file-pick-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.file-pick-name,
+.file-pick-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-pick-sub {
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+.palette-row[data-sel='1'] .file-pick-sub {
+  color: color-mix(in srgb, var(--text-on-accent) 75%, transparent);
+}
+
+.file-picker-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px 9px 16px;
+  border-top: 1px solid var(--border);
+}
+.file-picker-count {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.file-picker-foot .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .dialog {
   width: min(700px, 100%);
   max-height: 82vh;
@@ -2603,21 +2701,33 @@ button.property-kind:hover {
     font-size: 13px;
     padding: 16px 8px 6px;
   }
+  /*
+   * A sheet sits at the bottom of the screen and so does the keyboard, and the
+   * layout viewport does not shrink when the keyboard opens — only the visual
+   * viewport does. Without the inset, a palette you type into to filter puts
+   * its results behind the keys you are filtering with: the box stays visible
+   * because Safari scrolls it into view, and everything under it does not.
+   * `--kb-inset` is published by the keyboard watcher in layout.ts and is 0
+   * whenever there is no keyboard, so this is the full sheet the rest of the
+   * time. It has to move the sheet up AND take the same height off it — moving
+   * it alone would push its head off the top of the screen.
+   */
   .scrim {
-    padding: 0;
+    padding: 0 0 var(--kb-inset, 0px);
     align-items: flex-end;
   }
   .dialog,
   .palette {
     width: 100%;
     max-width: none;
-    max-height: 92vh;
+    max-height: calc(92vh - var(--kb-inset, 0px));
     border-radius: 16px 16px 0 0;
     border-bottom: none;
-    padding-bottom: env(safe-area-inset-bottom);
+    /* The home indicator is covered by the keyboard, so its inset is redundant. */
+    padding-bottom: max(0px, calc(env(safe-area-inset-bottom, 0px) - var(--kb-inset, 0px)));
   }
   .palette {
-    max-height: 82vh;
+    max-height: calc(82vh - var(--kb-inset, 0px));
   }
   .dialog-foot {
     padding-bottom: calc(12px + env(safe-area-inset-bottom));

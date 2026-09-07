@@ -156,14 +156,18 @@ autocomplete over every note; picking one that doesn't exist yet offers to creat
 it. Clicking a broken link creates the note on the spot. Renaming a note rewrites
 every link that pointed at it. Each note lists its own backlinks underneath.
 
-**Images and files.** Paste, drop, or use the toolbar's insert button — **Take
-Photo**, **Photo Library**, or **Choose File**. On a phone, Take Photo opens the
-camera directly. Every route lands in the same place: images are re-encoded on
-the way in — a 1.4 MB screenshot becomes 11 KB of WebP, a 122× reduction, with
-no visible difference at reading size — and every image is resizable by dragging
-its right edge (the width is written back into the markdown as
-`![[img.png|400]]`) and opens in the lightbox on click. PDFs, video, audio and
-text files can live in the vault too.
+**Images and files.** Paste, drop, or use the toolbar's insert button — **File
+in Slate**, **Take Photo**, **Photo Library**, or **Upload a File**. File in
+Slate opens a picker over everything already in the vault: type to filter it by
+name or folder, arrow through the results, Enter to embed the one you meant — so
+the image you attached last week goes into a second note without being uploaded
+a second time. Take Photo and Photo Library only appear on the devices that have
+them; on a desktop they were two names for the same file dialog. Every route
+lands in the same place: images are re-encoded on the way in — a 1.4 MB
+screenshot becomes 11 KB of WebP, a 122× reduction, with no visible difference
+at reading size — and every image is resizable by dragging its right edge (the
+width is written back into the markdown as `![[img.png|400]]`) and opens in the
+lightbox on click. PDFs, video, audio and text files can live in the vault too.
 
 In the lightbox a picture is handled rather than operated: pinch to zoom around
 whatever is between your fingers, drag to move around it — it stops with its
@@ -190,7 +194,10 @@ megabyte install, which is the honest price of a PDF that opens on a plane.
 
 In rich text an image stays an image: putting the caret beside one never swaps
 it back for `![[img.png]]`, and it takes no margin of its own, so a line of
-text sits immediately above or below it unless you write a blank line.
+text sits immediately above or below it unless you write a blank line. The one
+exception is an embed being written — while the caret is between the brackets
+the markup stays visible, because a widget that swallows the target at the
+first character typed leaves `![[a]]` and no way to finish the name.
 
 A capture that arrives as a bare `image.jpg` gets a dated name so a folder of
 them stays browsable; a library filename you'd recognise — `IMG_0421`,
@@ -520,6 +527,46 @@ covers ⌘N with no folder selected, and **a note created from a broken
 `[[link]]`** — which always lands there, and is named for the link text. That
 is the case `{{title}}` is really for.
 
+**Text snippets, if you want those.** The addresses and phrases you type over
+and over, behind a word you choose. Type `wiki` in any note and press Tab — or
+tap the suggestion — and it becomes whatever you said it stands for.
+
+They live in **one ordinary note**. `Snippets.md` at the vault root, where a
+`##` heading is the trigger and everything under it is what the trigger expands
+to, so a snippet is written, edited, searched and synced like anything else and
+there is no snippet format to learn:
+
+```markdown
+## wiki
+https://en.wikipedia.org/wiki/
+
+## sig
+Thanks,
+{{cursor}}
+```
+
+One rule, so a multi-line snippet costs nothing and no character has to be
+escaped — a `|` or an em dash in a phrase would break a table or a list.
+Snippets fill in the same fields templates do (`{{date}}`, `{{time}}`,
+`{{weekday}}`), and `{{cursor}}` says where to leave the caret afterwards.
+
+**There is no sigil**, because a leading punctuation mark is a keyboard-layer
+switch away on a phone — a strange toll on the feature whose whole purpose is
+typing less. The trigger is whatever the heading says: name one `;sig` and you
+type that instead. What keeps the list off ordinary prose is a single rule —
+**what you have typed since the last space must be the start of a trigger you
+wrote down.** Everything that would otherwise be a special case falls out of
+it: `[[wik` and `#wik` are a note and a tag being named, no trigger begins with
+a bracket or a hash, so snippets stay out of those lists; `design` is not
+`sig`, because the run is the whole word rather than its tail.
+
+Nothing happens until you ask, the same way: `Snippets.md` is never created for
+you, and Settings → Editor offers to write it with a few in it to start from.
+
+Tab accepts any suggestion, not just a snippet — it falls through to indenting
+when no list is open. On a phone, where there is no Tab key, tapping the
+suggestion is the same gesture it always was.
+
 **Templates stay out of the roll-ups.** They are real notes, so without care
 every view that adds your notes up would count them — and a template is
 boilerplate for a note that does not exist yet. Its `- [ ]` is a blank to fill
@@ -772,6 +819,7 @@ bar above the list carries an **Edit** next to the **Close**.
 | ⌘⌥D *(on a task line)* | Set a due date |
 | ⌘⇧9 | Block quote |
 | ⌘] / ⌘[ | Indent / outdent a list item |
+| Tab | Accept a suggestion — a link, a tag, a snippet; indents when there is none |
 
 ---
 
@@ -1097,6 +1145,7 @@ src/
 │  ├─ searchindex.ts  what stops a search from reading every note
 │  ├─ templates.ts    folder templates: the fields, and which folder uses what
 │  ├─ starters.ts     the seven templates `Templates/` is created with
+│  ├─ snippets.ts     `Snippets.md`, parsed into triggers and what they expand to
 │  ├─ devices.ts      per-device write registry, for version attribution
 │  ├─ images.ts       paste- and capture-time re-encoding
 │  └─ settings.ts     device-local vs vault-wide preferences
@@ -1126,6 +1175,8 @@ src/
    ├─ dragNote.ts    dragging a note onto a folder, with a pointer
    ├─ DueMenu.tsx    the due-date picker that rides on it
    ├─ DueChip.tsx    a task's date, as a control rather than a caption
+   ├─ FilePicker.tsx the vault's own files, as somewhere to insert one from
+   ├─ pickFile.ts    what that picker matches on, and the order it answers in
    └─ Mobile.tsx     phone tab bar and full-screen tab views
 ```
 
@@ -1209,8 +1260,8 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 550 unit + two-device sync tests
-node scripts/smoke.mjs  # 442 checks in headless Chromium against dist/
+npm test                # 586 unit + two-device sync tests
+node scripts/smoke.mjs  # 476 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 
@@ -1225,14 +1276,16 @@ nothing else's content contained one. The table section asserts inline elements
 inside cells one by one — `strong`, `em`, `code`, `del`, a wikilink, a link, a
 tag — rather than eyeballing text, and the photo-insert section drives the real
 native file picker and checks the result was re-encoded, named and made
-resizable exactly like a paste. The phone section formats a table from the
-Format sheet with real taps — the cell stays marked, the note stays put, and the
-keyboard stays down — and taps a link in both rendered modes, because a tap that
-only summons the keyboard is exactly what a synthesised click looks like. It
-also holds the reading mode to its promise on both layouts: a note opened from
-the list has no `contenteditable` anywhere in it and nothing focused, a table in
-it has no typeable cells, and the tap that ends that is the one that puts the
-caret in the word it landed on.
+resizable exactly like a paste, then inserts that same file a second time from
+the in-vault picker — filtered by typing, chosen with Enter — and checks the
+note gained an embed while the vault gained no second copy. The phone section
+formats a table from the Format sheet with real taps — the cell stays marked,
+the note stays put, and the keyboard stays down — and taps a link in both
+rendered modes, because a tap that only summons the keyboard is exactly what a
+synthesised click looks like. It also holds the reading mode to its promise on
+both layouts: a note opened from the list has no `contenteditable` anywhere in
+it and nothing focused, a table in it has no typeable cells, and the tap that
+ends that is the one that puts the caret in the word it landed on.
 
 Four more sections exist because the answer is only true in a browser. A note
 is *dragged* onto a folder with real drag events, which is the whole of that
