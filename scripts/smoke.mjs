@@ -1511,6 +1511,42 @@ try {
     consoleErrors.slice(sinkErrorsBefore).join(' | '),
   )
 
+  /*
+   * Selecting inside a code block, which for a while showed nothing at all.
+   *
+   * The selection is drawn rather than native, in a layer CodeMirror puts
+   * *under* the content, and a code block paints a background of its own over
+   * it — as do the frontmatter block and a callout. Nothing about the DOM says
+   * so: the ranges were there, the colour was there, and the block sat on top.
+   * So this is checked the only way that is honest about it, by looking: the
+   * same strip of screen with and without a selection over it.
+   */
+  const codeLine = page.locator('.cm-line.cm-codeblock').nth(1)
+  await codeLine.scrollIntoViewIfNeeded()
+  const strip = await codeLine.boundingBox()
+  const stripClip = { x: strip.x + 4, y: strip.y + 2, width: Math.min(180, strip.width - 8), height: strip.height - 4 }
+  const unselected = await page.screenshot({ clip: stripClip })
+  await page.mouse.move(strip.x + 6, strip.y + strip.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(strip.x + Math.min(220, strip.width - 10), strip.y + strip.height / 2, { steps: 10 })
+  await page.mouse.up()
+  await page.waitForTimeout(300)
+  const selectedRects = await page.evaluate(
+    () => document.querySelectorAll('.cm-selectionLayer > *').length,
+  )
+  const selected = await page.screenshot({ clip: stripClip })
+  check(
+    'a selection inside a code block is drawn where it can be seen',
+    selectedRects > 0 && Buffer.compare(unselected, selected) !== 0,
+    `${selectedRects} ranges, ${Buffer.compare(unselected, selected) !== 0 ? 'pixels changed' : 'pixels identical'}`,
+  )
+  check(
+    'and the layer it is drawn in does not swallow clicks',
+    (await page.evaluate(
+      () => getComputedStyle(document.querySelector('.cm-selectionLayer')).pointerEvents,
+    )) === 'none',
+  )
+
   // Back to the top: everything below reads this same note, and CodeMirror
   // only builds the lines that are on screen.
   await page.locator('.cm-content').evaluate((el) => {

@@ -45,9 +45,34 @@ export const editorTheme = EditorView.theme({
   '.cm-line': { padding: '0 4px' },
   '&.cm-focused': { outline: 'none' },
   '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--accent)', borderLeftWidth: '2px' },
+  /*
+   * The selection, in the app's own accent rather than CodeMirror's grey.
+   *
+   * `!important` is load-bearing, and was missing: the base theme dresses a
+   * *focused* editor's selection with a selector four classes deeper than
+   * this one — `&light.cm-focused > .cm-scroller > .cm-selectionLayer
+   * .cm-selectionBackground` — so an opaque `#d7d4f0` quietly won every time
+   * the editor had focus, which is every time anybody selects anything.
+   * Translucency is what the rule below then depends on.
+   */
   '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection': {
-    backgroundColor: 'var(--selection)',
+    backgroundColor: 'var(--selection) !important',
   },
+  /*
+   * The selection is drawn rather than native, and CodeMirror draws it in a
+   * layer *under* the content — where anything with a background of its own
+   * hides it. A code block has one, so does the frontmatter block, so does a
+   * callout: selecting inside any of them showed no selection at all, which
+   * looks like the highlight going missing behind the block.
+   *
+   * So the layer is painted over the content instead. It can be, because the
+   * colour is translucent: the words stay readable through it the way they do
+   * under a highlighter, which is also what the browser does to a selected
+   * picture. `!important` because CodeMirror writes its `-1` as an inline
+   * style, and `pointer-events` because a layer lying over the text would
+   * otherwise swallow every click meant for the text.
+   */
+  '.cm-selectionLayer': { zIndex: '1 !important', pointerEvents: 'none' },
   '.cm-activeLine': { backgroundColor: 'transparent' },
   '.cm-gutters': { display: 'none' },
   '.cm-placeholder': { color: 'var(--text-faint)', fontStyle: 'normal' },
