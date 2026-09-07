@@ -4980,6 +4980,78 @@ try {
   await page.waitForTimeout(250)
   check('and the date closes the form again', (await page.locator('.properties').count()) === 0)
 
+  /* ---- $(property): the form's values, read back into the page ----------
+   *
+   * The other direction of the same form. What has to hold is that the file
+   * keeps the token while the page shows the value, that a property nobody
+   * declared is left alone — a shell command in a sentence is not a variable —
+   * and that filling a blank in fills the page in behind it.
+   */
+  await page.evaluate(async () => {
+    const text =
+      '---\nclient: Acme Corp\nrate:\ntags: [work, active]\n---\n\n# Job sheet\n\n' +
+      'Prepared for $(client), filed under $(tags).\n\n' +
+      'The rate is $(rate) a day.\n\n' +
+      '| Field | Value |\n| --- | --- |\n| Client | $(client) |\n\n' +
+      'Run $(pwd) to see where you are.\n'
+    const db = await new Promise((res) => {
+      const r = indexedDB.open('slate')
+      r.onsuccess = () => res(r.result)
+    })
+    const tx = db.transaction('files', 'readwrite')
+    tx.objectStore('files').put({
+      path: 'Job sheet.md', kind: 'note', text, mime: 'text/markdown', size: text.length,
+      hash: 'vars1', mtime: Date.now() + 40_000, ctime: Date.now(),
+      dirty: true, dirtyFlag: 1, sync: {},
+    })
+    await new Promise((res) => { tx.oncomplete = res })
+  })
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForSelector('.note-row')
+  await page.locator('.note-row').filter({ hasText: 'Job sheet' }).first().click()
+  await page.waitForTimeout(500)
+  await intoRichText()
+
+  const page1 = await page.locator('.cm-content').innerText()
+  check(
+    'a property written into the body reads as its value',
+    page1.includes('Prepared for Acme Corp, filed under work, active.'),
+    page1.split('\n').find((l) => l.startsWith('Prepared')),
+  )
+  check(
+    'including inside a table cell, which the editor draws itself',
+    (await page.locator('.cm-table-render .cm-var').first().innerText()) === 'Acme Corp',
+  )
+  check(
+    'a property with nothing in it is a blank wearing its own name',
+    (await page.locator('.cm-var-blank').innerText()) === 'rate',
+  )
+  check(
+    'a name this note never declared is left exactly as typed',
+    page1.includes('Run $(pwd) to see where you are.'),
+  )
+  const varsFile = await noteContaining('Prepared for')
+  check(
+    'and the file still says what was typed, token and all',
+    varsFile.includes('Prepared for $(client)') && varsFile.includes('| Client | $(client) |'),
+  )
+
+  // Clicking a value is the second way in to the form that owns it.
+  await page.locator('.cm-var').first().click()
+  await page.waitForTimeout(400)
+  check('clicking a value opens the properties form', (await page.locator('.properties').count()) === 1)
+
+  await (await propertyRow('rate')).locator('.property-value').fill('450')
+  await (await propertyRow('rate')).locator('.property-value').blur()
+  await page.waitForTimeout(800)
+  const page2 = await page.locator('.cm-content').innerText()
+  check(
+    'filling the property in fills the page in behind it',
+    page2.includes('The rate is 450 a day.'),
+    page2.split('\n').find((l) => l.includes('rate is')),
+  )
+  check('and the blank is gone', (await page.locator('.cm-var-blank').count()) === 0)
+
   /* ---- persistence across a reload ------------------------------------ */
   const beforeCount = await page.evaluate(
     () => document.querySelectorAll('.note-row').length,

@@ -86,6 +86,7 @@ import {
   tagCompletion,
   wikiCompletion,
 } from './completion'
+import { propertyCompletion } from './vars'
 
 export const previewCompartment = new Compartment()
 export const contextCompartment = new Compartment()
@@ -335,6 +336,7 @@ export function createEditorState(opts: EditorOptions): EditorState {
     markdownLanguage.data.of({ autocomplete: tagCompletion }),
     markdownLanguage.data.of({ autocomplete: calloutCompletion }),
     markdownLanguage.data.of({ autocomplete: snippetCompletion }),
+    markdownLanguage.data.of({ autocomplete: propertyCompletion }),
     autocompletion({
       activateOnTyping: true,
       closeOnBlur: true,

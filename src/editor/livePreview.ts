@@ -47,10 +47,12 @@ import {
   EmbedWidget,
   HrWidget,
   TableWidget,
+  VarWidget,
   isDelimiterRow,
 } from './widgets'
 import { parseCallout } from './callout'
-import { findDue, isTaskLine } from '../core/markdown'
+import { findDue, isTaskLine, scanVars, varText } from '../core/markdown'
+import { frontmatterEnd, frontmatterLines, frontmatterOf } from './vars'
 import { noteContext } from './context'
 import { normalizeUri, scanUris } from './links'
 import { resolveEmbed, resolveLink } from '../core/vault'
@@ -225,19 +227,6 @@ const INLINE_EXTRAS: Array<[RegExp, Decoration]> = [
   [/==(?!\s)(.+?)(?<!\s)==/g, highlighted],
 ]
 
-/** Line numbers of a leading `---` frontmatter block, fences included. */
-function frontmatterLines(state: EditorState): number[] {
-  if (state.doc.lines < 2) return []
-  if (state.doc.line(1).text.trim() !== '---') return []
-  const limit = Math.min(state.doc.lines, 200)
-  for (let n = 2; n <= limit; n++) {
-    if (state.doc.line(n).text.trim() === '---') {
-      return Array.from({ length: n }, (_, i) => i + 1)
-    }
-  }
-  return []
-}
-
 function buildDecorations(view: EditorView): DecorationSet {
   const { state } = view
   const out: Array<Range<Decoration>> = []
@@ -267,6 +256,13 @@ function buildDecorations(view: EditorView): DecorationSet {
    * still fully editable.
    */
   const fmLines = frontmatterLines(state)
+  const fmEnd = frontmatterEnd(state, fmLines)
+  /*
+   * Parsed at most once per build, and only if a `$(...)` is actually found in
+   * what is on screen — which in most notes is never.
+   */
+  let parsed: ReturnType<typeof frontmatterOf> | undefined
+  const properties = () => (parsed ??= frontmatterOf(state, fmLines))
   for (const n of fmLines) {
     const line = state.doc.line(n)
     seenLines.add(line.from)
@@ -284,11 +280,11 @@ function buildDecorations(view: EditorView): DecorationSet {
    * Claiming them here keeps the tree walk from also styling them, and
    * monospaces the pipes while the caret is inside so columns line up.
    */
-  const richTables = state.facet(previewMode) === 'rich'
+  const rich = state.facet(previewMode) === 'rich'
   for (const t of findTables(state)) {
     const first = state.doc.line(t.fromLine)
     const last = state.doc.line(t.toLine)
-    const editing = !richTables && touched(state, first.from, last.to)
+    const editing = !rich && touched(state, first.from, last.to)
     for (let n = t.fromLine; n <= t.toLine; n++) {
       const line = state.doc.line(n)
       seenLines.add(line.from)
@@ -750,6 +746,40 @@ function buildDecorations(view: EditorView): DecorationSet {
       if (line.to >= vTo) break
       p = line.to + 1
     }
+
+    /*
+     * `$(property)` — a value from the note's own frontmatter.
+     *
+     * Textual, like the hashtags above, and bounded the same way: only a key
+     * this note actually declares is touched. `$(pwd)` in a note with no `pwd`
+     * property stays the four characters somebody typed, because a shell
+     * command in a sentence is not a variable — and a note with no frontmatter
+     * at all has nothing here to do.
+     *
+     * The block itself is skipped: `greeting: Hello $(name)` is metadata being
+     * written, not prose being read, and a property quoting another one is a
+     * knot nobody asked for.
+     */
+    if (fmLines.length) {
+      for (let p = Math.max(vFrom, fmEnd + 1); p <= vTo; ) {
+        const line = state.doc.lineAt(p)
+        for (const v of scanVars(line.text, line.from)) {
+          const data = properties()
+          if (!(v.key in data)) continue
+          if (isInsideCodeOrLink(tree.resolveInner(v.from + 1, 1))) continue
+          // Structure, not formatting: the key has to stay reachable, so the
+          // caret reveals the token in rich text as well as in live preview.
+          if (touched(state, v.from, v.to)) continue
+          out.push(
+            Decoration.replace({
+              widget: new VarWidget(v.key, varText(data[v.key]), rich),
+            }).range(v.from, v.to),
+          )
+        }
+        if (line.to >= vTo) break
+        p = line.to + 1
+      }
+    }
   }
 
   return RangeSet.of(out, true)
@@ -1020,6 +1050,7 @@ function buildTableDecorations(state: EditorState): DecorationSet {
           first.from,
           notePath,
           typeable,
+          frontmatterOf(state),
         ),
         block: true,
       }).range(first.from, last.to),

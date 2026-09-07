@@ -14,12 +14,21 @@
  */
 
 import { attachmentUrl, resolveEmbed, resolveLink } from '../core/vault'
+import { varText, type FrontmatterValue } from '../core/markdown'
 import { mediaClass } from '../core/util'
 import { requestLightbox } from './context'
 
 interface Ctx {
   /** Path of the note the text came from, for resolving relative embeds. */
   notePath: string
+  /**
+   * The note's properties, so `$(client)` in a table cell reads as the value
+   * it does everywhere else. A cell is text in a widget, which the editor's
+   * own decorations cannot reach — the same reason `**bold**` is handled here.
+   */
+  vars?: Record<string, FrontmatterValue>
+  /** Rich text: a value is a way in to the form that owns it. */
+  varsClickable?: boolean
 }
 
 /** Ordered by precedence: earlier patterns win at the same position. */
@@ -105,6 +114,23 @@ const RULES: Array<{
     re: /^_([^_\s][\s\S]*?)_(?![\w_])/,
     build: (m, ctx) => wrap('em', m[1], ctx),
   },
+  // `$(key)` — a property of the note, read into the cell.
+  {
+    re: /^\$\(([A-Za-z0-9_.-]+)\)/,
+    build: (m, ctx) => {
+      const key = m[1]
+      const known = ctx.vars && key in ctx.vars
+      if (!known) return document.createTextNode(m[0])
+      const value = varText(ctx.vars![key])
+      const el = document.createElement('span')
+      el.className = value === undefined ? 'cm-var cm-var-blank' : 'cm-var'
+      el.textContent = value ?? key
+      el.title =
+        value === undefined ? `${key} has no value yet` : `${key} — from this note's properties`
+      if (ctx.varsClickable) el.dataset.var = key
+      return el
+    },
+  },
   {
     re: /^#([A-Za-z0-9_][A-Za-z0-9/_-]*)/,
     build: (m) => {
@@ -188,7 +214,7 @@ export function appendInline(parent: Node, text: string, ctx: Ctx): void {
     let matched = false
     // Only try rules at characters that could start one; scanning every rule at
     // every position would be needlessly quadratic on long cells.
-    if (/[`!\[*_~#h]/.test(text[i])) {
+    if (/[`!\[*_~#h$]/.test(text[i])) {
       const rest = text.slice(i)
       for (const rule of RULES) {
         const m = rule.re.exec(rest)
@@ -209,8 +235,13 @@ export function appendInline(parent: Node, text: string, ctx: Ctx): void {
 }
 
 /** Convenience: render into a fresh fragment. */
-export function renderInline(text: string, notePath: string): DocumentFragment {
+export function renderInline(
+  text: string,
+  notePath: string,
+  vars?: Record<string, FrontmatterValue>,
+  varsClickable = false,
+): DocumentFragment {
   const frag = document.createDocumentFragment()
-  appendInline(frag, text, { notePath })
+  appendInline(frag, text, { notePath, vars, varsClickable })
   return frag
 }

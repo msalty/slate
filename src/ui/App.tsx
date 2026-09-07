@@ -34,6 +34,7 @@ import {
   notify,
   openNote,
   paletteOpen,
+  propertiesOpen,
   scope,
   setScope,
   settingsOpen,
@@ -166,6 +167,10 @@ export function App() {
         closeMobileEditor()
       }
     }
+    // Clicking a `$(property)` in the body: the same form the note's date
+    // opens, asked for from the value that needs changing.
+    const onProperties = () => (propertiesOpen.value = true)
+    addEventListener('slate:properties', onProperties)
     addEventListener('slate:open-link', onLink)
     addEventListener('slate:lightbox', onLightbox)
     addEventListener('slate:open-tag', onTag)
@@ -173,6 +178,7 @@ export function App() {
     addEventListener('slate:link-dialog', onLinkDialog)
     addEventListener('slate:due', onDue)
     return () => {
+      removeEventListener('slate:properties', onProperties)
       removeEventListener('slate:open-link', onLink)
       removeEventListener('slate:lightbox', onLightbox)
       removeEventListener('slate:open-tag', onTag)

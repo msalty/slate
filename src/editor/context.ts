@@ -45,6 +45,17 @@ export function requestUri(
   dispatchEvent(new CustomEvent('slate:uri', { detail: { url, ...at } }))
 }
 
+/**
+ * Ask the shell to open the note's properties form.
+ *
+ * Clicking a `$(property)` in the body is the second way in to the same form
+ * the note's date opens — and the more obvious one, since it is asked for
+ * while looking at the value that is wrong or missing.
+ */
+export function requestProperties() {
+  dispatchEvent(new CustomEvent('slate:properties'))
+}
+
 /** Ask the shell to open the add/edit-link dialog for the caret's position. */
 export function requestLinkDialog() {
   dispatchEvent(new CustomEvent('slate:link-dialog'))

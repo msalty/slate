@@ -9,8 +9,11 @@
 
 import { normPath, parseYmd, startOfDay, titleFromPath, ymd } from './util'
 
+/** What a single frontmatter key can hold, once parsed. */
+export type FrontmatterValue = string | string[] | boolean | number
+
 export interface Frontmatter {
-  data: Record<string, string | string[] | boolean | number>
+  data: Record<string, FrontmatterValue>
   /** Character offset in the source where the body begins. */
   bodyStart: number
   raw: string
@@ -21,7 +24,7 @@ export function parseFrontmatter(text: string): Frontmatter {
   if (!text.startsWith('---')) return { data: {}, bodyStart: 0, raw: '' }
   const m = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(text)
   if (!m) return { data: {}, bodyStart: 0, raw: '' }
-  const data: Record<string, string | string[] | boolean | number> = {}
+  const data: Record<string, FrontmatterValue> = {}
   let lastKey: string | undefined
   for (const line of m[1].split(/\r?\n/)) {
     const item = /^\s*-\s+(.*)$/.exec(line)
@@ -72,6 +75,72 @@ export function setFrontmatterKey(text: string, key: string, value: string): str
   if (idx >= 0) lines[idx] = line
   else lines.push(line)
   return `---\n${lines.join('\n')}\n---\n${text.slice(fm.bodyStart)}`
+}
+
+/* --------------------------------------------------------------- variables */
+
+/**
+ * `$(key)` — a frontmatter value, written into the body of the note.
+ *
+ * The note file keeps the token; only the rendered views swap it for the
+ * value, which is what makes it safe: nothing rewrites the file, and a note
+ * carrying these opens in any other markdown editor as the text that was
+ * typed. That is the same bargain live preview makes everywhere else.
+ *
+ * `$(...)` rather than `{{...}}` on purpose. Templates already use `{{title}}`
+ * and `{{date}}`, and those are expanded *once*, when the note is made; this
+ * one is resolved every time the note is drawn. Two different things deserve
+ * two different shapes.
+ *
+ * The key charset is the one `parseFrontmatter` accepts, so anything nameable
+ * in the properties form is nameable here.
+ */
+const VAR = /\$\(([A-Za-z0-9_.-]+)\)/g
+
+export interface VarRef {
+  from: number
+  to: number
+  key: string
+}
+
+/** Every `$(key)` in `text`, with positions offset by `offset`. */
+export function scanVars(text: string, offset = 0): VarRef[] {
+  const out: VarRef[] = []
+  VAR.lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = VAR.exec(text))) {
+    out.push({ from: offset + m.index, to: offset + m.index + m[0].length, key: m[1] })
+  }
+  return out
+}
+
+/**
+ * Swap every `$(key)` this data can answer for. Anything else is left alone —
+ * a name nobody declared, and a property still waiting to be filled in, both
+ * stay as the text they are, because both are still questions.
+ */
+export function resolveVars(text: string, data: Record<string, FrontmatterValue>): string {
+  VAR.lastIndex = 0
+  return text.replace(VAR, (raw, key: string) => (key in data ? (varText(data[key]) ?? raw) : raw))
+}
+
+/**
+ * How a value reads in a sentence, or `undefined` when there is nothing to
+ * read — which the views draw as a blank to fill in rather than as nothing at
+ * all, since a template's empty property is the whole point of it.
+ *
+ * A list joins with commas, because that is how `tags: [travel, lisbon]` is
+ * typed into the properties form and how it reads back out. `false` is a
+ * value, not a blank.
+ */
+export function varText(value: FrontmatterValue | undefined): string | undefined {
+  if (value === undefined) return undefined
+  if (Array.isArray(value)) {
+    const joined = value.filter((v) => String(v).trim()).join(', ')
+    return joined || undefined
+  }
+  const s = String(value).trim()
+  return s || undefined
 }
 
 /* ----------------------------------------------------------------- regions */
@@ -362,8 +431,18 @@ export function stripInline(s: string): string {
     .trim()
 }
 
-/** First meaningful line of body text, for the note list subtitle. */
-export function excerptOf(text: string, bodyStart = 0): string {
+/**
+ * First meaningful line of body text, for the note list subtitle.
+ *
+ * `vars` is the note's own properties, when the caller has them: a row reading
+ * "Prepared for $(client)" beside a page reading "Prepared for Acme Corp" is
+ * the same note described two ways, and the list is the one that is wrong.
+ */
+export function excerptOf(
+  text: string,
+  bodyStart = 0,
+  vars?: Record<string, FrontmatterValue>,
+): string {
   const body = text.slice(bodyStart)
   for (const raw of body.split('\n')) {
     const line = raw.trim()
@@ -384,7 +463,7 @@ export function excerptOf(text: string, bodyStart = 0): string {
       .replace(/[*_~`>]/g, '')
       .replace(/^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s*)?/, '')
       .trim()
-    if (clean) return clean.slice(0, 180)
+    if (clean) return (vars ? resolveVars(clean, vars) : clean).slice(0, 180)
   }
   return ''
 }

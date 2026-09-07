@@ -7,11 +7,14 @@ import {
   parseDue,
   parseFrontmatter,
   scanTags,
+  resolveVars,
   scanTasks,
+  scanVars,
   scanWikiLinks,
   setFrontmatterKey,
   splitSizeFragment,
   stripInline,
+  varText,
   withDue,
 } from './markdown'
 import { safeSegment, startOfDay } from './util'
@@ -76,6 +79,60 @@ describe('tags', () => {
     expect(tags).not.toContain('nope')
     expect(tags).not.toContain('alsonope')
     expect(tags).not.toContain('Heading')
+  })
+})
+
+describe('$(property) references', () => {
+  it('finds them with the positions the editor swaps', () => {
+    const line = 'Dear $(first_name), about $(project.name):'
+    expect(scanVars(line)).toEqual([
+      { from: 5, to: 18, key: 'first_name' },
+      { from: 26, to: 41, key: 'project.name' },
+    ])
+    expect(line.slice(5, 18)).toBe('$(first_name)')
+    expect(line.slice(26, 41)).toBe('$(project.name)')
+  })
+
+  it('offsets into the document, so a line is scanned where it sits', () => {
+    expect(scanVars('a $(x) b', 100)[0]).toEqual({ from: 102, to: 106, key: 'x' })
+  })
+
+  it('is not fooled by things that merely look like one', () => {
+    // An unclosed token, a name with no characters a property could have, and
+    // the money that shares its first character.
+    expect(scanVars('$(unclosed and $() and $(a b) and costs $(5) or $5.00')).toEqual([
+      { from: 40, to: 44, key: '5' },
+    ])
+  })
+
+  it('fills a line in for the note list, leaving the unanswerable alone', () => {
+    const data = { client: 'Acme Corp', rate: '' }
+    expect(resolveVars('Prepared for $(client), at $(rate) — run $(pwd).', data)).toBe(
+      'Prepared for Acme Corp, at $(rate) — run $(pwd).',
+    )
+  })
+
+  it('is what the note list shows, so a row reads like the page it stands for', () => {
+    const note = ['---', 'client: Acme Corp', '---', '', '# Job', '', 'Prepared for $(client).'].join('\n')
+    const fm = parseFrontmatter(note)
+    expect(excerptOf(note, fm.bodyStart, fm.data)).toBe('Prepared for Acme Corp.')
+    // Without the properties there is nothing to resolve against, and the
+    // line is left as written rather than guessed at.
+    expect(excerptOf(note, fm.bodyStart)).toBe('Prepared for $(client).')
+  })
+
+  it('reads a value the way it would be written in a sentence', () => {
+    expect(varText('Mike')).toBe('Mike')
+    expect(varText(6)).toBe('6')
+    expect(varText(false)).toBe('false')
+    expect(varText(['travel', 'lisbon'])).toBe('travel, lisbon')
+  })
+
+  it('has nothing to show for a property nobody has filled in', () => {
+    expect(varText('')).toBeUndefined()
+    expect(varText('   ')).toBeUndefined()
+    expect(varText([])).toBeUndefined()
+    expect(varText(undefined)).toBeUndefined()
   })
 })
 

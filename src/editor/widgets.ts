@@ -12,6 +12,7 @@ import { fencedBody } from './codeblock'
 import { ICONS, withCalloutFold } from './callout'
 import { renderInline } from './inline'
 import { basename, dueLabel, dueTone, formatBytes, mediaClass, startOfDay } from '../core/util'
+import type { FrontmatterValue } from '../core/markdown'
 import { familyIconSvg, fileIconSvg, fileTypeLabel } from '../core/filetypes'
 import { pdfAsset, pdfLibrary } from '../core/pdfjs'
 import { requestDueMenu, requestLightbox } from './context'
@@ -418,6 +419,66 @@ export class DueChipWidget extends WidgetType {
   }
 }
 
+/** Are two sets of properties the same, as far as anything drawn from them cares? */
+function sameVars(
+  a: Record<string, FrontmatterValue>,
+  b: Record<string, FrontmatterValue>,
+): boolean {
+  const ka = Object.keys(a)
+  if (ka.length !== Object.keys(b).length) return false
+  return ka.every((k) => k in b && String(a[k]) === String(b[k]))
+}
+
+/* --------------------------------------------------------------- variable */
+
+/**
+ * A property standing in for the `$(key)` that asked for it.
+ *
+ * Deliberately not a chip when it has a value: the whole point is a note that
+ * reads as finished prose, so the value sits in the sentence looking like the
+ * text somebody would have typed. What marks it is a tooltip, and — in rich
+ * text, where the properties form exists — a click that opens the form at the
+ * property it came from.
+ *
+ * A declared property with nothing in it is the other half of the same idea. A
+ * template is mostly blanks when it is new, and a blank that shows its own
+ * name is a to-do list for filling the note in.
+ */
+export class VarWidget extends WidgetType {
+  constructor(
+    readonly key: string,
+    /** The value, or undefined for a property declared and left empty. */
+    readonly value: string | undefined,
+    /** Rich text only: the click that opens the properties form. */
+    readonly clickable: boolean,
+  ) {
+    super()
+  }
+
+  eq(other: VarWidget) {
+    return other.key === this.key && other.value === this.value && other.clickable === this.clickable
+  }
+
+  toDOM(): HTMLElement {
+    const el = document.createElement('span')
+    const filled = this.value !== undefined
+    el.className = filled ? 'cm-var' : 'cm-var cm-var-blank'
+    el.textContent = filled ? this.value! : this.key
+    el.title = filled
+      ? `${this.key} — from this note's properties${this.clickable ? ', click to edit' : ''}`
+      : `${this.key} has no value yet${this.clickable ? ' — click to fill it in' : ''}`
+    // What `linkClicks` looks for. Only in rich text: in live preview there is
+    // no properties form to open, and a click there should land the caret and
+    // reveal the token, which is what that mode is for.
+    if (this.clickable) el.dataset.var = this.key
+    return el
+  }
+
+  ignoreEvent() {
+    return false
+  }
+}
+
 /* ------------------------------------------------------------------ table */
 
 /** Chromium and Safari have had `plaintext-only` for years; Firefox recently. */
@@ -462,6 +523,14 @@ export class TableWidget extends WidgetType {
      * construction — which takes the whole editor down with it.
      */
     readonly typeable = false,
+    /**
+     * The note's properties, for a `$(client)` written into a cell.
+     *
+     * Carried rather than looked up so the widget can tell whether it is out
+     * of date: a table's own source does not change when a property does, so
+     * without this the cell would keep showing yesterday's value.
+     */
+    readonly vars: Record<string, FrontmatterValue> = {},
   ) {
     super()
   }
@@ -471,7 +540,8 @@ export class TableWidget extends WidgetType {
       other.source === this.source &&
       other.notePath === this.notePath &&
       other.typeable === this.typeable &&
-      other.from === this.from
+      other.from === this.from &&
+      sameVars(other.vars, this.vars)
     )
   }
 
@@ -505,7 +575,8 @@ export class TableWidget extends WidgetType {
         cell.className = 'cm-table-cell'
         cell.dataset.row = String(r)
         cell.dataset.col = String(c)
-        if (stored) cell.appendChild(renderInline(cellText(stored), this.notePath))
+        if (stored)
+          cell.appendChild(renderInline(cellText(stored), this.notePath, this.vars, this.typeable))
         if (model.align[c]) cell.style.textAlign = model.align[c]
         if (this.typeable) this.wireCell(view, cell, r, c, stored)
         tr.appendChild(cell)
@@ -603,7 +674,7 @@ export class TableWidget extends WidgetType {
       if (!this.commit(view, row, col, cell.textContent ?? '')) {
         // Nothing changed: put the rendering back, since focus took it away.
         cell.textContent = ''
-        if (stored) cell.appendChild(renderInline(raw, this.notePath))
+        if (stored) cell.appendChild(renderInline(raw, this.notePath, this.vars, this.typeable))
         // No rewrite means no new DOM to carry the mark, so it is set here —
         // unless focus has already moved on to another cell of the same table.
         const cur = focusedCell.value

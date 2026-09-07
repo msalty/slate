@@ -113,6 +113,39 @@ rewrites one line and nothing else — a property the form has no opinion about,
 a comment somebody left in the block, whether a list was written as `[a, b]` or
 one item per line, all come back out of the file exactly as they went in.
 
+**A property can be written into the note as well as into the form.** `$(client)`
+anywhere in the body reads as that property's value in rich text and live
+preview:
+
+```markdown
+---
+client: Acme Corp
+contact: Dana Reyes
+rate:
+---
+
+# Job sheet
+
+Prepared for **$(client)**, attention $(contact). The rate is $(rate) a day.
+```
+
+reads as *Prepared for **Acme Corp**, attention Dana Reyes. The rate is ⟨rate⟩
+a day.* — with `rate` drawn as a dashed blank, because it has been named and
+not yet filled in. That is what makes a template a form: write the note once
+with the properties it needs, and every note made from it fills itself in as
+its properties are filled in — headings, sentences, bold text and table cells
+alike. Typing `$(` offers the note's own properties, with their values, so
+there is nothing to remember.
+
+Three rules keep it out of the way. **The file is never rewritten** — `$(client)`
+is what is on disk and what every other markdown editor sees, exactly like the
+rest of live preview, and source mode shows it as typed. **Only a property the
+note declares is touched**, so `$(pwd)` in a sentence about the shell is left
+alone, and a note with no frontmatter has nothing to substitute. And the caret
+reveals the token wherever it lands in one, so a name can be corrected without
+deleting anything. Clicking a value opens the properties form at the note it
+came from, which is usually why you were looking at it.
+
 **A note opens as a page to read.** No caret anywhere in it, which on a phone is
 the difference between opening a note and opening a note with a keyboard across
 the bottom half of it before you have read a word. Tap the text and that is
@@ -1209,6 +1242,8 @@ src/
 │  ├─ callout.ts   the callout vocabulary: five colours, and what aliases to them
 │  ├─ codeblock.ts reading a fenced block back out, for the copy button
 │  ├─ due.ts        writing a task's due date into the buffer being typed in
+│  ├─ vars.ts       `$(property)`: the note's own frontmatter, read into its
+│  │                 body — and the completion that offers it
 │  ├─ inline.ts      inline markdown for text inside widgets (table cells)
 │  └─ pickImage.ts   camera / photo library / file insertion
 └─ ui/            Preact components

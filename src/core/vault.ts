@@ -218,7 +218,7 @@ function buildEntry(f: VaultFile): NoteIndexEntry | undefined {
     path: f.path,
     title: titleFromPath(f.path),
     folder: dirname(f.path),
-    excerpt: excerptOf(text, fm.bodyStart),
+    excerpt: excerptOf(text, fm.bodyStart, fm.data),
     mtime: f.mtime,
     ctime: f.ctime,
     calendarDate: calendarDateFor(f.path, fm.data, f.ctime),

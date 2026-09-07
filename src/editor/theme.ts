@@ -624,6 +624,26 @@ export const editorTheme = EditorView.theme({
     color: 'var(--text)',
   },
   '.cm-embed-pdf-meta': { marginLeft: 'auto', flexShrink: '0' },
+  /*
+   * A property read into the body.
+   *
+   * No chip, no colour, no border: the point of `$(client)` is a note that
+   * reads as though the name had been typed into the sentence, so a filled
+   * value is styled as the text around it. What it gets instead is a tooltip,
+   * and a hint under the pointer in rich text, where clicking opens the form.
+   */
+  '.cm-var': { borderRadius: '3px' },
+  '.cm-rich .cm-var[data-var]': { cursor: 'pointer' },
+  '.cm-rich .cm-var[data-var]:hover': {
+    backgroundColor: 'color-mix(in srgb, var(--accent) 12%, transparent)',
+  },
+  /* An empty one is the other half: a blank wearing its own name. */
+  '.cm-var-blank': {
+    padding: '0 6px',
+    border: '1px dashed var(--border-strong)',
+    color: 'var(--text-muted)',
+    fontSize: '0.92em',
+  },
   '.cm-embed-missing': {
     display: 'inline-block',
     padding: '2px 8px',
