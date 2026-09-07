@@ -1657,6 +1657,35 @@ try {
     `reading=${afterTap.flag}, focused ${afterTap.focused || 'nothing'}`,
   )
 
+  /*
+   * And the way back out.
+   *
+   * Escape has always done this and always will, but Escape is no use on a
+   * phone and invisible on a desktop: without a button, a note you touched
+   * stayed a note you were writing in until you closed it. The pencil's own
+   * slot in the header is the way back the moment it is used.
+   */
+  const doneButton = page.locator('.editor-pane [aria-label="Done editing"]')
+  check('editing offers a way back to reading', (await doneButton.count()) === 1)
+  await doneButton.click()
+  await page.waitForTimeout(350)
+  const afterDone = await readingState()
+  check(
+    'and it hands the note back: no caret, nothing to type into',
+    afterDone.flag === '1' &&
+      afterDone.editable === 'false' &&
+      !afterDone.focused.includes('cm-content'),
+    `reading=${afterDone.flag}, contenteditable=${afterDone.editable}, focused ${afterDone.focused || 'nothing'}`,
+  )
+  check(
+    'and the pencil is back in its slot, which is where it went',
+    (await page.locator('.editor-pane [aria-label="Edit note"]').count()) === 1 &&
+      (await doneButton.count()) === 0,
+  )
+  // Back to editing for the checks that follow, the way the reader would.
+  await clickWord('Final')
+  await page.waitForTimeout(200)
+
   /* ---- following a link with a pointer -----------------------------------
    * The desktop half of the phone tests further down. One plain click opens
    * the link and the caret stays out of the text — a click that lands in the
@@ -5061,7 +5090,19 @@ try {
    */
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
   await page.locator('.cm-content').click()
+  await page.waitForTimeout(250)
+  // Deliberately *while editing*: a caret in the note is the state somebody
+  // copies from, and the tokens must not come back for a selection crossing
+  // them — what is highlighted has to be what lands on the clipboard.
+  const editingWhenCopied = await readingState()
   await page.keyboard.press('Control+a')
+  await page.waitForTimeout(250)
+  check(
+    'a selection across the note leaves the values on the page',
+    !(await page.locator('.cm-content').innerText()).includes('$(client)') &&
+      editingWhenCopied.editable === 'true',
+    `contenteditable=${editingWhenCopied.editable}`,
+  )
   await page.keyboard.press('Control+c')
   await page.waitForTimeout(400)
   const clip = await page.evaluate(() => navigator.clipboard.readText())

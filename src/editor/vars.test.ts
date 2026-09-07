@@ -132,6 +132,35 @@ describe('editing one', () => {
       view.destroy()
     }
   })
+
+  it('reveals it to a caret placed beside it, which is how it is reached at all', async () => {
+    const view = await editor('Hello $(first_name).\n')
+    const at = view.state.doc.toString().indexOf('$(first_name)')
+    for (const anchor of [at, at + '$(first_name)'.length]) {
+      view.dispatch({ selection: { anchor }, userEvent: 'select.pointer' })
+      expect(vars(view)).toEqual([])
+    }
+    view.destroy()
+  })
+
+  it('keeps the value under a selection in rich text, so what is highlighted is what is copied', async () => {
+    const view = await editor('Hello $(first_name), and welcome.\n')
+    const doc = view.state.doc.toString()
+    const from = doc.indexOf('Hello')
+    view.dispatch({ selection: { anchor: from, head: doc.length }, userEvent: 'select.pointer' })
+    expect(shown(view)).toContain('Hello Mike, and welcome.')
+    expect(vars(view)).toEqual([{ text: 'Mike', key: 'first_name', blank: false }])
+    view.destroy()
+  })
+
+  it('but shows the source under one in live preview, which is a mode for the file', async () => {
+    const view = await editor('Hello $(first_name), and welcome.\n', 'live')
+    const doc = view.state.doc.toString()
+    const from = doc.indexOf('Hello')
+    view.dispatch({ selection: { anchor: from, head: doc.length }, userEvent: 'select.pointer' })
+    expect(shown(view)).toContain('Hello $(first_name), and welcome.')
+    view.destroy()
+  })
 })
 
 /** What the clipboard would end up with for a copy of `text`. */

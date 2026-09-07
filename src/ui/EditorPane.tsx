@@ -441,6 +441,23 @@ export function EditorPane() {
     beginEditing(view)
   }
 
+  /**
+   * Hand the note back — the other half of the pencil.
+   *
+   * Escape has always done this, and Escape is no use on a phone and invisible
+   * on a desktop: a note you have touched stays a note you are writing in,
+   * with the caret revealing the source of whatever it is beside, and no way
+   * out of that but closing the note. So the pencil's slot in the header
+   * becomes the way back the moment it is used, which is also where the eye
+   * looks for it.
+   */
+  const stopEditing = () => {
+    const view = viewRef.current
+    if (!view) return
+    readingMode.value = true
+    endEditing(view)
+  }
+
   /** The three presentations, as a menu with the active one ticked. */
   const modeItems: MenuItem[] = EDITOR_MODES.map((m) => ({
     label: m.label,
@@ -565,6 +582,16 @@ export function EditorPane() {
             onClick={startEditing}
           >
             <IconPencil />
+          </button>
+        )}
+        {!reading && !trashed && (
+          <button
+            class="icon-btn"
+            aria-label="Done editing"
+            title="Done editing — read the note (Esc)"
+            onClick={stopEditing}
+          >
+            <IconCheck />
           </button>
         )}
         {!reading && !trashed && compact && rich && (

@@ -141,9 +141,13 @@ Three rules keep it out of the way. **The file is never rewritten** — `$(clien
 is what is on disk and what every other markdown editor sees, exactly like the
 rest of live preview, and source mode shows it as typed. **Only a property the
 note declares is touched**, so `$(pwd)` in a sentence about the shell is left
-alone, and a note with no frontmatter has nothing to substitute. And the caret
-reveals the token wherever it lands in one, so a name can be corrected without
-deleting anything. Clicking a value opens the properties form at the note it
+alone, and a note with no frontmatter has nothing to substitute. And **a caret**
+in one reveals the token, so a name can be corrected without deleting anything —
+a caret, in rich text, and not a selection that merely crosses it: selecting a
+paragraph to copy it is not editing the names inside it, and a selection showing
+tokens where the page shows values would be highlighting one thing and copying
+another. Live preview reveals on either, because there the source is the thing
+being worked on. Clicking a value opens the properties form at the note it
 came from, which is usually why you were looking at it.
 
 **Copying out of rich text takes the values.** Select a paragraph there and what
@@ -162,8 +166,10 @@ the difference between opening a note and opening a note with a keyboard across
 the bottom half of it before you have read a word. Tap the text and that is
 where the caret lands — the tap that starts the edit is the tap that says where
 — or press the pencil in the header, which starts you at the top of whatever is
-on screen rather than scrolling the note out from under you. Escape hands the
-note back. Links, checkboxes, images and a task's date chip all still answer
+on screen rather than scrolling the note out from under you. **The pencil's own
+slot becomes the way back**: while you are writing it is a tick that hands the
+note back to being read, which Escape does too and which a phone has no Escape
+key for. Links, checkboxes, images and a task's date chip all still answer
 a tap while reading, so you can work through a note without falling into the
 editor, and a checkbox ticked or a date set in passing still saves: reading is
 not read-only. A brand new note is the

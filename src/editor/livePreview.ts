@@ -207,6 +207,21 @@ function composingEmbed(state: EditorState, from: number, to: number): boolean {
   return touched(state, from, to)
 }
 
+/**
+ * True when a caret — an empty selection, not a range — sits in [from, to].
+ *
+ * The difference matters for anything rich text renders as a value rather than
+ * as syntax. A caret in a `$(client)` is somebody editing the name and needs
+ * the source; a selection merely *covering* it is somebody selecting a
+ * paragraph, and revealing every token it crosses would mean the words you see
+ * highlighted are not the words you are about to copy.
+ */
+function caretIn(state: EditorState, from: number, to: number): boolean {
+  if (!state.field(focusedField, false)) return false
+  if (!state.field(interactedField, false)) return false
+  return state.selection.ranges.some((r) => r.empty && r.from >= from && r.to <= to)
+}
+
 /** True when a selection range is on any line the node spans. */
 function lineTouched(
   state: EditorState,
@@ -767,9 +782,18 @@ function buildDecorations(view: EditorView): DecorationSet {
           const data = properties()
           if (!(v.key in data)) continue
           if (isInsideCodeOrLink(tree.resolveInner(v.from + 1, 1))) continue
-          // Structure, not formatting: the key has to stay reachable, so the
-          // caret reveals the token in rich text as well as in live preview.
-          if (touched(state, v.from, v.to)) continue
+          /*
+           * Structure, not formatting: the key has to stay reachable, so the
+           * caret reveals the token in rich text as well as in live preview.
+           *
+           * In rich text it takes a caret, though, not any selection that
+           * happens to cross it. Selecting a paragraph to copy it is not
+           * editing the names inside it, and a selection that showed tokens
+           * where the page shows values would be highlighting one thing and
+           * copying another. Live preview reveals on either, because there the
+           * source is the thing being worked on.
+           */
+          if (rich ? caretIn(state, v.from, v.to) : touched(state, v.from, v.to)) continue
           out.push(
             Decoration.replace({
               widget: new VarWidget(v.key, varText(data[v.key]), rich),
