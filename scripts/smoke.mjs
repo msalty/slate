@@ -5018,10 +5018,11 @@ try {
    */
   await page.evaluate(async () => {
     const text =
-      '---\nclient: Acme Corp\nrate:\ntags: [work, active]\n---\n\n# Job sheet\n\n' +
+      '---\nclient: Acme Corp\nrate:\ncase: 124\ntags: [work, active]\n---\n\n# Job sheet\n\n' +
       'Prepared for $(client), filed under $(tags).\n\n' +
       'The rate is $(rate) a day.\n\n' +
       '| Field | Value |\n| --- | --- |\n| Client | $(client) |\n\n' +
+      'The [case](https://example.com/support.aspx?TID=$(case)) is open.\n\n' +
       'Run $(pwd) to see where you are.\n'
     const db = await new Promise((res) => {
       const r = indexedDB.open('slate')
@@ -5063,6 +5064,54 @@ try {
   check(
     'and the file still says what was typed, token and all',
     varsFile.includes('Prepared for $(client)') && varsFile.includes('| Client | $(client) |'),
+  )
+
+  /*
+   * An address is the one place a property has to resolve even while the note
+   * is only being read: a link is followed rather than copied, so a token left
+   * in one goes nowhere. The parentheses are the other half of it — the URL
+   * used to be re-parsed with a pattern that ended at the first `)`, which is
+   * the token's own, sending the click a character short of the truth.
+   */
+  const caseLink = page.locator('.cm-uri').filter({ hasText: 'case' }).first()
+  check(
+    'a property inside a link address resolves',
+    (await caseLink.getAttribute('data-href')) === 'https://example.com/support.aspx?TID=124',
+    await caseLink.getAttribute('data-href'),
+  )
+  await armLinkTrap()
+  await caseLink.click()
+  await page.waitForTimeout(250)
+  const caseClick = await linkTrapResult()
+  check(
+    'and clicking it goes where the note says it goes',
+    caseClick.opened.length === 1 &&
+      caseClick.opened[0] === 'https://example.com/support.aspx?TID=124',
+    caseClick.opened.join(',') || 'nothing opened',
+  )
+  await page.evaluate(() => document.removeEventListener('click', window.__linkTrap))
+
+  /*
+   * A drag that starts on a value.
+   *
+   * The browser answers a press on a widget — or on an existing selection —
+   * by dragging it, and dragged text deliberately carries the tokens. That
+   * suppression used to be held until a `dragend` or `drop` cleared it, and a
+   * drag that ended in neither left every copy after it handing back tokens.
+   */
+  await page.evaluate(() =>
+    document
+      .querySelector('.cm-content')
+      ?.dispatchEvent(new Event('dragstart', { bubbles: true })),
+  )
+  await page.keyboard.press('Control+a')
+  await page.keyboard.press('Control+c')
+  await page.waitForTimeout(400)
+  const afterDrag = await page.evaluate(() => navigator.clipboard.readText())
+  check(
+    'a copy after a drag still takes the values',
+    afterDrag.includes('Prepared for Acme Corp') && !afterDrag.includes('$(client)'),
+    afterDrag.split('\n').find((l) => l.startsWith('Prepared')),
   )
 
   // Clicking a value is the second way in to the form that owns it.

@@ -126,6 +126,15 @@ function applyKey(key: string) {
  * returned — which would quietly turn `$(client)` into "Acme Corp" in the
  * file, the one thing this whole feature promises never to do.
  *
+ * Both flags last exactly as long as the event that sets them. An earlier
+ * version held the drag flag from `dragstart` until a `dragend` or `drop`
+ * cleared it, and a drag that ended in neither — cancelled with Escape, ended
+ * off-window, begun on a widget the browser decided to drag itself — left
+ * every copy after it handing back tokens, with nothing on screen to say why.
+ * CodeMirror reads the filter synchronously inside its own handler for the
+ * event, so a microtask is late enough to be certain and early enough that
+ * nothing else can be caught by it.
+ *
  * A **cut** is a move nine times out of ten as well: taking a paragraph from
  * here and putting it there. Cutting values and pasting them back would flatten
  * every property in that paragraph into fixed text, and the paragraph would
@@ -137,10 +146,7 @@ function applyKey(key: string) {
  * Observers rather than handlers: observers run before CodeMirror's own
  * handlers for the same event and, unlike handlers, cannot preempt them. Both
  * flags are module-level because there is one pointer doing one thing at a
- * time. The cut flag is cleared on a microtask — CodeMirror's own cut handler
- * runs synchronously inside the event, well before that. If a `dragend` were
- * ever missed the worst case is a copy that carries the token, which is what
- * copying did before any of this.
+ * time.
  */
 let dragging = false
 let cutting = false
@@ -172,12 +178,9 @@ export const varsOnCopy: Extension = [
     },
     dragstart() {
       dragging = true
-    },
-    dragend() {
-      dragging = false
-    },
-    drop() {
-      dragging = false
+      queueMicrotask(() => {
+        dragging = false
+      })
     },
   }),
 ]

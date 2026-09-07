@@ -165,6 +165,18 @@ export function scanUris(text: string, offset = 0): UriMatch[] {
 
 /* ------------------------------------------------------- editing a link */
 
+/**
+ * The address inside `](…)`, as a pattern.
+ *
+ * Balanced parentheses belong to the address: CommonMark says so, the markdown
+ * parser agrees, and both a Wikipedia `(disambiguation)` and one of this app's
+ * own `?TID=$(case)` need it. Stopping at the first `)` — which is what this
+ * replaced — quietly hands back an address one character short of the truth,
+ * and a link that goes somewhere slightly wrong is worse than one that
+ * obviously does not work.
+ */
+export const MD_URL = String.raw`(?:[^()\s]|\([^()\s]*\))*`
+
 export interface LinkSpan {
   /** Range of the whole `[text](url)` construct. */
   from: number
@@ -176,7 +188,10 @@ export interface LinkSpan {
 /** The markdown link the caret sits in, if any. */
 export function linkAt(state: EditorState, pos: number): LinkSpan | undefined {
   const line = state.doc.lineAt(pos)
-  const re = /(!?)\[([^\]\n]*)\]\(\s*(<[^>\n]*>|[^)\s]*)(\s+"[^"\n]*")?\s*\)/g
+  const re = new RegExp(
+    String.raw`(!?)\[([^\]\n]*)\]\(\s*(<[^>\n]*>|${MD_URL})(\s+"[^"\n]*")?\s*\)`,
+    'g',
+  )
   let m: RegExpExecArray | null
   while ((m = re.exec(line.text))) {
     if (m[1]) continue // an image, not a link

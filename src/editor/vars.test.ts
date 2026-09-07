@@ -91,6 +91,66 @@ describe('a property written into the body', () => {
   })
 })
 
+describe('in a link address', () => {
+  /** The href rich text would follow for the first link in the note. */
+  const href = (view: EditorView) =>
+    view.contentDOM.querySelector('.cm-uri')?.getAttribute('data-href')
+
+  it('resolves, because a link is followed rather than read', async () => {
+    const view = await editor('See the [case](https://x.example/c.aspx?TID=$(nights)).\n')
+    expect(href(view)).toBe('https://x.example/c.aspx?TID=6')
+    view.destroy()
+  })
+
+  it('keeps the parentheses the address is entitled to', async () => {
+    // The token's own `)` used to end the address, sending the click one
+    // character short of where the note said it went.
+    const view = await editor('See [it](https://x.example/a_(b)_c).\n')
+    expect(href(view)).toBe('https://x.example/a_(b)_c')
+    view.destroy()
+  })
+
+  it('works while the note is only being read, which is when links are used', async () => {
+    const doc = FM + 'See the [case](https://x.example/c.aspx?TID=$(nights)).\n'
+    const parent = document.body.appendChild(document.createElement('div'))
+    const view = new EditorView({
+      parent,
+      state: createEditorState({
+        doc,
+        path: 'note.md',
+        mode: 'rich',
+        fontSize: 16,
+        editable: false,
+        onChange: () => {},
+      }),
+    })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(href(view)).toBe('https://x.example/c.aspx?TID=6')
+    view.destroy()
+  })
+
+  it('leaves an address alone when the property is not this note\'s', async () => {
+    const view = await editor('See [it](https://x.example/?id=$(nope)).\n')
+    expect(href(view)).toBe('https://x.example/?id=$(nope)')
+    view.destroy()
+  })
+
+  it('resolves a bare address too', async () => {
+    const view = await editor('Go to https://x.example/c?TID=$(nights) now.\n')
+    expect(href(view)).toBe('https://x.example/c?TID=6')
+    view.destroy()
+  })
+
+  it('and one inside a table cell', async () => {
+    const view = await editor(
+      '| Case | Link |\n| --- | --- |\n| 1 | [open](https://x.example/c?TID=$(nights)) |\n',
+    )
+    const a = view.contentDOM.querySelector('.cm-table-render a')
+    expect(a?.getAttribute('href')).toBe('https://x.example/c?TID=6')
+    view.destroy()
+  })
+})
+
 describe('what it leaves alone', () => {
   it('a key this note never declared', async () => {
     const view = await editor('Run $(pwd) to see where you are.\n')
@@ -217,7 +277,16 @@ describe('copying out of rich text', () => {
     const view = await editor('Hello $(first_name).\n')
     view.contentDOM.dispatchEvent(new Event('dragstart', { bubbles: true }))
     expect(copied(view, 'Hello $(first_name).')).toBe('Hello $(first_name).')
-    view.contentDOM.dispatchEvent(new Event('dragend', { bubbles: true }))
+    view.destroy()
+  })
+
+  it('and lets go of that by itself, without waiting for a dragend that may never come', async () => {
+    const view = await editor('Hello $(first_name).\n')
+    view.contentDOM.dispatchEvent(new Event('dragstart', { bubbles: true }))
+    // No dragend, no drop: the drag was cancelled, or ended off-window, or was
+    // the browser dragging a widget nobody meant to pick up. A flag held until
+    // one of those arrived left every later copy handing back tokens.
+    await new Promise((r) => queueMicrotask(() => r(undefined)))
     expect(copied(view, 'Hello $(first_name).')).toBe('Hello Mike.')
     view.destroy()
   })

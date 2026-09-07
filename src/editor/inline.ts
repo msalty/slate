@@ -14,9 +14,10 @@
  */
 
 import { attachmentUrl, resolveEmbed, resolveLink } from '../core/vault'
-import { varText, type FrontmatterValue } from '../core/markdown'
+import { resolveVars, varText, type FrontmatterValue } from '../core/markdown'
 import { mediaClass } from '../core/util'
 import { requestLightbox } from './context'
+import { MD_URL } from './links'
 
 interface Ctx {
   /** Path of the note the text came from, for resolving relative embeds. */
@@ -69,10 +70,13 @@ const RULES: Array<{
     },
   },
   {
-    re: /^\[([^\]\n]*)\]\(\s*([^)\s]*)\s*\)/,
-    build: (m) => {
+    // Balanced parentheses are part of the address — see `MD_URL`.
+    re: new RegExp(String.raw`^\[([^\]\n]*)\]\(\s*(${MD_URL})\s*\)`),
+    build: (m, ctx) => {
       const el = document.createElement('a')
-      el.href = m[2]
+      // A `$(case)` in the address resolves like one in a sentence: a link is
+      // followed rather than read, so a token left in it goes nowhere.
+      el.href = ctx.vars ? resolveVars(m[2], ctx.vars) : m[2]
       el.target = '_blank'
       el.rel = 'noopener noreferrer'
       appendInline(el, m[1], { notePath: '' })

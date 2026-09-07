@@ -51,7 +51,7 @@ import {
   isDelimiterRow,
 } from './widgets'
 import { parseCallout } from './callout'
-import { findDue, isTaskLine, scanVars, varText } from '../core/markdown'
+import { findDue, isTaskLine, resolveVars, scanVars, varText } from '../core/markdown'
 import { frontmatterEnd, frontmatterLines, frontmatterOf } from './vars'
 import { noteContext } from './context'
 import { normalizeUri, scanUris } from './links'
@@ -278,6 +278,13 @@ function buildDecorations(view: EditorView): DecorationSet {
    */
   let parsed: ReturnType<typeof frontmatterOf> | undefined
   const properties = () => (parsed ??= frontmatterOf(state, fmLines))
+  /*
+   * An address with `$(case)` in it is the same idea as one in a sentence, and
+   * the one place it has to work even while the note is only being read: a
+   * link is followed, not copied, so a token left in it goes nowhere.
+   */
+  const withProperties = (url: string) =>
+    fmLines.length && url.includes('$(') ? resolveVars(url, properties()) : url
   for (const n of fmLines) {
     const line = state.doc.line(n)
     seenLines.add(line.from)
@@ -573,11 +580,23 @@ function buildDecorations(view: EditorView): DecorationSet {
         /* ---- markdown links: the label becomes the clickable thing ---- */
         if (name === 'Link') {
           const raw = state.doc.sliceString(node.from, node.to)
-          const m = /^\[([^\]\n]*)\]\(\s*(<[^>\n]*>|[^)\s]*)/.exec(raw)
+          const m = /^\[([^\]\n]*)\]/.exec(raw)
           if (!m) return
-          let url = m[2]
+          /*
+           * The address comes from the parser, not from a second regex over
+           * the same text.
+           *
+           * The regex this replaced ended the URL at the first `)`, which is
+           * wrong for every address holding balanced parentheses — a
+           * `(disambiguation)` on Wikipedia, and `?TID=$(case)` here. It sent
+           * clicks to a URL a character short of the truth while the note went
+           * on showing the whole thing. CommonMark allows those parens and the
+           * parser already gets them right.
+           */
+          const urlNode = node.node.getChild('URL')
+          let url = urlNode ? state.doc.sliceString(urlNode.from, urlNode.to) : ''
           if (url.startsWith('<') && url.endsWith('>')) url = url.slice(1, -1)
-          const href = normalizeUri(url)
+          const href = normalizeUri(withProperties(url))
           if (!href) return
           const from = node.from + 1
           const to = from + m[1].length
@@ -585,7 +604,7 @@ function buildDecorations(view: EditorView): DecorationSet {
             out.push(
               Decoration.mark({
                 class: 'cm-uri',
-                attributes: { 'data-href': href, title: url },
+                attributes: { 'data-href': href, title: href },
               }).range(from, to),
             )
           }
@@ -603,7 +622,7 @@ function buildDecorations(view: EditorView): DecorationSet {
           // the textual scan below deliberately skips — that scan avoids
           // anything the parser has already claimed — so it gets its mark here.
           if (name === 'URL') {
-            const href = normalizeUri(state.doc.sliceString(node.from, node.to))
+            const href = normalizeUri(withProperties(state.doc.sliceString(node.from, node.to)))
             if (href) {
               out.push(
                 Decoration.mark({
@@ -697,7 +716,7 @@ function buildDecorations(view: EditorView): DecorationSet {
       for (const u of scanUris(line.text, line.from)) {
         const node = tree.resolveInner(u.from + 1, 1)
         if (isInsideCodeOrLink(node)) continue
-        const href = normalizeUri(u.url)
+        const href = normalizeUri(withProperties(u.url))
         if (!href) continue
         out.push(
           Decoration.mark({

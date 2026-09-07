@@ -137,6 +137,14 @@ its properties are filled in — headings, sentences, bold text and table cells
 alike. Typing `$(` offers the note's own properties, with their values, so
 there is nothing to remember.
 
+**Addresses count as places too.** `[the case](https://support.example/c?TID=$(case))`
+is followed to the address the property makes, in every mode and while the note
+is only being read — which is the one place this *has* to work, since a link is
+followed rather than copied and a token left in one goes nowhere. The
+parentheses in `$(case)` are safe there: balanced parentheses have always been
+part of a markdown address, and reading one back now honours that instead of
+stopping at the first `)`.
+
 Three rules keep it out of the way. **The file is never rewritten** — `$(client)`
 is what is on disk and what every other markdown editor sees, exactly like the
 rest of live preview, and source mode shows it as typed. **Only a property the

@@ -467,6 +467,17 @@ export class VarWidget extends WidgetType {
     el.title = filled
       ? `${this.key} — from this note's properties${this.clickable ? ', click to edit' : ''}`
       : `${this.key} has no value yet${this.clickable ? ' — click to fill it in' : ''}`
+    /*
+     * A value is text to be selected, not an object to be dragged.
+     *
+     * A widget is `contenteditable="false"` inside editable content, which is
+     * enough for a browser to answer a press-and-sweep starting on it by
+     * dragging the element instead of selecting through it — so a selection
+     * begun on a value selected nothing, and the drag it became handed the
+     * clipboard the token. The picture widget says the same thing for the same
+     * reason.
+     */
+    el.draggable = false
     // What `linkClicks` looks for. Only in rich text: in live preview there is
     // no properties form to open, and a click there should land the caret and
     // reveal the token, which is what that mode is for.
