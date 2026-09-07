@@ -3195,6 +3195,60 @@ try {
   await page.waitForTimeout(300)
   check('the picker leaves the phone editor as it found it', (await page.locator('.file-picker').count()) === 0)
 
+  /* ---- typing an embed out by hand, in rich text -------------------------
+   * The other way to reach a file: `![[` and the autocomplete. Rich text used
+   * to swap the markup for the widget the moment `![[a]]` parsed, which took
+   * the target out from under the completion — one letter went in, the range
+   * went atomic, and the note was left with `![[a]]` and no way to finish the
+   * name. So what is checked is that the markup survives being typed into and
+   * the list is still narrowing while it happens.
+   */
+  const typed = async (s) => {
+    await page.keyboard.type(s)
+    await page.waitForTimeout(350)
+  }
+  await page.locator('.cm-content').click()
+  await page.keyboard.press('Control+End')
+  await typed('![[')
+  await typed('I')
+  const oneChar = await page.evaluate(() => document.querySelector('.cm-content').textContent)
+  check(
+    'one character into an embed, the markup is still there to type into',
+    oneChar.includes('![[I]]'),
+    oneChar.slice(-24),
+  )
+  await typed('MG_04')
+  const sixChars = await page.evaluate(() => document.querySelector('.cm-content').textContent)
+  const suggestions = await page.locator('.cm-tooltip-autocomplete li').allInnerTexts()
+  check(
+    'and the rest of the name goes in after it',
+    sixChars.includes('![[IMG_04]]'),
+    sixChars.slice(-24),
+  )
+  check(
+    'with the autocomplete still narrowing to the file',
+    suggestions.some((t) => /IMG_0421/.test(t)),
+    suggestions.join(' / ') || 'no suggestions',
+  )
+  /*
+   * Accept it, and the finished embed becomes a picture like any other.
+   * Counted from just before the keystroke rather than from the earlier
+   * total: typing at the end of the note scrolled the first embeds out of
+   * CodeMirror's rendered range, and what is not rendered is not in the DOM.
+   */
+  const embedsShown = await page.locator('.cm-embed img').count()
+  await page.keyboard.press('Enter')
+  await page.waitForTimeout(900)
+  const embedsFromTyping = await page.locator('.cm-embed img').count()
+  const docAfterAccept = await page.evaluate(() => document.querySelector('.cm-content').textContent)
+  check(
+    'accepting the suggestion embeds the file',
+    embedsFromTyping === embedsShown + 1 && !docAfterAccept.includes('![['),
+    `${embedsShown} -> ${embedsFromTyping} embeds, markup ${docAfterAccept.includes('![[') ? 'left behind' : 'gone'}`,
+  )
+  for (let i = 0; i < 6; i++) await page.keyboard.press('Control+z')
+  await page.waitForTimeout(500)
+
   await page.evaluate(() => document.documentElement.style.removeProperty('--kb-inset'))
 
   /* ---- editing a table from the phone's Format sheet ----------------------

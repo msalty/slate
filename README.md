@@ -194,7 +194,10 @@ megabyte install, which is the honest price of a PDF that opens on a plane.
 
 In rich text an image stays an image: putting the caret beside one never swaps
 it back for `![[img.png]]`, and it takes no margin of its own, so a line of
-text sits immediately above or below it unless you write a blank line.
+text sits immediately above or below it unless you write a blank line. The one
+exception is an embed being written — while the caret is between the brackets
+the markup stays visible, because a widget that swallows the target at the
+first character typed leaves `![[a]]` and no way to finish the name.
 
 A capture that arrives as a bare `image.jpg` gets a dated name so a folder of
 them stays browsable; a library filename you'd recognise — `IMG_0421`,
@@ -1215,8 +1218,8 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 559 unit + two-device sync tests
-node scripts/smoke.mjs  # 456 checks in headless Chromium against dist/
+npm test                # 566 unit + two-device sync tests
+node scripts/smoke.mjs  # 460 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

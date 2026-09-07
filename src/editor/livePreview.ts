@@ -183,6 +183,28 @@ function touched(
   return false
 }
 
+/**
+ * True while the caret is inside the part of an embed that gets typed — the
+ * target between `![[` and `]]`, or the URL between `](` and `)`.
+ *
+ * Rich mode deliberately keeps a finished embed a picture whatever the caret
+ * is doing beside it (see the WikiEmbed branch), but an embed is not a picture
+ * while it is being written. `![[` leaves the caret between the brackets, and
+ * replacing the markup with a widget at the first character typed there takes
+ * the target out from under the autocomplete: the range goes atomic, one
+ * letter goes in, and there is no way to finish the name — which is what
+ * "I can only type one character" looked like.
+ *
+ * The range checked is the target alone, never the whole node, so a caret
+ * merely beside a finished embed still leaves a picture where the picture is.
+ */
+function composingEmbed(state: EditorState, from: number, to: number): boolean {
+  // An empty target is legitimate — `![[]]` is exactly where typing starts —
+  // but a node too short to hold one has nothing to type into.
+  if (to < from) return false
+  return touched(state, from, to)
+}
+
 /** True when a selection range is on any line the node spans. */
 function lineTouched(
   state: EditorState,
@@ -484,8 +506,11 @@ function buildDecorations(view: EditorView): DecorationSet {
           // 'format' so rich mode never swaps a picture for its markdown: a
           // caret landing beside an image is someone about to type next to it,
           // and there is nothing in `![[img.png|400]]` the rich editor cannot
-          // do with the resize handle and the delete key.
+          // do with the resize handle and the delete key. An embed being typed
+          // is the exception, in every mode — see `composingEmbed`.
           if (touched(state, node.from, node.to, 'format')) return
+          // `![[` … `]]`
+          if (composingEmbed(state, node.from + 3, node.to - 2)) return
           const raw = state.doc.sliceString(node.from, node.to)
           const inner = raw.slice(3, -2)
           const [targetPart, sizePart] = splitPipe(inner)
@@ -509,6 +534,10 @@ function buildDecorations(view: EditorView): DecorationSet {
         if (name === 'Image') {
           if (touched(state, node.from, node.to, 'format')) return
           const raw = state.doc.sliceString(node.from, node.to)
+          // The address, between `](` and the closing paren — typed by hand,
+          // so the same rule as a wikilink embed's target applies to it.
+          const urlAt = raw.indexOf('](')
+          if (urlAt >= 0 && composingEmbed(state, node.from + urlAt + 2, node.to - 1)) return
           const m = /^!\[([^\]]*)\]\(\s*(<[^>]*>|[^)\s]*)/.exec(raw)
           if (!m) return
           let url = m[2]
