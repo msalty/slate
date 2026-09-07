@@ -117,57 +117,78 @@ one item per line, all come back out of the file exactly as they went in.
 anywhere in the body reads as that property's value in rich text and live
 preview:
 
-```markdown
+````markdown
 ---
 client: Acme Corp
 contact: Dana Reyes
+case: 124
 rate:
 ---
 
 # Job sheet
 
 Prepared for **$(client)**, attention $(contact). The rate is $(rate) a day.
+
+The ticket is [case $(case)](https://support.example/c.aspx?TID=$(case)).
+
+```sh
+ssh admin@$(client).example
 ```
+````
 
 reads as *Prepared for **Acme Corp**, attention Dana Reyes. The rate is ⟨rate⟩
 a day.* — with `rate` drawn as a dashed blank, because it has been named and
-not yet filled in. That is what makes a template a form: write the note once
-with the properties it needs, and every note made from it fills itself in as
-its properties are filled in — headings, sentences, bold text and table cells
-alike. Typing `$(` offers the note's own properties, with their values, so
-there is nothing to remember.
+not yet filled in. The link goes to `…?TID=124`, and the block says
+`ssh admin@Acme Corp.example`. That is what makes a template a form: write the
+note once with the properties it needs, and every note made from it fills
+itself in as its properties are filled in. Typing `$(` offers the note's own
+properties, with their values, so there is nothing to remember, and clicking a
+value opens the properties form at the property it came from.
 
-**Addresses count as places too.** `[the case](https://support.example/c?TID=$(case))`
-is followed to the address the property makes, in every mode and while the note
-is only being read — which is the one place this *has* to work, since a link is
-followed rather than copied and a token left in one goes nowhere. The
-parentheses in `$(case)` are safe there: balanced parentheses have always been
-part of a markdown address, and reading one back now honours that instead of
-stopping at the first `)`.
+Where it resolves, and where it deliberately does not:
+
+| Written in | What happens |
+| --- | --- |
+| a sentence, a heading, a list, a table cell | the value, styled as the text around it |
+| a fenced code block | the value — a block is a thing you copy out and run |
+| a link or embed address | the value, wherever it is followed — reading included |
+| `` `$(client)` `` in backticks | left as typed: this is how the syntax is written *about* |
+| the `---` block itself | left as typed; a property quoting another is a knot |
+| source mode | left as typed — that mode is the file |
 
 Three rules keep it out of the way. **The file is never rewritten** — `$(client)`
 is what is on disk and what every other markdown editor sees, exactly like the
-rest of live preview, and source mode shows it as typed. **Only a property the
-note declares is touched**, so `$(pwd)` in a sentence about the shell is left
-alone, and a note with no frontmatter has nothing to substitute. And **a caret**
-in one reveals the token, so a name can be corrected without deleting anything —
-a caret, in rich text, and not a selection that merely crosses it: selecting a
-paragraph to copy it is not editing the names inside it, and a selection showing
-tokens where the page shows values would be highlighting one thing and copying
-another. Live preview reveals on either, because there the source is the thing
-being worked on. Clicking a value opens the properties form at the note it
-came from, which is usually why you were looking at it.
+rest of live preview. **Only a property the note declares is touched**, so
+`$(pwd)` in a sentence about the shell is left alone, and a note with no
+frontmatter has nothing to substitute. And **a caret** in one reveals the token,
+so a name can be corrected without deleting anything — a caret, in rich text,
+and not a selection that merely crosses it: selecting a paragraph to copy it is
+not editing the names inside it. Live preview reveals on either, because there
+the source is the thing being worked on.
 
-**Copying out of rich text takes the values.** Select a paragraph there and what
-lands on the clipboard is what the page says — *Prepared for Acme Corp* — so a
-note can be pasted into an email without the reader seeing the wiring. Live
-preview and source copy the file, as they show it. Cut and drag deliberately
-still carry the tokens: both are usually a move from here to there in the same
-note, and a move that pasted values back in would flatten its properties into
-fixed text without changing a word on screen — damage nobody would notice until
-the day they changed a property and half the note failed to follow. A property
-still waiting to be filled in copies as its token too, which is easier to spot
-in an email than a hole.
+**Copying out of rich text takes the values.** Select a paragraph there — or
+press a code block's copy button — and what lands on the clipboard is what the
+page says, so a note can be pasted into an email, or a command into a terminal,
+without the reader seeing the wiring. Live preview and source copy the file, as
+they show it. Cut and drag deliberately still carry the tokens: both are
+usually a move from here to there in the same note, and a move that pasted
+values back in would flatten its properties into fixed text without changing a
+word on screen — damage nobody would notice until the day they changed a
+property and half the note failed to follow. A property still waiting to be
+filled in copies as its token too, which is easier to spot in an email than a
+hole.
+
+**`read-only: true` makes the note a form.** Add it as a checkbox in the
+properties panel — or write it in the block by hand, where `readonly`,
+`read_only` and `yes` are all understood — and the body stops accepting edits
+in every mode: no caret, no keyboard, no checkbox to tick, no table cell to
+type in, nothing pasted or dropped in, and the pencil in the header becomes a
+lock. What still works is the properties form, which the lock itself opens, and
+which is where the checkbox is unticked to hand the note back. Its tasks stay
+in the Tasks view and say so rather than ticking if you try. That is the pairing
+worth having: a page whose every changeable part is a labelled field cannot be
+knocked out of shape by the person filling it in, and one built to be copied out
+of stays exactly as it was written.
 
 **A note opens as a page to read.** No caret anywhere in it, which on a phone is
 the difference between opening a note and opening a note with a keyboard across
@@ -1268,7 +1289,9 @@ src/
 │  ├─ codeblock.ts reading a fenced block back out, for the copy button
 │  ├─ due.ts        writing a task's due date into the buffer being typed in
 │  ├─ vars.ts       `$(property)`: the note's own frontmatter, read into its
-│  │                 body — and the completion that offers it
+│  │                 body — the completion that offers it, what the clipboard
+│  │                 does with it, and the `read-only` lock a note puts on
+│  │                 itself
 │  ├─ inline.ts      inline markdown for text inside widgets (table cells)
 │  └─ pickImage.ts   camera / photo library / file insertion
 └─ ui/            Preact components

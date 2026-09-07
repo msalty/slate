@@ -5171,6 +5171,102 @@ try {
     (await noteContaining('Prepared for')).includes('Prepared for $(client)'),
   )
 
+  /* ---- a note its own properties lock ------------------------------------
+   *
+   * `read-only: true` turns a note into a form: the properties can be filled
+   * in and nothing else about it can be typed over. What has to hold is that
+   * every way into the body refuses — the tap, the keyboard, a checkbox — and
+   * that the one thing that must still work does: the form, including the
+   * checkbox that takes the lock off again.
+   */
+  await page.evaluate(async () => {
+    const text =
+      '---\nread-only: true\nhost: fw-edge-01\ncase: 124\n---\n\n# Session\n\n' +
+      '- [ ] Not tickable\n\nRun this on $(host):\n\n' +
+      '```sh\nssh admin@$(host).example\nshow log | include $(case)\n```\n\n' +
+      'The syntax itself stays literal: `$(host)`.\n'
+    const db = await new Promise((res) => {
+      const r = indexedDB.open('slate')
+      r.onsuccess = () => res(r.result)
+    })
+    const tx = db.transaction('files', 'readwrite')
+    tx.objectStore('files').put({
+      path: 'Locked session.md', kind: 'note', text, mime: 'text/markdown', size: text.length,
+      hash: 'lock1', mtime: Date.now() + 50_000, ctime: Date.now(),
+      dirty: true, dirtyFlag: 1, sync: {},
+    })
+    await new Promise((res) => { tx.oncomplete = res })
+  })
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForSelector('.note-row')
+  await page.locator('.note-row').filter({ hasText: 'Locked session' }).first().click()
+  await page.waitForTimeout(500)
+  await intoRichText()
+
+  const locked = await page.locator('.cm-content').innerText()
+  check(
+    'a fenced block fills itself in — a command you copy out, not a quotation',
+    locked.includes('ssh admin@fw-edge-01.example') && locked.includes('show log | include 124'),
+    locked.split('\n').find((l) => l.startsWith('ssh')),
+  )
+  check(
+    'while the syntax in backticks stays the syntax',
+    locked.includes('$(host)'),
+  )
+
+  await page.locator('.cm-line').filter({ hasText: 'Run this on' }).first().click()
+  await page.waitForTimeout(350)
+  await page.keyboard.type('nonsense')
+  await page.waitForTimeout(500)
+  const lockedState = await readingState()
+  check(
+    'a locked note refuses the tap that would start writing in it',
+    lockedState.flag === '1' && lockedState.editable === 'false',
+    `reading=${lockedState.flag}, contenteditable=${lockedState.editable}`,
+  )
+  check(
+    'and the keys that followed it',
+    !(await page.locator('.cm-content').innerText()).includes('nonsense'),
+  )
+  check(
+    'its checkboxes show, and do not tick',
+    await page.locator('.cm-task-checkbox').first().isDisabled(),
+  )
+  check(
+    'the pencil is a lock instead',
+    (await page.locator('.editor-pane [aria-label="Read-only note"]').count()) === 1 &&
+      (await page.locator('.editor-pane [aria-label="Edit note"]').count()) === 0,
+  )
+
+  // The copy button on a block: the same rule as copying by hand.
+  await page.locator('.cm-code-copy').first().click({ force: true })
+  await page.waitForTimeout(400)
+  const codeClip = await page.evaluate(() => navigator.clipboard.readText())
+  check(
+    'copying the block takes the command, filled in',
+    codeClip.includes('ssh admin@fw-edge-01.example') && !codeClip.includes('$(host)'),
+    JSON.stringify(codeClip.split('\n')[0]),
+  )
+
+  // The form is the one thing that still writes — including its own lock.
+  await page.locator('.editor-pane [aria-label="Read-only note"]').click()
+  await page.waitForTimeout(350)
+  check('the lock opens the properties form', (await page.locator('.properties').count()) === 1)
+  await (await propertyRow('host')).locator('.property-value').fill('fw-core-02')
+  await (await propertyRow('host')).locator('.property-value').blur()
+  await page.waitForTimeout(700)
+  check(
+    'a locked note still fills in from its own form',
+    (await page.locator('.cm-content').innerText()).includes('ssh admin@fw-core-02.example'),
+  )
+  await (await propertyRow('read-only')).locator('input[type=checkbox]').click()
+  await page.waitForTimeout(700)
+  check(
+    'and unticking it hands the note back',
+    (await page.locator('.editor-pane [aria-label="Edit note"]').count()) === 1 &&
+      (await page.locator('.editor-pane [aria-label="Read-only note"]').count()) === 0,
+  )
+
   /* ---- persistence across a reload ------------------------------------ */
   const beforeCount = await page.evaluate(
     () => document.querySelectorAll('.note-row').length,

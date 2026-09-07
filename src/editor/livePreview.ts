@@ -433,7 +433,7 @@ function buildDecorations(view: EditorView): DecorationSet {
            */
           if (styledFirst && name === 'FencedCode' && lastLine > firstLine) {
             out.push(
-              Decoration.widget({ widget: new CopyCodeWidget(), side: 1 }).range(
+              Decoration.widget({ widget: new CopyCodeWidget(rich), side: 1 }).range(
                 state.doc.line(firstLine).to,
               ),
             )
@@ -474,7 +474,10 @@ function buildDecorations(view: EditorView): DecorationSet {
           const checked = /x/i.test(raw)
           if (!touched(state, node.from - 1, node.to + 1, 'format')) {
             out.push(
-              Decoration.replace({ widget: new CheckboxWidget(checked) }).range(node.from, node.to),
+              Decoration.replace({ widget: new CheckboxWidget(checked, state.readOnly) }).range(
+                node.from,
+                node.to,
+              ),
             )
           }
           if (checked) {
@@ -537,7 +540,9 @@ function buildDecorations(view: EditorView): DecorationSet {
           out.push(
             Decoration.replace({
               widget: new EmbedWidget({
-                path: resolveEmbed(target, ctx.path),
+                // An embed names a file the same way a link names an address,
+                // so a property is as welcome in one as in the other.
+                path: resolveEmbed(withProperties(target), ctx.path),
                 label: target,
                 width,
                 alt: sizePart && !width ? sizePart : '',
@@ -556,11 +561,19 @@ function buildDecorations(view: EditorView): DecorationSet {
           // so the same rule as a wikilink embed's target applies to it.
           const urlAt = raw.indexOf('](')
           if (urlAt >= 0 && composingEmbed(state, node.from + urlAt + 2, node.to - 1)) return
-          const m = /^!\[([^\]]*)\]\(\s*(<[^>]*>|[^)\s]*)/.exec(raw)
+          const m = /^!\[([^\]]*)\]/.exec(raw)
           if (!m) return
-          let url = m[2]
+          // From the parser, for the reason the link above takes it from there:
+          // a `)` inside the address is the address's, not the end of it.
+          const urlNode = node.node.getChild('URL')
+          // No address yet — an embed still being typed out, `![[IMG` on its
+          // way to being a picture. Nothing to draw, and drawing it would take
+          // the half-written target out from under the autocomplete.
+          if (!urlNode) return
+          let url = state.doc.sliceString(urlNode.from, urlNode.to)
           if (url.startsWith('<') && url.endsWith('>')) url = url.slice(1, -1)
-          const [clean, width] = splitWidth(url)
+          const [rawClean, width] = splitWidth(url)
+          const clean = withProperties(rawClean)
           const external = /^(https?|data):/i.test(clean)
           out.push(
             Decoration.replace({
@@ -800,7 +813,7 @@ function buildDecorations(view: EditorView): DecorationSet {
         for (const v of scanVars(line.text, line.from)) {
           const data = properties()
           if (!(v.key in data)) continue
-          if (isInsideCodeOrLink(tree.resolveInner(v.from + 1, 1))) continue
+          if (isLiteralHere(tree.resolveInner(v.from + 1, 1))) continue
           /*
            * Structure, not formatting: the key has to stay reachable, so the
            * caret reveals the token in rich text as well as in live preview.
@@ -826,6 +839,28 @@ function buildDecorations(view: EditorView): DecorationSet {
   }
 
   return RangeSet.of(out, true)
+}
+
+/**
+ * Where a `$(key)` is left as the text somebody typed.
+ *
+ * Inline code, because that is how the syntax is written *about* — a note
+ * explaining `$(client)` has to be able to say it — and an address, because
+ * the address is resolved where it is followed rather than where it is shown.
+ *
+ * A fenced block is deliberately not on the list. A block is a thing you copy
+ * out and run, and a command with the host and the case number already in it
+ * is the whole reason for wanting a property in one.
+ */
+function isLiteralHere(node: { name: string; parent: unknown } | null): boolean {
+  let n = node as { name: string; parent: unknown } | null
+  let depth = 0
+  while (n && depth++ < 12) {
+    if (n.name === 'InlineCode' || n.name === 'URL' || n.name === 'Link' || n.name === 'WikiLink')
+      return true
+    n = n.parent as { name: string; parent: unknown } | null
+  }
+  return false
 }
 
 /**
@@ -1074,7 +1109,10 @@ function buildTableDecorations(state: EditorState): DecorationSet {
    * take a tap and raise the keyboard in a note that is only being read, which
    * is the one thing reading mode promises will not happen.
    */
-  const typeable = rich && state.facet(EditorView.editable)
+  // A locked note's cells are read like the rest of it: a cell is its own
+  // editing host, so `readOnly` has to be asked here rather than left to
+  // CodeMirror's own input handling.
+  const typeable = rich && state.facet(EditorView.editable) && !state.readOnly
 
   for (const t of findTables(state)) {
     const first = state.doc.line(t.fromLine)

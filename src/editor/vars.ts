@@ -23,9 +23,15 @@
  */
 
 import type { Completion, CompletionContext, CompletionResult } from '@codemirror/autocomplete'
-import type { EditorState, Extension } from '@codemirror/state'
+import { EditorState, type Extension } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
-import { parseFrontmatter, resolveVars, varText, type FrontmatterValue } from '../core/markdown'
+import {
+  isLocked,
+  parseFrontmatter,
+  resolveVars,
+  varText,
+  type FrontmatterValue,
+} from '../core/markdown'
 
 /**
  * Line numbers of a leading `---` block, fences included.
@@ -70,6 +76,27 @@ export function frontmatterOf(
   const text = state.doc.sliceString(0, end)
   if (cache?.text !== text) cache = { text, data: parseFrontmatter(text).data }
   return cache.data
+}
+
+/* ------------------------------------------------------------------- lock */
+
+/**
+ * A note whose own properties say its body is not to be typed in.
+ *
+ * `EditorState.readOnly` is what says it, because that is the flag every one
+ * of CodeMirror's own input paths already consults — typing, pasting,
+ * dropping, the commands behind the toolbar — so the lock does not depend on
+ * this app remembering to check it in each of them. A programmatic dispatch
+ * still goes through, which is exactly right: the properties form writes with
+ * one, and so does a version arriving from another device.
+ *
+ * Computed from the document, so ticking the checkbox in the form locks the
+ * note under your hand, and clearing it hands it back. `always` folds in the
+ * other reason a note refuses edits — it was deleted — because the facet takes
+ * the first value it is given and two of them would mean one is never heard.
+ */
+export function propertyLock(always = false): Extension {
+  return EditorState.readOnly.compute(['doc'], (state) => always || isLocked(frontmatterOf(state)))
 }
 
 /**

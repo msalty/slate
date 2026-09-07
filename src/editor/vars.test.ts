@@ -141,12 +141,91 @@ describe('in a link address', () => {
     view.destroy()
   })
 
+  it('names a file in an embed the same way', async () => {
+    // The vault has nothing by that name here, so what is checked is that the
+    // property reached the target rather than that the picture drew.
+    const view = await editor('![shot](shots/$(first_name).png)\n')
+    expect(view.contentDOM.querySelector('.cm-embed-missing')?.textContent).toBe(
+      'Missing: shots/Mike.png',
+    )
+    view.destroy()
+  })
+
   it('and one inside a table cell', async () => {
     const view = await editor(
       '| Case | Link |\n| --- | --- |\n| 1 | [open](https://x.example/c?TID=$(nights)) |\n',
     )
     const a = view.contentDOM.querySelector('.cm-table-render a')
     expect(a?.getAttribute('href')).toBe('https://x.example/c?TID=6')
+    view.destroy()
+  })
+})
+
+describe('in a fenced code block', () => {
+  const BLOCK = '```sh\nssh admin@$(first_name).example\n```\n'
+
+  it('fills in, because a block is a thing you copy out and run', async () => {
+    const view = await editor(BLOCK)
+    expect(shown(view)).toContain('ssh admin@Mike.example')
+    view.destroy()
+  })
+
+  it('while a backtick span stays literal, which is how the syntax is written about', async () => {
+    const view = await editor('Write `$(first_name)` to name them.\n')
+    // Rich text hides the backticks themselves; what matters is that the token
+    // inside them is still the token.
+    expect(shown(view)).toContain('$(first_name)')
+    expect(vars(view)).toEqual([])
+    view.destroy()
+  })
+
+  it('and the block copies out filled in', async () => {
+    const view = await editor(BLOCK)
+    expect(copied(view, 'ssh admin@$(first_name).example')).toBe('ssh admin@Mike.example')
+    view.destroy()
+  })
+})
+
+describe('a note its own properties lock', () => {
+  const LOCKED = ['---', 'first_name: Mike', 'read-only: true', '---', '', 'Hello $(first_name).', ''].join('\n')
+
+  const open = async (doc: string, mode: EditorMode = 'rich') => {
+    const parent = document.body.appendChild(document.createElement('div'))
+    const view = new EditorView({
+      parent,
+      state: createEditorState({ doc, path: 'note.md', mode, fontSize: 16, onChange: () => {} }),
+    })
+    await new Promise((r) => setTimeout(r, 0))
+    return view
+  }
+
+  it('refuses every mode, since a lock source mode ignored would not be one', async () => {
+    for (const mode of ['rich', 'live', 'source'] as EditorMode[]) {
+      const view = await open(LOCKED, mode)
+      expect(view.state.readOnly).toBe(true)
+      view.destroy()
+    }
+  })
+
+  it('still fills its properties in, which is the whole point of locking it', async () => {
+    const view = await open(LOCKED)
+    expect(shown(view)).toContain('Hello Mike.')
+    view.destroy()
+  })
+
+  it('takes the lock off the moment the property does', async () => {
+    const view = await open(LOCKED)
+    const at = view.state.doc.toString().indexOf('read-only: true')
+    // What the properties form does: a programmatic dispatch, which a locked
+    // note still accepts — otherwise there would be no way back out of one.
+    view.dispatch({ changes: { from: at, to: at + 'read-only: true'.length, insert: 'read-only: false' } })
+    expect(view.state.readOnly).toBe(false)
+    view.destroy()
+  })
+
+  it('is not locked by a note that merely has properties', async () => {
+    const view = await open(FM + 'Hello $(first_name).\n')
+    expect(view.state.readOnly).toBe(false)
     view.destroy()
   })
 })

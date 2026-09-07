@@ -12,7 +12,9 @@
  * `EditorState.readOnly` is deliberately NOT set with it. That one refuses
  * changes, and a note being read still has to accept the ones that are not
  * typing: a task ticked off in passing, a merge landing from another device.
- * Deleted is the place that really is read-only, and it sets both.
+ * Deleted is the place that really is read-only, and it sets both — as is a
+ * note whose own properties carry `read-only`, which is the same distinction
+ * drawn by the note rather than by the app (see editor/vars.ts).
  */
 
 import { Compartment } from '@codemirror/state'
@@ -41,6 +43,10 @@ export function beginEditing(
   at?: { x: number; y: number },
   keepCaret = false,
 ): void {
+  // A note locked by its own properties has nothing to begin: the caret would
+  // land in text that refuses every key, which reads as a broken editor rather
+  // than as a locked note.
+  if (view.state.readOnly) return
   const box = view.scrollDOM.getBoundingClientRect()
   const coords = at ?? { x: box.left + 8, y: box.top + 8 }
   /*

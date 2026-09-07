@@ -290,6 +290,10 @@ export const clipboardHandler = EditorView.domEventHandlers({
   },
 
   paste(event, view) {
+    // A note locked by its properties takes nothing from the clipboard. This
+    // handler runs before CodeMirror's own, which is the one that would
+    // otherwise have refused it.
+    if (view.state.readOnly) return false
     /*
      * The table is looked for FIRST, and that ordering is the whole feature.
      *
@@ -324,6 +328,7 @@ export const clipboardHandler = EditorView.domEventHandlers({
   },
 
   drop(event, view) {
+    if (view.state.readOnly) return false
     const dt = event.dataTransfer
     if (!dt?.files?.length) return false
     const files = Array.from(dt.files)

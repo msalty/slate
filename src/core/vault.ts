@@ -32,6 +32,7 @@ import {
   calendarDateFor,
   codeRegions,
   excerptOf,
+  isLocked,
   isTaskLine,
   noteLevelTags,
   parseFrontmatter,
@@ -1376,16 +1377,23 @@ function snippetAt(text: string, at: number, len: number, from = 0): string {
 /* ------------------------------------------------------------------- tasks */
 
 /** Toggle a checkbox in a note's source and save. */
-export async function toggleTask(path: string, line: number): Promise<void> {
+/**
+ * Tick a task from a list. False when the note it lives on will not have it —
+ * a note whose own properties say it is read-only, which the list has no other
+ * way to know.
+ */
+export async function toggleTask(path: string, line: number): Promise<boolean> {
   const f = files.get(path)
-  if (!f?.text) return
+  if (!f?.text) return false
+  if (isLocked(parseFrontmatter(f.text).data)) return false
   const lines = f.text.split('\n')
   const l = lines[line]
-  if (l === undefined) return
+  if (l === undefined) return false
   const m = /^(\s*(?:[-*+]|\d+[.)])\s+\[)([ xX])(\].*)$/.exec(l)
-  if (!m) return
+  if (!m) return false
   lines[line] = `${m[1]}${m[2] === ' ' ? 'x' : ' '}${m[3]}`
   await saveNote(path, lines.join('\n'))
+  return true
 }
 
 /**
@@ -1397,16 +1405,22 @@ export async function toggleTask(path: string, line: number): Promise<void> {
  * picking the date a task already has shouldn't cost a save, a sync and a
  * version-history snapshot.
  */
-export async function setDue(path: string, line: number, date: number | undefined): Promise<void> {
+export async function setDue(
+  path: string,
+  line: number,
+  date: number | undefined,
+): Promise<boolean> {
   const f = files.get(path)
-  if (!f?.text) return
+  if (!f?.text) return false
+  if (isLocked(parseFrontmatter(f.text).data)) return false
   const lines = f.text.split('\n')
   const l = lines[line]
-  if (l === undefined || !isTaskLine(l)) return
+  if (l === undefined || !isTaskLine(l)) return false
   const next = withDue(l, date)
-  if (next === l) return
+  if (next === l) return false
   lines[line] = next
   await saveNote(path, lines.join('\n'))
+  return true
 }
 
 /** Notes whose calendar date is the given local day. */

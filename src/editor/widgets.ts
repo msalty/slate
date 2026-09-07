@@ -12,7 +12,9 @@ import { fencedBody } from './codeblock'
 import { ICONS, withCalloutFold } from './callout'
 import { renderInline } from './inline'
 import { basename, dueLabel, dueTone, formatBytes, mediaClass, startOfDay } from '../core/util'
-import type { FrontmatterValue } from '../core/markdown'
+import { resolveVars, type FrontmatterValue } from '../core/markdown'
+import { frontmatterOf } from './vars'
+import { MD_URL } from './links'
 import { familyIconSvg, fileIconSvg, fileTypeLabel } from '../core/filetypes'
 import { pdfAsset, pdfLibrary } from '../core/pdfjs'
 import { requestDueMenu, requestLightbox } from './context'
@@ -252,8 +254,20 @@ function glyph(cls: string, paths: string): SVGSVGElement {
 export class CopyCodeWidget extends WidgetType {
   private timer: ReturnType<typeof setTimeout> | undefined
 
-  eq() {
-    return true
+  constructor(
+    /**
+     * Rich text: the block goes to the clipboard the way the page shows it,
+     * `$(host)` and all resolved. Which is most of why a property in a fenced
+     * block is worth having — a command you fill in at the top of the note and
+     * copy out of the middle of it.
+     */
+    readonly resolve = false,
+  ) {
+    super()
+  }
+
+  eq(other: CopyCodeWidget) {
+    return other.resolve === this.resolve
   }
 
   toDOM(view: EditorView) {
@@ -280,7 +294,8 @@ export class CopyCodeWidget extends WidgetType {
       const pos = view.posAtDOM(btn)
       const body = fencedBody(view.state.doc.toString().split('\n'), view.state.doc.lineAt(pos).number - 1)
       if (body === undefined) return
-      void copyText(body).then((ok) => {
+      const text = this.resolve ? resolveVars(body, frontmatterOf(view.state)) : body
+      void copyText(text).then((ok) => {
         if (!ok) return
         btn.dataset.copied = '1'
         btn.title = 'Copied'
@@ -337,22 +352,28 @@ async function copyText(text: string): Promise<boolean> {
 /* --------------------------------------------------------------- checkbox */
 
 export class CheckboxWidget extends WidgetType {
-  constructor(readonly checked: boolean) {
+  constructor(
+    readonly checked: boolean,
+    /** A note locked by its own properties: the box shows, and does not tick. */
+    readonly locked = false,
+  ) {
     super()
   }
   eq(other: CheckboxWidget) {
-    return other.checked === this.checked
+    return other.checked === this.checked && other.locked === this.locked
   }
   toDOM(view: EditorView) {
     const box = document.createElement('input')
     box.type = 'checkbox'
     box.className = 'cm-task-checkbox'
     box.checked = this.checked
+    box.disabled = this.locked
     box.setAttribute('aria-label', this.checked ? 'Completed task' : 'Incomplete task')
     box.addEventListener('mousedown', (e) => {
       // Toggle on mousedown so the click never lands as a caret placement.
       e.preventDefault()
       e.stopPropagation()
+      if (view.state.readOnly) return
       const pos = view.posAtDOM(box)
       const line = view.state.doc.lineAt(pos)
       const m = /^(\s*(?:[-*+]|\d+[.)])\s+\[)([ xX])(\])/.exec(line.text)
@@ -408,6 +429,8 @@ export class DueChipWidget extends WidgetType {
     const open = (e: Event) => {
       e.preventDefault()
       e.stopPropagation()
+      // A date is an edit like any other, and a locked note takes none.
+      if (view.state.readOnly) return
       const r = el.getBoundingClientRect()
       requestDueMenu({ x: r.left, y: r.bottom + 4 }, view.posAtDOM(el), this.date)
     }
@@ -1238,7 +1261,8 @@ function applyWidth(view: EditorView, dom: HTMLElement, width: number | undefine
     return
   }
 
-  const md = /!\[([^\]\n]*)\]\(([^)\s]*)\)/g
+  // Balanced parentheses belong to the address — a `$(client)` in one included.
+  const md = new RegExp(String.raw`!\[([^\]\n]*)\]\((${MD_URL})\)`, 'g')
   while ((m = md.exec(text))) {
     if (rel < m.index || rel > m.index + m[0].length) continue
     const url = m[2].replace(/#w=\d+$/, '')

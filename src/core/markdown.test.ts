@@ -3,6 +3,7 @@ import {
   calendarDateFor,
   excerptOf,
   findDue,
+  isLocked,
   isTaskLine,
   parseDue,
   parseFrontmatter,
@@ -121,6 +122,16 @@ describe('$(property) references', () => {
     expect(excerptOf(note, fm.bodyStart)).toBe('Prepared for $(client).')
   })
 
+  it('leaves what is in backticks as it was typed, so the syntax can be written about', () => {
+    const data = { client: 'Acme Corp' }
+    expect(resolveVars('Write `$(client)` and get $(client).', data)).toBe(
+      'Write `$(client)` and get Acme Corp.',
+    )
+    // Three backticks are a fence, not a span: a block is a thing you copy out
+    // with the values in it.
+    expect(resolveVars('```sh\nssh $(client)\n```', data)).toBe('```sh\nssh Acme Corp\n```')
+  })
+
   it('reads a value the way it would be written in a sentence', () => {
     expect(varText('Mike')).toBe('Mike')
     expect(varText(6)).toBe('6')
@@ -133,6 +144,26 @@ describe('$(property) references', () => {
     expect(varText('   ')).toBeUndefined()
     expect(varText([])).toBeUndefined()
     expect(varText(undefined)).toBeUndefined()
+  })
+})
+
+describe('the read-only property', () => {
+  it('is the checkbox the properties form writes, and the words people type', () => {
+    for (const raw of ['true', 'yes', 'on', '1', 'Yes', 'TRUE']) {
+      expect(isLocked({ 'read-only': raw })).toBe(true)
+    }
+    expect(isLocked({ 'read-only': true })).toBe(true)
+    expect(isLocked({ readonly: 'yes' })).toBe(true)
+    expect(isLocked({ read_only: true })).toBe(true)
+  })
+
+  it('locks nothing until it says so', () => {
+    expect(isLocked({})).toBe(false)
+    expect(isLocked({ 'read-only': false })).toBe(false)
+    expect(isLocked({ 'read-only': 'no' })).toBe(false)
+    expect(isLocked({ 'read-only': '' })).toBe(false)
+    // A note that merely mentions it in another property is not locked.
+    expect(isLocked({ note: 'read-only', tags: ['read-only'] })).toBe(false)
   })
 })
 

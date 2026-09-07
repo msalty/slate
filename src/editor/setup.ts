@@ -86,7 +86,7 @@ import {
   tagCompletion,
   wikiCompletion,
 } from './completion'
-import { propertyCompletion, varsOnCopy } from './vars'
+import { propertyCompletion, propertyLock, varsOnCopy } from './vars'
 
 export const previewCompartment = new Compartment()
 export const contextCompartment = new Compartment()
@@ -416,10 +416,17 @@ export function createEditorState(opts: EditorOptions): EditorState {
     }),
   ]
 
-  // `readOnly` stops commands; the editable compartment above stops the
-  // browser's own editing affordances (and the phone keyboard) from appearing
-  // at all, and a deleted note is opened for reading, so it already has it off.
-  if (opts.readOnly) extensions.push(EditorState.readOnly.of(true))
+  /*
+   * `readOnly` stops commands; the editable compartment above stops the
+   * browser's own editing affordances (and the phone keyboard) from appearing
+   * at all, and a deleted note is opened for reading, so it already has it off.
+   *
+   * One value, not two: the facet takes the first it is given, so a note that
+   * is read-only because it was deleted and one that says so in its own
+   * properties have to be answered by the same computation or the later of
+   * them would never be heard. See editor/vars.ts.
+   */
+  extensions.push(propertyLock(!!opts.readOnly))
 
   return EditorState.create({
     doc: opts.doc,

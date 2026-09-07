@@ -115,13 +115,36 @@ export function scanVars(text: string, offset = 0): VarRef[] {
 }
 
 /**
+ * A single-backtick span: the one place a `$(key)` is left as it was typed.
+ *
+ * Which is what makes the syntax writable about — a note explaining
+ * `$(client)` has to be able to say it — and it is single backticks alone, so
+ * that a fenced block, whose fences are three, still fills itself in. A span
+ * cannot cross a line, which is also what keeps a lone backtick in prose from
+ * swallowing the rest of the paragraph.
+ */
+const INLINE_CODE = /(?<!`)`[^`\n]+`(?!`)/g
+
+/**
  * Swap every `$(key)` this data can answer for. Anything else is left alone —
  * a name nobody declared, and a property still waiting to be filled in, both
- * stay as the text they are, because both are still questions.
+ * stay as the text they are, because both are still questions. So is anything
+ * in backticks.
  */
 export function resolveVars(text: string, data: Record<string, FrontmatterValue>): string {
-  VAR.lastIndex = 0
-  return text.replace(VAR, (raw, key: string) => (key in data ? (varText(data[key]) ?? raw) : raw))
+  const swap = (chunk: string) => {
+    VAR.lastIndex = 0
+    return chunk.replace(VAR, (raw, key: string) => (key in data ? (varText(data[key]) ?? raw) : raw))
+  }
+  let out = ''
+  let at = 0
+  INLINE_CODE.lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = INLINE_CODE.exec(text))) {
+    out += swap(text.slice(at, m.index)) + m[0]
+    at = m.index + m[0].length
+  }
+  return out + swap(text.slice(at))
 }
 
 /**
@@ -141,6 +164,32 @@ export function varText(value: FrontmatterValue | undefined): string | undefined
   }
   const s = String(value).trim()
   return s || undefined
+}
+
+/**
+ * The property that makes a note's body read-only.
+ *
+ * A note carrying it is a form: the properties can be filled in, and nothing
+ * else about it can be typed over — no caret, no checkbox to tick, no table
+ * cell to edit. That is the point of pairing it with `$(name)`. A page whose
+ * every changeable part is a labelled field cannot be knocked out of shape by
+ * the person filling it in, and one built to be copied out of stays exactly as
+ * it was written.
+ *
+ * Three spellings, because the hyphen is the one this documents and the other
+ * two are what people type. The value is read the way a person means it rather
+ * than the way YAML would: the properties form writes `true` for its checkbox,
+ * and anyone writing the block by hand writes `yes`.
+ */
+const LOCK_KEYS = ['read-only', 'readonly', 'read_only']
+const LOCK_YES = new Set(['true', 'yes', 'on', '1'])
+
+export function isLocked(data: Record<string, FrontmatterValue>): boolean {
+  return LOCK_KEYS.some((k) => {
+    const v = data[k]
+    if (v === undefined || Array.isArray(v)) return false
+    return LOCK_YES.has(String(v).trim().toLowerCase())
+  })
 }
 
 /* ----------------------------------------------------------------- regions */
