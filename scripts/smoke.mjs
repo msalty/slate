@@ -3249,6 +3249,82 @@ try {
   for (let i = 0; i < 6; i++) await page.keyboard.press('Control+z')
   await page.waitForTimeout(500)
 
+  /*
+   * And the completion list, which is a tooltip rather than a sheet and so
+   * gets its room a different way — CodeMirror fits one into the window, and
+   * the window does not shrink for the keyboard. With the caret near the
+   * bottom of a note, which is where anybody typing has it, the list was drawn
+   * into the keys with most of it unreachable. It also has to be tappable:
+   * Tab is the desktop way to accept one, a thumb is the only way here.
+   */
+  await page.keyboard.press('Control+End')
+  // Push the caret to the bottom of the shortened editor, which is where a
+  // note being typed into actually leaves it — and the only place the list
+  // has nowhere to go but into the keys. Without this the caret sits high
+  // enough that the list fits below it either way and the check proves
+  // nothing; the assertion under it holds the test to that.
+  await page.keyboard.type('\n'.repeat(24))
+  await page.waitForTimeout(300)
+  await page.keyboard.type('[[')
+  await page.waitForTimeout(600)
+  const { caretY, keysAt } = await page.evaluate(() => {
+    const c = document.querySelector('.cm-cursor-primary')?.getBoundingClientRect()
+    return { caretY: c ? Math.round(c.bottom) : null, keysAt: window.innerHeight - 336 }
+  })
+  check(
+    'the caret is down by the keyboard, where this is worth checking',
+    caretY !== null && caretY > keysAt - 140,
+    `caret at ${caretY}, keys at ${keysAt}`,
+  )
+  const list = await page.evaluate(() => {
+    const tip = document.querySelector('.cm-tooltip-autocomplete')
+    if (!tip) return null
+    const line = window.innerHeight - 336
+    const box = tip.getBoundingClientRect()
+    const rows = [...tip.querySelectorAll('li')]
+    return {
+      line,
+      top: Math.round(box.top),
+      bottom: Math.round(box.bottom),
+      rows: rows.length,
+      /*
+       * Rows the list is actually showing that fall past the keyboard line.
+       * A long list scrolls inside its own box, so the rows below that box
+       * are reachable and their geometry says nothing about the keyboard —
+       * only the ones on screen count.
+       */
+      hidden: rows.filter((r) => {
+        const rect = r.getBoundingClientRect()
+        return rect.top < box.bottom && rect.bottom > line
+      }).length,
+      shortest: Math.round(Math.min(...rows.map((r) => r.getBoundingClientRect().height))),
+    }
+  })
+  check('typing `[[` on a phone offers the notes to link to', !!list && list.rows > 0, `${list?.rows ?? 0} suggestions`)
+  check(
+    'the suggestions sit above the keyboard rather than under it',
+    !!list && list.hidden === 0 && list.bottom <= list.line,
+    list ? `list ${list.top}-${list.bottom}, keys at ${list.line}, ${list.hidden} hidden` : 'no list',
+  )
+  check(
+    'and each one is big enough to tap',
+    !!list && list.shortest >= 44,
+    `shortest row ${list?.shortest}px`,
+  )
+
+  // Accepting one with a tap, since there is no Tab key here.
+  const firstRow = await page.locator('.cm-tooltip-autocomplete li').first().boundingBox()
+  await page.touchscreen.tap(firstRow.x + firstRow.width / 2, firstRow.y + firstRow.height / 2)
+  await page.waitForTimeout(500)
+  const linked = await page.evaluate(() => document.querySelector('.cm-content').textContent)
+  check(
+    'a tap accepts a suggestion the way Tab would',
+    /\[\[[^\]]+\]\]/.test(linked) && (await page.locator('.cm-tooltip-autocomplete').count()) === 0,
+    linked.slice(-24),
+  )
+  for (let i = 0; i < 30; i++) await page.keyboard.press('Control+z')
+  await page.waitForTimeout(500)
+
   await page.evaluate(() => document.documentElement.style.removeProperty('--kb-inset'))
 
   /* ---- editing a table from the phone's Format sheet ----------------------

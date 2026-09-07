@@ -1219,7 +1219,7 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 
 ```bash
 npm test                # 566 unit + two-device sync tests
-node scripts/smoke.mjs  # 460 checks in headless Chromium against dist/
+node scripts/smoke.mjs  # 465 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

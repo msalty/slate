@@ -13,6 +13,7 @@ import {
   type Transaction,
 } from '@codemirror/state'
 import {
+  tooltips,
   EditorView,
   ViewPlugin,
   type ViewUpdate,
@@ -334,6 +335,35 @@ export function createEditorState(opts: EditorOptions): EditorState {
       maxRenderedOptions: 60,
       icons: false,
       defaultKeymap: true,
+    }),
+    /*
+     * Keep a completion list out from under the phone's keyboard.
+     *
+     * CodeMirror fits a tooltip into the window, and the window does not
+     * shrink when the keyboard opens — so a list opened with the caret near
+     * the bottom of the note, which is where anybody typing has it, was drawn
+     * straight into the keys: two of three suggestions unreachable. Told the
+     * real space instead, it flips the list above the caret.
+     *
+     * The inset is read from the CSS variable the keyboard watcher publishes
+     * (ui/layout.ts) rather than imported: the editor does not depend on the
+     * shell anywhere else, and a popped-out window has no keyboard to dodge —
+     * its document carries no variable, which reads as 0 and is correct.
+     */
+    tooltips({
+      tooltipSpace: (view) => {
+        const doc = view.dom.ownerDocument
+        const win = doc.defaultView ?? window
+        const raw = getComputedStyle(doc.documentElement).getPropertyValue('--kb-inset')
+        const keyboard = Math.max(0, Number.parseFloat(raw) || 0)
+        const pad = 4
+        return {
+          top: pad,
+          left: pad,
+          right: win.innerWidth - pad,
+          bottom: win.innerHeight - keyboard - pad,
+        }
+      },
     }),
     editorTheme,
     taskHighlightExtension,
