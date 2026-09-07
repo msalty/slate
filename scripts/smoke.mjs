@@ -2410,10 +2410,31 @@ try {
   await pdfChooser.setFiles({ name: 'spec.pdf', mimeType: 'application/pdf', buffer: pdfBytes })
   await page.waitForTimeout(2000)
 
-  const pdfCard = page.locator('.cm-embed-card:has-text("spec.pdf")')
-  check('a PDF is inserted as a card rather than a picture', (await pdfCard.count()) >= 1)
+  /*
+   * A PDF in a note is its own first page, drawn the same way the viewer draws
+   * one — not a grey card with a filename on it, which is what four scanned
+   * invoices in a note used to look like: four identical rectangles.
+   */
+  const pdfEmbed = page.locator('.cm-embed-pdf')
+  await page.waitForSelector('.cm-embed-pdf canvas', { timeout: 20000 }).catch(() => {})
+  check('a PDF is inserted as its own first page', (await pdfEmbed.count()) >= 1)
 
-  await pdfCard.first().click()
+  const inline = await page.evaluate(() => {
+    const c = document.querySelector('.cm-embed-pdf canvas')
+    if (!c?.width) return { width: 0 }
+    const d = c.getContext('2d').getImageData(0, 0, c.width, Math.min(c.height, 400)).data
+    let ink = 0
+    for (let i = 0; i < d.length; i += 4) if (d[i] < 200 || d[i + 1] < 200 || d[i + 2] < 200) ink++
+    return { width: c.width, ink, meta: document.querySelector('.cm-embed-pdf-meta')?.textContent }
+  })
+  check('the page in the note is drawn, not described', inline.width > 0 && inline.ink > 100, JSON.stringify(inline))
+  check('and it says how many more pages there are', /4 pages/.test(inline.meta ?? ''), inline.meta)
+  check(
+    'an embedded PDF can be resized like a picture',
+    (await page.locator('.cm-embed:has(.cm-embed-pdf) .cm-embed-resize').count()) >= 1,
+  )
+
+  await pdfEmbed.first().click()
   await page.waitForSelector('.pdf-page canvas', { timeout: 20000 }).catch(() => {})
   const pdfPages = await page.locator('.pdf-page').count()
   check('every page of a multi-page PDF is laid out', pdfPages === 4, `${pdfPages} pages`)

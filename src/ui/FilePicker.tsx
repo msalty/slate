@@ -15,6 +15,7 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { attachmentUrl, attachments } from '../core/vault'
 import { basename, formatBytes, mediaClass, relativeTime, searchTerms } from '../core/util'
+import { familyName, fileFamily, fileIconSvg } from '../core/filetypes'
 import { Highlight } from './Highlight'
 import { IconClose, IconSearch, IconUpload } from './Icons'
 import { closeFilePicker, filePick, rankFiles } from './pickFile'
@@ -150,14 +151,18 @@ export function FilePicker() {
                   {url ? (
                     <img class="file-pick-thumb" src={url} alt="" loading="lazy" />
                   ) : (
-                    <span class="file-pick-thumb file-pick-kind">{kind.toUpperCase().slice(0, 3)}</span>
+                    <span
+                      class="file-pick-thumb file-pick-kind"
+                      dangerouslySetInnerHTML={{ __html: fileIconSvg(f.path, 20) }}
+                    />
                   )}
                   <span class="file-pick-text">
                     <span class="file-pick-name">
                       <Highlight text={name} terms={terms} />
                     </span>
                     <span class="file-pick-sub">
-                      {kind} · {formatBytes(f.size)} · {relativeTime(f.mtime)} ·{' '}
+                      {familyName(fileFamily(f.path))} · {formatBytes(f.size)} ·{' '}
+                      {relativeTime(f.mtime)} ·{' '}
                       <Highlight text={f.path} terms={terms} />
                     </span>
                   </span>

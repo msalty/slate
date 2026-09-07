@@ -167,7 +167,35 @@ lands in the same place: images are re-encoded on the way in — a 1.4 MB
 screenshot becomes 11 KB of WebP, a 122× reduction, with no visible difference
 at reading size — and every image is resizable by dragging its right edge (the
 width is written back into the markdown as `![[img.png|400]]`) and opens in the
-lightbox on click. PDFs, video, audio and text files can live in the vault too.
+lightbox on click.
+
+**Four kinds of file draw themselves in the note**, and each of the four takes a
+width the same way:
+
+| In the note | Dragging its edge writes |
+| --- | --- |
+| a picture — PNG, JPEG, WebP, AVIF, GIF, SVG, BMP | `![[shot.png\|400]]` |
+| a video with its controls — MP4, WebM, MOV | `![[clip.mp4\|520]]` |
+| a player — MP3, M4A, WAV, OGG, FLAC, AAC | `![[take-1.mp3\|300]]` |
+| a PDF's first page, drawn by pdf.js, with the page count under it | `![[spec.pdf\|360]]` |
+
+Dragging one close to the full width of the pane drops the number again, so the
+common case stays free of a hard-coded size. The same widths are understood in
+plain-markdown form as a URL fragment other renderers ignore —
+`![alt](spec.pdf#w=360)`.
+
+**Everything else gets a card that says what it is**: the file's name, its
+extension and its size, over a mark drawn for its kind — a spreadsheet, a
+document, a presentation, an archive, a font, an ebook, code, plain text. That
+mark is the point of them. A project note pointing at four attachments used to
+be four identical grey rectangles that had to be read one at a time; now the
+zip, the deck, the invoice and the font are told apart at a glance, and the
+same marks name the same files in the Files browser and in the picker. A card
+opens its file in the lightbox, which shows what it can and offers a download
+for what it cannot. A picture in a format this browser has no decoder for — a
+TIFF outside Safari, a HEIC outside Apple's — quietly becomes one of these
+cards rather than a broken image, as does a video in a container it cannot
+play.
 
 In the lightbox a picture is handled rather than operated: pinch to zoom around
 whatever is between your fingers, drag to move around it — it stops with its
@@ -177,11 +205,11 @@ click to zoom) plus the `−` / `1:1` / `+` buttons and the `-`, `0`, `+` keys;
 those buttons are hidden on a phone, where fingers do the job better and the
 space is worth more to the file name.
 
-**PDFs are drawn by the app rather than by the browser**, which is not a
-preference: pointing an `<iframe>` at a PDF — the usual trick, and what this
-used to do — gives you page one as a still picture on iOS, with no scrolling to
-page two and no pinch, and a blank rectangle on Android Chrome, which has no PDF
-plugin for frames at all. So the app draws the pages itself, all of them, in one
+**PDFs are drawn by the app rather than by the browser**, in the note and in
+the viewer alike, which is not a preference: pointing an `<iframe>` at a PDF —
+the usual trick, and what this used to do — gives you page one as a still
+picture on iOS, with no scrolling to page two and no pinch, and a blank
+rectangle on Android Chrome, which has no PDF plugin for frames at all. So the app draws the pages itself, all of them, in one
 column that scrolls. Pinch to zoom and the pages are *redrawn* at the new size
 rather than magnified; on a desktop the `−` / `Fit` / `+` buttons and the `-`,
 `0`, `+` keys do the same, as does ctrl-scroll or a trackpad pinch. The words stay real
@@ -191,6 +219,12 @@ three-hundred-page scan does not cost three hundred pages of memory. And it
 works with the network off like the rest of the app: pdf.js, its worker and its
 image decoders are precached — about two megabytes of a three-and-a-half
 megabyte install, which is the honest price of a PDF that opens on a plane.
+
+The page inside a note is the same machinery kept deliberately small: the first
+page only, at the width the embed is shown at, and only once it has scrolled
+near the screen — so a note listing a dozen invoices costs one document open,
+not a dozen. Clicking it opens the real viewer, where the rest of the pages
+are.
 
 In rich text an image stays an image: putting the caret beside one never swaps
 it back for `![[img.png]]`, and it takes no margin of its own, so a line of
@@ -1148,6 +1182,10 @@ src/
 │  ├─ snippets.ts     `Snippets.md`, parsed into triggers and what they expand to
 │  ├─ devices.ts      per-device write registry, for version attribution
 │  ├─ images.ts       paste- and capture-time re-encoding
+│  ├─ filetypes.ts    what a file is when nothing can show what it holds:
+│  │                  the families, and the mark each one wears
+│  ├─ pdfjs.ts        pdf.js, loaded once for the viewer and for the first
+│  │                  page drawn into a note
 │  └─ settings.ts     device-local vs vault-wide preferences
 ├─ adapters/      webdav.ts · gdrive.ts · memory.ts (tests)
 ├─ editor/        CodeMirror 6: live preview, widgets, completion, paste

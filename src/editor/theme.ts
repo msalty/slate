@@ -537,6 +537,17 @@ export const editorTheme = EditorView.theme({
     cursor: 'zoom-in',
     backgroundColor: 'var(--surface-2)',
   },
+  /*
+   * A player is given a width so it can be dragged to another one. Left to
+   * itself an <audio> element is whatever width that browser's controls happen
+   * to want, which is a different number on each of them and not a number the
+   * resize handle can start from.
+   */
+  '.cm-embed audio': {
+    display: 'block',
+    width: '340px',
+    maxWidth: '100%',
+  },
   '.cm-embed-resize': {
     position: 'absolute',
     right: '-3px',
@@ -573,6 +584,46 @@ export const editorTheme = EditorView.theme({
     fontSize: '0.92em',
   },
   '.cm-embed-card:hover': { borderColor: 'var(--border-strong)' },
+  '.cm-embed-card svg': { flexShrink: '0', color: 'var(--text-muted)' },
+
+  /* --- an embedded PDF: its first page, and what it is ---------------- */
+  '.cm-embed-pdf': {
+    width: '420px',
+    maxWidth: '100%',
+    border: '1px solid var(--border)',
+    borderRadius: '10px',
+    overflow: 'hidden',
+    backgroundColor: 'var(--surface-2)',
+    cursor: 'zoom-in',
+  },
+  '.cm-embed-pdf:hover': { borderColor: 'var(--border-strong)' },
+  '.cm-embed-pdf-page': {
+    display: 'block',
+    width: '100%',
+    height: 'auto',
+    // Paper is white in both themes; a dark card behind a page still loading
+    // would flash to white the moment it draws.
+    backgroundColor: '#fff',
+    // Until the first page has been measured there is nothing to hold the box
+    // open, and a note would reflow around it as each PDF arrives.
+    minHeight: '120px',
+  },
+  '.cm-embed-pdf-foot': {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '7px',
+    padding: '7px 10px',
+    borderTop: '1px solid var(--border)',
+    fontSize: '0.82em',
+    color: 'var(--text-muted)',
+  },
+  '.cm-embed-pdf-name': {
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    color: 'var(--text)',
+  },
+  '.cm-embed-pdf-meta': { marginLeft: 'auto', flexShrink: '0' },
   '.cm-embed-missing': {
     display: 'inline-block',
     padding: '2px 8px',
