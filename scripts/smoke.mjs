@@ -5220,6 +5220,10 @@ try {
       '---\nread-only: true\nhost: fw-edge-01\ncase: 124\n---\n\n# Session\n\n' +
       '- [ ] Not tickable\n\nRun this on $(host):\n\n' +
       '```sh\nssh admin@$(host).example\nshow log | include $(case)\n```\n\n' +
+      // A second block with no language on its fence. It is the one that
+      // catches the size bug: with no mode to tokenise it, the markdown parser
+      // marks the text `monospace` itself, and that tag shrinks what it marks.
+      '```\ndiagnose debug flow filter addr $(host)\n```\n\n' +
       'The syntax itself stays literal: `$(host)`.\n'
     const db = await new Promise((res) => {
       const r = indexedDB.open('slate')
@@ -5248,6 +5252,32 @@ try {
   check(
     'while the syntax in backticks stays the syntax',
     locked.includes('$(host)'),
+  )
+
+  /*
+   * One size for everything in a fenced block.
+   *
+   * A value filled into a block is a widget, and a widget is not source, so
+   * the highlighter never marks it — while the `monospace` tag it marks the
+   * *text* with shrinks that text again, and only when the markdown parser is
+   * the one tokenising it. Three sizes of the same monospace line, and the
+   * odd one out was always the property. Checked as the invariant it is:
+   * nothing inside a code line is a different size from the line.
+   */
+  const codeSizes = await page.evaluate(() =>
+    [...document.querySelectorAll('.cm-line.cm-codeblock')].flatMap((line) => {
+      const size = getComputedStyle(line).fontSize
+      return [...line.querySelectorAll('span')]
+        .filter((el) => el.textContent.trim())
+        .map((el) => ({ cls: el.className || '(none)', size: getComputedStyle(el).fontSize, line: size }))
+    }),
+  )
+  const odd = codeSizes.filter((s) => s.size !== s.line)
+  check(
+    'a value filled into a code block is the size of the code around it',
+    codeSizes.some((s) => s.cls.includes('cm-var')) && odd.length === 0,
+    odd.map((s) => `${s.cls} ${s.size} ≠ ${s.line}`).join(', ') ||
+      `${codeSizes.length} spans, all ${codeSizes[0]?.line}`,
   )
 
   await page.locator('.cm-line').filter({ hasText: 'Run this on' }).first().click()

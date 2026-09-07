@@ -236,6 +236,19 @@ export const editorTheme = EditorView.theme({
     // Keeps the tinted background off the transparent border below.
     backgroundClip: 'padding-box',
   },
+  /*
+   * One size for everything in a fenced block, whatever drew it.
+   *
+   * The line above sets the size code is read at. What sat inside it did not
+   * agree: the `monospace` tag in the highlight style below shrinks again by
+   * 0.9 — right for inline code in a 15px paragraph, a second helping here —
+   * and it reaches a block's text only when the markdown parser is the one
+   * tokenising it. So a block whose language is loaded came out a step larger
+   * than one whose language is not, and a `$(property)` filled into either
+   * came out larger still, since a widget is not source and the highlighter
+   * never marks it. Three sizes of the same monospace line.
+   */
+  '.cm-line.cm-codeblock span': { fontSize: 'inherit' },
   '.cm-line.cm-codeblock-first': {
     borderRadius: '8px 8px 0 0',
     paddingTop: '8px',

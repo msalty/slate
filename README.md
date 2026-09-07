@@ -150,7 +150,7 @@ Where it resolves, and where it deliberately does not:
 | Written in | What happens |
 | --- | --- |
 | a sentence, a heading, a list, a table cell | the value, styled as the text around it |
-| a fenced code block | the value — a block is a thing you copy out and run |
+| a fenced code block | the value — a block is a thing you copy out and run. It takes the size of the code around it, and not its syntax colour, so a filled-in value is visible as one |
 | a link or embed address | the value, wherever it is followed — reading included |
 | `` `$(client)` `` in backticks | left as typed: this is how the syntax is written *about* |
 | the `---` block itself | left as typed; a property quoting another is a knot |
