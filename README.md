@@ -417,6 +417,16 @@ and `due:overdue`, `due:today`, `due:soon`, `due:none`, `due:any`. So
 #home AND NOT #urgent      everything at home that can wait
 ```
 
+**A checkbox with nothing after it is not a task**, anywhere a task list is
+drawn — Tasks, Due, the calendar, a Tag Folder over tasks, and the counts on
+all of them. The daily note opens with `- [ ] ` under Today and keeps two more
+under Habits and Tomorrow, which is the point of it: a blank to type into, one
+keystroke to delete. What it is not is work anybody owes, and a week of daily
+notes was otherwise seven "Untitled task" rows in every filtered list. A note
+holding nothing but blank checkboxes does not answer to `has:tasks` either. The
+note itself is untouched: the checkbox is drawn where it was written, ticks
+when clicked, and becomes a task the moment it is given something to say.
+
 **Finished tasks are out of the list by default**, with *Show completed* in the
 same ⋮ menu to bring them back. A list whose top is what you owe and whose
 bottom is a growing archive of what you don't is a list people stop reading —

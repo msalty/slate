@@ -97,6 +97,30 @@ describe('tasks', () => {
     expect(tasks[3].text).toBe('Numbered item')
   })
 
+  it('leaves an empty checkbox out, wherever the blank came from', () => {
+    /*
+     * The daily note's template opens with `- [ ] ` and keeps two more of them
+     * under Habits and Tomorrow. They are blanks to type into; until somebody
+     * does, they are nobody's work.
+     */
+    const doc = [
+      '## Today',
+      '',
+      '- [ ] ',
+      '- [ ]',
+      '- [x]   ',
+      '  - [ ]\t',
+      '- [ ] Actually do something',
+      '- [ ] 📅 2026-09-04',
+    ].join('\n')
+    const tasks = scanTasks(doc)
+    expect(tasks.map((t) => t.text)).toEqual(['Actually do something', '📅 2026-09-04'])
+    // The blanks are skipped, not removed: what is left still points at the
+    // line it lives on, which is what toggling and navigation work from.
+    expect(tasks[0].line).toBe(6)
+    expect(tasks[1].line).toBe(7)
+  })
+
   it('parses every supported due-date syntax', () => {
     expect(parseDue('do it 📅 2026-01-05')).toBeDefined()
     expect(parseDue('do it @due(2026-01-05)')).toBeDefined()

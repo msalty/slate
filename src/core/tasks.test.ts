@@ -24,6 +24,26 @@ async function fresh(): Promise<Vault> {
 
 const sep4 = startOfDay(new Date(2026, 8, 4))
 
+describe('a note of blank checkboxes', () => {
+  const DAILY = '# Monday\n\n## Today\n\n- [ ] \n\n## Habits\n\n- [ ] Move\n- [ ] \n'
+
+  it('contributes only the checkboxes somebody wrote something on', async () => {
+    const v = await fresh()
+    const p = await v.createNote('', 'Daily', DAILY)
+    const mine = v.tasks.value.filter((t) => t.path === p)
+    expect(mine.map((t) => t.text)).toEqual(['Move'])
+    // Line 8 of the note, so ticking it in a list still ticks the right line.
+    expect(mine[0].line).toBe(8)
+  })
+
+  it('does not count as a note with tasks when every one of them is blank', async () => {
+    const v = await fresh()
+    const p = await v.createNote('', 'Fresh daily', '# Tuesday\n\n## Today\n\n- [ ] \n- [ ] \n')
+    expect(v.notes.value.find((n) => n.path === p)?.hasTasks).toBe(false)
+    expect(v.tasks.value.some((t) => t.path === p)).toBe(false)
+  })
+})
+
 describe('setDue', () => {
   it('adds a date to the task on the given line and nothing else', async () => {
     const v = await fresh()

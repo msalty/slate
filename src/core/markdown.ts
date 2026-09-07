@@ -226,6 +226,21 @@ export function isTaskLine(line: string): boolean {
   return TASK.test(line)
 }
 
+/**
+ * Every task in a note — which does not include an empty checkbox.
+ *
+ * `- [ ]` with nothing after it is a line waiting to be typed into, not a job
+ * anybody has to do. The daily note's template opens with a few of them on
+ * purpose, and a template's blank lines have no business turning up in the
+ * Tasks view, in a Tag Folder, or in tomorrow's count of what is due. So they
+ * are not indexed, by any of the lists that ask this function what a note
+ * holds — `hasTasks` included, so a note holding nothing but blank checkboxes
+ * does not answer to a `has:tasks` rule either.
+ *
+ * The editor draws its checkbox from `isTaskLine`, not from here, so an empty
+ * one is still a checkbox in the note: tickable, and a task the moment it is
+ * given something to say.
+ */
 export function scanTasks(text: string): RawTask[] {
   const out: RawTask[] = []
   const regions = codeRegions(text)
@@ -234,13 +249,14 @@ export function scanTasks(text: string): RawTask[] {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
     const m = TASK.exec(line)
-    if (m && !inRegions(regions, offset)) {
+    const body = m ? m[3].trim() : ''
+    if (m && body && !inRegions(regions, offset)) {
       const markerAt = offset + line.indexOf('[', m[1].length)
       out.push({
         line: i,
         markerAt,
         done: m[2].toLowerCase() === 'x',
-        text: m[3].trim(),
+        text: body,
         due: parseDue(m[3]),
         tags: scanTags(m[3]),
       })
