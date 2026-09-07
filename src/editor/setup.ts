@@ -86,7 +86,7 @@ import {
   tagCompletion,
   wikiCompletion,
 } from './completion'
-import { propertyCompletion } from './vars'
+import { propertyCompletion, varsOnCopy } from './vars'
 
 export const previewCompartment = new Compartment()
 export const contextCompartment = new Compartment()
@@ -293,6 +293,12 @@ export function previewExtensions(mode: EditorMode): Extension {
          * properties panel the note's date opens. See ui/Properties.tsx.
          */
         frontmatterField,
+        /*
+         * What is copied out of rich text is what rich text shows: a
+         * `$(property)` in the selection lands on the clipboard as its value.
+         * See editor/vars.ts.
+         */
+        varsOnCopy,
         typeIntoText,
         formatWatcher,
         cellTargetWatcher,

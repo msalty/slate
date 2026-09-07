@@ -12,6 +12,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { EditorView } from '@codemirror/view'
 import { createEditorState, type EditorMode } from './setup'
+import type { EditorState } from '@codemirror/state'
 
 const FM = ['---', 'first_name: Mike', 'client:', 'tags: [travel, lisbon]', 'nights: 6', '---', ''].join('\n')
 
@@ -130,5 +131,65 @@ describe('editing one', () => {
       expect(vars(view)).toEqual([])
       view.destroy()
     }
+  })
+})
+
+/** What the clipboard would end up with for a copy of `text`. */
+function copied(view: EditorView, text: string): string {
+  const filters = view.state.facet(EditorView.clipboardOutputFilter)
+  return filters.reduce((s: string, f: (t: string, st: EditorState) => string) => f(s, view.state), text)
+}
+
+describe('copying out of rich text', () => {
+  it('puts the values on the clipboard, not the tokens', async () => {
+    const view = await editor('Hello $(first_name), all $(nights) nights.\n')
+    expect(copied(view, 'Hello $(first_name), all $(nights) nights.')).toBe(
+      'Hello Mike, all 6 nights.',
+    )
+    view.destroy()
+  })
+
+  it('carries a blank as its token, which is easier to notice than nothing', async () => {
+    const view = await editor('Rate: $(client).\n')
+    expect(copied(view, 'Rate: $(client).')).toBe('Rate: $(client).')
+    view.destroy()
+  })
+
+  it('leaves a name this note never declared alone', async () => {
+    const view = await editor('Run $(pwd).\n')
+    expect(copied(view, 'Run $(pwd).')).toBe('Run $(pwd).')
+    view.destroy()
+  })
+
+  it('does not touch live preview or source, which are modes for the file', async () => {
+    for (const mode of ['live', 'source'] as EditorMode[]) {
+      const view = await editor('Hello $(first_name).\n', mode)
+      expect(copied(view, 'Hello $(first_name).')).toBe('Hello $(first_name).')
+      view.destroy()
+    }
+  })
+
+  it('hands a cut the token, because a cut is nearly always a move', async () => {
+    const view = await editor('Hello $(first_name).\n')
+    // A real cut, so the editor does what a cut does: a range of the body, and
+    // one that holds no token of its own, so the note it leaves behind is
+    // still the note the assertions below are about.
+    const at = view.state.doc.toString().indexOf('Hello')
+    view.dispatch({ selection: { anchor: at, head: at + 5 }, userEvent: 'select.pointer' })
+    view.contentDOM.dispatchEvent(new Event('cut', { bubbles: true }))
+    expect(copied(view, 'Hello $(first_name).')).toBe('Hello $(first_name).')
+    // Only for that event: the next copy is a copy again.
+    await new Promise((r) => queueMicrotask(() => r(undefined)))
+    expect(copied(view, 'Hello $(first_name).')).toBe('Hello Mike.')
+    view.destroy()
+  })
+
+  it('hands a drag the token, so dropping one back in the note cannot rewrite it', async () => {
+    const view = await editor('Hello $(first_name).\n')
+    view.contentDOM.dispatchEvent(new Event('dragstart', { bubbles: true }))
+    expect(copied(view, 'Hello $(first_name).')).toBe('Hello $(first_name).')
+    view.contentDOM.dispatchEvent(new Event('dragend', { bubbles: true }))
+    expect(copied(view, 'Hello $(first_name).')).toBe('Hello Mike.')
+    view.destroy()
   })
 })

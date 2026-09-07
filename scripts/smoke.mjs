@@ -5052,6 +5052,35 @@ try {
   )
   check('and the blank is gone', (await page.locator('.cm-var-blank').count()) === 0)
 
+  /*
+   * Copying out of rich text takes what rich text shows.
+   *
+   * A paragraph pasted into an email has to read the way the page reads, or
+   * the values are only half a feature. The file keeps the tokens either way,
+   * which is checked above and again after the copy.
+   */
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+  await page.locator('.cm-content').click()
+  await page.keyboard.press('Control+a')
+  await page.keyboard.press('Control+c')
+  await page.waitForTimeout(400)
+  const clip = await page.evaluate(() => navigator.clipboard.readText())
+  check(
+    'copying takes the values, not the tokens',
+    clip.includes('Prepared for Acme Corp, filed under work, active.') &&
+      clip.includes('The rate is 450 a day.') &&
+      !clip.includes('$(client)'),
+    clip.split('\n').find((l) => l.startsWith('Prepared')),
+  )
+  check(
+    'and still leaves a name the note never declared alone',
+    clip.includes('Run $(pwd) to see where you are.'),
+  )
+  check(
+    'the note itself is untouched by the copy',
+    (await noteContaining('Prepared for')).includes('Prepared for $(client)'),
+  )
+
   /* ---- persistence across a reload ------------------------------------ */
   const beforeCount = await page.evaluate(
     () => document.querySelectorAll('.note-row').length,

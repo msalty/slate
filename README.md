@@ -146,6 +146,17 @@ reveals the token wherever it lands in one, so a name can be corrected without
 deleting anything. Clicking a value opens the properties form at the note it
 came from, which is usually why you were looking at it.
 
+**Copying out of rich text takes the values.** Select a paragraph there and what
+lands on the clipboard is what the page says — *Prepared for Acme Corp* — so a
+note can be pasted into an email without the reader seeing the wiring. Live
+preview and source copy the file, as they show it. Cut and drag deliberately
+still carry the tokens: both are usually a move from here to there in the same
+note, and a move that pasted values back in would flatten its properties into
+fixed text without changing a word on screen — damage nobody would notice until
+the day they changed a property and half the note failed to follow. A property
+still waiting to be filled in copies as its token too, which is easier to spot
+in an email than a hole.
+
 **A note opens as a page to read.** No caret anywhere in it, which on a phone is
 the difference between opening a note and opening a note with a keyboard across
 the bottom half of it before you have read a word. Tap the text and that is

@@ -23,9 +23,9 @@
  */
 
 import type { Completion, CompletionContext, CompletionResult } from '@codemirror/autocomplete'
-import type { EditorState } from '@codemirror/state'
-import type { EditorView } from '@codemirror/view'
-import { parseFrontmatter, varText, type FrontmatterValue } from '../core/markdown'
+import type { EditorState, Extension } from '@codemirror/state'
+import { EditorView } from '@codemirror/view'
+import { parseFrontmatter, resolveVars, varText, type FrontmatterValue } from '../core/markdown'
 
 /**
  * Line numbers of a leading `---` block, fences included.
@@ -115,3 +115,69 @@ function applyKey(key: string) {
     })
   }
 }
+
+/* ----------------------------------------------------------- the clipboard */
+
+/**
+ * The two ways of taking text out of a note that are not copying it.
+ *
+ * A **drag** is a move: CodeMirror runs the same filter over dragged text, and
+ * a drop back into the note replaces what was dragged with whatever the filter
+ * returned — which would quietly turn `$(client)` into "Acme Corp" in the
+ * file, the one thing this whole feature promises never to do.
+ *
+ * A **cut** is a move nine times out of ten as well: taking a paragraph from
+ * here and putting it there. Cutting values and pasting them back would flatten
+ * every property in that paragraph into fixed text, and the paragraph would
+ * read exactly the same afterwards — damage nobody would notice until the day
+ * they changed a property and half the note failed to follow. Somebody cutting
+ * a paragraph into an email gets the tokens instead, which is at least visible,
+ * and copy is right there.
+ *
+ * Observers rather than handlers: observers run before CodeMirror's own
+ * handlers for the same event and, unlike handlers, cannot preempt them. Both
+ * flags are module-level because there is one pointer doing one thing at a
+ * time. The cut flag is cleared on a microtask — CodeMirror's own cut handler
+ * runs synchronously inside the event, well before that. If a `dragend` were
+ * ever missed the worst case is a copy that carries the token, which is what
+ * copying did before any of this.
+ */
+let dragging = false
+let cutting = false
+
+/**
+ * Copying out of rich text takes what rich text shows.
+ *
+ * Rich text is the word-processor mode: what is on the page is what a note is,
+ * so a paragraph pasted into an email should read the way it reads here —
+ * "Prepared for Acme Corp", not "Prepared for $(client)".
+ *
+ * Live preview and source are left alone deliberately. Both are modes for
+ * working on the file, where the source of a construct is the thing you are
+ * handling and copying it is the point.
+ *
+ * A property named but not yet filled in copies as its token, since a blank
+ * pasted into an email is better noticed than silently dropped.
+ */
+export const varsOnCopy: Extension = [
+  EditorView.clipboardOutputFilter.of((text, state) =>
+    dragging || cutting ? text : resolveVars(text, frontmatterOf(state)),
+  ),
+  EditorView.domEventObservers({
+    cut() {
+      cutting = true
+      queueMicrotask(() => {
+        cutting = false
+      })
+    },
+    dragstart() {
+      dragging = true
+    },
+    dragend() {
+      dragging = false
+    },
+    drop() {
+      dragging = false
+    },
+  }),
+]
