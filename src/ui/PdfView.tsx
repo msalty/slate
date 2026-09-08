@@ -31,6 +31,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks'
 import type { PDFDocumentLoadingTask, PDFPageProxy } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import { pdfAsset as asset, pdfLibrary as library, type Pdfjs } from '../core/pdfjs'
 import {
   clampZoom,
   fitColumn,
@@ -43,41 +44,7 @@ import {
   type Point,
 } from './pdfLayout'
 
-type Pdfjs = typeof import('pdfjs-dist/legacy/build/pdf.mjs')
 type TextLayer = InstanceType<Pdfjs['TextLayer']>
-
-/**
- * pdf.js, fetched the first time a PDF is opened and never again.
- *
- * A dynamic import is what keeps it out of the bundle everybody downloads to
- * write a note. The worker and the decoders it needs alongside it are emitted
- * by the build under a fixed path of their own (see vite.config.ts), because
- * pdf.js asks for those by name rather than importing them.
- *
- * The `legacy` build, not the default one, and the difference is not cosmetic:
- * the default build is compiled for whatever the newest browser can do this
- * month — it calls `Map.prototype.getOrInsertComputed`, which is a 2025
- * proposal — and on a phone a year old every page fails to draw with a
- * `not a function` in the console. `legacy` is the same library carrying the
- * polyfills for that, about 60KB more, and it is the one that works on the
- * devices this had to be fixed for in the first place.
- */
-let loading: Promise<Pdfjs> | undefined
-function library(): Promise<Pdfjs> {
-  return (loading ??= import('pdfjs-dist/legacy/build/pdf.mjs').then((lib) => {
-    lib.GlobalWorkerOptions.workerSrc = asset('pdf.worker.js')
-    return lib
-  }))
-}
-
-/**
- * Where the worker and the decoders live.
- *
- * Resolved against `document.baseURI` rather than written absolute, because the
- * whole app is built to run from whatever subdirectory it is dropped into — the
- * domain root, `~/Sites/slate/`, a Pages subpath — with no rebuild.
- */
-const asset = (name = '') => new URL(`pdfjs/${name}`, document.baseURI).href
 
 /** The gap between pages, and the room left above and below the document. */
 const GAP = 10

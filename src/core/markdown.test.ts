@@ -3,15 +3,19 @@ import {
   calendarDateFor,
   excerptOf,
   findDue,
+  isLocked,
   isTaskLine,
   parseDue,
   parseFrontmatter,
   scanTags,
+  resolveVars,
   scanTasks,
+  scanVars,
   scanWikiLinks,
   setFrontmatterKey,
   splitSizeFragment,
   stripInline,
+  varText,
   withDue,
 } from './markdown'
 import { safeSegment, startOfDay } from './util'
@@ -79,6 +83,90 @@ describe('tags', () => {
   })
 })
 
+describe('$(property) references', () => {
+  it('finds them with the positions the editor swaps', () => {
+    const line = 'Dear $(first_name), about $(project.name):'
+    expect(scanVars(line)).toEqual([
+      { from: 5, to: 18, key: 'first_name' },
+      { from: 26, to: 41, key: 'project.name' },
+    ])
+    expect(line.slice(5, 18)).toBe('$(first_name)')
+    expect(line.slice(26, 41)).toBe('$(project.name)')
+  })
+
+  it('offsets into the document, so a line is scanned where it sits', () => {
+    expect(scanVars('a $(x) b', 100)[0]).toEqual({ from: 102, to: 106, key: 'x' })
+  })
+
+  it('is not fooled by things that merely look like one', () => {
+    // An unclosed token, a name with no characters a property could have, and
+    // the money that shares its first character.
+    expect(scanVars('$(unclosed and $() and $(a b) and costs $(5) or $5.00')).toEqual([
+      { from: 40, to: 44, key: '5' },
+    ])
+  })
+
+  it('fills a line in for the note list, leaving the unanswerable alone', () => {
+    const data = { client: 'Acme Corp', rate: '' }
+    expect(resolveVars('Prepared for $(client), at $(rate) — run $(pwd).', data)).toBe(
+      'Prepared for Acme Corp, at $(rate) — run $(pwd).',
+    )
+  })
+
+  it('is what the note list shows, so a row reads like the page it stands for', () => {
+    const note = ['---', 'client: Acme Corp', '---', '', '# Job', '', 'Prepared for $(client).'].join('\n')
+    const fm = parseFrontmatter(note)
+    expect(excerptOf(note, fm.bodyStart, fm.data)).toBe('Prepared for Acme Corp.')
+    // Without the properties there is nothing to resolve against, and the
+    // line is left as written rather than guessed at.
+    expect(excerptOf(note, fm.bodyStart)).toBe('Prepared for $(client).')
+  })
+
+  it('leaves what is in backticks as it was typed, so the syntax can be written about', () => {
+    const data = { client: 'Acme Corp' }
+    expect(resolveVars('Write `$(client)` and get $(client).', data)).toBe(
+      'Write `$(client)` and get Acme Corp.',
+    )
+    // Three backticks are a fence, not a span: a block is a thing you copy out
+    // with the values in it.
+    expect(resolveVars('```sh\nssh $(client)\n```', data)).toBe('```sh\nssh Acme Corp\n```')
+  })
+
+  it('reads a value the way it would be written in a sentence', () => {
+    expect(varText('Mike')).toBe('Mike')
+    expect(varText(6)).toBe('6')
+    expect(varText(false)).toBe('false')
+    expect(varText(['travel', 'lisbon'])).toBe('travel, lisbon')
+  })
+
+  it('has nothing to show for a property nobody has filled in', () => {
+    expect(varText('')).toBeUndefined()
+    expect(varText('   ')).toBeUndefined()
+    expect(varText([])).toBeUndefined()
+    expect(varText(undefined)).toBeUndefined()
+  })
+})
+
+describe('the read-only property', () => {
+  it('is the checkbox the properties form writes, and the words people type', () => {
+    for (const raw of ['true', 'yes', 'on', '1', 'Yes', 'TRUE']) {
+      expect(isLocked({ 'read-only': raw })).toBe(true)
+    }
+    expect(isLocked({ 'read-only': true })).toBe(true)
+    expect(isLocked({ readonly: 'yes' })).toBe(true)
+    expect(isLocked({ read_only: true })).toBe(true)
+  })
+
+  it('locks nothing until it says so', () => {
+    expect(isLocked({})).toBe(false)
+    expect(isLocked({ 'read-only': false })).toBe(false)
+    expect(isLocked({ 'read-only': 'no' })).toBe(false)
+    expect(isLocked({ 'read-only': '' })).toBe(false)
+    // A note that merely mentions it in another property is not locked.
+    expect(isLocked({ note: 'read-only', tags: ['read-only'] })).toBe(false)
+  })
+})
+
 describe('tasks', () => {
   it('finds checked and unchecked items with due dates', () => {
     const doc = [
@@ -95,6 +183,30 @@ describe('tasks', () => {
     expect(tasks[1].done).toBe(true)
     expect(tasks[2].due).toBe(startOfDay(new Date(2026, 9, 1)))
     expect(tasks[3].text).toBe('Numbered item')
+  })
+
+  it('leaves an empty checkbox out, wherever the blank came from', () => {
+    /*
+     * The daily note's template opens with `- [ ] ` and keeps two more of them
+     * under Habits and Tomorrow. They are blanks to type into; until somebody
+     * does, they are nobody's work.
+     */
+    const doc = [
+      '## Today',
+      '',
+      '- [ ] ',
+      '- [ ]',
+      '- [x]   ',
+      '  - [ ]\t',
+      '- [ ] Actually do something',
+      '- [ ] 📅 2026-09-04',
+    ].join('\n')
+    const tasks = scanTasks(doc)
+    expect(tasks.map((t) => t.text)).toEqual(['Actually do something', '📅 2026-09-04'])
+    // The blanks are skipped, not removed: what is left still points at the
+    // line it lives on, which is what toggling and navigation work from.
+    expect(tasks[0].line).toBe(6)
+    expect(tasks[1].line).toBe(7)
   })
 
   it('parses every supported due-date syntax', () => {

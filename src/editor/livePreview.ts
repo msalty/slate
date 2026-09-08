@@ -47,10 +47,12 @@ import {
   EmbedWidget,
   HrWidget,
   TableWidget,
+  VarWidget,
   isDelimiterRow,
 } from './widgets'
 import { parseCallout } from './callout'
-import { findDue, isTaskLine } from '../core/markdown'
+import { findDue, isTaskLine, resolveVars, scanVars, varText } from '../core/markdown'
+import { frontmatterEnd, frontmatterLines, frontmatterOf } from './vars'
 import { noteContext } from './context'
 import { normalizeUri, scanUris } from './links'
 import { resolveEmbed, resolveLink } from '../core/vault'
@@ -205,6 +207,21 @@ function composingEmbed(state: EditorState, from: number, to: number): boolean {
   return touched(state, from, to)
 }
 
+/**
+ * True when a caret — an empty selection, not a range — sits in [from, to].
+ *
+ * The difference matters for anything rich text renders as a value rather than
+ * as syntax. A caret in a `$(client)` is somebody editing the name and needs
+ * the source; a selection merely *covering* it is somebody selecting a
+ * paragraph, and revealing every token it crosses would mean the words you see
+ * highlighted are not the words you are about to copy.
+ */
+function caretIn(state: EditorState, from: number, to: number): boolean {
+  if (!state.field(focusedField, false)) return false
+  if (!state.field(interactedField, false)) return false
+  return state.selection.ranges.some((r) => r.empty && r.from >= from && r.to <= to)
+}
+
 /** True when a selection range is on any line the node spans. */
 function lineTouched(
   state: EditorState,
@@ -224,19 +241,6 @@ const INLINE_EXTRAS: Array<[RegExp, Decoration]> = [
   [/<u>(.+?)<\/u>/g, underlined],
   [/==(?!\s)(.+?)(?<!\s)==/g, highlighted],
 ]
-
-/** Line numbers of a leading `---` frontmatter block, fences included. */
-function frontmatterLines(state: EditorState): number[] {
-  if (state.doc.lines < 2) return []
-  if (state.doc.line(1).text.trim() !== '---') return []
-  const limit = Math.min(state.doc.lines, 200)
-  for (let n = 2; n <= limit; n++) {
-    if (state.doc.line(n).text.trim() === '---') {
-      return Array.from({ length: n }, (_, i) => i + 1)
-    }
-  }
-  return []
-}
 
 function buildDecorations(view: EditorView): DecorationSet {
   const { state } = view
@@ -267,6 +271,20 @@ function buildDecorations(view: EditorView): DecorationSet {
    * still fully editable.
    */
   const fmLines = frontmatterLines(state)
+  const fmEnd = frontmatterEnd(state, fmLines)
+  /*
+   * Parsed at most once per build, and only if a `$(...)` is actually found in
+   * what is on screen — which in most notes is never.
+   */
+  let parsed: ReturnType<typeof frontmatterOf> | undefined
+  const properties = () => (parsed ??= frontmatterOf(state, fmLines))
+  /*
+   * An address with `$(case)` in it is the same idea as one in a sentence, and
+   * the one place it has to work even while the note is only being read: a
+   * link is followed, not copied, so a token left in it goes nowhere.
+   */
+  const withProperties = (url: string) =>
+    fmLines.length && url.includes('$(') ? resolveVars(url, properties()) : url
   for (const n of fmLines) {
     const line = state.doc.line(n)
     seenLines.add(line.from)
@@ -284,11 +302,11 @@ function buildDecorations(view: EditorView): DecorationSet {
    * Claiming them here keeps the tree walk from also styling them, and
    * monospaces the pipes while the caret is inside so columns line up.
    */
-  const richTables = state.facet(previewMode) === 'rich'
+  const rich = state.facet(previewMode) === 'rich'
   for (const t of findTables(state)) {
     const first = state.doc.line(t.fromLine)
     const last = state.doc.line(t.toLine)
-    const editing = !richTables && touched(state, first.from, last.to)
+    const editing = !rich && touched(state, first.from, last.to)
     for (let n = t.fromLine; n <= t.toLine; n++) {
       const line = state.doc.line(n)
       seenLines.add(line.from)
@@ -415,7 +433,7 @@ function buildDecorations(view: EditorView): DecorationSet {
            */
           if (styledFirst && name === 'FencedCode' && lastLine > firstLine) {
             out.push(
-              Decoration.widget({ widget: new CopyCodeWidget(), side: 1 }).range(
+              Decoration.widget({ widget: new CopyCodeWidget(rich), side: 1 }).range(
                 state.doc.line(firstLine).to,
               ),
             )
@@ -456,7 +474,10 @@ function buildDecorations(view: EditorView): DecorationSet {
           const checked = /x/i.test(raw)
           if (!touched(state, node.from - 1, node.to + 1, 'format')) {
             out.push(
-              Decoration.replace({ widget: new CheckboxWidget(checked) }).range(node.from, node.to),
+              Decoration.replace({ widget: new CheckboxWidget(checked, state.readOnly) }).range(
+                node.from,
+                node.to,
+              ),
             )
           }
           if (checked) {
@@ -519,7 +540,9 @@ function buildDecorations(view: EditorView): DecorationSet {
           out.push(
             Decoration.replace({
               widget: new EmbedWidget({
-                path: resolveEmbed(target, ctx.path),
+                // An embed names a file the same way a link names an address,
+                // so a property is as welcome in one as in the other.
+                path: resolveEmbed(withProperties(target), ctx.path),
                 label: target,
                 width,
                 alt: sizePart && !width ? sizePart : '',
@@ -538,11 +561,19 @@ function buildDecorations(view: EditorView): DecorationSet {
           // so the same rule as a wikilink embed's target applies to it.
           const urlAt = raw.indexOf('](')
           if (urlAt >= 0 && composingEmbed(state, node.from + urlAt + 2, node.to - 1)) return
-          const m = /^!\[([^\]]*)\]\(\s*(<[^>]*>|[^)\s]*)/.exec(raw)
+          const m = /^!\[([^\]]*)\]/.exec(raw)
           if (!m) return
-          let url = m[2]
+          // From the parser, for the reason the link above takes it from there:
+          // a `)` inside the address is the address's, not the end of it.
+          const urlNode = node.node.getChild('URL')
+          // No address yet — an embed still being typed out, `![[IMG` on its
+          // way to being a picture. Nothing to draw, and drawing it would take
+          // the half-written target out from under the autocomplete.
+          if (!urlNode) return
+          let url = state.doc.sliceString(urlNode.from, urlNode.to)
           if (url.startsWith('<') && url.endsWith('>')) url = url.slice(1, -1)
-          const [clean, width] = splitWidth(url)
+          const [rawClean, width] = splitWidth(url)
+          const clean = withProperties(rawClean)
           const external = /^(https?|data):/i.test(clean)
           out.push(
             Decoration.replace({
@@ -562,11 +593,23 @@ function buildDecorations(view: EditorView): DecorationSet {
         /* ---- markdown links: the label becomes the clickable thing ---- */
         if (name === 'Link') {
           const raw = state.doc.sliceString(node.from, node.to)
-          const m = /^\[([^\]\n]*)\]\(\s*(<[^>\n]*>|[^)\s]*)/.exec(raw)
+          const m = /^\[([^\]\n]*)\]/.exec(raw)
           if (!m) return
-          let url = m[2]
+          /*
+           * The address comes from the parser, not from a second regex over
+           * the same text.
+           *
+           * The regex this replaced ended the URL at the first `)`, which is
+           * wrong for every address holding balanced parentheses — a
+           * `(disambiguation)` on Wikipedia, and `?TID=$(case)` here. It sent
+           * clicks to a URL a character short of the truth while the note went
+           * on showing the whole thing. CommonMark allows those parens and the
+           * parser already gets them right.
+           */
+          const urlNode = node.node.getChild('URL')
+          let url = urlNode ? state.doc.sliceString(urlNode.from, urlNode.to) : ''
           if (url.startsWith('<') && url.endsWith('>')) url = url.slice(1, -1)
-          const href = normalizeUri(url)
+          const href = normalizeUri(withProperties(url))
           if (!href) return
           const from = node.from + 1
           const to = from + m[1].length
@@ -574,7 +617,7 @@ function buildDecorations(view: EditorView): DecorationSet {
             out.push(
               Decoration.mark({
                 class: 'cm-uri',
-                attributes: { 'data-href': href, title: url },
+                attributes: { 'data-href': href, title: href },
               }).range(from, to),
             )
           }
@@ -592,7 +635,7 @@ function buildDecorations(view: EditorView): DecorationSet {
           // the textual scan below deliberately skips — that scan avoids
           // anything the parser has already claimed — so it gets its mark here.
           if (name === 'URL') {
-            const href = normalizeUri(state.doc.sliceString(node.from, node.to))
+            const href = normalizeUri(withProperties(state.doc.sliceString(node.from, node.to)))
             if (href) {
               out.push(
                 Decoration.mark({
@@ -686,7 +729,7 @@ function buildDecorations(view: EditorView): DecorationSet {
       for (const u of scanUris(line.text, line.from)) {
         const node = tree.resolveInner(u.from + 1, 1)
         if (isInsideCodeOrLink(node)) continue
-        const href = normalizeUri(u.url)
+        const href = normalizeUri(withProperties(u.url))
         if (!href) continue
         out.push(
           Decoration.mark({
@@ -750,9 +793,74 @@ function buildDecorations(view: EditorView): DecorationSet {
       if (line.to >= vTo) break
       p = line.to + 1
     }
+
+    /*
+     * `$(property)` — a value from the note's own frontmatter.
+     *
+     * Textual, like the hashtags above, and bounded the same way: only a key
+     * this note actually declares is touched. `$(pwd)` in a note with no `pwd`
+     * property stays the four characters somebody typed, because a shell
+     * command in a sentence is not a variable — and a note with no frontmatter
+     * at all has nothing here to do.
+     *
+     * The block itself is skipped: `greeting: Hello $(name)` is metadata being
+     * written, not prose being read, and a property quoting another one is a
+     * knot nobody asked for.
+     */
+    if (fmLines.length) {
+      for (let p = Math.max(vFrom, fmEnd + 1); p <= vTo; ) {
+        const line = state.doc.lineAt(p)
+        for (const v of scanVars(line.text, line.from)) {
+          const data = properties()
+          if (!(v.key in data)) continue
+          if (isLiteralHere(tree.resolveInner(v.from + 1, 1))) continue
+          /*
+           * Structure, not formatting: the key has to stay reachable, so the
+           * caret reveals the token in rich text as well as in live preview.
+           *
+           * In rich text it takes a caret, though, not any selection that
+           * happens to cross it. Selecting a paragraph to copy it is not
+           * editing the names inside it, and a selection that showed tokens
+           * where the page shows values would be highlighting one thing and
+           * copying another. Live preview reveals on either, because there the
+           * source is the thing being worked on.
+           */
+          if (rich ? caretIn(state, v.from, v.to) : touched(state, v.from, v.to)) continue
+          out.push(
+            Decoration.replace({
+              widget: new VarWidget(v.key, varText(data[v.key]), rich),
+            }).range(v.from, v.to),
+          )
+        }
+        if (line.to >= vTo) break
+        p = line.to + 1
+      }
+    }
   }
 
   return RangeSet.of(out, true)
+}
+
+/**
+ * Where a `$(key)` is left as the text somebody typed.
+ *
+ * Inline code, because that is how the syntax is written *about* — a note
+ * explaining `$(client)` has to be able to say it — and an address, because
+ * the address is resolved where it is followed rather than where it is shown.
+ *
+ * A fenced block is deliberately not on the list. A block is a thing you copy
+ * out and run, and a command with the host and the case number already in it
+ * is the whole reason for wanting a property in one.
+ */
+function isLiteralHere(node: { name: string; parent: unknown } | null): boolean {
+  let n = node as { name: string; parent: unknown } | null
+  let depth = 0
+  while (n && depth++ < 12) {
+    if (n.name === 'InlineCode' || n.name === 'URL' || n.name === 'Link' || n.name === 'WikiLink')
+      return true
+    n = n.parent as { name: string; parent: unknown } | null
+  }
+  return false
 }
 
 /**
@@ -1001,7 +1109,10 @@ function buildTableDecorations(state: EditorState): DecorationSet {
    * take a tap and raise the keyboard in a note that is only being read, which
    * is the one thing reading mode promises will not happen.
    */
-  const typeable = rich && state.facet(EditorView.editable)
+  // A locked note's cells are read like the rest of it: a cell is its own
+  // editing host, so `readOnly` has to be asked here rather than left to
+  // CodeMirror's own input handling.
+  const typeable = rich && state.facet(EditorView.editable) && !state.readOnly
 
   for (const t of findTables(state)) {
     const first = state.doc.line(t.fromLine)
@@ -1020,6 +1131,7 @@ function buildTableDecorations(state: EditorState): DecorationSet {
           first.from,
           notePath,
           typeable,
+          frontmatterOf(state),
         ),
         block: true,
       }).range(first.from, last.to),

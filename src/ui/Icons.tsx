@@ -318,6 +318,13 @@ export const IconPencil = (p: P) => (
 
 /* ---- focus mode and the window it can step out into --------------------- */
 
+export const IconLock = (p: P) => (
+  <Svg {...p}>
+    <rect x="4.5" y="10.5" width="15" height="10" rx="2.2" />
+    <path d="M8 10.5V7.8a4 4 0 0 1 8 0v2.7" />
+  </Svg>
+)
+
 export const IconMaximize = (p: P) => (
   <Svg {...p}>
     <path d="M4 9V5.5A1.5 1.5 0 0 1 5.5 4H9M15 4h3.5A1.5 1.5 0 0 1 20 5.5V9M20 15v3.5a1.5 1.5 0 0 1-1.5 1.5H15M9 20H5.5A1.5 1.5 0 0 1 4 18.5V15" />

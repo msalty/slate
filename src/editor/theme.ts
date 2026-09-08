@@ -45,9 +45,34 @@ export const editorTheme = EditorView.theme({
   '.cm-line': { padding: '0 4px' },
   '&.cm-focused': { outline: 'none' },
   '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--accent)', borderLeftWidth: '2px' },
+  /*
+   * The selection, in the app's own accent rather than CodeMirror's grey.
+   *
+   * `!important` is load-bearing, and was missing: the base theme dresses a
+   * *focused* editor's selection with a selector four classes deeper than
+   * this one — `&light.cm-focused > .cm-scroller > .cm-selectionLayer
+   * .cm-selectionBackground` — so an opaque `#d7d4f0` quietly won every time
+   * the editor had focus, which is every time anybody selects anything.
+   * Translucency is what the rule below then depends on.
+   */
   '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection': {
-    backgroundColor: 'var(--selection)',
+    backgroundColor: 'var(--selection) !important',
   },
+  /*
+   * The selection is drawn rather than native, and CodeMirror draws it in a
+   * layer *under* the content — where anything with a background of its own
+   * hides it. A code block has one, so does the frontmatter block, so does a
+   * callout: selecting inside any of them showed no selection at all, which
+   * looks like the highlight going missing behind the block.
+   *
+   * So the layer is painted over the content instead. It can be, because the
+   * colour is translucent: the words stay readable through it the way they do
+   * under a highlighter, which is also what the browser does to a selected
+   * picture. `!important` because CodeMirror writes its `-1` as an inline
+   * style, and `pointer-events` because a layer lying over the text would
+   * otherwise swallow every click meant for the text.
+   */
+  '.cm-selectionLayer': { zIndex: '1 !important', pointerEvents: 'none' },
   '.cm-activeLine': { backgroundColor: 'transparent' },
   '.cm-gutters': { display: 'none' },
   '.cm-placeholder': { color: 'var(--text-faint)', fontStyle: 'normal' },
@@ -211,6 +236,19 @@ export const editorTheme = EditorView.theme({
     // Keeps the tinted background off the transparent border below.
     backgroundClip: 'padding-box',
   },
+  /*
+   * One size for everything in a fenced block, whatever drew it.
+   *
+   * The line above sets the size code is read at. What sat inside it did not
+   * agree: the `monospace` tag in the highlight style below shrinks again by
+   * 0.9 — right for inline code in a 15px paragraph, a second helping here —
+   * and it reaches a block's text only when the markdown parser is the one
+   * tokenising it. So a block whose language is loaded came out a step larger
+   * than one whose language is not, and a `$(property)` filled into either
+   * came out larger still, since a widget is not source and the highlighter
+   * never marks it. Three sizes of the same monospace line.
+   */
+  '.cm-line.cm-codeblock span': { fontSize: 'inherit' },
   '.cm-line.cm-codeblock-first': {
     borderRadius: '8px 8px 0 0',
     paddingTop: '8px',
@@ -537,6 +575,17 @@ export const editorTheme = EditorView.theme({
     cursor: 'zoom-in',
     backgroundColor: 'var(--surface-2)',
   },
+  /*
+   * A player is given a width so it can be dragged to another one. Left to
+   * itself an <audio> element is whatever width that browser's controls happen
+   * to want, which is a different number on each of them and not a number the
+   * resize handle can start from.
+   */
+  '.cm-embed audio': {
+    display: 'block',
+    width: '340px',
+    maxWidth: '100%',
+  },
   '.cm-embed-resize': {
     position: 'absolute',
     right: '-3px',
@@ -573,6 +622,66 @@ export const editorTheme = EditorView.theme({
     fontSize: '0.92em',
   },
   '.cm-embed-card:hover': { borderColor: 'var(--border-strong)' },
+  '.cm-embed-card svg': { flexShrink: '0', color: 'var(--text-muted)' },
+
+  /* --- an embedded PDF: its first page, and what it is ---------------- */
+  '.cm-embed-pdf': {
+    width: '420px',
+    maxWidth: '100%',
+    border: '1px solid var(--border)',
+    borderRadius: '10px',
+    overflow: 'hidden',
+    backgroundColor: 'var(--surface-2)',
+    cursor: 'zoom-in',
+  },
+  '.cm-embed-pdf:hover': { borderColor: 'var(--border-strong)' },
+  '.cm-embed-pdf-page': {
+    display: 'block',
+    width: '100%',
+    height: 'auto',
+    // Paper is white in both themes; a dark card behind a page still loading
+    // would flash to white the moment it draws.
+    backgroundColor: '#fff',
+    // Until the first page has been measured there is nothing to hold the box
+    // open, and a note would reflow around it as each PDF arrives.
+    minHeight: '120px',
+  },
+  '.cm-embed-pdf-foot': {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '7px',
+    padding: '7px 10px',
+    borderTop: '1px solid var(--border)',
+    fontSize: '0.82em',
+    color: 'var(--text-muted)',
+  },
+  '.cm-embed-pdf-name': {
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    color: 'var(--text)',
+  },
+  '.cm-embed-pdf-meta': { marginLeft: 'auto', flexShrink: '0' },
+  /*
+   * A property read into the body.
+   *
+   * No chip, no colour, no border: the point of `$(client)` is a note that
+   * reads as though the name had been typed into the sentence, so a filled
+   * value is styled as the text around it. What it gets instead is a tooltip,
+   * and a hint under the pointer in rich text, where clicking opens the form.
+   */
+  '.cm-var': { borderRadius: '3px' },
+  '.cm-rich .cm-var[data-var]': { cursor: 'pointer' },
+  '.cm-rich .cm-var[data-var]:hover': {
+    backgroundColor: 'color-mix(in srgb, var(--accent) 12%, transparent)',
+  },
+  /* An empty one is the other half: a blank wearing its own name. */
+  '.cm-var-blank': {
+    padding: '0 6px',
+    border: '1px dashed var(--border-strong)',
+    color: 'var(--text-muted)',
+    fontSize: '0.92em',
+  },
   '.cm-embed-missing': {
     display: 'inline-block',
     padding: '2px 8px',

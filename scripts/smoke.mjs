@@ -1511,6 +1511,42 @@ try {
     consoleErrors.slice(sinkErrorsBefore).join(' | '),
   )
 
+  /*
+   * Selecting inside a code block, which for a while showed nothing at all.
+   *
+   * The selection is drawn rather than native, in a layer CodeMirror puts
+   * *under* the content, and a code block paints a background of its own over
+   * it — as do the frontmatter block and a callout. Nothing about the DOM says
+   * so: the ranges were there, the colour was there, and the block sat on top.
+   * So this is checked the only way that is honest about it, by looking: the
+   * same strip of screen with and without a selection over it.
+   */
+  const codeLine = page.locator('.cm-line.cm-codeblock').nth(1)
+  await codeLine.scrollIntoViewIfNeeded()
+  const strip = await codeLine.boundingBox()
+  const stripClip = { x: strip.x + 4, y: strip.y + 2, width: Math.min(180, strip.width - 8), height: strip.height - 4 }
+  const unselected = await page.screenshot({ clip: stripClip })
+  await page.mouse.move(strip.x + 6, strip.y + strip.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(strip.x + Math.min(220, strip.width - 10), strip.y + strip.height / 2, { steps: 10 })
+  await page.mouse.up()
+  await page.waitForTimeout(300)
+  const selectedRects = await page.evaluate(
+    () => document.querySelectorAll('.cm-selectionLayer > *').length,
+  )
+  const selected = await page.screenshot({ clip: stripClip })
+  check(
+    'a selection inside a code block is drawn where it can be seen',
+    selectedRects > 0 && Buffer.compare(unselected, selected) !== 0,
+    `${selectedRects} ranges, ${Buffer.compare(unselected, selected) !== 0 ? 'pixels changed' : 'pixels identical'}`,
+  )
+  check(
+    'and the layer it is drawn in does not swallow clicks',
+    (await page.evaluate(
+      () => getComputedStyle(document.querySelector('.cm-selectionLayer')).pointerEvents,
+    )) === 'none',
+  )
+
   // Back to the top: everything below reads this same note, and CodeMirror
   // only builds the lines that are on screen.
   await page.locator('.cm-content').evaluate((el) => {
@@ -1656,6 +1692,35 @@ try {
     afterTap.flag === '0' && afterTap.editable === 'true' && afterTap.focused.includes('cm-content'),
     `reading=${afterTap.flag}, focused ${afterTap.focused || 'nothing'}`,
   )
+
+  /*
+   * And the way back out.
+   *
+   * Escape has always done this and always will, but Escape is no use on a
+   * phone and invisible on a desktop: without a button, a note you touched
+   * stayed a note you were writing in until you closed it. The pencil's own
+   * slot in the header is the way back the moment it is used.
+   */
+  const doneButton = page.locator('.editor-pane [aria-label="Done editing"]')
+  check('editing offers a way back to reading', (await doneButton.count()) === 1)
+  await doneButton.click()
+  await page.waitForTimeout(350)
+  const afterDone = await readingState()
+  check(
+    'and it hands the note back: no caret, nothing to type into',
+    afterDone.flag === '1' &&
+      afterDone.editable === 'false' &&
+      !afterDone.focused.includes('cm-content'),
+    `reading=${afterDone.flag}, contenteditable=${afterDone.editable}, focused ${afterDone.focused || 'nothing'}`,
+  )
+  check(
+    'and the pencil is back in its slot, which is where it went',
+    (await page.locator('.editor-pane [aria-label="Edit note"]').count()) === 1 &&
+      (await doneButton.count()) === 0,
+  )
+  // Back to editing for the checks that follow, the way the reader would.
+  await clickWord('Final')
+  await page.waitForTimeout(200)
 
   /* ---- following a link with a pointer -----------------------------------
    * The desktop half of the phone tests further down. One plain click opens
@@ -2410,10 +2475,31 @@ try {
   await pdfChooser.setFiles({ name: 'spec.pdf', mimeType: 'application/pdf', buffer: pdfBytes })
   await page.waitForTimeout(2000)
 
-  const pdfCard = page.locator('.cm-embed-card:has-text("spec.pdf")')
-  check('a PDF is inserted as a card rather than a picture', (await pdfCard.count()) >= 1)
+  /*
+   * A PDF in a note is its own first page, drawn the same way the viewer draws
+   * one — not a grey card with a filename on it, which is what four scanned
+   * invoices in a note used to look like: four identical rectangles.
+   */
+  const pdfEmbed = page.locator('.cm-embed-pdf')
+  await page.waitForSelector('.cm-embed-pdf canvas', { timeout: 20000 }).catch(() => {})
+  check('a PDF is inserted as its own first page', (await pdfEmbed.count()) >= 1)
 
-  await pdfCard.first().click()
+  const inline = await page.evaluate(() => {
+    const c = document.querySelector('.cm-embed-pdf canvas')
+    if (!c?.width) return { width: 0 }
+    const d = c.getContext('2d').getImageData(0, 0, c.width, Math.min(c.height, 400)).data
+    let ink = 0
+    for (let i = 0; i < d.length; i += 4) if (d[i] < 200 || d[i + 1] < 200 || d[i + 2] < 200) ink++
+    return { width: c.width, ink, meta: document.querySelector('.cm-embed-pdf-meta')?.textContent }
+  })
+  check('the page in the note is drawn, not described', inline.width > 0 && inline.ink > 100, JSON.stringify(inline))
+  check('and it says how many more pages there are', /4 pages/.test(inline.meta ?? ''), inline.meta)
+  check(
+    'an embedded PDF can be resized like a picture',
+    (await page.locator('.cm-embed:has(.cm-embed-pdf) .cm-embed-resize').count()) >= 1,
+  )
+
+  await pdfEmbed.first().click()
   await page.waitForSelector('.pdf-page canvas', { timeout: 20000 }).catch(() => {})
   const pdfPages = await page.locator('.pdf-page').count()
   check('every page of a multi-page PDF is laid out', pdfPages === 4, `${pdfPages} pages`)
@@ -4958,6 +5044,294 @@ try {
   await page.locator('.editor-date-button').click()
   await page.waitForTimeout(250)
   check('and the date closes the form again', (await page.locator('.properties').count()) === 0)
+
+  /* ---- $(property): the form's values, read back into the page ----------
+   *
+   * The other direction of the same form. What has to hold is that the file
+   * keeps the token while the page shows the value, that a property nobody
+   * declared is left alone — a shell command in a sentence is not a variable —
+   * and that filling a blank in fills the page in behind it.
+   */
+  await page.evaluate(async () => {
+    const text =
+      '---\nclient: Acme Corp\nrate:\ncase: 124\ntags: [work, active]\n---\n\n# Job sheet\n\n' +
+      'Prepared for $(client), filed under $(tags).\n\n' +
+      'The rate is $(rate) a day.\n\n' +
+      '| Field | Value |\n| --- | --- |\n| Client | $(client) |\n\n' +
+      'The [case](https://example.com/support.aspx?TID=$(case)) is open.\n\n' +
+      'Run $(pwd) to see where you are.\n'
+    const db = await new Promise((res) => {
+      const r = indexedDB.open('slate')
+      r.onsuccess = () => res(r.result)
+    })
+    const tx = db.transaction('files', 'readwrite')
+    tx.objectStore('files').put({
+      path: 'Job sheet.md', kind: 'note', text, mime: 'text/markdown', size: text.length,
+      hash: 'vars1', mtime: Date.now() + 40_000, ctime: Date.now(),
+      dirty: true, dirtyFlag: 1, sync: {},
+    })
+    await new Promise((res) => { tx.oncomplete = res })
+  })
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForSelector('.note-row')
+  await page.locator('.note-row').filter({ hasText: 'Job sheet' }).first().click()
+  await page.waitForTimeout(500)
+  await intoRichText()
+
+  const page1 = await page.locator('.cm-content').innerText()
+  check(
+    'a property written into the body reads as its value',
+    page1.includes('Prepared for Acme Corp, filed under work, active.'),
+    page1.split('\n').find((l) => l.startsWith('Prepared')),
+  )
+  check(
+    'including inside a table cell, which the editor draws itself',
+    (await page.locator('.cm-table-render .cm-var').first().innerText()) === 'Acme Corp',
+  )
+  check(
+    'a property with nothing in it is a blank wearing its own name',
+    (await page.locator('.cm-var-blank').innerText()) === 'rate',
+  )
+  check(
+    'a name this note never declared is left exactly as typed',
+    page1.includes('Run $(pwd) to see where you are.'),
+  )
+  const varsFile = await noteContaining('Prepared for')
+  check(
+    'and the file still says what was typed, token and all',
+    varsFile.includes('Prepared for $(client)') && varsFile.includes('| Client | $(client) |'),
+  )
+
+  /*
+   * An address is the one place a property has to resolve even while the note
+   * is only being read: a link is followed rather than copied, so a token left
+   * in one goes nowhere. The parentheses are the other half of it — the URL
+   * used to be re-parsed with a pattern that ended at the first `)`, which is
+   * the token's own, sending the click a character short of the truth.
+   */
+  const caseLink = page.locator('.cm-uri').filter({ hasText: 'case' }).first()
+  check(
+    'a property inside a link address resolves',
+    (await caseLink.getAttribute('data-href')) === 'https://example.com/support.aspx?TID=124',
+    await caseLink.getAttribute('data-href'),
+  )
+  await armLinkTrap()
+  await caseLink.click()
+  await page.waitForTimeout(250)
+  const caseClick = await linkTrapResult()
+  check(
+    'and clicking it goes where the note says it goes',
+    caseClick.opened.length === 1 &&
+      caseClick.opened[0] === 'https://example.com/support.aspx?TID=124',
+    caseClick.opened.join(',') || 'nothing opened',
+  )
+  await page.evaluate(() => document.removeEventListener('click', window.__linkTrap))
+
+  /*
+   * A drag that starts on a value.
+   *
+   * The browser answers a press on a widget — or on an existing selection —
+   * by dragging it, and dragged text deliberately carries the tokens. That
+   * suppression used to be held until a `dragend` or `drop` cleared it, and a
+   * drag that ended in neither left every copy after it handing back tokens.
+   */
+  await page.evaluate(() =>
+    document
+      .querySelector('.cm-content')
+      ?.dispatchEvent(new Event('dragstart', { bubbles: true })),
+  )
+  await page.keyboard.press('Control+a')
+  await page.keyboard.press('Control+c')
+  await page.waitForTimeout(400)
+  const afterDrag = await page.evaluate(() => navigator.clipboard.readText())
+  check(
+    'a copy after a drag still takes the values',
+    afterDrag.includes('Prepared for Acme Corp') && !afterDrag.includes('$(client)'),
+    afterDrag.split('\n').find((l) => l.startsWith('Prepared')),
+  )
+
+  // Clicking a value is the second way in to the form that owns it.
+  await page.locator('.cm-var').first().click()
+  await page.waitForTimeout(400)
+  check('clicking a value opens the properties form', (await page.locator('.properties').count()) === 1)
+
+  await (await propertyRow('rate')).locator('.property-value').fill('450')
+  await (await propertyRow('rate')).locator('.property-value').blur()
+  await page.waitForTimeout(800)
+  const page2 = await page.locator('.cm-content').innerText()
+  check(
+    'filling the property in fills the page in behind it',
+    page2.includes('The rate is 450 a day.'),
+    page2.split('\n').find((l) => l.includes('rate is')),
+  )
+  check('and the blank is gone', (await page.locator('.cm-var-blank').count()) === 0)
+
+  /*
+   * Copying out of rich text takes what rich text shows.
+   *
+   * A paragraph pasted into an email has to read the way the page reads, or
+   * the values are only half a feature. The file keeps the tokens either way,
+   * which is checked above and again after the copy.
+   */
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+  await page.locator('.cm-content').click()
+  await page.waitForTimeout(250)
+  // Deliberately *while editing*: a caret in the note is the state somebody
+  // copies from, and the tokens must not come back for a selection crossing
+  // them — what is highlighted has to be what lands on the clipboard.
+  const editingWhenCopied = await readingState()
+  await page.keyboard.press('Control+a')
+  await page.waitForTimeout(250)
+  check(
+    'a selection across the note leaves the values on the page',
+    !(await page.locator('.cm-content').innerText()).includes('$(client)') &&
+      editingWhenCopied.editable === 'true',
+    `contenteditable=${editingWhenCopied.editable}`,
+  )
+  await page.keyboard.press('Control+c')
+  await page.waitForTimeout(400)
+  const clip = await page.evaluate(() => navigator.clipboard.readText())
+  check(
+    'copying takes the values, not the tokens',
+    clip.includes('Prepared for Acme Corp, filed under work, active.') &&
+      clip.includes('The rate is 450 a day.') &&
+      !clip.includes('$(client)'),
+    clip.split('\n').find((l) => l.startsWith('Prepared')),
+  )
+  check(
+    'and still leaves a name the note never declared alone',
+    clip.includes('Run $(pwd) to see where you are.'),
+  )
+  check(
+    'the note itself is untouched by the copy',
+    (await noteContaining('Prepared for')).includes('Prepared for $(client)'),
+  )
+
+  /* ---- a note its own properties lock ------------------------------------
+   *
+   * `read-only: true` turns a note into a form: the properties can be filled
+   * in and nothing else about it can be typed over. What has to hold is that
+   * every way into the body refuses — the tap, the keyboard, a checkbox — and
+   * that the one thing that must still work does: the form, including the
+   * checkbox that takes the lock off again.
+   */
+  await page.evaluate(async () => {
+    const text =
+      '---\nread-only: true\nhost: fw-edge-01\ncase: 124\n---\n\n# Session\n\n' +
+      '- [ ] Not tickable\n\nRun this on $(host):\n\n' +
+      '```sh\nssh admin@$(host).example\nshow log | include $(case)\n```\n\n' +
+      // A second block with no language on its fence. It is the one that
+      // catches the size bug: with no mode to tokenise it, the markdown parser
+      // marks the text `monospace` itself, and that tag shrinks what it marks.
+      '```\ndiagnose debug flow filter addr $(host)\n```\n\n' +
+      'The syntax itself stays literal: `$(host)`.\n'
+    const db = await new Promise((res) => {
+      const r = indexedDB.open('slate')
+      r.onsuccess = () => res(r.result)
+    })
+    const tx = db.transaction('files', 'readwrite')
+    tx.objectStore('files').put({
+      path: 'Locked session.md', kind: 'note', text, mime: 'text/markdown', size: text.length,
+      hash: 'lock1', mtime: Date.now() + 50_000, ctime: Date.now(),
+      dirty: true, dirtyFlag: 1, sync: {},
+    })
+    await new Promise((res) => { tx.oncomplete = res })
+  })
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForSelector('.note-row')
+  await page.locator('.note-row').filter({ hasText: 'Locked session' }).first().click()
+  await page.waitForTimeout(500)
+  await intoRichText()
+
+  const locked = await page.locator('.cm-content').innerText()
+  check(
+    'a fenced block fills itself in — a command you copy out, not a quotation',
+    locked.includes('ssh admin@fw-edge-01.example') && locked.includes('show log | include 124'),
+    locked.split('\n').find((l) => l.startsWith('ssh')),
+  )
+  check(
+    'while the syntax in backticks stays the syntax',
+    locked.includes('$(host)'),
+  )
+
+  /*
+   * One size for everything in a fenced block.
+   *
+   * A value filled into a block is a widget, and a widget is not source, so
+   * the highlighter never marks it — while the `monospace` tag it marks the
+   * *text* with shrinks that text again, and only when the markdown parser is
+   * the one tokenising it. Three sizes of the same monospace line, and the
+   * odd one out was always the property. Checked as the invariant it is:
+   * nothing inside a code line is a different size from the line.
+   */
+  const codeSizes = await page.evaluate(() =>
+    [...document.querySelectorAll('.cm-line.cm-codeblock')].flatMap((line) => {
+      const size = getComputedStyle(line).fontSize
+      return [...line.querySelectorAll('span')]
+        .filter((el) => el.textContent.trim())
+        .map((el) => ({ cls: el.className || '(none)', size: getComputedStyle(el).fontSize, line: size }))
+    }),
+  )
+  const odd = codeSizes.filter((s) => s.size !== s.line)
+  check(
+    'a value filled into a code block is the size of the code around it',
+    codeSizes.some((s) => s.cls.includes('cm-var')) && odd.length === 0,
+    odd.map((s) => `${s.cls} ${s.size} ≠ ${s.line}`).join(', ') ||
+      `${codeSizes.length} spans, all ${codeSizes[0]?.line}`,
+  )
+
+  await page.locator('.cm-line').filter({ hasText: 'Run this on' }).first().click()
+  await page.waitForTimeout(350)
+  await page.keyboard.type('nonsense')
+  await page.waitForTimeout(500)
+  const lockedState = await readingState()
+  check(
+    'a locked note refuses the tap that would start writing in it',
+    lockedState.flag === '1' && lockedState.editable === 'false',
+    `reading=${lockedState.flag}, contenteditable=${lockedState.editable}`,
+  )
+  check(
+    'and the keys that followed it',
+    !(await page.locator('.cm-content').innerText()).includes('nonsense'),
+  )
+  check(
+    'its checkboxes show, and do not tick',
+    await page.locator('.cm-task-checkbox').first().isDisabled(),
+  )
+  check(
+    'the pencil is a lock instead',
+    (await page.locator('.editor-pane [aria-label="Read-only note"]').count()) === 1 &&
+      (await page.locator('.editor-pane [aria-label="Edit note"]').count()) === 0,
+  )
+
+  // The copy button on a block: the same rule as copying by hand.
+  await page.locator('.cm-code-copy').first().click({ force: true })
+  await page.waitForTimeout(400)
+  const codeClip = await page.evaluate(() => navigator.clipboard.readText())
+  check(
+    'copying the block takes the command, filled in',
+    codeClip.includes('ssh admin@fw-edge-01.example') && !codeClip.includes('$(host)'),
+    JSON.stringify(codeClip.split('\n')[0]),
+  )
+
+  // The form is the one thing that still writes — including its own lock.
+  await page.locator('.editor-pane [aria-label="Read-only note"]').click()
+  await page.waitForTimeout(350)
+  check('the lock opens the properties form', (await page.locator('.properties').count()) === 1)
+  await (await propertyRow('host')).locator('.property-value').fill('fw-core-02')
+  await (await propertyRow('host')).locator('.property-value').blur()
+  await page.waitForTimeout(700)
+  check(
+    'a locked note still fills in from its own form',
+    (await page.locator('.cm-content').innerText()).includes('ssh admin@fw-core-02.example'),
+  )
+  await (await propertyRow('read-only')).locator('input[type=checkbox]').click()
+  await page.waitForTimeout(700)
+  check(
+    'and unticking it hands the note back',
+    (await page.locator('.editor-pane [aria-label="Edit note"]').count()) === 1 &&
+      (await page.locator('.editor-pane [aria-label="Read-only note"]').count()) === 0,
+  )
 
   /* ---- persistence across a reload ------------------------------------ */
   const beforeCount = await page.evaluate(

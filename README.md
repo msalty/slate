@@ -113,13 +113,92 @@ rewrites one line and nothing else — a property the form has no opinion about,
 a comment somebody left in the block, whether a list was written as `[a, b]` or
 one item per line, all come back out of the file exactly as they went in.
 
+**A property can be written into the note as well as into the form.** `$(client)`
+anywhere in the body reads as that property's value in rich text and live
+preview:
+
+````markdown
+---
+client: Acme Corp
+contact: Dana Reyes
+case: 124
+rate:
+---
+
+# Job sheet
+
+Prepared for **$(client)**, attention $(contact). The rate is $(rate) a day.
+
+The ticket is [case $(case)](https://support.example/c.aspx?TID=$(case)).
+
+```sh
+ssh admin@$(client).example
+```
+````
+
+reads as *Prepared for **Acme Corp**, attention Dana Reyes. The rate is ⟨rate⟩
+a day.* — with `rate` drawn as a dashed blank, because it has been named and
+not yet filled in. The link goes to `…?TID=124`, and the block says
+`ssh admin@Acme Corp.example`. That is what makes a template a form: write the
+note once with the properties it needs, and every note made from it fills
+itself in as its properties are filled in. Typing `$(` offers the note's own
+properties, with their values, so there is nothing to remember, and clicking a
+value opens the properties form at the property it came from.
+
+Where it resolves, and where it deliberately does not:
+
+| Written in | What happens |
+| --- | --- |
+| a sentence, a heading, a list, a table cell | the value, styled as the text around it |
+| a fenced code block | the value — a block is a thing you copy out and run. It takes the size of the code around it, and not its syntax colour, so a filled-in value is visible as one |
+| a link or embed address | the value, wherever it is followed — reading included |
+| `` `$(client)` `` in backticks | left as typed: this is how the syntax is written *about* |
+| the `---` block itself | left as typed; a property quoting another is a knot |
+| source mode | left as typed — that mode is the file |
+
+Three rules keep it out of the way. **The file is never rewritten** — `$(client)`
+is what is on disk and what every other markdown editor sees, exactly like the
+rest of live preview. **Only a property the note declares is touched**, so
+`$(pwd)` in a sentence about the shell is left alone, and a note with no
+frontmatter has nothing to substitute. And **a caret** in one reveals the token,
+so a name can be corrected without deleting anything — a caret, in rich text,
+and not a selection that merely crosses it: selecting a paragraph to copy it is
+not editing the names inside it. Live preview reveals on either, because there
+the source is the thing being worked on.
+
+**Copying out of rich text takes the values.** Select a paragraph there — or
+press a code block's copy button — and what lands on the clipboard is what the
+page says, so a note can be pasted into an email, or a command into a terminal,
+without the reader seeing the wiring. Live preview and source copy the file, as
+they show it. Cut and drag deliberately still carry the tokens: both are
+usually a move from here to there in the same note, and a move that pasted
+values back in would flatten its properties into fixed text without changing a
+word on screen — damage nobody would notice until the day they changed a
+property and half the note failed to follow. A property still waiting to be
+filled in copies as its token too, which is easier to spot in an email than a
+hole.
+
+**`read-only: true` makes the note a form.** Add it as a checkbox in the
+properties panel — or write it in the block by hand, where `readonly`,
+`read_only` and `yes` are all understood — and the body stops accepting edits
+in every mode: no caret, no keyboard, no checkbox to tick, no table cell to
+type in, nothing pasted or dropped in, and the pencil in the header becomes a
+lock. What still works is the properties form, which the lock itself opens, and
+which is where the checkbox is unticked to hand the note back. Its tasks stay
+in the Tasks view and say so rather than ticking if you try. That is the pairing
+worth having: a page whose every changeable part is a labelled field cannot be
+knocked out of shape by the person filling it in, and one built to be copied out
+of stays exactly as it was written.
+
 **A note opens as a page to read.** No caret anywhere in it, which on a phone is
 the difference between opening a note and opening a note with a keyboard across
 the bottom half of it before you have read a word. Tap the text and that is
 where the caret lands — the tap that starts the edit is the tap that says where
 — or press the pencil in the header, which starts you at the top of whatever is
-on screen rather than scrolling the note out from under you. Escape hands the
-note back. Links, checkboxes, images and a task's date chip all still answer
+on screen rather than scrolling the note out from under you. **The pencil's own
+slot becomes the way back**: while you are writing it is a tick that hands the
+note back to being read, which Escape does too and which a phone has no Escape
+key for. Links, checkboxes, images and a task's date chip all still answer
 a tap while reading, so you can work through a note without falling into the
 editor, and a checkbox ticked or a date set in passing still saves: reading is
 not read-only. A brand new note is the
@@ -167,7 +246,35 @@ lands in the same place: images are re-encoded on the way in — a 1.4 MB
 screenshot becomes 11 KB of WebP, a 122× reduction, with no visible difference
 at reading size — and every image is resizable by dragging its right edge (the
 width is written back into the markdown as `![[img.png|400]]`) and opens in the
-lightbox on click. PDFs, video, audio and text files can live in the vault too.
+lightbox on click.
+
+**Four kinds of file draw themselves in the note**, and each of the four takes a
+width the same way:
+
+| In the note | Dragging its edge writes |
+| --- | --- |
+| a picture — PNG, JPEG, WebP, AVIF, GIF, SVG, BMP | `![[shot.png\|400]]` |
+| a video with its controls — MP4, WebM, MOV | `![[clip.mp4\|520]]` |
+| a player — MP3, M4A, WAV, OGG, FLAC, AAC | `![[take-1.mp3\|300]]` |
+| a PDF's first page, drawn by pdf.js, with the page count under it | `![[spec.pdf\|360]]` |
+
+Dragging one close to the full width of the pane drops the number again, so the
+common case stays free of a hard-coded size. The same widths are understood in
+plain-markdown form as a URL fragment other renderers ignore —
+`![alt](spec.pdf#w=360)`.
+
+**Everything else gets a card that says what it is**: the file's name, its
+extension and its size, over a mark drawn for its kind — a spreadsheet, a
+document, a presentation, an archive, a font, an ebook, code, plain text. That
+mark is the point of them. A project note pointing at four attachments used to
+be four identical grey rectangles that had to be read one at a time; now the
+zip, the deck, the invoice and the font are told apart at a glance, and the
+same marks name the same files in the Files browser and in the picker. A card
+opens its file in the lightbox, which shows what it can and offers a download
+for what it cannot. A picture in a format this browser has no decoder for — a
+TIFF outside Safari, a HEIC outside Apple's — quietly becomes one of these
+cards rather than a broken image, as does a video in a container it cannot
+play.
 
 In the lightbox a picture is handled rather than operated: pinch to zoom around
 whatever is between your fingers, drag to move around it — it stops with its
@@ -177,11 +284,11 @@ click to zoom) plus the `−` / `1:1` / `+` buttons and the `-`, `0`, `+` keys;
 those buttons are hidden on a phone, where fingers do the job better and the
 space is worth more to the file name.
 
-**PDFs are drawn by the app rather than by the browser**, which is not a
-preference: pointing an `<iframe>` at a PDF — the usual trick, and what this
-used to do — gives you page one as a still picture on iOS, with no scrolling to
-page two and no pinch, and a blank rectangle on Android Chrome, which has no PDF
-plugin for frames at all. So the app draws the pages itself, all of them, in one
+**PDFs are drawn by the app rather than by the browser**, in the note and in
+the viewer alike, which is not a preference: pointing an `<iframe>` at a PDF —
+the usual trick, and what this used to do — gives you page one as a still
+picture on iOS, with no scrolling to page two and no pinch, and a blank
+rectangle on Android Chrome, which has no PDF plugin for frames at all. So the app draws the pages itself, all of them, in one
 column that scrolls. Pinch to zoom and the pages are *redrawn* at the new size
 rather than magnified; on a desktop the `−` / `Fit` / `+` buttons and the `-`,
 `0`, `+` keys do the same, as does ctrl-scroll or a trackpad pinch. The words stay real
@@ -191,6 +298,12 @@ three-hundred-page scan does not cost three hundred pages of memory. And it
 works with the network off like the rest of the app: pdf.js, its worker and its
 image decoders are precached — about two megabytes of a three-and-a-half
 megabyte install, which is the honest price of a PDF that opens on a plane.
+
+The page inside a note is the same machinery kept deliberately small: the first
+page only, at the width the embed is shown at, and only once it has scrolled
+near the screen — so a note listing a dozen invoices costs one document open,
+not a dozen. Clicking it opens the real viewer, where the rest of the pages
+are.
 
 In rich text an image stays an image: putting the caret beside one never swaps
 it back for `![[img.png]]`, and it takes no margin of its own, so a line of
@@ -382,6 +495,16 @@ and `due:overdue`, `due:today`, `due:soon`, `due:none`, `due:any`. So
 #work due:overdue          work that has slipped
 #home AND NOT #urgent      everything at home that can wait
 ```
+
+**A checkbox with nothing after it is not a task**, anywhere a task list is
+drawn — Tasks, Due, the calendar, a Tag Folder over tasks, and the counts on
+all of them. The daily note opens with `- [ ] ` under Today and keeps two more
+under Habits and Tomorrow, which is the point of it: a blank to type into, one
+keystroke to delete. What it is not is work anybody owes, and a week of daily
+notes was otherwise seven "Untitled task" rows in every filtered list. A note
+holding nothing but blank checkboxes does not answer to `has:tasks` either. The
+note itself is untouched: the checkbox is drawn where it was written, ticks
+when clicked, and becomes a task the moment it is given something to say.
 
 **Finished tasks are out of the list by default**, with *Show completed* in the
 same ⋮ menu to bring them back. A list whose top is what you owe and whose
@@ -1148,6 +1271,10 @@ src/
 │  ├─ snippets.ts     `Snippets.md`, parsed into triggers and what they expand to
 │  ├─ devices.ts      per-device write registry, for version attribution
 │  ├─ images.ts       paste- and capture-time re-encoding
+│  ├─ filetypes.ts    what a file is when nothing can show what it holds:
+│  │                  the families, and the mark each one wears
+│  ├─ pdfjs.ts        pdf.js, loaded once for the viewer and for the first
+│  │                  page drawn into a note
 │  └─ settings.ts     device-local vs vault-wide preferences
 ├─ adapters/      webdav.ts · gdrive.ts · memory.ts (tests)
 ├─ editor/        CodeMirror 6: live preview, widgets, completion, paste
@@ -1161,6 +1288,10 @@ src/
 │  ├─ callout.ts   the callout vocabulary: five colours, and what aliases to them
 │  ├─ codeblock.ts reading a fenced block back out, for the copy button
 │  ├─ due.ts        writing a task's due date into the buffer being typed in
+│  ├─ vars.ts       `$(property)`: the note's own frontmatter, read into its
+│  │                 body — the completion that offers it, what the clipboard
+│  │                 does with it, and the `read-only` lock a note puts on
+│  │                 itself
 │  ├─ inline.ts      inline markdown for text inside widgets (table cells)
 │  └─ pickImage.ts   camera / photo library / file insertion
 └─ ui/            Preact components

@@ -641,6 +641,14 @@ textarea {
   background: var(--surface-2);
   flex: 0 0 auto;
 }
+/* A file with no thumbnail wears its kind's mark instead, so the column of
+   pictures does not go ragged where a zip sits in it. */
+.note-row-kind {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+}
 .note-row-badges {
   display: flex;
   gap: 4px;

@@ -20,6 +20,7 @@ import { excerptOf, setFrontmatterKey } from '../core/markdown'
 import { getRaw, saveNote } from '../core/vault'
 import type { NoteIndexEntry, VaultFile } from '../core/types'
 import { basename, formatBytes, mediaClass, relativeTime, startOfDay, ymd } from '../core/util'
+import { familyName, fileFamily, fileIconSvg } from '../core/filetypes'
 import {
   activePath,
   fileList,
@@ -659,12 +660,21 @@ function FileRow({ f, orphan }: { f: VaultFile; orphan: boolean }) {
               </span>
             )}
             <span class="note-row-excerpt">
-              {kind} · {formatBytes(f.size)} ·{' '}
+              {familyName(fileFamily(f.path))} · {formatBytes(f.size)} ·{' '}
               <Highlight text={f.path} terms={queryTerms.value} />
             </span>
           </span>
         </span>
-        {url && <img class="note-row-thumb" src={url} alt="" loading="lazy" />}
+        {url ? (
+          <img class="note-row-thumb" src={url} alt="" loading="lazy" />
+        ) : (
+          /* No picture to show, so the file shows what kind of file it is —
+             the same mark it wears on the card an embed of it makes. */
+          <span
+            class="note-row-thumb note-row-kind"
+            dangerouslySetInnerHTML={{ __html: fileIconSvg(f.path, 22) }}
+          />
+        )}
       </button>
     </SwipeRow>
   )

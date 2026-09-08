@@ -11,7 +11,12 @@ import { attachmentUrl, getRaw } from '../core/vault'
 import { fencedBody } from './codeblock'
 import { ICONS, withCalloutFold } from './callout'
 import { renderInline } from './inline'
-import { dueLabel, dueTone, formatBytes, mediaClass, startOfDay } from '../core/util'
+import { basename, dueLabel, dueTone, formatBytes, mediaClass, startOfDay } from '../core/util'
+import { resolveVars, type FrontmatterValue } from '../core/markdown'
+import { frontmatterOf } from './vars'
+import { MD_URL } from './links'
+import { familyIconSvg, fileIconSvg, fileTypeLabel } from '../core/filetypes'
+import { pdfAsset, pdfLibrary } from '../core/pdfjs'
 import { requestDueMenu, requestLightbox } from './context'
 import { wireLinkTaps } from './linkClicks'
 import {
@@ -249,8 +254,20 @@ function glyph(cls: string, paths: string): SVGSVGElement {
 export class CopyCodeWidget extends WidgetType {
   private timer: ReturnType<typeof setTimeout> | undefined
 
-  eq() {
-    return true
+  constructor(
+    /**
+     * Rich text: the block goes to the clipboard the way the page shows it,
+     * `$(host)` and all resolved. Which is most of why a property in a fenced
+     * block is worth having — a command you fill in at the top of the note and
+     * copy out of the middle of it.
+     */
+    readonly resolve = false,
+  ) {
+    super()
+  }
+
+  eq(other: CopyCodeWidget) {
+    return other.resolve === this.resolve
   }
 
   toDOM(view: EditorView) {
@@ -277,7 +294,8 @@ export class CopyCodeWidget extends WidgetType {
       const pos = view.posAtDOM(btn)
       const body = fencedBody(view.state.doc.toString().split('\n'), view.state.doc.lineAt(pos).number - 1)
       if (body === undefined) return
-      void copyText(body).then((ok) => {
+      const text = this.resolve ? resolveVars(body, frontmatterOf(view.state)) : body
+      void copyText(text).then((ok) => {
         if (!ok) return
         btn.dataset.copied = '1'
         btn.title = 'Copied'
@@ -334,22 +352,28 @@ async function copyText(text: string): Promise<boolean> {
 /* --------------------------------------------------------------- checkbox */
 
 export class CheckboxWidget extends WidgetType {
-  constructor(readonly checked: boolean) {
+  constructor(
+    readonly checked: boolean,
+    /** A note locked by its own properties: the box shows, and does not tick. */
+    readonly locked = false,
+  ) {
     super()
   }
   eq(other: CheckboxWidget) {
-    return other.checked === this.checked
+    return other.checked === this.checked && other.locked === this.locked
   }
   toDOM(view: EditorView) {
     const box = document.createElement('input')
     box.type = 'checkbox'
     box.className = 'cm-task-checkbox'
     box.checked = this.checked
+    box.disabled = this.locked
     box.setAttribute('aria-label', this.checked ? 'Completed task' : 'Incomplete task')
     box.addEventListener('mousedown', (e) => {
       // Toggle on mousedown so the click never lands as a caret placement.
       e.preventDefault()
       e.stopPropagation()
+      if (view.state.readOnly) return
       const pos = view.posAtDOM(box)
       const line = view.state.doc.lineAt(pos)
       const m = /^(\s*(?:[-*+]|\d+[.)])\s+\[)([ xX])(\])/.exec(line.text)
@@ -405,12 +429,85 @@ export class DueChipWidget extends WidgetType {
     const open = (e: Event) => {
       e.preventDefault()
       e.stopPropagation()
+      // A date is an edit like any other, and a locked note takes none.
+      if (view.state.readOnly) return
       const r = el.getBoundingClientRect()
       requestDueMenu({ x: r.left, y: r.bottom + 4 }, view.posAtDOM(el), this.date)
     }
     el.addEventListener('mousedown', open)
     return el
   }
+  ignoreEvent() {
+    return false
+  }
+}
+
+/** Are two sets of properties the same, as far as anything drawn from them cares? */
+function sameVars(
+  a: Record<string, FrontmatterValue>,
+  b: Record<string, FrontmatterValue>,
+): boolean {
+  const ka = Object.keys(a)
+  if (ka.length !== Object.keys(b).length) return false
+  return ka.every((k) => k in b && String(a[k]) === String(b[k]))
+}
+
+/* --------------------------------------------------------------- variable */
+
+/**
+ * A property standing in for the `$(key)` that asked for it.
+ *
+ * Deliberately not a chip when it has a value: the whole point is a note that
+ * reads as finished prose, so the value sits in the sentence looking like the
+ * text somebody would have typed. What marks it is a tooltip, and — in rich
+ * text, where the properties form exists — a click that opens the form at the
+ * property it came from.
+ *
+ * A declared property with nothing in it is the other half of the same idea. A
+ * template is mostly blanks when it is new, and a blank that shows its own
+ * name is a to-do list for filling the note in.
+ */
+export class VarWidget extends WidgetType {
+  constructor(
+    readonly key: string,
+    /** The value, or undefined for a property declared and left empty. */
+    readonly value: string | undefined,
+    /** Rich text only: the click that opens the properties form. */
+    readonly clickable: boolean,
+  ) {
+    super()
+  }
+
+  eq(other: VarWidget) {
+    return other.key === this.key && other.value === this.value && other.clickable === this.clickable
+  }
+
+  toDOM(): HTMLElement {
+    const el = document.createElement('span')
+    const filled = this.value !== undefined
+    el.className = filled ? 'cm-var' : 'cm-var cm-var-blank'
+    el.textContent = filled ? this.value! : this.key
+    el.title = filled
+      ? `${this.key} — from this note's properties${this.clickable ? ', click to edit' : ''}`
+      : `${this.key} has no value yet${this.clickable ? ' — click to fill it in' : ''}`
+    /*
+     * A value is text to be selected, not an object to be dragged.
+     *
+     * A widget is `contenteditable="false"` inside editable content, which is
+     * enough for a browser to answer a press-and-sweep starting on it by
+     * dragging the element instead of selecting through it — so a selection
+     * begun on a value selected nothing, and the drag it became handed the
+     * clipboard the token. The picture widget says the same thing for the same
+     * reason.
+     */
+    el.draggable = false
+    // What `linkClicks` looks for. Only in rich text: in live preview there is
+    // no properties form to open, and a click there should land the caret and
+    // reveal the token, which is what that mode is for.
+    if (this.clickable) el.dataset.var = this.key
+    return el
+  }
+
   ignoreEvent() {
     return false
   }
@@ -460,6 +557,14 @@ export class TableWidget extends WidgetType {
      * construction — which takes the whole editor down with it.
      */
     readonly typeable = false,
+    /**
+     * The note's properties, for a `$(client)` written into a cell.
+     *
+     * Carried rather than looked up so the widget can tell whether it is out
+     * of date: a table's own source does not change when a property does, so
+     * without this the cell would keep showing yesterday's value.
+     */
+    readonly vars: Record<string, FrontmatterValue> = {},
   ) {
     super()
   }
@@ -469,7 +574,8 @@ export class TableWidget extends WidgetType {
       other.source === this.source &&
       other.notePath === this.notePath &&
       other.typeable === this.typeable &&
-      other.from === this.from
+      other.from === this.from &&
+      sameVars(other.vars, this.vars)
     )
   }
 
@@ -503,7 +609,8 @@ export class TableWidget extends WidgetType {
         cell.className = 'cm-table-cell'
         cell.dataset.row = String(r)
         cell.dataset.col = String(c)
-        if (stored) cell.appendChild(renderInline(cellText(stored), this.notePath))
+        if (stored)
+          cell.appendChild(renderInline(cellText(stored), this.notePath, this.vars, this.typeable))
         if (model.align[c]) cell.style.textAlign = model.align[c]
         if (this.typeable) this.wireCell(view, cell, r, c, stored)
         tr.appendChild(cell)
@@ -601,7 +708,7 @@ export class TableWidget extends WidgetType {
       if (!this.commit(view, row, col, cell.textContent ?? '')) {
         // Nothing changed: put the rendering back, since focus took it away.
         cell.textContent = ''
-        if (stored) cell.appendChild(renderInline(raw, this.notePath))
+        if (stored) cell.appendChild(renderInline(raw, this.notePath, this.vars, this.typeable))
         // No rewrite means no new DOM to carry the mark, so it is set here —
         // unless focus has already moved on to another cell of the same table.
         const cur = focusedCell.value
@@ -807,9 +914,33 @@ export interface EmbedSpec {
   alt: string
 }
 
+/**
+ * What a PDF preview is drawn at when the markdown names no width — a fallback
+ * for the rare case of drawing before layout. `.cm-embed-pdf` in the theme
+ * carries the same number, and is what actually decides the width on screen.
+ */
+const PDF_WIDTH = 420
+
 export class EmbedWidget extends WidgetType {
+  /** Work to undo when CodeMirror throws this widget's DOM away. */
+  private cleanups: Array<() => void> = []
+  /** True once that has happened: nothing in flight should touch the DOM after. */
+  private gone = false
+
   constructor(readonly spec: EmbedSpec) {
     super()
+  }
+
+  destroy() {
+    this.gone = true
+    for (const c of this.cleanups) c()
+    this.cleanups = []
+  }
+
+  /** Register cleanup, or run it now if the widget is already gone. */
+  private onGone(undo: () => void) {
+    if (this.gone) undo()
+    else this.cleanups.push(undo)
   }
 
   eq(other: EmbedWidget) {
@@ -850,14 +981,17 @@ export class EmbedWidget extends WidgetType {
       img.addEventListener('click', (e) => {
         e.preventDefault()
         e.stopPropagation()
-        if (path) requestLightbox(path)
-        else window.open(href, '_blank', 'noopener')
+        this.open()
       })
       // The intrinsic size arrives late; tell CM so the scroll position is right.
       img.addEventListener('load', () => view.requestMeasure())
-      img.addEventListener('error', () => {
-        img.replaceWith(card('Could not load', label, () => {}))
-      })
+      /*
+       * A picture this browser cannot decode — a TIFF outside Safari, a HEIC
+       * outside Apple's — is not a broken embed, it is a file with no preview
+       * on this device. It gets the card every other unshowable file gets, so
+       * it can still be named, sized and opened.
+       */
+      img.addEventListener('error', () => this.replaceWithCard(wrap, view))
       wrap.appendChild(img)
       if (path) wrap.appendChild(this.resizeHandle(view, img))
       return wrap
@@ -870,6 +1004,8 @@ export class EmbedWidget extends WidgetType {
       v.preload = 'metadata'
       if (width) v.style.width = `${width}px`
       v.addEventListener('loadedmetadata', () => view.requestMeasure())
+      // A container the browser has no codec for — .avi, .mkv on most of them.
+      v.addEventListener('error', () => this.replaceWithCard(wrap, view))
       wrap.appendChild(v)
       if (path) wrap.appendChild(this.resizeHandle(view, v))
       return wrap
@@ -880,21 +1016,157 @@ export class EmbedWidget extends WidgetType {
       a.src = src
       a.controls = true
       a.preload = 'metadata'
-      a.style.width = '100%'
-      a.style.maxWidth = '420px'
+      // A player is as wide as it is told to be — the width in the markdown, or
+      // the default in the theme. It resizes like everything else: a transcript
+      // beside a note is worth narrowing, and a set of takes is worth widening.
+      if (width) a.style.width = `${width}px`
+      a.addEventListener('error', () => this.replaceWithCard(wrap, view))
       wrap.appendChild(a)
+      // Below the minimum the controls start dropping buttons, so the drag
+      // stops where the player is still a player.
+      if (path) wrap.appendChild(this.resizeHandle(view, a, 180))
       return wrap
     }
 
-    // PDFs and everything else get a card that opens the viewer.
-    const f = path ? getRaw(path) : undefined
-    wrap.appendChild(
-      card(label, f ? `${kind.toUpperCase()} · ${formatBytes(f.size)}` : kind.toUpperCase(), () => {
-        if (path) requestLightbox(path)
-        else window.open(href, '_blank', 'noopener')
-      }),
-    )
+    if (kind === 'pdf' && src) {
+      wrap.appendChild(this.pdfPreview(view, wrap, src))
+      if (path) wrap.appendChild(this.resizeHandle(view, wrap.firstElementChild as HTMLElement))
+      return wrap
+    }
+
+    // Everything else — a spreadsheet, an archive, a font — is a card wearing
+    // its own kind's mark, which opens the file.
+    wrap.appendChild(this.fileCard())
     return wrap
+  }
+
+  /** Open what this embed points at: the viewer for a vault file, a tab for a URL. */
+  private open() {
+    const { path, href } = this.spec
+    if (path) requestLightbox(path)
+    else if (href) window.open(href, '_blank', 'noopener')
+  }
+
+  /** The card an unshowable file gets: its mark, its name, its type and size. */
+  private fileCard(): HTMLElement {
+    const { path, label } = this.spec
+    const f = path ? getRaw(path) : undefined
+    const type = path ? fileTypeLabel(path) : 'LINK'
+    return card(
+      label,
+      f ? `${type} · ${formatBytes(f.size)}` : type,
+      path ? fileIconSvg(path) : familyIconSvg('other'),
+      () => this.open(),
+    )
+  }
+
+  /**
+   * Swap a player, a picture or a page the browser could not draw for the card
+   * it would have had. The height changes, so CodeMirror is told to re-measure.
+   */
+  private replaceWithCard(wrap: HTMLElement, view: EditorView) {
+    wrap.textContent = ''
+    wrap.appendChild(this.fileCard())
+    view.requestMeasure()
+  }
+
+  /**
+   * The first page of a PDF, drawn into the note.
+   *
+   * A PDF used to be a card here, which is the one attachment where that hurt:
+   * a note pointing at four scanned invoices showed four identical rectangles,
+   * and the only way to tell them apart was to open each one. So the page is
+   * drawn — by pdf.js, the same library the full viewer uses and the same
+   * reasoning behind it (see `ui/PdfView.tsx`: an `<iframe>` gives a still
+   * picture on iOS and nothing at all on Android Chrome).
+   *
+   * Only the first page, only once it is near the screen, and only at the width
+   * it is shown at: a note is a page of contents, not a reader. Clicking it
+   * opens the real viewer, where all of the pages are.
+   */
+  private pdfPreview(view: EditorView, wrap: HTMLElement, src: string): HTMLElement {
+    const { label, width } = this.spec
+    const box = document.createElement('div')
+    box.className = 'cm-embed-pdf'
+    if (width) box.style.width = `${width}px`
+
+    const canvas = document.createElement('canvas')
+    canvas.className = 'cm-embed-pdf-page'
+    box.appendChild(canvas)
+
+    const foot = document.createElement('div')
+    foot.className = 'cm-embed-pdf-foot'
+    foot.innerHTML = familyIconSvg('pdf', 15)
+    const name = document.createElement('span')
+    name.className = 'cm-embed-pdf-name'
+    name.textContent = basename(label)
+    const meta = document.createElement('span')
+    meta.className = 'cm-embed-pdf-meta'
+    const f = this.spec.path ? getRaw(this.spec.path) : undefined
+    meta.textContent = f ? formatBytes(f.size) : 'PDF'
+    foot.append(name, meta)
+    box.appendChild(foot)
+    box.addEventListener('click', () => this.open())
+
+    const draw = async () => {
+      const lib = await pdfLibrary()
+      if (this.gone) return
+      const task = lib.getDocument({ url: src, wasmUrl: pdfAsset() })
+      // Takes the worker, the document and the page proxy with it when the
+      // widget goes — a note scrolled past should not keep a PDF open.
+      this.onGone(() => void task.destroy())
+      const doc = await task.promise
+      const page = await doc.getPage(1)
+      if (this.gone) return
+      const unit = page.getViewport({ scale: 1 })
+      /*
+       * Drawn at the width it is displayed at, times the screen's pixel ratio
+       * and no more than twice — a full-page scan at 3x on a phone is fifteen
+       * megabytes of canvas for a thumbnail nobody is reading yet.
+       */
+      const css = Math.min(900, box.clientWidth || width || PDF_WIDTH)
+      const viewport = page.getViewport({
+        scale: (css * Math.min(2, devicePixelRatio || 1)) / unit.width,
+      })
+      canvas.width = Math.max(1, Math.round(viewport.width))
+      canvas.height = Math.max(1, Math.round(viewport.height))
+      canvas.style.aspectRatio = `${unit.width} / ${unit.height}`
+      const ctx = canvas.getContext('2d')
+      if (!ctx) throw new Error('no 2d context')
+      await page.render({ canvas, canvasContext: ctx, viewport }).promise
+      if (this.gone) return
+      meta.textContent = `${doc.numPages} page${doc.numPages === 1 ? '' : 's'}${
+        f ? ` · ${formatBytes(f.size)}` : ''
+      }`
+      // The page has a height now, so the lines below it are where they belong.
+      view.requestMeasure()
+    }
+
+    const start = () => {
+      void draw().catch((e) => {
+        if (this.gone) return
+        console.warn('PDF preview failed', e)
+        this.replaceWithCard(wrap, view)
+      })
+    }
+
+    // Near the screen, not merely in the note: a note holding a dozen PDFs
+    // should cost one document, not a dozen.
+    if (typeof IntersectionObserver === 'function') {
+      const io = new IntersectionObserver(
+        (entries) => {
+          if (!entries.some((e) => e.isIntersecting)) return
+          io.disconnect()
+          start()
+        },
+        { rootMargin: '300px' },
+      )
+      io.observe(box)
+      this.onGone(() => io.disconnect())
+    } else {
+      start()
+    }
+    return box
   }
 
   /**
@@ -902,7 +1174,7 @@ export class EmbedWidget extends WidgetType {
    * for immediate feedback, then written back into the markdown once on
    * release — so a resize is one undoable edit, not one per mouse move.
    */
-  private resizeHandle(view: EditorView, target: HTMLElement): HTMLElement {
+  private resizeHandle(view: EditorView, target: HTMLElement, min = 80): HTMLElement {
     const handle = document.createElement('div')
     handle.className = 'cm-embed-resize'
     handle.setAttribute('role', 'separator')
@@ -918,7 +1190,7 @@ export class EmbedWidget extends WidgetType {
       let next = Math.round(startW)
 
       const move = (ev: PointerEvent) => {
-        next = Math.round(Math.min(maxW, Math.max(80, startW + (ev.clientX - startX))))
+        next = Math.round(Math.min(maxW, Math.max(min, startW + (ev.clientX - startX))))
         target.style.width = `${next}px`
       }
       const up = () => {
@@ -941,12 +1213,14 @@ export class EmbedWidget extends WidgetType {
   }
 }
 
-function card(title: string, sub: string, onClick: () => void): HTMLElement {
+/**
+ * The card an embed falls back to. `icon` is markup from `core/filetypes.ts` —
+ * static, and never built out of anything in the note.
+ */
+function card(title: string, sub: string, icon: string, onClick: () => void): HTMLElement {
   const el = document.createElement('div')
   el.className = 'cm-embed-card'
-  el.innerHTML =
-    `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">` +
-    `<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>`
+  el.innerHTML = icon
   const text = document.createElement('div')
   const t = document.createElement('div')
   t.textContent = title
@@ -987,7 +1261,8 @@ function applyWidth(view: EditorView, dom: HTMLElement, width: number | undefine
     return
   }
 
-  const md = /!\[([^\]\n]*)\]\(([^)\s]*)\)/g
+  // Balanced parentheses belong to the address — a `$(client)` in one included.
+  const md = new RegExp(String.raw`!\[([^\]\n]*)\]\((${MD_URL})\)`, 'g')
   while ((m = md.exec(text))) {
     if (rel < m.index || rel > m.index + m[0].length) continue
     const url = m[2].replace(/#w=\d+$/, '')

@@ -28,7 +28,7 @@ import { openDueMenu } from './DueMenu'
 import { applyDue } from '../editor/due'
 import { adoptFromStorage, getEntry, ready, resolveLink, revision } from '../core/vault'
 import { settings } from '../core/settings'
-import { activePath, lightboxPath, notify, openNote } from './state'
+import { activePath, lightboxPath, notify, openNote, propertiesOpen } from './state'
 import { compactAllowed, installLayoutWatcher, layoutMode } from './layout'
 import { installMirror, reportHolding } from './popout'
 
@@ -143,6 +143,10 @@ export function PopoutWindow() {
       const { tag } = (e as CustomEvent<{ tag: string }>).detail
       notify(`#${tag} — open the main window to browse tags`)
     }
+    // Clicking a `$(property)` in the body: the same form the note's date
+    // opens, asked for from the value that needs changing.
+    const onProperties = () => (propertiesOpen.value = true)
+    addEventListener('slate:properties', onProperties)
     addEventListener('slate:open-link', onLink)
     addEventListener('slate:lightbox', onLightbox)
     addEventListener('slate:open-tag', onTag)
@@ -150,6 +154,7 @@ export function PopoutWindow() {
     addEventListener('slate:link-dialog', onLinkDialog)
     addEventListener('slate:due', onDue)
     return () => {
+      removeEventListener('slate:properties', onProperties)
       removeEventListener('slate:open-link', onLink)
       removeEventListener('slate:lightbox', onLightbox)
       removeEventListener('slate:open-tag', onTag)

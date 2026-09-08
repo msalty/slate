@@ -9,8 +9,11 @@
 
 import { normPath, parseYmd, startOfDay, titleFromPath, ymd } from './util'
 
+/** What a single frontmatter key can hold, once parsed. */
+export type FrontmatterValue = string | string[] | boolean | number
+
 export interface Frontmatter {
-  data: Record<string, string | string[] | boolean | number>
+  data: Record<string, FrontmatterValue>
   /** Character offset in the source where the body begins. */
   bodyStart: number
   raw: string
@@ -21,7 +24,7 @@ export function parseFrontmatter(text: string): Frontmatter {
   if (!text.startsWith('---')) return { data: {}, bodyStart: 0, raw: '' }
   const m = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(text)
   if (!m) return { data: {}, bodyStart: 0, raw: '' }
-  const data: Record<string, string | string[] | boolean | number> = {}
+  const data: Record<string, FrontmatterValue> = {}
   let lastKey: string | undefined
   for (const line of m[1].split(/\r?\n/)) {
     const item = /^\s*-\s+(.*)$/.exec(line)
@@ -72,6 +75,121 @@ export function setFrontmatterKey(text: string, key: string, value: string): str
   if (idx >= 0) lines[idx] = line
   else lines.push(line)
   return `---\n${lines.join('\n')}\n---\n${text.slice(fm.bodyStart)}`
+}
+
+/* --------------------------------------------------------------- variables */
+
+/**
+ * `$(key)` — a frontmatter value, written into the body of the note.
+ *
+ * The note file keeps the token; only the rendered views swap it for the
+ * value, which is what makes it safe: nothing rewrites the file, and a note
+ * carrying these opens in any other markdown editor as the text that was
+ * typed. That is the same bargain live preview makes everywhere else.
+ *
+ * `$(...)` rather than `{{...}}` on purpose. Templates already use `{{title}}`
+ * and `{{date}}`, and those are expanded *once*, when the note is made; this
+ * one is resolved every time the note is drawn. Two different things deserve
+ * two different shapes.
+ *
+ * The key charset is the one `parseFrontmatter` accepts, so anything nameable
+ * in the properties form is nameable here.
+ */
+const VAR = /\$\(([A-Za-z0-9_.-]+)\)/g
+
+export interface VarRef {
+  from: number
+  to: number
+  key: string
+}
+
+/** Every `$(key)` in `text`, with positions offset by `offset`. */
+export function scanVars(text: string, offset = 0): VarRef[] {
+  const out: VarRef[] = []
+  VAR.lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = VAR.exec(text))) {
+    out.push({ from: offset + m.index, to: offset + m.index + m[0].length, key: m[1] })
+  }
+  return out
+}
+
+/**
+ * A single-backtick span: the one place a `$(key)` is left as it was typed.
+ *
+ * Which is what makes the syntax writable about — a note explaining
+ * `$(client)` has to be able to say it — and it is single backticks alone, so
+ * that a fenced block, whose fences are three, still fills itself in. A span
+ * cannot cross a line, which is also what keeps a lone backtick in prose from
+ * swallowing the rest of the paragraph.
+ */
+const INLINE_CODE = /(?<!`)`[^`\n]+`(?!`)/g
+
+/**
+ * Swap every `$(key)` this data can answer for. Anything else is left alone —
+ * a name nobody declared, and a property still waiting to be filled in, both
+ * stay as the text they are, because both are still questions. So is anything
+ * in backticks.
+ */
+export function resolveVars(text: string, data: Record<string, FrontmatterValue>): string {
+  const swap = (chunk: string) => {
+    VAR.lastIndex = 0
+    return chunk.replace(VAR, (raw, key: string) => (key in data ? (varText(data[key]) ?? raw) : raw))
+  }
+  let out = ''
+  let at = 0
+  INLINE_CODE.lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = INLINE_CODE.exec(text))) {
+    out += swap(text.slice(at, m.index)) + m[0]
+    at = m.index + m[0].length
+  }
+  return out + swap(text.slice(at))
+}
+
+/**
+ * How a value reads in a sentence, or `undefined` when there is nothing to
+ * read — which the views draw as a blank to fill in rather than as nothing at
+ * all, since a template's empty property is the whole point of it.
+ *
+ * A list joins with commas, because that is how `tags: [travel, lisbon]` is
+ * typed into the properties form and how it reads back out. `false` is a
+ * value, not a blank.
+ */
+export function varText(value: FrontmatterValue | undefined): string | undefined {
+  if (value === undefined) return undefined
+  if (Array.isArray(value)) {
+    const joined = value.filter((v) => String(v).trim()).join(', ')
+    return joined || undefined
+  }
+  const s = String(value).trim()
+  return s || undefined
+}
+
+/**
+ * The property that makes a note's body read-only.
+ *
+ * A note carrying it is a form: the properties can be filled in, and nothing
+ * else about it can be typed over — no caret, no checkbox to tick, no table
+ * cell to edit. That is the point of pairing it with `$(name)`. A page whose
+ * every changeable part is a labelled field cannot be knocked out of shape by
+ * the person filling it in, and one built to be copied out of stays exactly as
+ * it was written.
+ *
+ * Three spellings, because the hyphen is the one this documents and the other
+ * two are what people type. The value is read the way a person means it rather
+ * than the way YAML would: the properties form writes `true` for its checkbox,
+ * and anyone writing the block by hand writes `yes`.
+ */
+const LOCK_KEYS = ['read-only', 'readonly', 'read_only']
+const LOCK_YES = new Set(['true', 'yes', 'on', '1'])
+
+export function isLocked(data: Record<string, FrontmatterValue>): boolean {
+  return LOCK_KEYS.some((k) => {
+    const v = data[k]
+    if (v === undefined || Array.isArray(v)) return false
+    return LOCK_YES.has(String(v).trim().toLowerCase())
+  })
 }
 
 /* ----------------------------------------------------------------- regions */
@@ -226,6 +344,21 @@ export function isTaskLine(line: string): boolean {
   return TASK.test(line)
 }
 
+/**
+ * Every task in a note — which does not include an empty checkbox.
+ *
+ * `- [ ]` with nothing after it is a line waiting to be typed into, not a job
+ * anybody has to do. The daily note's template opens with a few of them on
+ * purpose, and a template's blank lines have no business turning up in the
+ * Tasks view, in a Tag Folder, or in tomorrow's count of what is due. So they
+ * are not indexed, by any of the lists that ask this function what a note
+ * holds — `hasTasks` included, so a note holding nothing but blank checkboxes
+ * does not answer to a `has:tasks` rule either.
+ *
+ * The editor draws its checkbox from `isTaskLine`, not from here, so an empty
+ * one is still a checkbox in the note: tickable, and a task the moment it is
+ * given something to say.
+ */
 export function scanTasks(text: string): RawTask[] {
   const out: RawTask[] = []
   const regions = codeRegions(text)
@@ -234,13 +367,14 @@ export function scanTasks(text: string): RawTask[] {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
     const m = TASK.exec(line)
-    if (m && !inRegions(regions, offset)) {
+    const body = m ? m[3].trim() : ''
+    if (m && body && !inRegions(regions, offset)) {
       const markerAt = offset + line.indexOf('[', m[1].length)
       out.push({
         line: i,
         markerAt,
         done: m[2].toLowerCase() === 'x',
-        text: m[3].trim(),
+        text: body,
         due: parseDue(m[3]),
         tags: scanTags(m[3]),
       })
@@ -346,8 +480,18 @@ export function stripInline(s: string): string {
     .trim()
 }
 
-/** First meaningful line of body text, for the note list subtitle. */
-export function excerptOf(text: string, bodyStart = 0): string {
+/**
+ * First meaningful line of body text, for the note list subtitle.
+ *
+ * `vars` is the note's own properties, when the caller has them: a row reading
+ * "Prepared for $(client)" beside a page reading "Prepared for Acme Corp" is
+ * the same note described two ways, and the list is the one that is wrong.
+ */
+export function excerptOf(
+  text: string,
+  bodyStart = 0,
+  vars?: Record<string, FrontmatterValue>,
+): string {
   const body = text.slice(bodyStart)
   for (const raw of body.split('\n')) {
     const line = raw.trim()
@@ -368,7 +512,7 @@ export function excerptOf(text: string, bodyStart = 0): string {
       .replace(/[*_~`>]/g, '')
       .replace(/^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s*)?/, '')
       .trim()
-    if (clean) return clean.slice(0, 180)
+    if (clean) return (vars ? resolveVars(clean, vars) : clean).slice(0, 180)
   }
   return ''
 }

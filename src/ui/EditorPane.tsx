@@ -59,6 +59,7 @@ import { beginEditing, endEditing, installTapToEdit } from '../editor/reading'
 import { templateBodyFor } from '../core/templates'
 import { offerTitleFromHeading } from './titleDrift'
 import { UNTITLED } from '../core/vault'
+import { isLocked, parseFrontmatter } from '../core/markdown'
 import { layoutMode, railState, toggleRail } from './layout'
 import { debounce, longDateTime } from '../core/util'
 import {
@@ -70,6 +71,7 @@ import {
   IconEye,
   IconHistory,
   IconImagePlus,
+  IconLock,
   IconMaximize,
   IconMinimize,
   IconPaperclip,
@@ -99,6 +101,14 @@ export function EditorPane() {
    * selected — the list should not jump — but it holds no editor for it: see
    * the top of the rebuild effect, and the card rendered in its place below.
    */
+  /**
+   * `read-only: true` in the note's own properties.
+   *
+   * Held here as well as in the editor state because the header renders from
+   * the component, and the note can be locked and unlocked from the properties
+   * form without the vault having caught up.
+   */
+  const [locked, setLocked] = useState(false)
   const popped = !!path && isPoppedOut(path)
   /** True in a popped-out window, which is one note and no app around it. */
   const detached = isPopoutWindow()
@@ -194,6 +204,7 @@ export function EditorPane() {
     // as well, and start hidden on every one of them.
     formatSheetOpen.value = false
     propertiesOpen.value = false
+    setLocked(isLocked(parseFrontmatter(text).data))
 
     const state = createEditorState({
       doc: text,
@@ -211,7 +222,13 @@ export function EditorPane() {
        * `{{cursor}}`, and that is what arrives here.
        */
       caret: writing ? (caret ?? text.length) : undefined,
-      onChange: (text) => saveRef.current(path, text),
+      onChange: (text) => {
+        saveRef.current(path, text)
+        // The lock lives in the note's own properties, so it can be put on and
+        // taken off from the form while the note is open. Read from the buffer
+        // rather than from the vault, which is a debounce behind it.
+        setLocked(isLocked(parseFrontmatter(text).data))
+      },
     })
     const view = new EditorView({ state, parent: hostRef.current })
     viewRef.current = view
@@ -228,6 +245,14 @@ export function EditorPane() {
 
     const stopTaps = installTapToEdit(view, (at, keepCaret) => {
       if (!readingMode.peek()) return
+      /*
+       * A note locked by its own properties stays a page.
+       *
+       * `beginEditing` refuses it too, but the flag has to be left alone as
+       * well: flipping it would put the app in the writing state — Done, the
+       * Insert button, no pencil — around an editor that accepts nothing.
+       */
+      if (view.state.readOnly) return
       readingMode.value = false
       beginEditing(view, at, keepCaret)
     })
@@ -436,9 +461,26 @@ export function EditorPane() {
   /** Start editing from the header, for a pointer that would rather not tap. */
   const startEditing = () => {
     const view = viewRef.current
-    if (!view) return
+    if (!view || view.state.readOnly) return
     readingMode.value = false
     beginEditing(view)
+  }
+
+  /**
+   * Hand the note back — the other half of the pencil.
+   *
+   * Escape has always done this, and Escape is no use on a phone and invisible
+   * on a desktop: a note you have touched stays a note you are writing in,
+   * with the caret revealing the source of whatever it is beside, and no way
+   * out of that but closing the note. So the pencil's slot in the header
+   * becomes the way back the moment it is used, which is also where the eye
+   * looks for it.
+   */
+  const stopEditing = () => {
+    const view = viewRef.current
+    if (!view) return
+    readingMode.value = true
+    endEditing(view)
   }
 
   /** The three presentations, as a menu with the active one ticked. */
@@ -557,7 +599,7 @@ export function EditorPane() {
         />
         )}
         <span class="spacer" />
-        {reading && !trashed && (
+        {reading && !trashed && !locked && (
           <button
             class="icon-btn"
             aria-label="Edit note"
@@ -565,6 +607,32 @@ export function EditorPane() {
             onClick={startEditing}
           >
             <IconPencil />
+          </button>
+        )}
+        {/*
+          * A note that says it is read-only says so where the pencil would be,
+          * and the same button is the way in to the only part of it that can
+          * be changed — including the checkbox that locked it.
+          */}
+        {!trashed && locked && (
+          <button
+            class="icon-btn"
+            aria-label="Read-only note"
+            aria-pressed={propertiesOpen.value}
+            title="Read-only — only this note's properties can be changed"
+            onClick={() => (propertiesOpen.value = !propertiesOpen.value)}
+          >
+            <IconLock />
+          </button>
+        )}
+        {!reading && !trashed && (
+          <button
+            class="icon-btn"
+            aria-label="Done editing"
+            title="Done editing — read the note (Esc)"
+            onClick={stopEditing}
+          >
+            <IconCheck />
           </button>
         )}
         {!reading && !trashed && compact && rich && (

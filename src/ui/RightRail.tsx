@@ -27,6 +27,7 @@ import {
   calendarDayIntent,
   calendarMonth,
   matchingTasks,
+  notify,
   openDailyNote,
   openNote,
   scope,
@@ -276,7 +277,14 @@ function TaskRow({
         class="task-check"
         checked={t.done}
         aria-label={t.text}
-        onChange={() => void toggleTask(t.path, t.line)}
+        onChange={() =>
+          void toggleTask(t.path, t.line).then((ok) => {
+            // A note can refuse: one whose own properties say it is read-only
+            // is a form, and its tasks are part of the form rather than of the
+            // list. Saying so beats a checkbox that springs back.
+            if (!ok) notify(`${t.noteTitle} is read-only`)
+          })
+        }
       />
       <span
         class="task-text"
@@ -302,7 +310,11 @@ function TaskRow({
       <DueChip
         due={t.due}
         label={t.text || 'this task'}
-        onPick={(date) => void setDue(t.path, t.line, date)}
+        onPick={(date) =>
+          void setDue(t.path, t.line, date).then((ok) => {
+            if (!ok) notify(`${t.noteTitle} is read-only`)
+          })
+        }
       />
     </div>
   )

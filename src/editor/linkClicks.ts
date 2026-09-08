@@ -15,14 +15,14 @@
  */
 
 import { EditorView } from '@codemirror/view'
-import { requestOpenLink, requestUri } from './context'
+import { requestOpenLink, requestProperties, requestUri } from './context'
 
 /**
  * Everything in a note that is worth a tap. Plain anchors are in the list
  * because a table cell's content is rendered by us into widget DOM, where a
  * link really is an `<a>` rather than a decorated span.
  */
-const LINK_SELECTOR = '[data-href], [data-wikilink], [data-tag], a[href]'
+const LINK_SELECTOR = '[data-href], [data-wikilink], [data-tag], [data-var], a[href]'
 
 /** The link-like element an event happened in, if it happened in one. */
 export function linkElementAt(target: EventTarget | null): HTMLElement | null {
@@ -59,6 +59,12 @@ export function followLink(
     dispatchEvent(new CustomEvent('slate:open-tag', { detail: { tag } }))
     return true
   }
+  // A property in the body opens the form that owns it. The element only
+  // carries this in rich text, which is the only mode that has the form.
+  if (el.dataset.var !== undefined) {
+    requestProperties()
+    return true
+  }
   const href = el.dataset.href ?? el.getAttribute('href')
   if (!href) return false
   requestUri(href, { x: at.x, y: at.y, pos: posOf(view, el), via: at.via })
@@ -67,7 +73,11 @@ export function followLink(
 
 /** True when this element is a link the platform, not the note, would open. */
 function isUriLink(el: HTMLElement): boolean {
-  return el.dataset.wikilink === undefined && el.dataset.tag === undefined
+  return (
+    el.dataset.wikilink === undefined &&
+    el.dataset.tag === undefined &&
+    el.dataset.var === undefined
+  )
 }
 
 /**
