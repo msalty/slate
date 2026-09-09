@@ -16,7 +16,7 @@
 
 import { NotFound, PreconditionFailed, type RemoteAdapter, type RemoteEntry } from '../core/types'
 import { normPath } from '../core/util'
-import { REQUEST_TIMEOUT_MS, TRANSFER_TIMEOUT_MS, isTimeout, timeoutSignal } from './net'
+import { REQUEST_TIMEOUT_MS, bodySize, isTimeout, timeoutSignal, transferTimeout } from './net'
 
 /**
  * How deep the tree walk will go.
@@ -115,6 +115,14 @@ export class WebdavAdapter implements RemoteAdapter {
       throw new Error('WebDAV rejected the username or password.')
     if (res.status === 404) throw new NotFound(`${path} not found on the server`)
     if (res.status === 412) throw new PreconditionFailed()
+    // Nextcloud and nginx both cap upload size by default, so this is the
+    // ordinary way a large attachment fails — worth saying plainly rather than
+    // reporting a bare status nobody can act on. It is the server's limit, not
+    // ours, so the remedy is on the server.
+    if (res.status === 413)
+      throw new Error(
+        `${this.describe()} refused ${path || '/'}: the file is larger than the server's upload limit.`,
+      )
     if (res.status === 507) throw new Error('The WebDAV server is out of space.')
     if (!res.ok && res.status !== 207)
       throw new Error(`WebDAV ${method} ${path || '/'} failed: ${res.status} ${res.statusText}`)
@@ -240,7 +248,7 @@ export class WebdavAdapter implements RemoteAdapter {
   }
 
   async getBlob(entry: RemoteEntry): Promise<{ blob: Blob; rev?: string; mtime?: number }> {
-    const res = await this.request('GET', entry.path, { timeoutMs: TRANSFER_TIMEOUT_MS })
+    const res = await this.request('GET', entry.path, { timeoutMs: transferTimeout(entry.size) })
     return {
       blob: await res.blob(),
       rev: cleanEtag(res.headers.get('ETag')) ?? entry.rev,
@@ -265,7 +273,11 @@ export class WebdavAdapter implements RemoteAdapter {
 
     let res: Response
     try {
-      res = await this.request('PUT', path, { headers, body, timeoutMs: TRANSFER_TIMEOUT_MS })
+      res = await this.request('PUT', path, {
+        headers,
+        body,
+        timeoutMs: transferTimeout(bodySize(body)),
+      })
     } catch (e) {
       if (e instanceof PreconditionFailed) throw e
       // Some servers answer If-None-Match:* with 405 rather than 412.

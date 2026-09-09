@@ -18,7 +18,7 @@
 
 import { NotFound, PreconditionFailed, type RemoteAdapter, type RemoteEntry } from '../core/types'
 import { basename, normPath } from '../core/util'
-import { REQUEST_TIMEOUT_MS, TRANSFER_TIMEOUT_MS, isTimeout, timeoutSignal } from './net'
+import { REQUEST_TIMEOUT_MS, bodySize, isTimeout, timeoutSignal, transferTimeout } from './net'
 
 const FOLDER_MIME = 'application/vnd.google-apps.folder'
 const API = 'https://www.googleapis.com/drive/v3'
@@ -203,8 +203,13 @@ export class GdriveAdapter implements RemoteAdapter {
     const token = await this.ensureToken()
     // Every request carries a deadline: an answer that never comes would
     // otherwise leave the sync engine's single in-flight run alive forever, and
-    // every later sync joins that run rather than starting a new one.
-    const { timeoutMs = init.body ? TRANSFER_TIMEOUT_MS : REQUEST_TIMEOUT_MS, ...rest } = init
+    // every later sync joins that run rather than starting a new one. A request
+    // carrying bytes gets one sized for them; one that is only a round trip
+    // gets the short one.
+    const {
+      timeoutMs = init.body ? transferTimeout(bodySize(init.body)) : REQUEST_TIMEOUT_MS,
+      ...rest
+    } = init
     const run = (t: string) =>
       fetch(url, {
         ...rest,
@@ -357,8 +362,9 @@ export class GdriveAdapter implements RemoteAdapter {
     const id = entry.handle ?? this.idByPath.get(entry.path)
     if (!id) throw new NotFound(`No Drive id for ${entry.path}`)
     // A download has no request body but can still be an attachment of many
-    // megabytes, so it gets the transfer deadline rather than the short one.
-    return this.api(`${API}/files/${id}?alt=media`, { timeoutMs: TRANSFER_TIMEOUT_MS })
+    // megabytes, so its deadline comes from the size the listing reported
+    // rather than from the short one requests without a body would get.
+    return this.api(`${API}/files/${id}?alt=media`, { timeoutMs: transferTimeout(entry.size) })
   }
 
   async getText(entry: RemoteEntry): Promise<{ text: string; rev?: string; mtime?: number }> {
