@@ -16,6 +16,17 @@
 
 import { NotFound, PreconditionFailed, type RemoteAdapter, type RemoteEntry } from '../core/types'
 import { normPath } from '../core/util'
+import { REQUEST_TIMEOUT_MS, TRANSFER_TIMEOUT_MS, isTimeout, timeoutSignal } from './net'
+
+/**
+ * How deep the tree walk will go.
+ *
+ * Reaching it is not a listing that stops early: sync reads a listing as the
+ * whole truth about the remote, so anything the walk did not reach would look
+ * exactly like a file another device had deleted. The walk therefore fails
+ * rather than answering with part of the vault — see `list`.
+ */
+const MAX_DEPTH = 24
 
 export interface WebdavConfig {
   url: string
@@ -76,19 +87,25 @@ export class WebdavAdapter implements RemoteAdapter {
   private async request(
     method: string,
     path: string,
-    init: RequestInit & { headers?: Record<string, string> } = {},
+    init: RequestInit & { headers?: Record<string, string>; timeoutMs?: number } = {},
   ): Promise<Response> {
+    const { timeoutMs = REQUEST_TIMEOUT_MS, ...rest } = init
     let res: Response
     try {
       res = await fetch(this.urlFor(path), {
-        ...init,
+        ...rest,
         method,
         headers: this.headers(init.headers),
         // Basic auth is supplied explicitly; never attach ambient cookies.
         credentials: 'omit',
         cache: 'no-store',
+        signal: timeoutSignal(timeoutMs),
       })
     } catch (e) {
+      if (isTimeout(e))
+        throw new Error(
+          `${this.describe()} did not answer within ${Math.round(timeoutMs / 1000)}s (${method} ${path || '/'}). The next sync will try again.`,
+        )
       // A network-level failure here is almost always CORS or an offline device.
       throw new Error(
         `Could not reach ${this.describe()}. If the server is up, this is usually a CORS problem — see the WebDAV section of the README. (${(e as Error).message})`,
@@ -124,7 +141,7 @@ export class WebdavAdapter implements RemoteAdapter {
     // Breadth-first with Depth:1, a level at a time, bounded concurrency.
     let frontier: string[] = ['']
     let depth = 0
-    while (frontier.length && depth < 24) {
+    while (frontier.length && depth < MAX_DEPTH) {
       const dirs: string[] = []
       for (let i = 0; i < frontier.length; i += 6) {
         const batch = frontier.slice(i, i + 6)
@@ -141,6 +158,13 @@ export class WebdavAdapter implements RemoteAdapter {
       frontier = dirs
       depth++
     }
+    // Fail closed. A short listing is not a smaller vault, it is a wrong one:
+    // the sync engine would read every unvisited file as deleted elsewhere and
+    // move the local copies to the trash.
+    if (frontier.length)
+      throw new Error(
+        `The vault on ${this.describe()} is nested more than ${MAX_DEPTH} folders deep, so this listing would have been incomplete. Nothing was changed.`,
+      )
     return out
   }
 
@@ -216,7 +240,7 @@ export class WebdavAdapter implements RemoteAdapter {
   }
 
   async getBlob(entry: RemoteEntry): Promise<{ blob: Blob; rev?: string; mtime?: number }> {
-    const res = await this.request('GET', entry.path)
+    const res = await this.request('GET', entry.path, { timeoutMs: TRANSFER_TIMEOUT_MS })
     return {
       blob: await res.blob(),
       rev: cleanEtag(res.headers.get('ETag')) ?? entry.rev,
@@ -241,7 +265,7 @@ export class WebdavAdapter implements RemoteAdapter {
 
     let res: Response
     try {
-      res = await this.request('PUT', path, { headers, body })
+      res = await this.request('PUT', path, { headers, body, timeoutMs: TRANSFER_TIMEOUT_MS })
     } catch (e) {
       if (e instanceof PreconditionFailed) throw e
       // Some servers answer If-None-Match:* with 405 rather than 412.
@@ -263,9 +287,21 @@ export class WebdavAdapter implements RemoteAdapter {
     return { rev, mtime }
   }
 
-  async remove(entry: RemoteEntry): Promise<void> {
+  /**
+   * Delete, conditionally.
+   *
+   * `If-Match` is what makes replicating another device's delete safe: between
+   * the listing this run is working from and this request, a third device may
+   * have written to the file, and deleting it then would destroy content this
+   * device has never seen. The server answers 412 instead, which the sync
+   * engine reads as "resurrect it".
+   */
+  async remove(entry: RemoteEntry, ifMatchRev?: string): Promise<void> {
+    const rev = ifMatchRev ?? entry.rev
     try {
-      await this.request('DELETE', entry.path)
+      await this.request('DELETE', entry.path, {
+        headers: rev ? { 'If-Match': `"${rev}"` } : {},
+      })
     } catch (e) {
       if (e instanceof NotFound) return // already gone; that is success
       throw e
@@ -287,13 +323,20 @@ export class WebdavAdapter implements RemoteAdapter {
           method: 'MKCOL',
           headers: this.headers(),
           credentials: 'omit',
+          signal: timeoutSignal(REQUEST_TIMEOUT_MS),
         })
         // 405 = already exists, which is exactly what we want.
         if (!res.ok && res.status !== 405 && res.status !== 301)
           throw new Error(`Could not create folder "${cur}" (${res.status}).`)
       } catch (e) {
         if (e instanceof Error && e.message.startsWith('Could not create')) throw e
-        // Network errors here are surfaced by the subsequent PUT.
+        // The request never got an answer, so whether the folder exists is
+        // unknown. Nothing is remembered and nothing deeper is attempted: the
+        // PUT that follows reports the real problem, and the next write asks
+        // again rather than trusting a guess. Caching an uncertain "ensured"
+        // here is how a single dropped connection stops a folder from ever
+        // being created for the rest of the session.
+        return
       }
       this.ensured.add(cur)
     }

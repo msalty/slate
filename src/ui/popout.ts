@@ -22,10 +22,13 @@
  *   3. **Only the main window syncs.** A popout is an editor, not a second
  *      copy of the app: it saves locally and lets the window that opened it
  *      push. Two sync engines reconciling one vault against one remote is a
- *      race nobody needs.
+ *      race nobody needs — and where two *ordinary* tabs are open, the sync
+ *      engine's own lock picks one of them for the same reason.
  *
- * None of this machinery exists until a note is actually popped out: no
- * channel, no interval, no listener.
+ * The channel in (2) is opened wherever the app boots, popout or not, because
+ * two ordinary tabs are two copies of the app over one database exactly as a
+ * popout is. The rest — the interval, the registry of open windows — still
+ * costs nothing until a note is actually popped out.
  */
 
 import { signal } from '@preact/signals'
@@ -139,9 +142,9 @@ let holding: string | undefined
 /**
  * Start mirroring writes to and from the other windows of this vault.
  *
- * Called by a popout as it boots and by the main window the moment it opens
- * one, so a session that never pops anything out never opens a channel.
- * Idempotent: both of those can happen in either order.
+ * Called by every window as it boots, and again by the main window the moment
+ * it opens a popout. Idempotent: those can happen in any order and any number
+ * of times.
  */
 export function installMirror(): void {
   if (channel || !canPopOut()) return

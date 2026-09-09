@@ -1203,15 +1203,25 @@ When a file has changed on both sides:
   be needlessly destructive.
 - **Same lines rewritten** → your version stays at the real path (so the editor
   buffer under your cursor is never yanked away) and the server's version is
-  saved beside it as `Note (conflict — mac 2026-08-31 1420).md`, which then syncs
-  everywhere so the divergence is visible on every device rather than quietly
-  resolved on one.
+  saved beside it as `Note (conflict — mac 2026-08-31 142033).md`, which then
+  syncs everywhere so the divergence is visible on every device rather than
+  quietly resolved on one. The name is made unique before it is used, so a
+  second conflict on the same note moments later is a second copy rather than a
+  replacement for the first.
 
 Writes are conditional (`If-Match`), so a write is refused rather than
 overwriting a change that arrived since the last listing; the refusal routes back
-into the merge above. A pull that finds the file edited locally while it was in
-flight merges rather than installs, so an edit made mid-sync is not erased by the
-download it raced.
+into the merge above. Deletes are conditional in the same way — replicating
+another device's delete cannot destroy an edit that landed after the listing, and
+a refused delete resurrects the file instead. (Google Drive has no conditional
+request, so its adapter re-reads the file's revision immediately before writing
+or trashing and refuses if it moved.) A pull that finds the file edited locally
+while it was in flight merges rather than installs, so an edit made mid-sync is
+not erased by the download it raced.
+
+A run that cannot carry some of its files says so: those paths are named in the
+app, the run is left in an error state rather than reported as "Synced", and
+they are tried again on the next run.
 
 A note open in the editor is folded in too. The editor holds its own copy of the
 text, and that copy is what the next keystroke saves — so a version arriving from
@@ -1345,9 +1355,11 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
   the one with the backend connected, and a popout deliberately doesn't run a
   second sync engine racing the first. It saves to the same local database
   regardless, so nothing is lost — but close the app and leave only the popout
-  open, and what you write there goes up the next time the app itself is. The
-  fix is a leader election between the windows, which is more machinery than
-  the case deserves for now.
+  open, and what you write there goes up the next time the app itself is.
+  Ordinary tabs are a different case and are handled: every window mirrors its
+  writes to the others over a BroadcastChannel, and a run takes a Web Lock, so
+  two tabs of the app share one picture of the vault and only one of them syncs
+  at a time.
 - **The search index is rebuilt from nothing each session** — it lives in
   memory, so a reload, or an installed app the OS has evicted, starts again. It
   is only built by vaults big enough to want one, it runs in idle slices and

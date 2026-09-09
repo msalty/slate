@@ -169,7 +169,13 @@ export interface RemoteAdapter {
     ifMatchRev: string | undefined,
     knownHandle?: string,
   ): Promise<{ rev?: string; mtime?: number; handle?: string }>
-  remove(entry: RemoteEntry): Promise<void>
+  /**
+   * Delete a file. `ifMatchRev` is the rev the caller believes the remote
+   * holds, and adapters MUST refuse (throw PreconditionFailed) if the remote
+   * has moved on since — a delete replicated from another device must never
+   * destroy an edit made after the listing this run is working from.
+   */
+  remove(entry: RemoteEntry, ifMatchRev?: string): Promise<void>
   /** Ensure a directory exists (no-op for flat stores). */
   ensureDir(path: string): Promise<void>
 }
@@ -186,6 +192,25 @@ export class NotFound extends Error {
     super(message)
     this.name = 'NotFound'
   }
+}
+
+/**
+ * Recognise a refused conditional write or delete across the adapter boundary.
+ *
+ * `instanceof` compares class identity, which holds only while everything came
+ * from one copy of this module — and an adapter is precisely the piece that
+ * might not have. Getting this wrong is expensive: the sync engine reads a
+ * precondition failure as "someone else got there first, go and merge", and
+ * anything it fails to recognise becomes a generic error instead, so the
+ * merge never happens. The name is set in the constructor and is the reliable
+ * half of the test.
+ */
+export function isPreconditionFailed(e: unknown): boolean {
+  return e instanceof PreconditionFailed || (e as Error | undefined)?.name === 'PreconditionFailed'
+}
+
+export function isNotFound(e: unknown): boolean {
+  return e instanceof NotFound || (e as Error | undefined)?.name === 'NotFound'
 }
 
 export interface AppSettings {

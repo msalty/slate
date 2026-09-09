@@ -39,8 +39,23 @@ export class MemoryServer {
     return row ? row.body.text() : undefined
   }
 
+  /** Delete as if from another device, bypassing preconditions. */
   remove(path: string): void {
     this.files.delete(normPath(path))
+  }
+
+  /**
+   * The conditional delete a real backend offers: WebDAV's `If-Match` on
+   * DELETE, and Drive's re-read of headRevisionId just before trashing. A
+   * client that asks to delete a revision the server has moved past is refused,
+   * because the file it meant to delete is not the file that is there now.
+   */
+  delete(path: string, ifMatchRev: string | undefined): void {
+    const p = normPath(path)
+    const existing = this.files.get(p)
+    if (!existing) return // already gone; that is success
+    if (ifMatchRev !== undefined && existing.rev !== ifMatchRev) throw new PreconditionFailed()
+    this.files.delete(p)
   }
 
   put(path: string, body: Blob, ifMatchRev: string | undefined): { rev: string; mtime: number } {
@@ -99,8 +114,8 @@ export class MemoryAdapter implements RemoteAdapter {
     return this.server.put(path, blob, ifMatchRev)
   }
 
-  async remove(entry: RemoteEntry) {
-    this.server.remove(entry.path)
+  async remove(entry: RemoteEntry, ifMatchRev?: string) {
+    this.server.delete(entry.path, ifMatchRev ?? entry.rev)
   }
 
   async ensureDir() {

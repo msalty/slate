@@ -171,6 +171,36 @@ describe('sync round trips', () => {
     expect(b.vault.trashItems().length).toBe(1)
   })
 
+  it('does not delete a note that was written to after this run listed it', async () => {
+    const server = new MemoryServer()
+    const a = await makeDevice(server, 'mac')
+    const p = await a.vault.createNote('', 'Important', 'first draft\n')
+    await run(a)
+    await a.vault.deleteNote(p)
+
+    // The listing said the note was untouched, and the delete is planned from
+    // it. Another device writes in the window between the two — which on a real
+    // backend is a whole run's worth of files wide.
+    const adapter = new MemoryAdapter(server)
+    const remove = adapter.remove.bind(adapter)
+    let raced = false
+    adapter.remove = async (entry, rev) => {
+      if (entry.path === p && !raced) {
+        raced = true
+        server.writeText(p, 'first draft\nsomething they just added\n')
+      }
+      return remove(entry, rev)
+    }
+    a.sync.setAdapter(adapter)
+
+    await run(a)
+
+    // The write survives on the server, and the edit beats the delete here too.
+    expect(await server.readText(p)).toContain('something they just added')
+    expect(a.vault.exists(p)).toBe(true)
+    expect(a.vault.getText(p)).toContain('something they just added')
+  })
+
   it('resurrects a note that was edited elsewhere after being deleted here', async () => {
     const server = new MemoryServer()
     const a = await makeDevice(server, 'mac')
@@ -229,6 +259,62 @@ describe('sync round trips', () => {
     const finalText = await server.readText(p)
     expect(finalText).toContain('local addition')
     expect(finalText).toContain('remote addition')
+  })
+
+  it('keeps both conflict copies when one note conflicts twice in a row', async () => {
+    const server = new MemoryServer()
+    const a = await makeDevice(server, 'mac')
+    const p = await a.vault.createNote('', 'Hotel', 'Hotel: pending\n')
+    await run(a)
+    const b = await makeDevice(server, 'phone')
+    await run(b)
+
+    // Two conflicts on the same note, seconds apart — a note open on two
+    // machines does this by itself. A conflict copy written over the previous
+    // one is the loss the copy exists to prevent.
+    for (const [mac, phone] of [
+      ['Hotel: Alfama\n', 'Hotel: Chiado\n'],
+      ['Hotel: Graça\n', 'Hotel: Belém\n'],
+    ]) {
+      await a.vault.saveNote(p, mac)
+      await b.vault.saveNote(p, phone)
+      await run(a)
+      await run(b)
+      await run(a)
+      await run(b)
+    }
+
+    const copies = b.vault.listAll().filter((f) => f.path.includes('conflict') && !f.deleted)
+    expect(copies).toHaveLength(2)
+    expect(copies.map((f) => f.text).join('\n')).toContain('Alfama')
+    expect(copies.map((f) => f.text).join('\n')).toContain('Graça')
+  })
+
+  it('reports a file it could not sync rather than calling the run a success', async () => {
+    const server = new MemoryServer()
+    const a = await makeDevice(server, 'mac')
+    const ok = await a.vault.createNote('', 'Fine', 'this one works\n')
+    const bad = await a.vault.createNote('', 'Doomed', 'this one does not\n')
+
+    const adapter = new MemoryAdapter(server)
+    const put = adapter.put.bind(adapter)
+    adapter.put = async (path, body, mime, ifMatchRev) => {
+      if (path === bad) throw new Error('the server is out of space')
+      return put(path, body, mime, ifMatchRev)
+    }
+    a.sync.setAdapter(adapter)
+
+    await run(a)
+
+    // The other files still went, which is why the error is swallowed per file…
+    expect(await server.readText(ok)).toContain('this one works')
+    // …and this is the other half of that bargain.
+    expect(a.sync.status.value.phase).toBe('error')
+    expect(a.sync.status.value.lastSyncAt).toBeUndefined()
+    expect(a.sync.recentFailures.value.map((f) => f.path)).toEqual([bad])
+    expect(a.sync.recentFailures.value[0].error).toContain('out of space')
+    // Still dirty, so the next run tries again.
+    expect(a.vault.getRaw(bad)?.dirty).toBe(true)
   })
 
   it('survives a restart with unsynced edits', async () => {
