@@ -20,7 +20,7 @@
 
 import { signal } from '@preact/signals'
 import type { RemoteAdapter, RemoteEntry, SyncStatus, VaultFile } from './types'
-import { PreconditionFailed } from './types'
+import { isPreconditionFailed } from './types'
 import { merge3 } from './merge'
 import {
   forget,
@@ -41,14 +41,47 @@ export const status = signal<SyncStatus>({ phase: 'idle', pendingCount: 0, confl
 /** Paths that produced a conflict copy in the most recent run, for the UI banner. */
 export const recentConflicts = signal<string[]>([])
 
+/**
+ * Files the most recent run could not sync, and why.
+ *
+ * A run that fails on some of its files is not a run that succeeded. The whole
+ * point of a per-file error being caught is that the *other* files still go
+ * through; the price of that is that somebody has to remember which ones did
+ * not, or "Synced" ends up meaning "tried".
+ */
+export const recentFailures = signal<Array<{ path: string; error: string }>>([])
+
 let adapter: RemoteAdapter | undefined
 let running: Promise<void> | undefined
 /** Set when a sync is requested while one is already in flight. */
 let rerunRequested = false
 let deviceLabel = 'device'
 
+/**
+ * Bumped every time the backend changes.
+ *
+ * A run is a plan drawn up against one remote — paths, revisions, ids — and
+ * changing backends halfway through would push the second half of that plan at
+ * a server that has never seen any of it. The run captures the number it
+ * started with and every remote call checks it, so a switch abandons the run
+ * instead of half-applying it.
+ */
+let generation = 0
+let runGeneration = -1
+
+/**
+ * The adapter this run is talking to, or an error if it is no longer the one
+ * the app is configured for.
+ */
+function remote(): RemoteAdapter {
+  if (!adapter || runGeneration !== generation)
+    throw new Error('The backend changed while syncing — this run was abandoned.')
+  return adapter
+}
+
 export function setAdapter(a: RemoteAdapter | undefined): void {
   adapter = a
+  generation++
   status.value = {
     ...status.value,
     phase: 'idle',
@@ -100,6 +133,34 @@ export function sync(): Promise<void> {
   return running
 }
 
+const SYNC_LOCK = 'slate:sync'
+
+/**
+ * Run the body only if no other tab of this vault is syncing.
+ *
+ * Every ordinary tab boots its own backend, so without this two of them
+ * reconcile the same vault against the same remote at the same time — the same
+ * files listed, uploaded and stamped twice, and each one's write looking to the
+ * other like a change from a different device. The tab that skips loses
+ * nothing: writes are mirrored between windows, so whichever tab holds the lock
+ * is pushing everything both of them have.
+ *
+ * Web Locks are released when the tab holding one goes away, crash included, so
+ * a lock can never be left behind. Where the API is missing the behaviour is
+ * exactly what it was before.
+ */
+async function withSyncLock(body: () => Promise<void>): Promise<void> {
+  const locks = typeof navigator === 'undefined' ? undefined : navigator.locks
+  if (!locks) return body()
+  let ran = false
+  await locks.request(SYNC_LOCK, { ifAvailable: true }, async (lock) => {
+    if (!lock) return
+    ran = true
+    await body()
+  })
+  if (!ran) setStatus({ detail: 'Another window of this vault is syncing…' })
+}
+
 async function runOnce(): Promise<void> {
   if (!adapter) {
     setStatus({ phase: 'idle', detail: 'Local only' })
@@ -109,27 +170,33 @@ async function runOnce(): Promise<void> {
     setStatus({ phase: 'offline', detail: 'Offline — changes are saved locally' })
     return
   }
+  return withSyncLock(runLocked)
+}
 
+async function runLocked(): Promise<void> {
   const conflicts: string[] = []
+  /** Files this run could not sync. See `recentFailures`. */
+  const failures: Array<{ path: string; error: string }> = []
+  runGeneration = generation
   try {
     // Anything this device pushed since the last run is written out now, so it
     // travels with this run rather than waiting for the next one.
     await persistDeviceRegistry()
     setStatus({ phase: 'listing', detail: 'Checking for changes…', progress: 0, lastError: undefined })
-    if (!adapter.isConnected()) await adapter.connect()
+    if (!remote().isConnected()) await remote().connect()
 
-    const remoteList = await adapter.list()
-    const remote = new Map<string, RemoteEntry>()
-    for (const e of remoteList) if (!e.isDir) remote.set(e.path, e)
+    const remoteList = await remote().list()
+    const remoteFiles = new Map<string, RemoteEntry>()
+    for (const e of remoteList) if (!e.isDir) remoteFiles.set(e.path, e)
 
-    const paths = new Set<string>([...listAll().map((f) => f.path), ...remote.keys()])
+    const paths = new Set<string>([...listAll().map((f) => f.path), ...remoteFiles.keys()])
     // Device records go first. They are tiny, and a note pulled after the file
     // that says who wrote it can be attributed in this run instead of the next.
     const ordered = [...paths].sort((a, b) => Number(isDevicePath(b)) - Number(isDevicePath(a)))
     const plan: Array<() => Promise<void>> = []
 
     for (const path of ordered) {
-      const R = remote.get(path)
+      const R = remoteFiles.get(path)
       // The local side is read when the item actually runs, not now: a run can
       // take seconds, and an edit made in the meantime must not be reconciled
       // away on the strength of a stale snapshot.
@@ -144,14 +211,18 @@ async function runOnce(): Promise<void> {
     let done = 0
     let cursor = 0
     const workers = Array.from({ length: Math.min(CONCURRENCY, plan.length) }, async () => {
-      while (cursor < plan.length) {
+      // A backend swapped out from under the run makes the rest of the plan
+      // meaningless, so the workers stop rather than failing every file in turn.
+      while (cursor < plan.length && runGeneration === generation) {
         const i = cursor++
         try {
           await plan[i]()
         } catch (e) {
           // One bad file must not abort the whole run; the rest still sync and
-          // the failure is retried next time.
-          console.warn('[slate] sync item failed', e)
+          // the failure is retried next time. It is recorded, though — a run
+          // that could not write half the vault must not report "Synced".
+          failures.push({ path: ordered[i], error: (e as Error).message ?? String(e) })
+          console.warn('[slate] sync item failed', ordered[i], e)
         }
         done++
         if (done % 5 === 0 || done === plan.length)
@@ -162,6 +233,24 @@ async function runOnce(): Promise<void> {
     await pushDeviceRegistry()
 
     recentConflicts.value = conflicts
+    recentFailures.value = failures
+
+    if (failures.length) {
+      // Degraded, not done. `lastSyncAt` is the moment the two sides were last
+      // known to agree, and after this run they demonstrably do not, so it is
+      // left where it was. Those files are still dirty and go again next run.
+      const n = failures.length
+      const summary = `${n} file${n === 1 ? '' : 's'} could not sync (${failures[0].path}: ${failures[0].error})`
+      setStatus({
+        phase: 'error',
+        progress: undefined,
+        conflictCount: conflicts.length,
+        lastError: summary,
+        detail: `Synced ${done - n} of ${plan.length} — ${n} failed`,
+      })
+      return
+    }
+
     setStatus({
       phase: 'idle',
       progress: undefined,
@@ -169,9 +258,13 @@ async function runOnce(): Promise<void> {
       conflictCount: conflicts.length,
       detail: conflicts.length
         ? `Synced — ${conflicts.length} conflict ${conflicts.length === 1 ? 'copy' : 'copies'} kept`
-        : `Synced with ${adapter.describe()}`,
+        : `Synced with ${remote().describe()}`,
     })
   } catch (e) {
+    // Whatever got through before this still counts, and whatever did not is
+    // still worth naming — the banner reads "the last run", not "the last run
+    // that finished".
+    recentFailures.value = failures
     const msg = (e as Error).message ?? String(e)
     setStatus({
       phase: 'error',
@@ -229,7 +322,20 @@ async function reconcile(
       await pull(path, R, conflicts)
       return
     }
-    await adapter!.remove(R)
+    // The revision goes with the delete. The check above was made against a
+    // listing that may be seconds old by the time this file's turn comes round,
+    // and a third device can write in that window; the adapter refuses rather
+    // than deleting a version nobody here has ever seen.
+    try {
+      await remote().remove(R, R.rev)
+    } catch (e) {
+      if (!isPreconditionFailed(e)) throw e
+      const fresh = (await remote().list()).find((x) => x.path === path && !x.isDir)
+      // Same rule as above, one round later: an edit beats a delete.
+      if (fresh) return pull(path, fresh, conflicts)
+      // Refused, and now absent — someone else deleted it first. Nothing to do
+      // but agree.
+    }
     await forget(path)
     return
   }
@@ -293,7 +399,7 @@ async function pull(path: string, R: RemoteEntry, conflicts: string[]): Promise<
   const now = Date.now()
   const existing = getRaw(path)
   if (isNotePath(path) || path.endsWith('.json')) {
-    const { text, rev, mtime } = await adapter!.getText(R)
+    const { text, rev, mtime } = await remote().getText(R)
     const hash = await hashText(text)
     // Typing does not stop for a network round trip. If the file changed
     // locally while this request was in flight, installing the remote text
@@ -324,7 +430,7 @@ async function pull(path: string, R: RemoteEntry, conflicts: string[]): Promise<
     return
   }
 
-  const { blob, rev, mtime } = await adapter!.getBlob(R)
+  const { blob, rev, mtime } = await remote().getBlob(R)
   const hash = await hashBlob(blob)
   const raced = racedLocalEdit(path, hash)
   if (raced) return resolve(path, raced, R, conflicts)
@@ -372,7 +478,7 @@ async function push(path: string, L: VaultFile, ifMatch: string | undefined): Pr
   const mime = L.mime || mimeForPath(path)
 
   try {
-    const res = await adapter!.put(path, body, mime, ifMatch)
+    const res = await remote().put(path, body, mime, ifMatch)
     recordWrite(path)
     await markSynced(path, {
       baseHash: L.hash,
@@ -381,10 +487,10 @@ async function push(path: string, L: VaultFile, ifMatch: string | undefined): Pr
       remoteMtime: res.mtime,
     })
   } catch (e) {
-    if (e instanceof PreconditionFailed) {
+    if (isPreconditionFailed(e)) {
       // The remote changed between our listing and our write. Re-list just this
       // file and fall through to a proper merge instead of forcing.
-      const fresh = (await adapter!.list()).find((x) => x.path === path && !x.isDir)
+      const fresh = (await remote().list()).find((x) => x.path === path && !x.isDir)
       if (fresh) {
         const conflicts: string[] = []
         await resolve(path, L, fresh, conflicts)
@@ -418,7 +524,7 @@ async function resolve(
   knownRemoteText?: string,
 ): Promise<void> {
   if (L.kind === 'attachment') {
-    const { blob } = await adapter!.getBlob(R)
+    const { blob } = await remote().getBlob(R)
     const remoteHash = await hashBlob(blob)
     if (remoteHash === L.hash) {
       // Same bytes on both sides — not a conflict at all, just re-stamp.
@@ -432,7 +538,7 @@ async function resolve(
     return
   }
 
-  const remoteText = knownRemoteText ?? (await adapter!.getText(R)).text
+  const remoteText = knownRemoteText ?? (await remote().getText(R)).text
   const localText = L.text ?? ''
 
   if (remoteText === localText) {
@@ -507,12 +613,26 @@ async function resolve(
   await push(path, L, R.rev)
 }
 
+/**
+ * Where a conflict copy goes.
+ *
+ * The name has to be unique or it is not a copy at all — writing one conflict
+ * copy over another is precisely the content loss the copy exists to prevent,
+ * and two conflicts on one note within the same minute is not exotic: a note
+ * open on two machines produces exactly that. Seconds narrow the window and the
+ * counter closes it, including against a copy still sitting in the vault from a
+ * previous run.
+ */
 function conflictPath(path: string): string {
   const dot = path.lastIndexOf('.')
   const stem = dot > 0 ? path.slice(0, dot) : path
   const ext = dot > 0 ? path.slice(dot) : ''
-  const stamp = `${ymd(Date.now())} ${new Date().toTimeString().slice(0, 5).replace(':', '')}`
-  return `${stem} (conflict — ${deviceLabel} ${stamp})${ext}`
+  const now = new Date()
+  const stamp = `${ymd(now.getTime())} ${now.toTimeString().slice(0, 8).replace(/:/g, '')}`
+  const base = `${stem} (conflict — ${deviceLabel} ${stamp})`
+  let out = `${base}${ext}`
+  for (let n = 2; getRaw(out); n++) out = `${base} ${n}${ext}`
+  return out
 }
 
 /* -------------------------------------------------------------- scheduling */

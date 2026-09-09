@@ -20,7 +20,7 @@ import { applyDue } from '../editor/due'
 import { MobileCalendar, MobileMore, MobileNav, MobileTasks } from './Mobile'
 import { settings, update } from '../core/settings'
 import { connectBackend } from '../app/backend'
-import { recentConflicts, status, sync } from '../core/sync'
+import { recentConflicts, recentFailures, status, sync } from '../core/sync'
 import { ready, resolveLink } from '../core/vault'
 import {
   activePath,
@@ -41,7 +41,7 @@ import {
   visibleNotes,
 } from './state'
 import { Toaster } from './Toast'
-import { resumePopouts } from './popout'
+import { installMirror, resumePopouts } from './popout'
 import {
   closeDrawer,
   drawer,
@@ -73,11 +73,21 @@ export function App() {
   useEffect(() => installKeyboardWatcher(), [])
 
   /*
-   * Notes that were popped out into their own windows before this one was
-   * reloaded are still out there, and this window has forgotten them. A no-op
-   * in a session that has never popped anything out.
+   * Two ordinary tabs of the vault are the same arrangement as a popout and the
+   * window that opened it: two copies of the app over one IndexedDB, each with
+   * its own in-memory picture of every file. Without a word between them, a save
+   * in one is invisible to the other, and the other's next write is made from
+   * what it was holding before — so the mirror goes in wherever the app boots,
+   * not only where a note has been popped out.
+   *
+   * Notes that were popped out before this window was reloaded are still out
+   * there too, and this window has forgotten them; asking is a no-op in a
+   * session that has never popped anything out.
    */
-  useEffect(() => resumePopouts(), [])
+  useEffect(() => {
+    installMirror()
+    resumePopouts()
+  }, [])
 
   /* ---- theme ------------------------------------------------------- */
   useEffect(() => {
@@ -385,6 +395,32 @@ export function App() {
             Review
           </button>
           <button class="status-btn" onClick={() => (recentConflicts.value = [])}>
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {/*
+       * Files the last run could not carry. A sync that quietly gives up on
+       * some of the vault while reporting success is worse than one that
+       * fails outright, because nothing ever prompts anyone to look. They are
+       * still pending and the next run retries them; this is so the retry is
+       * not the only thing that knows.
+       */}
+      {recentFailures.value.length > 0 && (
+        <div class="conflict-banner">
+          <IconWarn size={14} />
+          <span style={{ flex: 1 }}>
+            {recentFailures.value.length} file
+            {recentFailures.value.length === 1 ? '' : 's'} could not sync (
+            {recentFailures.value[0].path}
+            {recentFailures.value.length > 1 ? ' and others' : ''}). They are still saved here and
+            will be tried again.
+          </span>
+          <button class="status-btn" onClick={() => void sync()}>
+            Retry now
+          </button>
+          <button class="status-btn" onClick={() => (recentFailures.value = [])}>
             Dismiss
           </button>
         </div>

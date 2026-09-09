@@ -88,6 +88,25 @@ import { hasCamera, hasPhotoLibrary, pickAndInsert } from '../editor/pickImage'
 import { openFilePicker } from './pickFile'
 import { insertVaultFiles } from '../editor/paste'
 
+/**
+ * A save that did not land.
+ *
+ * Autosave is the only thing standing between what has been typed and what
+ * survives the tab being closed, and the realistic way it fails is the browser
+ * refusing the write because the origin is out of storage. Silence there is the
+ * worst possible answer: the text is still on screen, so everything looks
+ * normal right up until the reload that loses it. Say so instead, and keep
+ * saying so — the buffer still holds the work, and the next keystroke tries
+ * again.
+ */
+function reportSaveFailure(e: unknown) {
+  console.error('[slate] could not save note', e)
+  notify(
+    'This note could not be saved on this device — storage may be full. Copy anything unsaved somewhere safe.',
+    'error',
+  )
+}
+
 export function EditorPane() {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -138,7 +157,7 @@ export function EditorPane() {
       void saveNote(p, text).then(() => {
         syncSoon()
         offerTitleFromHeading(p, text)
-      })
+      }, reportSaveFailure)
     }, 400),
   )
 
@@ -149,7 +168,7 @@ export function EditorPane() {
     saveRef.current.flush()
     const text = view.state.doc.toString()
     baseRef.current = text
-    void saveNote(p, text)
+    void saveNote(p, text).catch(reportSaveFailure)
   }
 
   // Rebuild the editor when the open note changes. A fresh state per note means
@@ -298,7 +317,7 @@ export function EditorPane() {
     setDoc(view, r.text, path)
     // A merge produced text neither side had; the vault needs it too, and the
     // debounced save the dispatch just scheduled would be 400ms late.
-    if (r.text !== incoming) void saveNote(path, r.text).then(() => syncSoon())
+    if (r.text !== incoming) void saveNote(path, r.text).then(() => syncSoon(), reportSaveFailure)
     if (r.conflicted)
       notify('This note changed elsewhere while you were typing — both edits are marked in place')
   }, [path, rev])

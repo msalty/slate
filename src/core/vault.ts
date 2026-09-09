@@ -3,9 +3,14 @@
  * IndexedDB, reconciled against a remote by the sync engine.
  *
  * Every mutation here follows the same order:
- *   1. update memory (UI is instant)
- *   2. persist to IndexedDB (survives a crash or a closed tab)
- *   3. mark dirty (the sync engine will push it when it next runs)
+ *   1. persist to IndexedDB (survives a crash or a closed tab)
+ *   2. adopt it in memory and mark it dirty (the sync engine pushes it later)
+ *   3. reindex and bump the revision, which redraws the UI
+ *
+ * Durable first, and only then believed. The other way round is a fraction of a
+ * millisecond faster to the screen and turns a refused write — a full quota is
+ * the realistic one — into an edit that looks saved, is not, and cannot be
+ * retried because memory already claims to hold it. See `writeFile`.
  *
  * Nothing waits on the network. That is the whole performance story: typing a
  * note is a memory write plus an IndexedDB put, and sync happens later.
@@ -96,16 +101,17 @@ function bump() {
 /**
  * Told which paths were just written, when anything is listening.
  *
- * A note popped out into a window of its own is edited by a *second copy of
- * this module*, in a second JS context, over the same IndexedDB. Each window's
- * `files` map is its own, so without a word between them the two drift: one
- * window's list, search index and — worse — its sync engine would go on
- * working from the copy it was holding when the other window started typing.
+ * A second tab of the app — or a note popped out into a window of its own — is
+ * a *second copy of this module*, in a second JS context, over the same
+ * IndexedDB. Each window's `files` map is its own, so without a word between
+ * them the two drift: one window's list, search index and — worse — its sync
+ * engine would go on working from the copy it was holding when the other
+ * window started typing.
  *
  * `ui/popout.ts` installs a listener that broadcasts these paths to the other
- * windows, and `adoptFromStorage` below is the far end of it. Nothing is
- * installed until a note is actually popped out, so an ordinary session pays
- * one undefined check per write and nothing else.
+ * windows, and `adoptFromStorage` below is the far end of it. It is installed
+ * wherever the app boots; a window with nobody to talk to pays for one
+ * BroadcastChannel and nothing else.
  */
 let onWrite: ((paths: string[]) => void) | undefined
 
@@ -681,8 +687,9 @@ export async function markSynced(
       lastSyncedAt: Date.now(),
     },
   }
-  files.set(path, next)
+  // Durable before adopted, for the reason spelled out over `writeFile`.
   await putFile(next)
+  files.set(path, next)
   if (!stillCurrent) bump()
 }
 
@@ -692,9 +699,21 @@ export function listAll(): VaultFile[] {
 
 /* ----------------------------------------------------------------- writing */
 
+/**
+ * Persist first, then adopt.
+ *
+ * The other order reads more naturally and quietly loses work. If IndexedDB
+ * refuses the write — a full quota is the realistic case, and Safari's is
+ * small — an in-memory copy that already holds the new text makes the failure
+ * invisible: `saveNote` finds the text it was asked to save already in place
+ * and returns early, so the retry that would have rescued the edit never
+ * happens and the note reverts to the last durable version on the next reload.
+ * This way the rejection propagates to the caller with memory and disk still
+ * agreeing, and the next keystroke tries again.
+ */
 async function writeFile(f: VaultFile): Promise<void> {
-  files.set(f.path, f)
   await putFile(f)
+  files.set(f.path, f)
 }
 
 /** Create a note. Returns its path. Guarantees a unique filename. */
@@ -1104,8 +1123,10 @@ export async function tombstone(path: string): Promise<void> {
     mtime: Date.now(),
     dirty: true,
   }
-  files.set(path, next)
+  // Durable before adopted, for the reason spelled out over `writeFile`: a
+  // tombstone only in memory is a note that comes back on the next reload.
   await putFile(next)
+  files.set(path, next)
   indexMap.delete(path)
   dropFromSearchIndex(path)
   releaseUrl(path)

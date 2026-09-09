@@ -18,12 +18,19 @@
 
 import { NotFound, PreconditionFailed, type RemoteAdapter, type RemoteEntry } from '../core/types'
 import { basename, normPath } from '../core/util'
+import { REQUEST_TIMEOUT_MS, TRANSFER_TIMEOUT_MS, isTimeout, timeoutSignal } from './net'
 
 const FOLDER_MIME = 'application/vnd.google-apps.folder'
 const API = 'https://www.googleapis.com/drive/v3'
 const UPLOAD = 'https://www.googleapis.com/upload/drive/v3'
 const SCOPE = 'https://www.googleapis.com/auth/drive.file'
 const GIS_SRC = 'https://accounts.google.com/gsi/client'
+
+/** See the identical constant in the WebDAV adapter: a listing fails rather than truncates. */
+const MAX_DEPTH = 24
+
+/** A silent token refresh that never calls back would otherwise hang forever. */
+const TOKEN_TIMEOUT_MS = 60_000
 
 interface TokenClient {
   requestAccessToken(overrides?: { prompt?: string }): void
@@ -92,6 +99,10 @@ export class GdriveAdapter implements RemoteAdapter {
   private token = ''
   private tokenExpiry = 0
   private client?: TokenClient
+  /** The one token request in flight, shared by everyone who asks meanwhile. */
+  private tokenWait?: Promise<string>
+  /** How the reused token client reports a failure to the current request. */
+  private failToken?: (e: Error) => void
   private rootId = ''
   /** vault path -> Drive file id, for both files and folders. */
   private idByPath = new Map<string, string>()
@@ -111,29 +122,74 @@ export class GdriveAdapter implements RemoteAdapter {
 
   /* --------------------------------------------------------------- oauth */
 
+  /**
+   * The token, fetching one if the current one is missing or nearly expired.
+   *
+   * At most one request is ever in flight. The Google token client has exactly
+   * one `callback` slot, so a second concurrent request overwrites the first's
+   * — and since five sync workers hit a 401 at roughly the same moment, that is
+   * the ordinary case, not a rare one. The overwritten promise is never settled
+   * by anything, so its caller waits forever and takes the whole sync run with
+   * it. One shared promise means they all get the same answer.
+   */
   private async ensureToken(interactive = false): Promise<string> {
     if (this.token && Date.now() < this.tokenExpiry - 60_000) return this.token
     if (!this.cfg.clientId) throw new Error('No Google OAuth client ID configured.')
+    const inFlight = this.tokenWait
+    if (inFlight) return inFlight
+
+    const wait = this.requestToken(interactive)
+    this.tokenWait = wait
+    const release = () => {
+      if (this.tokenWait === wait) this.tokenWait = undefined
+    }
+    wait.then(release, release)
+    return wait
+  }
+
+  private async requestToken(interactive: boolean): Promise<string> {
     await loadGis()
 
     return new Promise<string>((resolve, reject) => {
+      // Nothing here is guaranteed to call back — a blocked third-party frame
+      // simply goes quiet — so the promise carries its own deadline.
+      const timer = setTimeout(
+        () =>
+          reject(
+            new Error('Google sign-in did not respond. Check for a blocker, then try again.'),
+          ),
+        TOKEN_TIMEOUT_MS,
+      )
+      const settle = <T>(fn: (v: T) => void) => (v: T) => {
+        clearTimeout(timer)
+        fn(v)
+      }
+      const fail = settle(reject)
+      const done = settle(resolve)
+      // The client is built once and reused, so its error callback must reach
+      // whichever request is current rather than the one that happened to
+      // create it.
+      this.failToken = fail
+
       if (!this.client) {
         this.client = window.google!.accounts.oauth2.initTokenClient({
           client_id: this.cfg.clientId,
           scope: SCOPE,
           callback: () => {},
           error_callback: (e) =>
-            reject(new Error(`Google sign-in failed: ${e.message ?? e.type ?? 'unknown'}`)),
+            this.failToken?.(
+              new Error(`Google sign-in failed: ${e.message ?? e.type ?? 'unknown'}`),
+            ),
         })
       }
       this.client.callback = (r) => {
         if (r.error || !r.access_token) {
-          reject(new Error(`Google sign-in failed: ${r.error ?? 'no token returned'}`))
+          fail(new Error(`Google sign-in failed: ${r.error ?? 'no token returned'}`))
           return
         }
         this.token = r.access_token
         this.tokenExpiry = Date.now() + (r.expires_in ?? 3600) * 1000
-        resolve(this.token)
+        done(this.token)
       }
       // '' asks for a silent refresh; 'consent' forces the account chooser.
       this.client.requestAccessToken({ prompt: interactive ? 'consent' : '' })
@@ -142,26 +198,41 @@ export class GdriveAdapter implements RemoteAdapter {
 
   private async api(
     url: string,
-    init: RequestInit & { headers?: Record<string, string> } = {},
+    init: RequestInit & { headers?: Record<string, string>; timeoutMs?: number } = {},
   ): Promise<Response> {
     const token = await this.ensureToken()
+    // Every request carries a deadline: an answer that never comes would
+    // otherwise leave the sync engine's single in-flight run alive forever, and
+    // every later sync joins that run rather than starting a new one.
+    const { timeoutMs = init.body ? TRANSFER_TIMEOUT_MS : REQUEST_TIMEOUT_MS, ...rest } = init
     const run = (t: string) =>
       fetch(url, {
-        ...init,
+        ...rest,
         headers: { ...init.headers, Authorization: `Bearer ${t}` },
+        signal: timeoutSignal(timeoutMs),
       })
 
     let res: Response
     try {
       res = await run(token)
     } catch (e) {
+      if (isTimeout(e))
+        throw new Error(
+          `Google Drive did not answer within ${Math.round(timeoutMs / 1000)}s. The next sync will try again.`,
+        )
       throw new Error(`Could not reach Google Drive: ${(e as Error).message}`)
     }
     if (res.status === 401) {
       // Token expired mid-flight; refresh once and retry.
       this.token = ''
       this.tokenExpiry = 0
-      res = await run(await this.ensureToken())
+      try {
+        res = await run(await this.ensureToken())
+      } catch (e) {
+        if (isTimeout(e))
+          throw new Error('Google Drive did not answer after the token was refreshed.')
+        throw e
+      }
     }
     if (res.status === 404) throw new NotFound('File not found in Drive')
     if (res.status === 403) {
@@ -225,7 +296,7 @@ export class GdriveAdapter implements RemoteAdapter {
     let frontier: Array<{ id: string; path: string }> = [{ id: this.rootId, path: '' }]
     let depth = 0
 
-    while (frontier.length && depth < 24) {
+    while (frontier.length && depth < MAX_DEPTH) {
       const next: Array<{ id: string; path: string }> = []
       // Drive quotas are per-second, so a small fan-out keeps us under them.
       for (let i = 0; i < frontier.length; i += 4) {
@@ -252,6 +323,12 @@ export class GdriveAdapter implements RemoteAdapter {
       frontier = next
       depth++
     }
+    // A listing is read as the whole truth about the remote, so a partial one
+    // would present every unvisited file as deleted elsewhere. Fail instead.
+    if (frontier.length)
+      throw new Error(
+        `The vault in Drive is nested more than ${MAX_DEPTH} folders deep, so this listing would have been incomplete. Nothing was changed.`,
+      )
     return out
   }
 
@@ -279,7 +356,9 @@ export class GdriveAdapter implements RemoteAdapter {
   private async fetchMedia(entry: RemoteEntry): Promise<Response> {
     const id = entry.handle ?? this.idByPath.get(entry.path)
     if (!id) throw new NotFound(`No Drive id for ${entry.path}`)
-    return this.api(`${API}/files/${id}?alt=media`)
+    // A download has no request body but can still be an attachment of many
+    // megabytes, so it gets the transfer deadline rather than the short one.
+    return this.api(`${API}/files/${id}?alt=media`, { timeoutMs: TRANSFER_TIMEOUT_MS })
   }
 
   async getText(entry: RemoteEntry): Promise<{ text: string; rev?: string; mtime?: number }> {
@@ -359,10 +438,21 @@ export class GdriveAdapter implements RemoteAdapter {
     }
   }
 
-  async remove(entry: RemoteEntry): Promise<void> {
+  async remove(entry: RemoteEntry, ifMatchRev?: string): Promise<void> {
     const id = entry.handle ?? this.idByPath.get(entry.path)
     if (!id) return
+    const rev = ifMatchRev ?? entry.rev
     try {
+      // Drive has no conditional delete, so the revision is checked as late as
+      // possible instead. Between the listing this run is working from and now,
+      // another device may have written to the file; trashing it then would
+      // discard content this device has never seen. Refusing hands the decision
+      // back to the sync engine, which resurrects it.
+      if (rev) {
+        const cur = await this.api(`${API}/files/${id}?fields=headRevisionId`)
+        const meta = (await cur.json()) as DriveFile
+        if (meta.headRevisionId && meta.headRevisionId !== rev) throw new PreconditionFailed()
+      }
       // Trash rather than delete: a mistaken sync deletion stays recoverable
       // from Drive's own trash for 30 days.
       await this.api(`${API}/files/${id}`, {
@@ -381,11 +471,33 @@ export class GdriveAdapter implements RemoteAdapter {
     await this.ensureDirId(normPath(path))
   }
 
+  /**
+   * Folders being created concurrently, at most once each.
+   *
+   * Uploads run five at a time and Drive is happy to hold two folders with the
+   * same name in the same parent, so two workers both wanting a folder that
+   * does not exist yet would each make one — and half the notes would land in
+   * the wrong twin. The second caller waits on the first's answer instead.
+   */
+  private dirWaits = new Map<string, Promise<string>>()
+
   private async ensureDirId(path: string): Promise<string> {
     const p = normPath(path)
     if (!p) return this.rootId
     const hit = this.idByPath.get(p)
     if (hit) return hit
+    const inFlight = this.dirWaits.get(p)
+    if (inFlight) return inFlight
+    const wait = this.resolveDirId(p)
+    this.dirWaits.set(p, wait)
+    try {
+      return await wait
+    } finally {
+      this.dirWaits.delete(p)
+    }
+  }
+
+  private async resolveDirId(p: string): Promise<string> {
     const parent = await this.ensureDirId(p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '')
     // Look before creating so a folder made on another device is reused.
     const q = encodeURIComponent(
@@ -405,6 +517,7 @@ export class GdriveAdapter implements RemoteAdapter {
     }
     this.token = ''
     this.tokenExpiry = 0
+    this.tokenWait = undefined
     this.connected = false
   }
 }
