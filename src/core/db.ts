@@ -106,6 +106,33 @@ export async function getFile(path: string): Promise<VaultFile | undefined> {
   return d.get('files', path)
 }
 
+/**
+ * Read many rows in one transaction, keyed by path. Absent rows are absent
+ * from the map rather than present and undefined.
+ *
+ * The write side has always batched (`putFiles`); this is the read side of the
+ * same idea, and it matters for the same reason. A sync that installs a few
+ * hundred files tells every other window which paths moved, and each of them
+ * has to read those rows back — one transaction per path is most of the cost of
+ * that, and none of it is work.
+ */
+export async function getFiles(
+  paths: readonly string[],
+): Promise<Map<string, VaultFile>> {
+  const out = new Map<string, VaultFile>()
+  if (!paths.length) return out
+  const d = await db()
+  const tx = d.transaction('files', 'readonly')
+  await Promise.all(
+    paths.map(async (p) => {
+      const row = await tx.store.get(p)
+      if (row) out.set(p, row)
+    }),
+  )
+  await tx.done
+  return out
+}
+
 export async function allFiles(): Promise<VaultFile[]> {
   const d = await db()
   return d.getAll('files')
@@ -139,8 +166,39 @@ const MAX_VERSIONS_PER_NOTE = 60
 const VERSION_TTL_MS = 90 * 24 * 60 * 60 * 1000
 
 /**
+ * How close together two ordinary edits have to be to count as one.
+ *
+ * Autosave settles every 400 ms of continuous typing, and each settle used to
+ * record a version. Sixty of those is under half a minute: a single sitting
+ * filled the whole of a note's history with snapshots of itself mid-sentence
+ * and evicted every version worth having, which made the ninety-day retention
+ * above a fiction for any note anybody actually works on.
+ *
+ * So a burst of typing keeps its *first* snapshot — the state the burst started
+ * from, which is the thing you would want back — and drops the rest. Sixty
+ * versions then span at least a couple of hours of active editing rather than
+ * twenty-four seconds of it, and the recent past, which is the part this gives
+ * up, is exactly the part the editor's own undo stack covers.
+ */
+const VERSION_COALESCE_MS = 2 * 60 * 1000
+
+/**
+ * Is this snapshot near-duplicate bookkeeping rather than history?
+ *
+ * Only ever true of two ordinary edits close together. Everything else —
+ * a delete, a pull, a merged conflict, an import — is recorded whatever its
+ * timing, because those are the versions somebody goes looking for.
+ */
+function coalescesInto(newest: Version | undefined, next: Omit<Version, 'id'>): boolean {
+  if (!newest || newest.reason !== 'edit' || next.reason !== 'edit') return false
+  const gap = next.at - newest.at
+  return gap >= 0 && gap < VERSION_COALESCE_MS
+}
+
+/**
  * Record a version. Skipped when the content is identical to the newest stored
- * version, so an idle autosave loop doesn't fill the store with duplicates.
+ * version, so an idle autosave loop doesn't fill the store with duplicates, and
+ * when it is one more keystroke's worth of the burst already recorded.
  */
 export async function pushVersion(v: Omit<Version, 'id'>): Promise<void> {
   const d = await db()
@@ -149,7 +207,7 @@ export async function pushVersion(v: Omit<Version, 'id'>): Promise<void> {
   let newest: Version | undefined
   let cursor = await idx.openCursor(IDBKeyRange.only(v.path), 'prev')
   if (cursor) newest = cursor.value
-  if (newest?.hash === v.hash) {
+  if (newest?.hash === v.hash || coalescesInto(newest, v)) {
     await tx.done
     return
   }

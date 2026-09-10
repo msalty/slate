@@ -77,12 +77,23 @@ export interface NoteIndexEntry {
   /** The date this note is filed under in the calendar (ms epoch, local midnight). */
   calendarDate: number
   tags: string[]
-  /** Lowercased titles this note links to via [[wikilinks]]. */
+  /** Wikilink targets this note points at, as written, embeds excluded. */
   links: string[]
   /** Relative paths of attachments embedded in this note. */
   embeds: string[]
   pinned: boolean
   hasTasks: boolean
+  /**
+   * This note's tasks, already parsed.
+   *
+   * Here rather than derived on demand because the roll-ups that read tasks —
+   * the task list, the calendar's due-day counts, every Tag Folder that gathers
+   * tasks — are recomputed on *any* change to the vault, and rescanning every
+   * note's body each time is the single most expensive thing the app does while
+   * you type. The index is already rebuilt for exactly the note that changed,
+   * so parsing here means one note is reparsed per save instead of all of them.
+   */
+  tasks: TaskItem[]
   size: number
 }
 

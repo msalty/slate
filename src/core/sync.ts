@@ -26,6 +26,7 @@ import {
   forget,
   installFromRemote,
 
+  dirtyCount,
   listAll,
   markSynced,
   getRaw,
@@ -98,9 +99,16 @@ export function setDeviceLabel(name: string): void {
   deviceLabel = name
 }
 
-/** Number of local files waiting to be pushed. Drives the status pill. */
+/**
+ * Number of local files waiting to be pushed. Drives the status pill.
+ *
+ * The vault keeps this as a running total. It used to be counted here, by
+ * copying the whole file map and filtering it — which is cheap once and was not
+ * being asked once: `setStatus` reads it, and a run over a large vault reports
+ * progress a few hundred times.
+ */
 export function pendingCount(): number {
-  return listAll().filter((f) => f.dirty).length
+  return dirtyCount()
 }
 
 function setStatus(patch: Partial<SyncStatus>) {

@@ -28,6 +28,7 @@ import {
   allFiles,
   deleteFileRow as dbDeleteFileRow,
   getFile,
+  getFiles,
   putFile as dbPutFile,
   putFiles as dbPutFiles,
   pushVersion,
@@ -96,6 +97,37 @@ function bump() {
   revision.value = revision.value + 1
 }
 
+/*
+ * How many files are waiting to be pushed, kept as a running total.
+ *
+ * The sync engine asks for this on every progress tick — several hundred times
+ * in a run over a large vault — and answering by copying the whole file map and
+ * filtering it turned the status line into a measurable share of the run. It is
+ * one number and it only ever changes when a file does, so it is counted where
+ * that happens instead.
+ *
+ * Which is why every write to `files` goes through the two helpers below rather
+ * than touching the map: a `files.set` that skipped them would leave the count
+ * quietly wrong, and a wrong count is a "0 pending" beside unsaved work.
+ */
+let dirtyFiles = 0
+
+function setFile(path: string, f: VaultFile): void {
+  if (files.get(path)?.dirty) dirtyFiles--
+  if (f.dirty) dirtyFiles++
+  files.set(path, f)
+}
+
+function dropFile(path: string): void {
+  if (files.get(path)?.dirty) dirtyFiles--
+  files.delete(path)
+}
+
+/** Files with local content the remote has not confirmed. Drives the status pill. */
+export function dirtyCount(): number {
+  return dirtyFiles
+}
+
 /* ------------------------------------------------------------ other windows */
 
 /**
@@ -153,14 +185,45 @@ async function deleteFileRow(path: string): Promise<void> {
  * the sync engine's pulls go through: `revision` moves, and the editor folds
  * the new text into whatever is in the buffer.
  */
-export async function adoptFromStorage(paths: readonly string[]): Promise<void> {
+export function adoptFromStorage(paths: readonly string[]): Promise<void> {
+  if (!paths.length) return Promise.resolve()
+  if (!queuedPaths) queuedPaths = new Set()
+  for (const p of paths) queuedPaths.add(p)
+  if (!queuedRun) {
+    queuedRun = Promise.resolve().then(() => {
+      // Claimed before the read starts, so anything announced *during* it opens
+      // the next batch rather than joining one that has already been taken.
+      const batch = [...queuedPaths!]
+      queuedPaths = undefined
+      queuedRun = undefined
+      return adoptBatch(batch)
+    })
+  }
+  return queuedRun
+}
+
+/**
+ * A burst of announcements is one read.
+ *
+ * A sync that installs three hundred files broadcasts them as they land, and
+ * the far end used to answer each announcement on its own. Held to the end of
+ * the tick they collapse into a single pass over a single transaction, which is
+ * the difference between one redraw and a few hundred.
+ */
+let queuedPaths: Set<string> | undefined
+let queuedRun: Promise<void> | undefined
+
+async function adoptBatch(paths: string[]): Promise<void> {
+  // One transaction for the lot. Per-path reads were the whole cost here: a
+  // round trip to IndexedDB is mostly the trip.
+  const rows = await getFiles(paths)
   let changed = false
   for (const path of paths) {
-    const row = await getFile(path)
+    const row = rows.get(path)
     const held = files.get(path)
     if (!row) {
       if (!held) continue
-      files.delete(path)
+      dropFile(path)
       indexMap.delete(path)
       dropFromSearchIndex(path)
       releaseUrl(path)
@@ -174,7 +237,7 @@ export async function adoptFromStorage(paths: readonly string[]): Promise<void> 
       held.hash === row.hash &&
       held.mtime === row.mtime &&
       !!held.deleted === !!row.deleted
-    files.set(path, row)
+    setFile(path, row)
     if (same) continue
     reindex(path)
     changed = true
@@ -213,7 +276,7 @@ function buildEntry(f: VaultFile): NoteIndexEntry | undefined {
   const embeds: string[] = []
   for (const l of scanWikiLinks(text)) {
     if (l.embed) embeds.push(l.target)
-    else links.push(l.target.toLowerCase())
+    else links.push(l.target)
   }
   for (const l of scanMdLinks(text)) {
     if (!l.embed) continue
@@ -221,10 +284,22 @@ function buildEntry(f: VaultFile): NoteIndexEntry | undefined {
     if (!/^[a-z]+:/i.test(clean)) embeds.push(decodeURI(clean))
   }
 
+  const title = titleFromPath(f.path)
+  const folder = dirname(f.path)
+  const raw = scanTasks(text)
+  /*
+   * What the note says about itself, which every task on it inherits.
+   *
+   * Read once here rather than once per roll-up, which is the whole point of
+   * parsing tasks at index time: this used to be a second full pass over every
+   * note's text on every recompute, next to the task scan itself.
+   */
+  const inherited = raw.length ? noteLevelTags(text) : []
+
   return {
     path: f.path,
-    title: titleFromPath(f.path),
-    folder: dirname(f.path),
+    title,
+    folder,
     excerpt: excerptOf(text, fm.bodyStart, fm.data),
     mtime: f.mtime,
     ctime: f.ctime,
@@ -233,7 +308,19 @@ function buildEntry(f: VaultFile): NoteIndexEntry | undefined {
     links,
     embeds,
     pinned: fm.data.pinned === true,
-    hasTasks: scanTasks(text).length > 0,
+    hasTasks: raw.length > 0,
+    tasks: raw.map((t) => ({
+      id: `${f.path}:${t.line}`,
+      path: f.path,
+      noteTitle: title,
+      folder,
+      line: t.line,
+      text: stripInline(t.text),
+      done: t.done,
+      due: t.due,
+      tags: [...new Set([...t.tags, ...inherited])],
+      ownTags: t.tags,
+    })),
     size: f.size,
   }
 }
@@ -415,29 +502,16 @@ export const pathSet = computed(() => {
   return s
 })
 
+/**
+ * Every task in the vault, from every note that is your own material.
+ *
+ * A merge of what the index already holds, not a scan: the parsing happened in
+ * `buildEntry` when the note was last written. All this decides is which notes
+ * count and what order the rows come out in.
+ */
 export const tasks = computed<TaskItem[]>(() => {
   const out: TaskItem[] = []
-  for (const e of contentNotes.value) {
-    if (!e.hasTasks) continue
-    const f = files.get(e.path)
-    if (!f?.text) continue
-    // What the note says about itself, which every task on it inherits.
-    const inherited = noteLevelTags(f.text)
-    for (const t of scanTasks(f.text)) {
-      out.push({
-        id: `${e.path}:${t.line}`,
-        path: e.path,
-        noteTitle: e.title,
-        folder: e.folder,
-        line: t.line,
-        text: stripInline(t.text),
-        done: t.done,
-        due: t.due,
-        tags: [...new Set([...t.tags, ...inherited])],
-        ownTags: t.tags,
-      })
-    }
-  }
+  for (const e of contentNotes.value) for (const t of e.tasks) out.push(t)
   return out.sort((a, b) => {
     if (a.done !== b.done) return a.done ? 1 : -1
     if (a.due && b.due) return a.due - b.due
@@ -492,21 +566,25 @@ export const backlinkMap = computed(() => {
   return m
 })
 
-/** Wikilink targets that don't resolve to anything — offered as "create". */
+/**
+ * Wikilink targets that don't resolve to anything — offered as "create".
+ *
+ * Reads the targets off the index rather than rescanning every note's text, for
+ * the reason spelled out over `NoteIndexEntry.tasks`: this is read by
+ * always-visible chrome, so it recomputed on every keystroke's autosave and a
+ * fresh scan of the whole vault was most of what that cost.
+ */
 export const unresolvedLinks = computed(() => {
   const titles = titleIndex.value
   const paths = pathSet.value
   const m = new Map<string, string[]>()
   for (const e of contentNotes.value) {
-    const f = files.get(e.path)
-    if (!f?.text) continue
-    for (const l of scanWikiLinks(f.text)) {
-      if (l.embed) continue
-      if (resolveTarget(l.target, titles, paths)) continue
-      const arr = m.get(l.target)
+    for (const target of e.links) {
+      if (resolveTarget(target, titles, paths)) continue
+      const arr = m.get(target)
       if (arr) {
         if (!arr.includes(e.path)) arr.push(e.path)
-      } else m.set(l.target, [e.path])
+      } else m.set(target, [e.path])
     }
   }
   return m
@@ -613,7 +691,8 @@ export function resolveEmbed(ref: string, fromPath: string): string | undefined 
 export async function initVault(): Promise<void> {
   const rows = await allFiles()
   files.clear()
-  for (const f of rows) files.set(f.path, f)
+  dirtyFiles = 0
+  for (const f of rows) setFile(f.path, f)
   loadDeviceRecords(rows)
   reindexAll()
   ready.value = true
@@ -639,7 +718,7 @@ export async function installFromRemote(list: VaultFile[]): Promise<void> {
         device: writerFor(f.path),
       })
     }
-    files.set(f.path, f)
+    setFile(f.path, f)
   }
   await putFiles(list)
   for (const f of list) reindex(f.path)
@@ -689,7 +768,7 @@ export async function markSynced(
   }
   // Durable before adopted, for the reason spelled out over `writeFile`.
   await putFile(next)
-  files.set(path, next)
+  setFile(path, next)
   if (!stillCurrent) bump()
 }
 
@@ -713,7 +792,7 @@ export function listAll(): VaultFile[] {
  */
 async function writeFile(f: VaultFile): Promise<void> {
   await putFile(f)
-  files.set(f.path, f)
+  setFile(f.path, f)
 }
 
 /** Create a note. Returns its path. Guarantees a unique filename. */
@@ -833,7 +912,7 @@ export async function movePath(from: string, to: string): Promise<void> {
   // path gets a tombstone and the new one starts fresh and dirty.
   const now = Date.now()
   const moved: VaultFile = { ...f, path: to, mtime: now, dirty: true, sync: {} }
-  files.set(to, moved)
+  setFile(to, moved)
   await putFile(moved)
   await renameVersions(from, to)
   await tombstone(from)
@@ -865,7 +944,7 @@ async function rewriteLinksTo(oldTitle: string, newTitle: string): Promise<void>
       mtime: Date.now(),
       dirty: true,
     }
-    files.set(f.path, next)
+    setFile(f.path, next)
     touched.push(next)
   }
   if (touched.length) {
@@ -975,7 +1054,7 @@ async function repointReferences(from: string, to: string): Promise<void> {
       mtime: Date.now(),
       dirty: true,
     }
-    files.set(f.path, next)
+    setFile(f.path, next)
     touched.push(next)
   }
 
@@ -1126,7 +1205,7 @@ export async function tombstone(path: string): Promise<void> {
   // Durable before adopted, for the reason spelled out over `writeFile`: a
   // tombstone only in memory is a note that comes back on the next reload.
   await putFile(next)
-  files.set(path, next)
+  setFile(path, next)
   indexMap.delete(path)
   dropFromSearchIndex(path)
   releaseUrl(path)
@@ -1135,7 +1214,7 @@ export async function tombstone(path: string): Promise<void> {
 
 /** Sync-engine hook: the tombstone has been honoured remotely, drop the row. */
 export async function forget(path: string): Promise<void> {
-  files.delete(path)
+  dropFile(path)
   indexMap.delete(path)
   dropFromSearchIndex(path)
   await deleteFileRow(path)
