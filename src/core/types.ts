@@ -302,6 +302,23 @@ export interface AppSettings {
    */
   calendarDayOpens: 'filter' | 'daily'
   /**
+   * Where a quick-captured task is written.
+   *
+   * `daily` files it in the day's note, which is the default because it costs
+   * nothing new: tasks are read out of note bodies, so the line is in the
+   * Tasks tab, in the calendar's due counts and in any Tag Folder that gathers
+   * tasks the moment it lands. `inbox` is for a vault that doesn't keep a
+   * journal — one `Inbox` note that everything falls into instead.
+   */
+  quickAddTaskTarget: 'daily' | 'inbox'
+  /**
+   * The heading a captured task is filed under, written if the note hasn't got
+   * one yet. Empty means the end of the note.
+   */
+  quickAddTaskHeading: string
+  /** The folder a quick-captured note is created in. Empty is the vault root. */
+  quickAddNoteFolder: string
+  /**
    * Which of the sidebar's named sections are folded away.
    *
    * Three flags rather than one list, because settings are compared by value

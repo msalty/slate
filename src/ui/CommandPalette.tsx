@@ -29,6 +29,7 @@ import {
 import { relativeTime, startOfDay } from '../core/util'
 import { newNoteInFolder } from './EditorPane'
 import { canShareFiles, shareNote } from './shareNote'
+import { openQuickAdd } from './QuickAdd'
 
 interface Cmd {
   id: string
@@ -63,6 +64,16 @@ export function CommandPalette() {
         run: async () => {
           await newNoteInFolder(scope.value.kind === 'folder' ? scope.value.path : '')
         },
+      },
+      {
+        id: 'quick-task',
+        label: 'Quick add task',
+        run: () => openQuickAdd({ mode: 'task' }),
+      },
+      {
+        id: 'quick-note',
+        label: 'Quick add note',
+        run: () => openQuickAdd({ mode: 'note' }),
       },
       {
         id: 'share',

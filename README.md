@@ -778,6 +778,45 @@ Dates are still just markdown. Reading stays permissive — `📅 2026-09-04`,
 written by another tool works unchanged — and the picker only ever *writes* the
 `📅` form.
 
+**Quick capture.** Two taps from anywhere to a task on today's list. The middle
+of the phone's pill bar is a **+**; it opens a sheet with one field, the caret
+already in it and the keyboard already up, and *Add* writes the line. Nothing is
+written before that — the sheet is text in memory, so one you open and think
+better of costs the vault nothing.
+
+The sheet opens on whatever the tab it was pressed from is about — a task from
+Tasks, a note from Notes, a task dated for the day you are looking at from
+Calendar — and the Task/Note toggle is one tap for when it guessed wrong. Long-
+press the **+** for the other one directly, or for today's note. On a desktop
+the same thing is *Quick add task* and *Quick add note* in the palette, and an
+**Add task** row sits at the foot of every task list and under each day in the
+calendar.
+
+A captured task goes into **today's daily note, under `## Tasks`** — written if
+the note hasn't got that heading, joined if it has, so the second capture of the
+day lands under the first rather than starting another list. That is the default
+because it costs nothing new: tasks are read out of note bodies, so the line is
+in the Tasks tab, in the calendar's counts and in any Tag Folder that gathers
+tasks the moment it lands. Settings → Editor → **Quick add** points it at one
+`Inbox` note instead, or at a different heading, and the chip in the corner of
+the sheet always names the file it is about to write to.
+
+The date chips write the same `📅 2026-09-04` the picker does. `#tags` need no
+support at all — the line is markdown, so a `#vet` typed into it is a tag like
+any other. Paste three lines and you get three tasks, and a line that arrives
+already wearing a `- [ ]` is not given a second one. A note captured this way is
+**named after its first line**, which is the one thing *New note* could never
+do: it wrote `Untitled.md` before you had typed a character, and left it behind
+if you walked away.
+
+**Capture without opening the app.** Long-press Slate's icon on the home screen
+for **New task**, **New note** and **Today's note**, and share text or a link
+into Slate from any other app to land in the sheet with it already filled in.
+Both work with no network — the URL is served from the precache and the write is
+local, like every other write here. Both are Android, and both are the manifest
+rather than the app, so see *Known limits* for what that costs and for the
+iOS Shortcuts recipe that reaches the same URLs.
+
 **One layout that doesn't jump.** Three modes — phone, mid-size, wide — chosen
 explicitly rather than by CSS reacting to width on its own. The editor holds a
 guaranteed minimum width in all of them, so when space runs short a side panel
@@ -830,7 +869,7 @@ files when not.
 
 | | Shows | Side panels |
 |---|---|---|
-| **Phone** (< 760px) | One tab at a time, bottom pill bar: Notes · Tasks · Calendar · More | Everything else lives in More |
+| **Phone** (< 760px) | One tab at a time, bottom pill bar: Notes · Tasks · **+** · Calendar · More | Everything else lives in More |
 | **Mid-size** (760–1180px) | Note list + editor | Sidebar and calendar open as dismissable drawers |
 | **Wide** (≥ 1180px) | Sidebar + list + editor | Calendar sits inline from 1400px, a drawer below that |
 
@@ -1285,6 +1324,8 @@ src/
 │  │                  the families, and the mark each one wears
 │  ├─ pdfjs.ts        pdf.js, loaded once for the viewer and for the first
 │  │                  page drawn into a note
+│  ├─ capture.ts      quick capture: where a line goes, what it looks like
+│  │                  when it gets there, and what a launch URL is asking for
 │  └─ settings.ts     device-local vs vault-wide preferences
 ├─ adapters/      webdav.ts · gdrive.ts · memory.ts (tests)
 ├─ editor/        CodeMirror 6: live preview, widgets, completion, paste
@@ -1318,6 +1359,8 @@ src/
    ├─ DueChip.tsx    a task's date, as a control rather than a caption
    ├─ FilePicker.tsx the vault's own files, as somewhere to insert one from
    ├─ pickFile.ts    what that picker matches on, and the order it answers in
+   ├─ QuickAdd.tsx   the capture sheet, kept mounted so the keyboard can be
+   │                 raised inside the tap that asked for it
    └─ Mobile.tsx     phone tab bar and full-screen tab views
 ```
 
@@ -1378,6 +1421,24 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
   document opens and scrolls; some of its text may come out as boxes, and a form
   will not calculate. The three decoders that matter for ordinary and scanned
   documents — JBIG2, JPEG 2000 and colour profiles — *are* bundled.
+- **The launcher shortcuts and the share target are Android's.** iOS Safari
+  implements neither, so on an iPhone the home-screen icon has no long-press
+  menu and Slate does not appear in the share sheet. The URLs behind them are
+  ordinary ones — `?add=task`, `?add=note`, `?open=today`, and `?title=…&text=…`
+  for a share — so an iOS Shortcut set to *Open URL* against your install
+  reaches all of them, and can be put on the home screen or run from the share
+  sheet itself. On Android there is a second cost, and it is the manifest's:
+  Chrome bakes the manifest into the WebAPK at install time, so an app that was
+  installed before this shipped shows neither until it is uninstalled and
+  installed again. Nothing short of that does it — see the long note in
+  `vite.config.ts`, which was written the hard way.
+
+- **Quick capture writes where the setting says, not where you are looking.** A
+  task captured from a note about something else still goes to the daily note or
+  the Inbox; the sheet names the file, and changing it is a tap, but there is no
+  "add this to the note I am reading". A note that is open is the one place the
+  editor is already better at.
+
 - **No encryption at rest.** Notes are plain files on your server. Per-file
   encryption before upload would fit cleanly behind the adapter interface.
 - **iOS PWA storage can be evicted** after ~7 days of not opening the app, which
@@ -1403,8 +1464,8 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 586 unit + two-device sync tests
-node scripts/smoke.mjs  # 476 checks in headless Chromium against dist/
+npm test                # 722 unit + two-device sync tests
+node scripts/smoke.mjs  # 533 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

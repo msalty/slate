@@ -35,6 +35,7 @@ import {
   setScope,
 } from './state'
 import { DueChip } from './DueChip'
+import { openQuickAdd } from './QuickAdd'
 import { Highlight } from './Highlight'
 import {
   IconCalendar,
@@ -242,7 +243,37 @@ export function DayNotesPanel({ omitOwed = false }: { omitOwed?: boolean } = {})
       {due.map((t) => (
         <TaskRow key={t.id} task={t} />
       ))}
+      {/*
+        Adding from a day is about that day: the task is filed in that day's
+        note and carries its date, so it appears in the list directly above
+        rather than somewhere you have to go and look for it.
+      */}
+      <AddTaskRow day={day} due={day} label="Add task for this day" />
     </div>
+  )
+}
+
+/**
+ * The one-line way into capture from a list of tasks.
+ *
+ * A row rather than a floating button, because it belongs to the list it adds
+ * to — and on a desktop, where the phone's + is not on screen, this is the way
+ * in that isn't the command palette.
+ */
+function AddTaskRow({
+  day,
+  due,
+  label = 'Add task',
+}: {
+  day?: number
+  due?: number
+  label?: string
+}) {
+  return (
+    <button class="day-add-row" onClick={() => openQuickAdd({ mode: 'task', day, due })}>
+      <IconPlus size={12} />
+      {label}
+    </button>
   )
 }
 
@@ -447,6 +478,13 @@ export function TasksPanel({
           </Fragment>
         ))
       )}
+      {/*
+        Only where this panel owns its list. A Tag Folder's rule decides what
+        belongs in it, and a captured task goes to the daily note — so an add
+        row inside a folder would offer to add something that then wouldn't
+        appear there.
+      */}
+      {!items && !searching && <AddTaskRow />}
     </div>
   )
 }

@@ -533,6 +533,56 @@ export function Settings() {
                   <b>Create daily note</b> row makes.
                 </small>
               </label>
+
+              <h4 class="set-group">Quick add</h4>
+              <label class="field">
+                <span>A captured task goes to</span>
+                <select
+                  value={s.quickAddTaskTarget}
+                  onChange={(e) =>
+                    update({ quickAddTaskTarget: (e.target as HTMLSelectElement).value as never })
+                  }
+                >
+                  <option value="daily">Today's daily note</option>
+                  <option value="inbox">One Inbox note</option>
+                </select>
+                <small>
+                  The daily note is where the rest of the app already looks: a task written there is
+                  in the Tasks tab, in the calendar's counts and in any Tag Folder that gathers
+                  tasks, straight away. <code>Inbox.md</code> is for a vault that doesn't keep a
+                  journal.
+                </small>
+              </label>
+              <label class="field">
+                <span>Filed under the heading</span>
+                <input
+                  type="text"
+                  value={s.quickAddTaskHeading}
+                  placeholder="## Tasks"
+                  onChange={(e) =>
+                    update({ quickAddTaskHeading: (e.target as HTMLInputElement).value.trim() })
+                  }
+                />
+                <small>
+                  Written at the end of the note if it hasn't got that heading yet, so the second
+                  capture of the day joins the first. Leave it empty to add to the end instead.
+                </small>
+              </label>
+              <label class="field">
+                <span>A captured note is created in</span>
+                <input
+                  type="text"
+                  value={s.quickAddNoteFolder}
+                  placeholder="All Notes"
+                  onChange={(e) =>
+                    update({ quickAddNoteFolder: (e.target as HTMLInputElement).value.trim() })
+                  }
+                />
+                <small>
+                  Empty is the top of the vault. The note is named after its first line, so quick
+                  capture never leaves an <code>Untitled.md</code> behind.
+                </small>
+              </label>
             </>
           )}
 

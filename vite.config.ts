@@ -177,6 +177,37 @@ export default defineConfig({
           { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' },
           { src: 'icons/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
         ],
+        /*
+         * Long-press the launcher icon. These are the fastest way into the app
+         * there is — no cold start into a list you then have to navigate — and
+         * they cost nothing but a URL each, which App.tsx reads on the way in.
+         *
+         * Relative, like start_url and scope above, because dist/ has to keep
+         * working dropped into a subdirectory of somebody's web server.
+         *
+         * Android only in practice: iOS Safari implements neither this nor the
+         * share target below. The README has the Shortcuts recipe that gets an
+         * iPhone to the same place through the same URLs.
+         */
+        shortcuts: [
+          { name: 'New task', short_name: 'Task', url: './?add=task' },
+          { name: 'New note', short_name: 'Note', url: './?add=note' },
+          { name: 'Today’s note', short_name: 'Today', url: './?open=today' },
+        ],
+        /*
+         * Share text or a link from any other app into capture.
+         *
+         * A GET target on purpose: the parameters arrive in the URL, which the
+         * app already knows how to read, and no service worker has to sit in
+         * the request path to receive a POST. It also means a share works with
+         * no network — `navigateFallback` serves index.html out of the
+         * precache and the write is local, like every other write here.
+         */
+        share_target: {
+          action: '.',
+          method: 'GET',
+          params: { title: 'title', text: 'text', url: 'url' },
+        },
       },
       workbox: {
         /*

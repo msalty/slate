@@ -21,8 +21,10 @@ import {
   activePath,
   mobileEditorOpen,
   mobileTab,
+  openDailyNote,
   scope,
   scopeLabel,
+  selectedDay,
   setScope,
   settingsOpen,
   type MobileTab,
@@ -30,6 +32,9 @@ import {
 } from './state'
 import { CalendarPanel, DayNotesPanel, TasksPanel } from './RightRail'
 import { openTagFolderDialog } from './TagFolderDialog'
+import { openQuickAdd } from './QuickAdd'
+import { useLongPress } from './Menu'
+import { startOfDay } from '../core/util'
 import {
   IconCalendar,
   IconCheck,
@@ -37,7 +42,6 @@ import {
   IconDots,
   IconFolder,
   IconLink,
-  IconNewNote,
   IconNotes,
   IconPaperclip,
   IconPlus,
@@ -46,7 +50,6 @@ import {
   IconTag,
   IconTrash,
 } from './Icons'
-import { newNoteInFolder } from './EditorPane'
 
 const TABS: Array<{ id: MobileTab; label: string; icon: preact.ComponentChildren }> = [
   { id: 'notes', label: 'Notes', icon: <IconNotes size={21} /> },
@@ -55,33 +58,96 @@ const TABS: Array<{ id: MobileTab; label: string; icon: preact.ComponentChildren
   { id: 'more', label: 'More', icon: <IconDots size={21} /> },
 ]
 
+/**
+ * What the + in the middle of the pill adds, given where you are.
+ *
+ * The tab is the context, so the sheet opens on the thing that tab is about
+ * and the toggle inside it is one tap away for the times it guessed wrong.
+ * Calendar hands over the day being looked at as well: adding from a day is
+ * about that day, both for the note it is filed in and for the date it carries.
+ */
+function captureForTab(tab: MobileTab) {
+  if (tab === 'notes') return { mode: 'note' as const }
+  if (tab === 'calendar') {
+    const day = selectedDay.value
+    return { mode: 'task' as const, day, due: day }
+  }
+  return { mode: 'task' as const }
+}
+
 export function MobileNav() {
   const openTasks = tasks.value.filter((t) => !t.done).length
+
+  /*
+   * `aria-current` rather than the tab/tablist pattern this used to carry: a
+   * tablist may only contain tabs, and the + in the middle of the pill is not
+   * one. These were never really tabs anyway — there are no tabpanels for them
+   * to control — they are the app's four destinations, which is exactly what
+   * aria-current="page" says.
+   */
+  const tab = (t: (typeof TABS)[number]) => (
+    <button
+      key={t.id}
+      class="tabbar-item"
+      aria-current={mobileTab.value === t.id ? 'page' : undefined}
+      onClick={() => {
+        // Tapping the current tab scrolls its list back to the top.
+        if (mobileTab.value === t.id) {
+          document.querySelector('.mobile-view .list-scroll, .mobile-view .rail-scroll')?.scrollTo({ top: 0, behavior: 'smooth' })
+        }
+        mobileTab.value = t.id
+        if (t.id === 'notes' && scope.value.kind === 'day') setScope({ kind: 'all' })
+      }}
+    >
+      <span class="tabbar-icon">
+        {t.icon}
+        {t.id === 'tasks' && openTasks > 0 && <span class="tabbar-badge">{openTasks > 99 ? '99+' : openTasks}</span>}
+      </span>
+      <span class="tabbar-label">{t.label}</span>
+    </button>
+  )
+
   return (
-    <nav class="tabbar" role="tablist" aria-label="Sections">
-      {TABS.map((t) => (
-        <button
-          key={t.id}
-          class="tabbar-item"
-          role="tab"
-          aria-selected={mobileTab.value === t.id}
-          onClick={() => {
-            // Tapping the current tab scrolls its list back to the top.
-            if (mobileTab.value === t.id) {
-              document.querySelector('.mobile-view .list-scroll, .mobile-view .rail-scroll')?.scrollTo({ top: 0, behavior: 'smooth' })
-            }
-            mobileTab.value = t.id
-            if (t.id === 'notes' && scope.value.kind === 'day') setScope({ kind: 'all' })
-          }}
-        >
-          <span class="tabbar-icon">
-            {t.icon}
-            {t.id === 'tasks' && openTasks > 0 && <span class="tabbar-badge">{openTasks > 99 ? '99+' : openTasks}</span>}
-          </span>
-          <span class="tabbar-label">{t.label}</span>
-        </button>
-      ))}
+    <nav class="tabbar" aria-label="Sections">
+      {TABS.slice(0, 2).map(tab)}
+      <CaptureButton />
+      {TABS.slice(2).map(tab)}
     </nav>
+  )
+}
+
+/**
+ * Capture, in the middle of the pill.
+ *
+ * The centre because it is the easiest thing on the screen to reach with a
+ * thumb, and inside the pill rather than floating above it because a button
+ * hovering over the list is a button covering the list — and the whole point
+ * of a phone is that there isn't much list to spare.
+ */
+function CaptureButton() {
+  const longPress = useLongPress(
+    () => [
+      { label: 'New task', onSelect: () => openQuickAdd({ mode: 'task' }) },
+      { label: 'New note', onSelect: () => openQuickAdd({ mode: 'note' }) },
+      {
+        label: 'Today’s note',
+        separated: true,
+        onSelect: () => void openDailyNote(startOfDay(Date.now())),
+      },
+    ],
+    () => 'Add',
+  )
+  return (
+    <button
+      class="tabbar-add"
+      aria-label="Quick add"
+      onClick={() => openQuickAdd(captureForTab(mobileTab.value))}
+      {...longPress}
+    >
+      <span class="tabbar-add-dot">
+        <IconPlus size={21} />
+      </span>
+    </button>
   )
 }
 
@@ -93,12 +159,17 @@ export function MobileTasks() {
       <div class="mobile-head">
         <h1>Tasks</h1>
         <span class="spacer" />
+        {/*
+          This used to make a whole note per task — `Untitled.md` seeded with a
+          checkbox — which is a filing system nobody asked for. It captures into
+          the configured note instead.
+        */}
         <button
           class="icon-btn"
-          onClick={() => void newNoteInFolder('', 'Untitled', { seed: '- [ ] ' })}
-          aria-label="New task note"
+          onClick={() => openQuickAdd({ mode: 'task' })}
+          aria-label="Quick add task"
         >
-          <IconNewNote size={19} />
+          <IconPlus size={19} />
         </button>
       </div>
       <div class="rail-scroll">

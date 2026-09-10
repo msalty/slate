@@ -3109,6 +3109,99 @@ try {
     `was "${beforePick.trim()}"`,
   )
 
+  /* ---- quick capture ---------------------------------------------------
+   * Two taps end to end: the + in the middle of the pill, then Add. What is
+   * actually being checked is where the line lands — tasks are read out of
+   * note bodies, so a capture that worked is one that appears in the list
+   * underneath the sheet without anything being reloaded or reopened.
+   */
+  const beforeCapture = await page.locator('.task-row').count()
+  check('the pill carries a capture button', (await page.locator('.tabbar-add').count()) === 1)
+  check('and still exactly four tabs beside it', (await page.locator('.tabbar-item').count()) === 4)
+  const addBox = await page.locator('.tabbar-add').boundingBox()
+  check(
+    'the capture button is a real touch target',
+    addBox.height >= 44 && addBox.width >= 44,
+    `${Math.round(addBox.width)}\u00d7${Math.round(addBox.height)}`,
+  )
+
+  await page.locator('.tabbar-add').tap()
+  await page.waitForTimeout(350)
+  check('tapping it opens the capture sheet', (await page.locator('.qa-root[data-open="1"]').count()) === 1)
+  check(
+    'with the caret already in the field',
+    await page.evaluate(() => document.activeElement?.classList.contains('qa-field')),
+  )
+  check(
+    'and on the thing the tab it was pressed from is about',
+    (await page.locator('.qa-seg-btn[aria-pressed="true"]').innerText()).trim() === 'Task',
+  )
+  const destText = (await page.locator('.qa-dest').innerText()).trim()
+  check('the sheet names the file the task is going to', destText.startsWith('Daily/'), destText)
+  await page.screenshot({ path: join(SHOTS, '11c-phone-capture.png') })
+
+  await page.locator('.qa-field').fill('Call the vet')
+  await page.locator('.qa-chip:has-text("Today")').tap()
+  await page.locator('.qa-add').tap()
+  await page.waitForTimeout(700)
+  check(
+    'the captured task is in the list underneath',
+    (await page.locator('.task-row:has-text("Call the vet")').count()) === 1,
+  )
+  check(
+    'and it is one more task, not a new note holding one',
+    (await page.locator('.task-row').count()) === beforeCapture + 1,
+    `${beforeCapture} \u2192 ${await page.locator('.task-row').count()}`,
+  )
+  check(
+    'it carries the date the chip gave it',
+    (await page.locator('.task-row:has-text("Call the vet") .due-chip').innerText()).trim() === 'Today',
+  )
+  check('the sheet stays up for the next one', (await page.locator('.qa-root[data-open="1"]').count()) === 1)
+  check(
+    'and says what it has put away, since the note is not the list underneath',
+    (await page.locator('.qa-added').innerText()).trim() === '1 added',
+  )
+  check('with the field cleared', (await page.locator('.qa-field').inputValue()) === '')
+  check(
+    'and the date kept, since three tasks due today are three taps',
+    (await page.locator('.qa-chip:has-text("Today")').getAttribute('aria-pressed')) === 'true',
+  )
+
+  await page.locator('.qa-sheet [aria-label="Close"]').tap()
+  await page.waitForTimeout(300)
+  check('closing puts the sheet away', (await page.locator('.qa-root[data-open="1"]').count()) === 0)
+
+  /*
+   * The other half: a captured note is named after what was typed. This is
+   * the thing the old New note button could not do — it wrote `Untitled.md`
+   * before you had typed a character, and left it there if you walked away.
+   */
+  await page.locator('.tabbar-item:has-text("Notes")').tap()
+  await page.waitForTimeout(300)
+  // The suite has made an Untitled note of its own by now; what is being
+  // checked is that capture does not add to the pile.
+  const untitledBefore = await page.locator('.note-row:has-text("Untitled")').count()
+  await page.locator('.tabbar-add').tap()
+  await page.waitForTimeout(300)
+  check(
+    'on Notes the same button opens on Note',
+    (await page.locator('.qa-seg-btn[aria-pressed="true"]').innerText()).trim() === 'Note',
+  )
+  await page.locator('.qa-field').fill('Vet visit questions\nAsk about the booster.')
+  await page.locator('.qa-add').tap()
+  await page.waitForTimeout(700)
+  check('a captured note closes the sheet', (await page.locator('.qa-root[data-open="1"]').count()) === 0)
+  check(
+    'and is named after its first line',
+    (await page.locator('.note-row:has-text("Vet visit questions")').count()) === 1,
+  )
+  check(
+    'so nothing is left called Untitled',
+    (await page.locator('.note-row:has-text("Untitled")').count()) === untitledBefore,
+    `${untitledBefore} before`,
+  )
+
   await page.locator('.tabbar-item:has-text("Calendar")').click()
   await page.waitForTimeout(350)
   check('Calendar tab shows a month grid', (await page.locator('.cal-day').count()) >= 28)
@@ -5355,6 +5448,34 @@ try {
     })
   })
   check('attachment blob survives a reload', stillHasImage === true)
+
+  /* ---- arriving from a launcher shortcut or the share sheet ------------
+   * The same URLs the manifest's shortcuts and its GET share target point
+   * at. The second load is the one that matters: the parameters are cleared
+   * before anything is written, so a reload — or a tab restored tomorrow —
+   * cannot capture the same line a second time.
+   */
+  await page.goto(`http://localhost:${PORT}${BASE}?add=task&text=Ring%20the%20bank`, {
+    waitUntil: 'networkidle',
+  })
+  await page.waitForSelector('.qa-root[data-open="1"]', { timeout: 10_000 })
+  check('a shortcut URL opens capture on arrival', true)
+  check(
+    'prefilled with what was shared',
+    (await page.locator('.qa-field').inputValue()) === 'Ring the bank',
+  )
+  check(
+    'and the URL is cleaned so a reload cannot replay it',
+    !(await page.evaluate(() => location.search)).includes('add='),
+    await page.evaluate(() => location.search),
+  )
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForSelector('.shell', { timeout: 10_000 })
+  await page.waitForTimeout(500)
+  check(
+    'a reload asks for nothing',
+    (await page.locator('.qa-root[data-open="1"]').count()) === 0,
+  )
 
   /* ---- offline -------------------------------------------------------- */
   await page.context().setOffline(true)
