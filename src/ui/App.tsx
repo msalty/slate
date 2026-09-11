@@ -13,6 +13,7 @@ import { LinkDialog } from './LinkDialog'
 import { FilePicker } from './FilePicker'
 import { PromptDialog } from './PromptDialog'
 import { ConfirmDialog } from './ConfirmDialog'
+import { TranscribeDialog } from './TranscribeDialog'
 import { PaneResizer } from './PaneResizer'
 import { editLinkAtCaret, handleUriClick } from './linkActions'
 import { openDueMenu } from './DueMenu'
@@ -463,6 +464,7 @@ export function App() {
       <PromptDialog />
       <ConfirmDialog />
       <Lightbox />
+      <TranscribeDialog />
       <ContextMenu />
       <QuickAdd />
       <Toaster />

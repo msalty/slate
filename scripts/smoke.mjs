@@ -43,9 +43,37 @@ const MIME = {
   '.map': 'application/json',
 }
 
+/**
+ * A stand-in for an OpenAI-compatible model server.
+ *
+ * Served from this same origin on purpose. CORS is the interesting failure in
+ * real life and precisely the thing a test cannot stage — a browser's refusal
+ * is opaque by design, which is why the diagnosis for it lives in unit-tested
+ * pure code. What is worth driving through a real browser is everything else:
+ * that the settings reach the request, that a WebP attachment is re-encoded
+ * into something a model will take, that a fenced reply is unwrapped, and that
+ * *nothing is written to the note until the button is pressed*.
+ */
+const llm = { requests: [], reply: '```\nINVOICE 4821\nTOTAL 12.40\n```' }
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`)
   const path = decodeURIComponent(url.pathname)
+
+  if (path === '/mockllm/v1/models') {
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ data: [{ id: 'mock-vision' }, { id: 'mock-text' }] }))
+    return
+  }
+  if (path === '/mockllm/v1/chat/completions') {
+    const chunks = []
+    for await (const c of req) chunks.push(c)
+    llm.requests.push(JSON.parse(Buffer.concat(chunks).toString()))
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ choices: [{ message: { content: llm.reply } }] }))
+    return
+  }
+
   if (!path.startsWith(BASE)) {
     res.writeHead(404, { 'Content-Type': 'text/html' }).end('<html>outside the app</html>')
     return
@@ -647,6 +675,109 @@ try {
 
     await page.keyboard.press('Escape')
     await page.waitForTimeout(300)
+  }
+
+  /* ---- transcribing a picture -------------------------------------------
+   * The first feature that sends anything anywhere. Checked from both ends:
+   * with no provider configured there is no button at all, and with one there
+   * is a review step that has to be pressed before the note changes.
+   */
+  if (imgCount > 0) {
+    await page.locator('.cm-embed img').first().click()
+    await page.waitForTimeout(400)
+    check(
+      'with no AI provider there is no Transcribe button',
+      (await page.locator('.lightbox-bar .icon-btn[title^="Transcribe"]').count()) === 0,
+    )
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(250)
+
+    await page.click('.pane-head .icon-btn[title^="Settings"]')
+    await page.waitForSelector('.dialog')
+    await page.click('.tab:has-text("AI")')
+    await page.waitForTimeout(250)
+    check('Settings has somewhere to put a model', (await page.locator('.dialog:has-text("Provider")').count()) === 1)
+
+    await page.locator('.dialog label.field:has-text("Provider") select').selectOption('custom')
+    await page.waitForTimeout(150)
+    await page
+      .locator('.dialog label.field:has-text("API address") input')
+      .fill(`http://localhost:${PORT}/mockllm/v1`)
+    await page.locator('.dialog .btn-primary:has-text("Test connection")').click()
+    await page.waitForTimeout(600)
+    check(
+      'testing the connection reports what the server can run',
+      /2 models available/.test(await page.locator('.dialog-body').innerText()),
+    )
+    await page.locator('.dialog label.field:has-text("Vision model") input').fill('mock-vision')
+    await page.waitForTimeout(150)
+    await page.click('.dialog-foot .btn-primary')
+    await page.waitForTimeout(300)
+
+    const noteBefore = await page.locator('.cm-content').innerText()
+
+    await page.locator('.cm-embed img').first().click()
+    await page.waitForTimeout(400)
+    const transcribeBtn = page.locator('.lightbox-bar .icon-btn[title^="Transcribe"]')
+    check('configuring a provider puts Transcribe in the viewer', (await transcribeBtn.count()) === 1)
+    await transcribeBtn.click()
+    await page.waitForSelector('.transcribe-text', { timeout: 10000 })
+    await page.waitForTimeout(300)
+
+    const sent = llm.requests.at(-1)
+    const dataUrl = sent?.messages?.[0]?.content?.[1]?.image_url?.url ?? ''
+    check('the model was sent the picture', dataUrl.startsWith('data:image/'), dataUrl.slice(0, 22))
+    check(
+      'and it was re-encoded into a format every server takes',
+      /^data:image\/(jpeg|png);base64,/.test(dataUrl),
+      `stored as ${sizes?.mime ?? 'webp'}`,
+    )
+    check('the prompt asks for a verbatim transcription', /verbatim/i.test(sent?.messages?.[0]?.content?.[0]?.text ?? ''))
+
+    const shown = await page.locator('.transcribe-text').inputValue()
+    check('the reply is shown for review, unwrapped from its code fence', shown === 'INVOICE 4821\nTOTAL 12.40', shown)
+    check('the dialog says what left the device', /Sent to your provider/.test(await page.locator('.dialog-body').innerText()))
+    check('and the note has not been touched yet', (await page.locator('.cm-content').innerText()) === noteBefore)
+
+    // Edited before inserting, which is the point of the box being a box.
+    await page.locator('.transcribe-text').fill('INVOICE 4821\nTOTAL 12.40 (checked)')
+    await page.click('.dialog-foot .btn-primary')
+    await page.waitForTimeout(700)
+    const noteAfter = await page.locator('.cm-content').innerText()
+    check('inserting writes the edited text into the note', noteAfter.includes('TOTAL 12.40 (checked)'))
+    check('nothing that was in the note was lost', noteBefore.split('\n').every((l) => !l.trim() || noteAfter.includes(l.trim())))
+
+    /* A failure has to arrive as words rather than as a silent nothing. */
+    llm.reply = ''
+    await page.locator('.cm-embed img').first().click()
+    await page.waitForTimeout(400)
+    await page.locator('.lightbox-bar .icon-btn[title^="Transcribe"]').click()
+    await page.waitForSelector('.callout-danger', { timeout: 10000 })
+    check(
+      'a model that answers with nothing says so, and says why it might',
+      /vision model/.test(await page.locator('.dialog-body .callout-danger').innerText()),
+    )
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(250)
+    llm.reply = '```\nINVOICE 4821\nTOTAL 12.40\n```'
+
+    /* Put it back, so nothing downstream runs with a provider configured. */
+    await page.click('.pane-head .icon-btn[title^="Settings"]')
+    await page.waitForSelector('.dialog')
+    await page.click('.tab:has-text("AI")')
+    await page.waitForTimeout(250)
+    await page.locator('.dialog label.field:has-text("Provider") select').selectOption('none')
+    await page.waitForTimeout(150)
+    await page.click('.dialog-foot .btn-primary')
+    await page.waitForTimeout(300)
+    await page.locator('.cm-embed img').first().click()
+    await page.waitForTimeout(400)
+    check(
+      'turning the provider off takes the button away again',
+      (await page.locator('.lightbox-bar .icon-btn[title^="Transcribe"]').count()) === 0,
+    )
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(250)
   }
 
   /* ---- calendar ------------------------------------------------------ */

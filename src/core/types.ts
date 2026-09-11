@@ -8,6 +8,8 @@
  * of that file set, never the sole home of anything.
  */
 
+import type { AiSettings } from './llm'
+
 export type FileKind = 'note' | 'attachment'
 
 /** Sync bookkeeping for one file. This is what makes conflict detection safe. */
@@ -241,6 +243,20 @@ export interface AppSettings {
     folderId: string
     folderName: string
   }
+  /**
+   * The optional language-model connection.
+   *
+   * Device-local in its entirety, beside the WebDAV password rather than in
+   * `backstage/config.json`: an API key in the vault would be an API key on
+   * every device you sync to and in every backup of it. The model and address
+   * ride along on the same side of that line — they are cheap to retype, and
+   * splitting one setting across two homes to save four words of typing would
+   * be a worse thing to explain than the typing.
+   *
+   * `provider: 'none'` is the default and means the feature is not present:
+   * nothing is offered in the UI and nothing can leave the device.
+   */
+  ai: AiSettings
   autoSync: boolean
   /** Seconds between automatic syncs when autoSync is on. */
   syncIntervalSec: number

@@ -18,8 +18,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 550 unit and two-device sync tests
-node scripts/smoke.mjs # 442-check browser smoke test against dist/
+npm test               # 767 unit and two-device sync tests
+node scripts/smoke.mjs # 549-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -921,6 +921,81 @@ files when not.
 
 ---
 
+## Reading the text out of a picture
+
+Optional, off, and the only thing in Slate that sends anything anywhere other
+than your own backend. With no provider configured in Settings → **AI**, none of
+this exists: no button, no request, nothing different about the app at all.
+
+Configure one and the image viewer gains a **Transcribe** button. It sends that
+one picture — a receipt, a whiteboard, a page of a book, a screenshot of an
+error nobody can copy out of — and shows you what came back **in a box you can
+edit, before anything is written**. *Insert* puts it in the note under the
+picture it came from, where it reads as a caption and needs no explaining.
+*Cancel* writes nothing. A transcription is ordinary text in an ordinary `.md`
+file: no sidecar, no marker, nothing that needs this feature to still exist in a
+year for the note to make sense.
+
+The write goes through the same path as every other edit, so it takes a
+version-history snapshot and is undone from the same dialog — and a note with
+`lock: true` refuses it, the same as it refuses quick capture.
+
+### Setting it up
+
+| Provider | Address |
+| --- | --- |
+| **Ollama** | `http://localhost:11434/v1` |
+| **LM Studio** | `http://localhost:1234/v1` |
+| **OpenAI** | `https://api.openai.com/v1` |
+| **Google Gemini** | `https://generativelanguage.googleapis.com/v1beta` |
+| **Custom** | anything OpenAI-compatible — vLLM, OpenRouter, your own gateway |
+
+Pick one, press **Test connection** — it lists what the server can run, which is
+also how the model field gets filled in — and choose a model **that can see**. A
+text-only model will take the picture, ignore it, and answer about nothing; the
+list cannot tell you which is which, so this is the one part you have to know.
+
+The key and the address are stored in this browser's local database, beside the
+WebDAV password and for the same reason: they are never written into the vault,
+so they never sync to your other devices. Set them up per device.
+
+### The one thing that will go wrong: http
+
+A page served over HTTPS cannot call `http://`. Not with a flag, not with a
+permission, not on retry — so Slate installed from `https://notes.example.com`
+cannot reach Ollama on your desktop at `http://192.168.1.10:11434`, and that is
+the setup nearly everyone tries first. Settings says so before you press
+anything rather than after, because the browser's own error for it is the same
+unhelpful `TypeError` as four other problems.
+
+Three ways out, in the order they are worth trying:
+
+1. **Run the model on the machine you are reading notes on.**
+   `http://localhost` is exempt from the rule, so this simply works. Chrome now
+   asks permission the first time a page calls your local network, and Safari is
+   stricter than either — if it works in `curl` and not here, that is what it is.
+2. **Put the model behind TLS**, which is the only answer that works from a
+   phone. The Caddy block from the WebDAV section above does it; point it at
+   `localhost:11434` instead and use the https address.
+3. **Serve Slate itself over http** on the same machine, which trades the PWA
+   install for the convenience and is rarely what you want.
+
+CORS is the other half, and it is per provider: Ollama answers a browser only
+from origins it was started with (`OLLAMA_ORIGINS=https://notes.example.com`),
+and LM Studio refuses every browser until *Developer → Server settings → Enable
+CORS* is switched on. Both are named in the failure when it happens, with your
+origin already filled in.
+
+### What it does not do
+
+One picture, one request, started by you. Nothing runs in the background,
+nothing is indexed, no note is read by any of it, and no note's text is ever
+sent — the only thing that leaves the device is the image you pressed the button
+on, re-encoded to JPEG or PNG first because plenty of servers decode nothing
+else. The dialog says how many bytes went, every time.
+
+---
+
 ## Layout
 
 | | Shows | Side panels |
@@ -1382,8 +1457,12 @@ src/
 │  │                  page drawn into a note
 │  ├─ capture.ts      quick capture: where a line goes, what it looks like
 │  │                  when it gets there, and what a launch URL is asking for
+│  ├─ llm.ts         the optional model connection: two wire formats, and —
+│  │                  mostly — why a browser could not reach it
+│  ├─ ocr.ts         the transcription prompt, and where the text it produces
+│  │                  lands in the note
 │  └─ settings.ts     device-local vs vault-wide preferences
-├─ adapters/      webdav.ts · gdrive.ts · memory.ts (tests)
+├─ adapters/      webdav.ts · gdrive.ts · llm.ts · memory.ts (tests)
 ├─ editor/        CodeMirror 6: live preview, widgets, completion, paste
 │  ├─ format.ts     the formatting commands behind the rich-text bar
 │  ├─ caret.ts      the two edges of a line whose markup is hidden, and what
@@ -1499,6 +1578,13 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
   "add this to the note I am reading". A note that is open is the one place the
   editor is already better at.
 
+- **Transcription is one picture at a time, and cannot tell you whether your
+  model can see.** There is no "transcribe every image in this note", and the
+  model list a server returns says nothing about which of its entries handle
+  images — so picking a text-only one gets you a confident answer about nothing,
+  and the only symptom is that the answer is wrong. Guessing from the model's
+  name would be wrong often enough to be worse than saying nothing. The failure
+  when a model returns empty does at least name the likely cause.
 - **No encryption at rest.** Notes are plain files on your server. Per-file
   encryption before upload would fit cleanly behind the adapter interface.
 - **iOS PWA storage can be evicted** after ~7 days of not opening the app, which
@@ -1524,8 +1610,8 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 726 unit + two-device sync tests
-node scripts/smoke.mjs  # 535 checks in headless Chromium against dist/
+npm test                # 767 unit + two-device sync tests
+node scripts/smoke.mjs  # 549 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

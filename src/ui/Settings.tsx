@@ -1,7 +1,9 @@
 /** Settings: backend connection, sync behaviour, editor and image preferences. */
 
 import { useEffect, useState } from 'preact/hooks'
-import { settings, update, updateGdrive, updateWebdav } from '../core/settings'
+import { settings, update, updateAi, updateGdrive, updateWebdav } from '../core/settings'
+import { preflight, presetFor, PRESETS, type LlmProvider } from '../core/llm'
+import { listModels } from '../adapters/llm'
 import { buildAdapter, connectBackend } from '../app/backend'
 import { currentAdapter, status, sync } from '../core/sync'
 import { requestPersistence, storageEstimate } from '../core/db'
@@ -23,7 +25,15 @@ import { STARTER_TEMPLATES } from '../core/starters'
 import { hasSnippets, snippets, SNIPPETS_NOTE } from '../core/snippets'
 import { openNote } from './state'
 
-type Tab = 'sync' | 'editor' | 'files' | 'about'
+type Tab = 'sync' | 'editor' | 'files' | 'ai' | 'about'
+
+const TAB_LABEL: Record<Tab, string> = {
+  sync: 'Sync',
+  editor: 'Editor',
+  files: 'Images',
+  ai: 'AI',
+  about: 'About',
+}
 
 /**
  * Make `Templates/` and fill it with the starter set, then open the first one.
@@ -93,8 +103,12 @@ async function startSnippets() {
 export function Settings() {
   const [tab, setTab] = useState<Tab>('sync')
   const [testing, setTesting] = useState(false)
+  const [aiTesting, setAiTesting] = useState(false)
+  const [models, setModels] = useState<string[]>([])
   const [usage, setUsage] = useState<{ usage: number; quota: number }>()
   const s = settings.value
+  const preset = presetFor(s.ai.provider)
+  const pre = preflight(s.ai, location.origin)
 
   useEffect(() => {
     if (settingsOpen.value) void storageEstimate().then(setUsage)
@@ -130,6 +144,46 @@ export function Settings() {
     }
   }
 
+  /**
+   * Prove the address, the CORS configuration and the key in one request.
+   *
+   * Listing models rather than generating something: it is the cheapest call
+   * that exercises all three, it costs nothing on a metered provider, and it
+   * comes back with the list that fills the model field — so the test and the
+   * only tedious part of the setup are the same button.
+   *
+   * The model itself is deliberately *not* verified here. Whether a given model
+   * can see is not in the listing, and guessing from its name would be wrong
+   * often enough to be worse than silence; the transcription says so plainly if
+   * it turns out it cannot.
+   */
+  const testAi = async () => {
+    setAiTesting(true)
+    try {
+      const found = await listModels(settings.value.ai)
+      setModels(found)
+      if (!found.length) {
+        notify('Connected, but the server listed no models.', 'error')
+        return
+      }
+      const has = found.includes(settings.value.ai.visionModel)
+      if (!settings.value.ai.visionModel) {
+        notify(`Connected. ${found.length} models available — pick one that can read images.`)
+      } else if (has) {
+        notify(`Connected. ${settings.value.ai.visionModel} is available.`)
+      } else {
+        notify(
+          `Connected, but “${settings.value.ai.visionModel}” is not in the ${found.length} models this server lists.`,
+          'error',
+        )
+      }
+    } catch (e) {
+      notify((e as Error).message, 'error')
+    } finally {
+      setAiTesting(false)
+    }
+  }
+
   return (
     <div class="scrim" onClick={() => (settingsOpen.value = false)}>
       <div class="dialog" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
@@ -142,7 +196,7 @@ export function Settings() {
         </div>
 
         <div class="tabs" role="tablist">
-          {(['sync', 'editor', 'files', 'about'] as Tab[]).map((t) => (
+          {(['sync', 'editor', 'files', 'ai', 'about'] as Tab[]).map((t) => (
             <button
               key={t}
               class="tab"
@@ -150,7 +204,7 @@ export function Settings() {
               aria-selected={tab === t}
               onClick={() => setTab(t)}
             >
-              {t === 'sync' ? 'Sync' : t === 'editor' ? 'Editor' : t === 'files' ? 'Images' : 'About'}
+              {TAB_LABEL[t]}
             </button>
           ))}
         </div>
@@ -653,6 +707,133 @@ export function Settings() {
                 Originals are kept whenever re-encoding would make the file bigger, and animated
                 GIFs and SVGs are never touched.
               </div>
+            </>
+          )}
+
+          {tab === 'ai' && (
+            <>
+              <label class="field">
+                <span>Provider</span>
+                <select
+                  value={s.ai.provider}
+                  onChange={(e) => {
+                    const p = (e.target as HTMLSelectElement).value as LlmProvider
+                    // The preset *is* the address: picking one and then being
+                    // left with the last one's URL is the setting doing nothing.
+                    updateAi({ provider: p, baseUrl: presetFor(p)?.baseUrl ?? '' })
+                    setModels([])
+                  }}
+                >
+                  <option value="none">None — no AI features</option>
+                  {(Object.keys(PRESETS) as Array<Exclude<LlmProvider, 'none'>>).map((p) => (
+                    <option key={p} value={p}>
+                      {PRESETS[p].label}
+                    </option>
+                  ))}
+                </select>
+                <small>
+                  Off by default, and off is a complete state: with no provider, nothing in the app
+                  changes and nothing can leave this device.
+                </small>
+              </label>
+
+              {preset && (
+                <>
+                  <label class="field">
+                    <span>API address</span>
+                    <input
+                      type="url"
+                      placeholder={preset.baseUrl || 'https://llm.example.com/v1'}
+                      value={s.ai.baseUrl}
+                      onInput={(e) => updateAi({ baseUrl: (e.target as HTMLInputElement).value })}
+                    />
+                    <small>
+                      Ends in <code>/v1</code> for anything OpenAI-compatible; Slate adds it if you
+                      leave it off a bare address.
+                    </small>
+                  </label>
+
+                  <label class="field">
+                    <span>API key{preset.needsKey ? '' : ' (optional)'}</span>
+                    <input
+                      type="password"
+                      autocomplete="off"
+                      value={s.ai.apiKey}
+                      onInput={(e) => updateAi({ apiKey: (e.target as HTMLInputElement).value })}
+                    />
+                    {!preset.needsKey && <small>Ollama and LM Studio do not use one by default.</small>}
+                  </label>
+
+                  <label class="field">
+                    <span>Vision model</span>
+                    <input
+                      type="text"
+                      list="ai-models"
+                      placeholder={preset.sampleModel}
+                      value={s.ai.visionModel}
+                      onInput={(e) => updateAi({ visionModel: (e.target as HTMLInputElement).value })}
+                    />
+                    <datalist id="ai-models">
+                      {models.map((m) => (
+                        <option key={m} value={m} />
+                      ))}
+                    </datalist>
+                    <small>
+                      It has to be a model that can see — a text-only one will take the picture and
+                      answer about nothing. Test the connection to fill this list.
+                    </small>
+                  </label>
+
+                  {/*
+                    * Said before the request rather than after it. A page served
+                    * over https cannot call http, and the browser's error for
+                    * that is the same TypeError as four other problems — so the
+                    * one failure that can be known in advance is reported in
+                    * advance, while the address is still on screen to fix.
+                    */}
+                  {(pre.kind === 'blocked' || pre.kind === 'caution') && (
+                    <div
+                      class={pre.kind === 'blocked' ? 'callout callout-danger' : 'callout'}
+                      style={{ whiteSpace: 'pre-wrap' }}
+                    >
+                      {pre.kind === 'blocked' && (
+                        <IconWarn size={13} style={{ verticalAlign: '-2px', marginRight: 4 }} />
+                      )}
+                      {pre.message}
+                    </div>
+                  )}
+
+                  <div style={{ marginTop: 18, display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <button class="btn btn-primary" disabled={aiTesting} onClick={testAi}>
+                      {aiTesting ? 'Testing…' : 'Test connection'}
+                    </button>
+                    <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>
+                      {models.length ? `${models.length} models available` : 'Not tested'}
+                    </span>
+                  </div>
+
+                  {preset.corsFix && (
+                    <div class="callout">
+                      <strong>If it cannot be reached,</strong> it is usually CORS — the server has
+                      to allow this origin (<code>{location.origin}</code>).{' '}
+                      {preset.corsFix(location.origin)}
+                    </div>
+                  )}
+
+                  <div class="callout">
+                    The key and the address are stored in this browser's local database, beside the
+                    WebDAV password and for the same reason: they are never written into the vault,
+                    so they never sync to your other devices.
+                  </div>
+
+                  <div class="callout">
+                    <strong>What this switches on.</strong> One thing so far: <em>Transcribe</em> in
+                    the image viewer, which sends that one picture to the provider above and shows
+                    you the text before anything is written. Nothing runs on its own, nothing is sent
+                    in the background, and no note is read by any of it.
+                  </div>
+                </>
+              )}
             </>
           )}
 

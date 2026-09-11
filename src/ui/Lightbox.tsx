@@ -3,8 +3,11 @@
 import { useEffect, useRef, useState } from 'preact/hooks'
 import { attachmentUrl, getRaw } from '../core/vault'
 import { basename, formatBytes, mediaClass } from '../core/util'
+import { isConfigured } from '../core/llm'
+import { settings } from '../core/settings'
 import { lightboxPath } from './state'
-import { IconClose, IconDownload } from './Icons'
+import { openTranscribe } from './TranscribeDialog'
+import { IconClose, IconDownload, IconTextScan } from './Icons'
 import { PdfView } from './PdfView'
 import { clampZoom } from './pdfLayout'
 import { clampView, FIT, pan, pinch, zoomTo, type Box, type Point, type View } from './zoom'
@@ -226,6 +229,26 @@ export function Lightbox() {
               +
             </button>
           </>
+        )}
+        {/*
+          * Only when there is somewhere to send the picture. An AI feature with
+          * no provider configured is absent rather than disabled: a button that
+          * exists to explain why it does not work is a worse thing to meet in a
+          * toolbar than no button at all, and the setting that brings it back is
+          * one panel away.
+          */}
+        {kind === 'image' && !!url && isConfigured(settings.value.ai) && (
+          <button
+            class="icon-btn"
+            onClick={() => {
+              const p = path
+              lightboxPath.value = undefined
+              openTranscribe(p)
+            }}
+            title="Transcribe text from this image"
+          >
+            <IconTextScan />
+          </button>
         )}
         <button class="icon-btn" onClick={download} title="Download">
           <IconDownload />

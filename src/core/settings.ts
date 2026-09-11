@@ -59,6 +59,7 @@ function defaults(): AppSettings {
     backend: 'none',
     webdav: { url: '', username: '', password: '', root: '' },
     gdrive: { clientId: '', folderId: '', folderName: 'Slate' },
+    ai: { provider: 'none', baseUrl: '', apiKey: '', visionModel: '' },
     autoSync: true,
     syncIntervalSec: 60,
     showRightRail: true,
@@ -259,4 +260,8 @@ export function updateWebdav(patch: Partial<AppSettings['webdav']>): void {
 
 export function updateGdrive(patch: Partial<AppSettings['gdrive']>): void {
   settings.value = { ...settings.value, gdrive: { ...settings.value.gdrive, ...patch } }
+}
+
+export function updateAi(patch: Partial<AppSettings['ai']>): void {
+  settings.value = { ...settings.value, ai: { ...settings.value.ai, ...patch } }
 }
