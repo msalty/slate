@@ -18,7 +18,7 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 767 unit and two-device sync tests
+npm test               # 770 unit and two-device sync tests
 node scripts/smoke.mjs # 549-check browser smoke test against dist/
 ```
 
@@ -955,9 +955,17 @@ also how the model field gets filled in — and choose a model **that can see**.
 text-only model will take the picture, ignore it, and answer about nothing; the
 list cannot tell you which is which, so this is the one part you have to know.
 
-The key and the address are stored in this browser's local database, beside the
-WebDAV password and for the same reason: they are never written into the vault,
-so they never sync to your other devices. Set them up per device.
+**All four of these are per device** — provider, address, key and model alike.
+They live in this browser's local database, beside the WebDAV password and for
+the same reason: nothing here is written into the vault, so nothing here syncs.
+A key in `backstage/config.json` would be a key on every machine you sync to and
+in every backup of the vault, with nothing on screen to say so.
+
+That is a deliberate feature rather than a limitation, and it is what makes the
+sensible arrangement possible: Ollama on the desktop that has the GPU, a hosted
+provider on the laptop, and nothing at all on the phone or on a machine you do
+not want this on. Turning it off on one device leaves the others as they were.
+The cost is that each device is set up by hand once — four fields.
 
 ### The one thing that will go wrong: http
 
@@ -1610,7 +1618,7 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 767 unit + two-device sync tests
+npm test                # 770 unit + two-device sync tests
 node scripts/smoke.mjs  # 549 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```

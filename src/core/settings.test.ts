@@ -202,3 +202,64 @@ describe('a shared file that has not arrived yet', () => {
     expect(s.settings.value.editorMode).toBe('live')
   })
 })
+
+/**
+ * The line that keeps a credential on the device that typed it.
+ *
+ * Every preference here is either vault-wide or device-local, and getting one
+ * onto the wrong side is silent: a WebDAV password or a model API key written
+ * into `backstage/config.json` is a secret on every device you sync to and in
+ * every backup of the vault, with nothing in the UI to say so. So the rule is
+ * pinned from both directions — what reaches the file, and what does not —
+ * rather than left to whoever next edits `SHARED_KEYS`.
+ */
+describe('what is allowed into the shared file', () => {
+  it('never writes a secret into the vault, however much is changed', async () => {
+    const { s, v } = await fresh()
+    s.updateAi({ provider: 'openai', baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-secret', visionModel: 'gpt-4o-mini' })
+    s.updateWebdav({ url: 'https://dav.example.com', username: 'mike', password: 'hunter2' })
+    s.update({ sortBy: 'title' })
+    s.flushSettings()
+
+    const shared = await vi.waitFor(async () => {
+      const f = await sharedFile(v)
+      expect(f).toBeDefined()
+      return f!
+    })
+    expect(shared.ai).toBeUndefined()
+    expect(shared.webdav).toBeUndefined()
+    expect(shared.gdrive).toBeUndefined()
+    expect(JSON.stringify(shared)).not.toMatch(/sk-secret|hunter2/)
+    // The shared half still got through, so this is not passing vacuously.
+    expect(shared.sortBy).toBe('title')
+  })
+
+  it('does not take an AI provider from a shared file written by another device', async () => {
+    const { s, v } = await fresh()
+    // A config.json that names one — from an older build, a hand edit, or a
+    // vault shared with someone else. A device's own provider is its own.
+    await v.writeBackstage('config.json', {
+      sortBy: 'title',
+      ai: { provider: 'openai', baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-theirs', visionModel: 'gpt-4o-mini' },
+    })
+    await s.applySharedSettings()
+
+    expect(s.settings.value.sortBy).toBe('title')
+    expect(s.settings.value.ai.provider).toBe('none')
+    expect(s.settings.value.ai.apiKey).toBe('')
+  })
+
+  it('keeps the device-local half out of the file even after a shared read', async () => {
+    const { s, v } = await fresh()
+    s.updateAi({ provider: 'ollama', baseUrl: 'http://localhost:11434/v1', visionModel: 'llama3.2-vision' })
+    await v.writeBackstage('config.json', { theme: 'dark' })
+    await s.applySharedSettings()
+    s.update({ fontSize: 17 })
+    s.flushSettings()
+
+    await vi.waitFor(async () => expect((await sharedFile(v))?.fontSize).toBe(17))
+    expect((await sharedFile(v))?.ai).toBeUndefined()
+    // And this device kept what it had set.
+    expect(s.settings.value.ai.provider).toBe('ollama')
+  })
+})
