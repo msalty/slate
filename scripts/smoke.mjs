@@ -5516,6 +5516,46 @@ try {
   }
   await page.context().setOffline(false)
 
+  /* ---- the Home Screen icons iOS needs ---------------------------------
+   * iOS bakes a web app's start_url into the clip when you add it and throws
+   * away anything appended to the URL afterwards — so a Shortcut cannot ask an
+   * installed web app for a capture sheet, and each entry point ships a page
+   * and a manifest of its own to be added from instead.
+   *
+   * The check that earns its place is the first one: these are ordinary .html
+   * under a service worker whose navigateFallback would otherwise answer every
+   * navigation with the app itself, and a page that silently becomes the app
+   * is a page nobody can add the right thing from.
+   */
+  await page.goto(`http://localhost:${PORT}${BASE}new-task.html`, { waitUntil: 'networkidle' })
+  const installHeading = (await page.locator('h1').innerText()).trim()
+  check('the install page is served, not the app shell', installHeading === 'New task', installHeading)
+  const installManifest = await page.evaluate(async () => {
+    const href = document.querySelector('link[rel=manifest]').getAttribute('href')
+    const m = await (await fetch(href)).json()
+    return { href, start: m.start_url, name: m.short_name, id: m.id }
+  })
+  check('it links a manifest of its own', installManifest.href === './new-task.webmanifest', installManifest.href)
+  check(
+    'whose start_url is the capture URL, which is the whole point',
+    installManifest.start === './?add=task',
+    installManifest.start,
+  )
+  check('with an id of its own, so it installs as its own app', installManifest.id === './?add=task')
+  check(
+    'and the name the icon will wear',
+    installManifest.name === 'New task' &&
+      (await page.getAttribute('meta[name="apple-mobile-web-app-title"]', 'content')) === 'New task',
+  )
+  await page.locator('nav a').first().click()
+  await page.waitForTimeout(900)
+  check(
+    'following it opens capture, which is what the icon will do',
+    (await page.locator('.qa-root[data-open="1"]').count()) === 1,
+  )
+  await page.goto(`http://localhost:${PORT}${BASE}`, { waitUntil: 'networkidle' })
+  await page.waitForSelector('.shell', { timeout: 10_000 })
+
   /* ---- light theme screenshot ----------------------------------------- */
   await page.reload({ waitUntil: 'networkidle' })
   await page.waitForSelector('.shell')

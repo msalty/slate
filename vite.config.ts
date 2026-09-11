@@ -60,6 +60,193 @@ function pdfAssets(): Plugin {
   }
 }
 
+/**
+ * The capture entry points, in one place.
+ *
+ * Each is a URL the app reads on the way in (see core/capture.ts), and each is
+ * also something you can put on a Home Screen. Android gets them from the
+ * manifest's `shortcuts` — a long press on the launcher icon. iOS has no such
+ * thing, and cannot be given one from the app's own manifest either:
+ *
+ *   **iOS launches an installed web app at the address it was installed with.**
+ *   The manifest's `start_url` is baked into the web clip when you add it, and
+ *   anything appended to the URL afterwards — by a Shortcut, a link, the
+ *   `webapp://` scheme — is discarded before the page loads. Verified on a
+ *   device: `webapp://…/?add=task` opens Slate at `start_url` with an empty
+ *   query, which is indistinguishable from tapping the icon.
+ *
+ * So the address has to be baked in at the moment of adding, which means each
+ * entry point needs a manifest of its own carrying it as `start_url`, and a
+ * page of its own linking that manifest to be added *from*. That is what this
+ * emits: three small pages, each installable as its own icon.
+ */
+const CAPTURE = [
+  {
+    slug: 'new-task',
+    label: 'New task',
+    short: 'Task',
+    query: '?add=task',
+    blurb: 'opens Slate with the quick-add sheet up, on a new task',
+  },
+  {
+    slug: 'new-note',
+    label: 'New note',
+    short: 'Note',
+    query: '?add=note',
+    blurb: 'opens Slate with the quick-add sheet up, on a new note',
+  },
+  {
+    slug: 'today',
+    label: 'Today’s note',
+    short: 'Today',
+    query: '?open=today',
+    blurb: 'opens today’s daily note, making it if the day hasn’t got one',
+  },
+] as const
+
+const ICONS = [
+  { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+  { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' },
+  { src: 'icons/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+]
+
+type CaptureEntry = (typeof CAPTURE)[number]
+
+/*
+ * No `theme_color` and no `background_color`, for the reason set out at length
+ * against the app's own manifest below: whichever single colour is chosen is
+ * wrong for half of the users, and omitting it is what lets the system chrome
+ * follow the phone.
+ */
+function captureManifest(c: CaptureEntry): string {
+  return `${JSON.stringify(
+    {
+      name: `Slate — ${c.label}`,
+      short_name: c.label,
+      description: `Slate: ${c.blurb}.`,
+      // Distinct ids, or a browser that keys installs by id sees one app.
+      id: `./${c.query}`,
+      start_url: `./${c.query}`,
+      scope: './',
+      display: 'standalone',
+      orientation: 'any',
+      icons: ICONS,
+    },
+    null,
+    2,
+  )}\n`
+}
+
+/**
+ * The page you add to the Home Screen.
+ *
+ * Standalone HTML rather than a route in the app: Safari reads the manifest of
+ * the page being added, and the app has exactly one document, which links
+ * exactly one manifest. It carries the same `apple-` meta tags index.html
+ * does, since those are read at the moment of adding and decide whether the
+ * icon opens standalone or inside Safari's chrome.
+ */
+function capturePage(c: CaptureEntry): string {
+  const others = CAPTURE.filter((o) => o.slug !== c.slug)
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <title>${c.label} · Slate</title>
+    <link rel="manifest" href="./${c.slug}.webmanifest" />
+    <link rel="apple-touch-icon" href="./icons/icon-192.png" />
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <meta name="apple-mobile-web-app-title" content="${c.label}" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#1c1c1e" />
+    <style>
+      :root { --bg: #fff; --text: #1c1c1e; --muted: #5c5c60; --faint: #8e8e93; --line: rgba(0,0,0,.09); }
+      @media (prefers-color-scheme: dark) {
+        :root { --bg: #1c1c1e; --text: #f2f2f4; --muted: #a8a8ad; --faint: #79797f; --line: rgba(255,255,255,.09); }
+      }
+      html { background: var(--bg); }
+      body {
+        margin: 0; background: var(--bg); color: var(--text);
+        font: 16px/1.6 -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+        padding: env(safe-area-inset-top) 20px calc(40px + env(safe-area-inset-bottom));
+      }
+      main { max-width: 34rem; margin: 0 auto; padding-block: 48px 0; }
+      .eyebrow { font-size: 11px; font-weight: 600; letter-spacing: .13em; text-transform: uppercase; color: var(--faint); margin: 0 0 10px; }
+      h1 { font-size: 1.9rem; line-height: 1.15; letter-spacing: -.02em; margin: 0 0 18px; }
+      p { margin: 0 0 16px; }
+      .why { color: var(--muted); font-size: .94rem; border-left: 2px solid var(--line); padding-left: 14px; }
+      nav { margin-top: 28px; padding-top: 18px; border-top: 1px solid var(--line); font-size: .94rem; }
+      nav a { display: block; margin-bottom: 8px; color: inherit; }
+      :focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="eyebrow">Home Screen icon</p>
+      <h1>${c.label}</h1>
+      <p>Tap <b>Share</b>, then <b>Add to Home Screen</b>. The icon it makes ${c.blurb}.</p>
+      <p>Add it from <b>Safari</b> — a web app cannot install another one, so this page does nothing from inside Slate itself.</p>
+      <p class="why">
+        This page exists because iOS launches an installed web app at the address it was
+        installed with, and throws away anything added to the URL afterwards. The address
+        has to be baked in at the moment you add it, which is what adding <i>this</i> page
+        rather than the app does. On Android you need none of it: long-press the Slate
+        icon instead.
+      </p>
+      <nav>
+        <a href="./${c.query}">Open Slate — ${c.label.toLowerCase()}</a>
+${others.map((o) => `        <a href="./${o.slug}.html">Home Screen icon: ${o.label}</a>`).join('\n')}
+        <a href="./">Open Slate</a>
+      </nav>
+    </main>
+  </body>
+</html>
+`
+}
+
+/**
+ * Emit those pages and manifests into the build, and serve them in dev.
+ *
+ * The manifests are deliberately not precached: they are read once, by the
+ * browser, at the moment an icon is added, which is a moment that needs the
+ * network anyway. The pages are ordinary `.html` and so are covered by the
+ * precache glob, which matters more than it looks — a navigation to one has to
+ * beat `navigateFallback`, and being precached is what makes it.
+ */
+function capturePages(): Plugin {
+  const files = (): Record<string, string> =>
+    Object.fromEntries(
+      CAPTURE.flatMap((c) => [
+        [`${c.slug}.html`, capturePage(c)],
+        [`${c.slug}.webmanifest`, captureManifest(c)],
+      ]),
+    )
+  return {
+    name: 'slate:capture-pages',
+    configureServer(server) {
+      const emitted = files()
+      server.middlewares.use((req, res, next) => {
+        const name = req.url?.split('?')[0]?.replace(/^\//, '')
+        if (!name || !(name in emitted)) return next()
+        res.setHeader(
+          'Content-Type',
+          name.endsWith('.html') ? 'text/html' : 'application/manifest+json',
+        )
+        res.end(emitted[name])
+      })
+    },
+    buildStart() {
+      for (const [fileName, source] of Object.entries(files())) {
+        this.emitFile({ type: 'asset', fileName, source })
+      }
+    },
+  }
+}
+
 export default defineConfig({
   /*
    * Relative asset paths by default, so a built `dist/` works wherever it is
@@ -87,6 +274,7 @@ export default defineConfig({
   plugins: [
     preact(),
     pdfAssets(),
+    capturePages(),
     VitePWA({
       registerType: 'prompt',
       injectRegister: null,
@@ -172,11 +360,7 @@ export default defineConfig({
         orientation: 'any',
         start_url: '.',
         scope: '.',
-        icons: [
-          { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png' },
-          { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' },
-          { src: 'icons/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
-        ],
+        icons: ICONS,
         /*
          * Long-press the launcher icon. These are the fastest way into the app
          * there is — no cold start into a list you then have to navigate — and
@@ -185,15 +369,16 @@ export default defineConfig({
          * Relative, like start_url and scope above, because dist/ has to keep
          * working dropped into a subdirectory of somebody's web server.
          *
-         * Android only in practice: iOS Safari implements neither this nor the
-         * share target below. The README has the Shortcuts recipe that gets an
-         * iPhone to the same place through the same URLs.
+         * Android only: iOS Safari implements neither this nor the share target
+         * below, and cannot be given them from here — see the note above
+         * CAPTURE for why an iPhone needs a page and a manifest per entry
+         * point instead, which `capturePages` emits.
          */
-        shortcuts: [
-          { name: 'New task', short_name: 'Task', url: './?add=task' },
-          { name: 'New note', short_name: 'Note', url: './?add=note' },
-          { name: 'Today’s note', short_name: 'Today', url: './?open=today' },
-        ],
+        shortcuts: CAPTURE.map((c) => ({
+          name: c.label,
+          short_name: c.short,
+          url: `./${c.query}`,
+        })),
         /*
          * Share text or a link from any other app into capture.
          *

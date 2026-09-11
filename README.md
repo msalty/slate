@@ -809,13 +809,33 @@ already wearing a `- [ ]` is not given a second one. A note captured this way is
 do: it wrote `Untitled.md` before you had typed a character, and left it behind
 if you walked away.
 
-**Capture without opening the app.** Long-press Slate's icon on the home screen
-for **New task**, **New note** and **Today's note**, and share text or a link
-into Slate from any other app to land in the sheet with it already filled in.
-Both work with no network — the URL is served from the precache and the write is
-local, like every other write here. Both are Android, and both are the manifest
-rather than the app, so see *Known limits* for what that costs and for the
-iOS Shortcuts recipe that reaches the same URLs.
+**Capture without opening the app.** On Android, long-press Slate's icon on the
+home screen for **New task**, **New note** and **Today's note**, and share text
+or a link into Slate from any other app to land in the sheet with it already
+filled in. Both work with no network — the URL is served from the precache and
+the write is local, like every other write here. Both are the manifest rather
+than the app, so see *Known limits* for what that costs.
+
+**On an iPhone the icons are the answer, not a shortcut.** iOS launches an
+installed web app at the address it was installed with and throws away anything
+added to the URL afterwards, so nothing — a link, a Shortcut, the `webapp://`
+scheme — can ask an already-installed Slate to open a capture sheet. Tested on a
+device: it opens the app, at its start page, every time.
+
+What does work is baking the address in at the moment you add the icon. The
+build ships one small page per entry point for exactly that, each linking a
+manifest of its own:
+
+| Open in Safari | Add to Home Screen and you get |
+|---|---|
+| `new-task.html` | **New task** — opens with the sheet up, on a task |
+| `new-note.html` | **New note** — opens with the sheet up, on a note |
+| `today.html` | **Today** — opens today's daily note, making it if needed |
+
+Add them from **Safari**; a web app cannot install another one, so the pages do
+nothing from inside Slate. They are one tap from the home screen, which is
+fewer than a Shortcut, and the same URLs work in a Shortcut's *Open URL* if you
+would rather have one — `webapp://` + the address the icon was added with.
 
 **One layout that doesn't jump.** Three modes — phone, mid-size, wide — chosen
 explicitly rather than by CSS reacting to width on its own. The editor holds a
@@ -1423,11 +1443,12 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
   documents — JBIG2, JPEG 2000 and colour profiles — *are* bundled.
 - **The launcher shortcuts and the share target are Android's.** iOS Safari
   implements neither, so on an iPhone the home-screen icon has no long-press
-  menu and Slate does not appear in the share sheet. The URLs behind them are
-  ordinary ones — `?add=task`, `?add=note`, `?open=today`, and `?title=…&text=…`
-  for a share — so an iOS Shortcut set to *Open URL* against your install
-  reaches all of them, and can be put on the home screen or run from the share
-  sheet itself. On Android there is a second cost, and it is the manifest's:
+  menu and Slate does not appear in the share sheet. Worse, a URL cannot stand
+  in for them: iOS launches an installed web app at its `start_url` and drops
+  anything appended afterwards, so `?add=task` reaches the app only on a launch
+  that *starts* there. The per-entry-point pages above are the way around it,
+  and they cost an icon each rather than a menu. On Android there is a second
+  cost, and it is the manifest's:
   Chrome bakes the manifest into the WebAPK at install time, so an app that was
   installed before this shipped shows neither until it is uninstalled and
   installed again. Nothing short of that does it — see the long note in
@@ -1465,7 +1486,7 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 
 ```bash
 npm test                # 722 unit + two-device sync tests
-node scripts/smoke.mjs  # 535 checks in headless Chromium against dist/
+node scripts/smoke.mjs  # 541 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <title>New task · Slate</title>
+    <link rel="manifest" href="./new-task.webmanifest" />
+    <link rel="apple-touch-icon" href="./icons/icon-192.png" />
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <meta name="apple-mobile-web-app-title" content="New task" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#1c1c1e" />
+    <style>
+      :root { --bg: #fff; --text: #1c1c1e; --muted: #5c5c60; --faint: #8e8e93; --line: rgba(0,0,0,.09); }
+      @media (prefers-color-scheme: dark) {
+        :root { --bg: #1c1c1e; --text: #f2f2f4; --muted: #a8a8ad; --faint: #79797f; --line: rgba(255,255,255,.09); }
+      }
+      html { background: var(--bg); }
+      body {
+        margin: 0; background: var(--bg); color: var(--text);
+        font: 16px/1.6 -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+        padding: env(safe-area-inset-top) 20px calc(40px + env(safe-area-inset-bottom));
+      }
+      main { max-width: 34rem; margin: 0 auto; padding-block: 48px 0; }
+      .eyebrow { font-size: 11px; font-weight: 600; letter-spacing: .13em; text-transform: uppercase; color: var(--faint); margin: 0 0 10px; }
+      h1 { font-size: 1.9rem; line-height: 1.15; letter-spacing: -.02em; margin: 0 0 18px; }
+      p { margin: 0 0 16px; }
+      .why { color: var(--muted); font-size: .94rem; border-left: 2px solid var(--line); padding-left: 14px; }
+      nav { margin-top: 28px; padding-top: 18px; border-top: 1px solid var(--line); font-size: .94rem; }
+      nav a { display: block; margin-bottom: 8px; color: inherit; }
+      :focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="eyebrow">Home Screen icon</p>
+      <h1>New task</h1>
+      <p>Tap <b>Share</b>, then <b>Add to Home Screen</b>. The icon it makes opens Slate with the quick-add sheet up, on a new task.</p>
+      <p>Add it from <b>Safari</b> — a web app cannot install another one, so this page does nothing from inside Slate itself.</p>
+      <p class="why">
+        This page exists because iOS launches an installed web app at the address it was
+        installed with, and throws away anything added to the URL afterwards. The address
+        has to be baked in at the moment you add it, which is what adding <i>this</i> page
+        rather than the app does. On Android you need none of it: long-press the Slate
+        icon instead.
+      </p>
+      <nav>
+        <a href="./?add=task">Open Slate — new task</a>
+        <a href="./new-note.html">Home Screen icon: New note</a>
+        <a href="./today.html">Home Screen icon: Today’s note</a>
+        <a href="./">Open Slate</a>
+      </nav>
+    </main>
+  </body>
+</html>
