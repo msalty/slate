@@ -33,7 +33,7 @@ import {
 import { CalendarPanel, DayNotesPanel, TasksPanel } from './RightRail'
 import { openTagFolderDialog } from './TagFolderDialog'
 import { openQuickAdd } from './QuickAdd'
-import { useLongPress } from './Menu'
+import { openMenu, useLongPress } from './Menu'
 import { startOfDay } from '../core/util'
 import {
   IconCalendar,
@@ -116,6 +116,19 @@ export function MobileNav() {
   )
 }
 
+/** The other two things capture can be, for a long press or a right-click. */
+function captureMenu() {
+  return [
+    { label: 'New task', onSelect: () => openQuickAdd({ mode: 'task' }) },
+    { label: 'New note', onSelect: () => openQuickAdd({ mode: 'note' }) },
+    {
+      label: 'Today’s note',
+      separated: true,
+      onSelect: () => void openDailyNote(startOfDay(Date.now())),
+    },
+  ]
+}
+
 /**
  * Capture, in the middle of the pill.
  *
@@ -125,23 +138,23 @@ export function MobileNav() {
  * of a phone is that there isn't much list to spare.
  */
 function CaptureButton() {
-  const longPress = useLongPress(
-    () => [
-      { label: 'New task', onSelect: () => openQuickAdd({ mode: 'task' }) },
-      { label: 'New note', onSelect: () => openQuickAdd({ mode: 'note' }) },
-      {
-        label: 'Today’s note',
-        separated: true,
-        onSelect: () => void openDailyNote(startOfDay(Date.now())),
-      },
-    ],
-    () => 'Add',
-  )
+  const longPress = useLongPress(captureMenu, () => 'Add')
   return (
     <button
       class="tabbar-add"
       aria-label="Quick add"
       onClick={() => openQuickAdd(captureForTab(mobileTab.value))}
+      /*
+       * The half of long-press that isn't the timer. Android fires
+       * `contextmenu` at around the same moment `useLongPress` does, and
+       * without this Chrome's own long-press handling runs on top of the
+       * menu — which is why every other long-press in the app pairs the two.
+       * It is also what gives a right-click the same menu on a desktop.
+       */
+      onContextMenu={(e) => {
+        e.preventDefault()
+        openMenu(e, captureMenu(), 'Add')
+      }}
       {...longPress}
     >
       <span class="tabbar-add-dot">

@@ -999,6 +999,10 @@
   justify-content: center;
   height: 100%;
   -webkit-tap-highlight-color: transparent;
+  /* A long press here is a menu, so the browser must not also offer its own
+     selection callout over the top of it. */
+  -webkit-touch-callout: none;
+  user-select: none;
 }
 .tabbar-add-dot {
   display: flex;

@@ -3173,6 +3173,25 @@ try {
   check('closing puts the sheet away', (await page.locator('.qa-root[data-open="1"]').count()) === 0)
 
   /*
+   * The other half of the button. A long press on Android raises `contextmenu`
+   * at about the same moment the press timer fires, so the handler behind it is
+   * what actually has to be there — the timer alone leaves Chrome's own
+   * long-press running over the top of the menu.
+   */
+  await page.locator('.tabbar-add').click({ button: 'right' })
+  await page.waitForTimeout(350)
+  const addMenu = await page.locator('.menu-sheet .menu-item').allInnerTexts()
+  check(
+    'a long press on the + offers the other two things it can do',
+    // The sheet adds its own Cancel, as every action sheet on this phone does.
+    addMenu.join(',') === 'New task,New note,Today\u2019s note,Cancel',
+    addMenu.join(','),
+  )
+  await page.locator('.menu-scrim').click({ position: { x: 10, y: 10 } })
+  await page.waitForTimeout(250)
+  check('and dismisses without capturing anything', (await page.locator('.qa-root[data-open="1"]').count()) === 0)
+
+  /*
    * The other half: a captured note is named after what was typed. This is
    * the thing the old New note button could not do — it wrote `Untitled.md`
    * before you had typed a character, and left it there if you walked away.
