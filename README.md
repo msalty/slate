@@ -828,10 +828,50 @@ every other icon of the same site. A second Slate icon is a second Slate, with
 an empty vault. It was built, tested on a phone, and taken back out, because a
 task captured into a vault you cannot see is worse than one more tap.
 
-So on an iPhone capture is two taps — the icon, then the **+** — and that is the
-whole of it. If you sync over WebDAV and want it down to one, the vault is
-plain markdown over HTTP: an iOS Shortcut can append `- [ ] …` to today's note
-on the server directly, and Slate picks it up on its next sync.
+So on an iPhone capture is two taps — the icon, then the **+** — and through the
+app that is the whole of it.
+
+**One tap, with Apple out of the way.** There is a route that never touches the
+web app, and it is available because of what this vault is: plain markdown files
+over HTTP. A Shortcut can write to one directly. That gets you capture from the
+lock screen, from Siri and from the share sheet, and Slate picks it up on its
+next sync. It needs a WebDAV backend — Google Drive's OAuth makes the same
+thing impractical from a Shortcut — and it needs the network, which the app
+itself never does.
+
+Six actions:
+
+| | Action | Set it to |
+|---|---|---|
+| 1 | **Ask for Input** | Text — *What needs doing?* |
+| 2 | **Format Date** | Current Date, custom format `yyyy-MM-dd` |
+| 3 | **Text** | `https://SERVER/DAV-PATH/Daily/`*Formatted Date*`.md` |
+| 4 | **Get Contents of URL** | **GET**, header `Authorization` = `Basic TOKEN` |
+| 5 | **Text** | *Contents of URL*, then a new line, then `- [ ] `*Provided Input* |
+| 6 | **Get Contents of URL** | **PUT** to the URL from 3, same header, request body = the Text from 5 |
+
+`SERVER/DAV-PATH` is the server URL and subfolder from Settings → Sync, joined —
+the same address the app writes to. `TOKEN` is `username:password`
+base64-encoded, which is the same `Authorization` header the app's own adapter
+sends. Shortcuts is not a browser, so none of the CORS configuration WebDAV
+needs for the *app* applies to it.
+
+Append ` 📅 `*Formatted Date* in step 5 if you want the task due today; leave it
+off and it arrives dateless, as it does from the app's own sheet. The line lands
+at the end of the note rather than under `## Tasks` — a Shortcut has no reason
+to know about headings, and a task is a task wherever it sits in the file.
+
+Two things to know before relying on it. **The first capture of a day may have
+nothing to read**: the daily note does not exist until something makes it, so
+step 4 has no file to fetch. Point the shortcut at a fixed `Inbox.md` instead if
+that bites: set Quick add to file into an Inbox note, capture once from the app,
+and from then on there is always a file there to read. And
+**it is a read-modify-write**: between step 4 and step 6 the app could push a
+change of its own, which the PUT would then overwrite. The edit is not lost —
+the app still holds its copy locally, and the next sync sees a remote that moved
+and merges line by line, keeping a conflict copy if the two cannot be
+reconciled — but it is the reason this is a convenience rather than the way the
+app itself writes.
 
 **One layout that doesn't jump.** Three modes — phone, mid-size, wide — chosen
 explicitly rather than by CSS reacting to width on its own. The editor holds a
