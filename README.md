@@ -778,6 +778,101 @@ Dates are still just markdown. Reading stays permissive — `📅 2026-09-04`,
 written by another tool works unchanged — and the picker only ever *writes* the
 `📅` form.
 
+**Quick capture.** Two taps from anywhere to a task on today's list. The middle
+of the phone's pill bar is a **+**; it opens a sheet with one field, the caret
+already in it and the keyboard already up, and *Add* writes the line. Nothing is
+written before that — the sheet is text in memory, so one you open and think
+better of costs the vault nothing.
+
+The sheet opens on whatever the tab it was pressed from is about — a task from
+Tasks, a note from Notes, a task dated for the day you are looking at from
+Calendar — and the Task/Note toggle is one tap for when it guessed wrong. Long-
+press the **+** for the other one directly, or for today's note. On a desktop
+the same thing is *Quick add task* and *Quick add note* in the palette, and an
+**Add task** row sits at the foot of every task list and under each day in the
+calendar.
+
+A captured task goes into **today's daily note, under `## Tasks`** — written if
+the note hasn't got that heading, joined if it has, so the second capture of the
+day lands under the first rather than starting another list. That is the default
+because it costs nothing new: tasks are read out of note bodies, so the line is
+in the Tasks tab, in the calendar's counts and in any Tag Folder that gathers
+tasks the moment it lands. Settings → Editor → **Quick add** points it at one
+`Inbox` note instead, or at a different heading, and the chip in the corner of
+the sheet always names the file it is about to write to.
+
+The date chips write the same `📅 2026-09-04` the picker does. `#tags` need no
+support at all — the line is markdown, so a `#vet` typed into it is a tag like
+any other. Paste three lines and you get three tasks, and a line that arrives
+already wearing a `- [ ]` is not given a second one. A note captured this way is
+**named after its first line**, which is the one thing *New note* could never
+do: it wrote `Untitled.md` before you had typed a character, and left it behind
+if you walked away.
+
+**Capture without opening the app.** On Android, long-press Slate's icon on the
+home screen for **New task**, **New note** and **Today's note**, and share text
+or a link into Slate from any other app to land in the sheet with it already
+filled in. Both work with no network — the URL is served from the precache and
+the write is local, like every other write here. Both are the manifest rather
+than the app, so see *Known limits* for what that costs.
+
+**On an iPhone there is no equivalent, and the app is the answer.** Two
+findings, both from a device. iOS launches an installed web app at the address
+it was installed with and throws away anything added to the URL afterwards, so
+nothing — a link, a Shortcut, the `webapp://` scheme — can ask an already
+installed Slate to open a capture sheet; it opens the app, at its start page,
+every time. The way round that would be an icon per entry point, each installed
+from a page carrying its own `start_url` — and that is the second finding: iOS
+gives every home-screen web app its own storage, separate from Safari and from
+every other icon of the same site. A second Slate icon is a second Slate, with
+an empty vault. It was built, tested on a phone, and taken back out, because a
+task captured into a vault you cannot see is worse than one more tap.
+
+So on an iPhone capture is two taps — the icon, then the **+** — and through the
+app that is the whole of it.
+
+**One tap, with Apple out of the way.** There is a route that never touches the
+web app, and it is available because of what this vault is: plain markdown files
+over HTTP. A Shortcut can write to one directly. That gets you capture from the
+lock screen, from Siri and from the share sheet, and Slate picks it up on its
+next sync. It needs a WebDAV backend — Google Drive's OAuth makes the same
+thing impractical from a Shortcut — and it needs the network, which the app
+itself never does.
+
+Six actions:
+
+| | Action | Set it to |
+|---|---|---|
+| 1 | **Ask for Input** | Text — *What needs doing?* |
+| 2 | **Format Date** | Current Date, custom format `yyyy-MM-dd` |
+| 3 | **Text** | `https://SERVER/DAV-PATH/Daily/`*Formatted Date*`.md` |
+| 4 | **Get Contents of URL** | **GET**, header `Authorization` = `Basic TOKEN` |
+| 5 | **Text** | *Contents of URL*, then a new line, then `- [ ] `*Provided Input* |
+| 6 | **Get Contents of URL** | **PUT** to the URL from 3, same header, request body = the Text from 5 |
+
+`SERVER/DAV-PATH` is the server URL and subfolder from Settings → Sync, joined —
+the same address the app writes to. `TOKEN` is `username:password`
+base64-encoded, which is the same `Authorization` header the app's own adapter
+sends. Shortcuts is not a browser, so none of the CORS configuration WebDAV
+needs for the *app* applies to it.
+
+Append ` 📅 `*Formatted Date* in step 5 if you want the task due today; leave it
+off and it arrives dateless, as it does from the app's own sheet. The line lands
+at the end of the note rather than under `## Tasks` — a Shortcut has no reason
+to know about headings, and a task is a task wherever it sits in the file.
+
+Two things to know before relying on it. **The first capture of a day may have
+nothing to read**: the daily note does not exist until something makes it, so
+step 4 has no file to fetch. Point the shortcut at a fixed `Inbox.md` instead if
+that bites: set Quick add to file into an Inbox note, capture once from the app,
+and from then on there is always a file there to read. And
+**it is a read-modify-write**: between step 4 and step 6 the app could push a
+change of its own, which the PUT would then overwrite. The edit is not lost —
+the app still holds its copy locally, and the next sync sees a remote that moved
+and merges line by line, keeping a conflict copy if the two cannot be
+reconciled — but it is the reason this is a convenience rather than the way the
+app itself writes.
+
 **One layout that doesn't jump.** Three modes — phone, mid-size, wide — chosen
 explicitly rather than by CSS reacting to width on its own. The editor holds a
 guaranteed minimum width in all of them, so when space runs short a side panel
@@ -830,7 +925,7 @@ files when not.
 
 | | Shows | Side panels |
 |---|---|---|
-| **Phone** (< 760px) | One tab at a time, bottom pill bar: Notes · Tasks · Calendar · More | Everything else lives in More |
+| **Phone** (< 760px) | One tab at a time, bottom pill bar: Notes · Tasks · **+** · Calendar · More | Everything else lives in More |
 | **Mid-size** (760–1180px) | Note list + editor | Sidebar and calendar open as dismissable drawers |
 | **Wide** (≥ 1180px) | Sidebar + list + editor | Calendar sits inline from 1400px, a drawer below that |
 
@@ -1285,6 +1380,8 @@ src/
 │  │                  the families, and the mark each one wears
 │  ├─ pdfjs.ts        pdf.js, loaded once for the viewer and for the first
 │  │                  page drawn into a note
+│  ├─ capture.ts      quick capture: where a line goes, what it looks like
+│  │                  when it gets there, and what a launch URL is asking for
 │  └─ settings.ts     device-local vs vault-wide preferences
 ├─ adapters/      webdav.ts · gdrive.ts · memory.ts (tests)
 ├─ editor/        CodeMirror 6: live preview, widgets, completion, paste
@@ -1318,6 +1415,8 @@ src/
    ├─ DueChip.tsx    a task's date, as a control rather than a caption
    ├─ FilePicker.tsx the vault's own files, as somewhere to insert one from
    ├─ pickFile.ts    what that picker matches on, and the order it answers in
+   ├─ QuickAdd.tsx   the capture sheet, kept mounted so the keyboard can be
+   │                 raised inside the tap that asked for it
    └─ Mobile.tsx     phone tab bar and full-screen tab views
 ```
 
@@ -1378,6 +1477,28 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
   document opens and scrolls; some of its text may come out as boxes, and a form
   will not calculate. The three decoders that matter for ordinary and scanned
   documents — JBIG2, JPEG 2000 and colour profiles — *are* bundled.
+- **The launcher shortcuts and the share target are Android's, and iOS has no
+  substitute.** Safari implements neither, so on an iPhone the home-screen icon
+  has no long-press menu and Slate is not in the share sheet. A URL cannot stand
+  in: iOS launches an installed web app at its `start_url` and drops anything
+  appended afterwards, so `?add=task` only ever reaches the app on a launch that
+  *starts* there. And the obvious fix for that — an icon per entry point,
+  installed from a page carrying the right `start_url` — founders on iOS
+  partitioning storage per web clip: the second icon gets its own empty vault,
+  which for a local-first app is a trap rather than a shortcut. Both were
+  verified on a device. On Android there is a second cost, and it is the
+  manifest's:
+  Chrome bakes the manifest into the WebAPK at install time, so an app that was
+  installed before this shipped shows neither until it is uninstalled and
+  installed again. Nothing short of that does it — see the long note in
+  `vite.config.ts`, which was written the hard way.
+
+- **Quick capture writes where the setting says, not where you are looking.** A
+  task captured from a note about something else still goes to the daily note or
+  the Inbox; the sheet names the file, and changing it is a tap, but there is no
+  "add this to the note I am reading". A note that is open is the one place the
+  editor is already better at.
+
 - **No encryption at rest.** Notes are plain files on your server. Per-file
   encryption before upload would fit cleanly behind the adapter interface.
 - **iOS PWA storage can be evicted** after ~7 days of not opening the app, which
@@ -1403,8 +1524,8 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 586 unit + two-device sync tests
-node scripts/smoke.mjs  # 476 checks in headless Chromium against dist/
+npm test                # 726 unit + two-device sync tests
+node scripts/smoke.mjs  # 535 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

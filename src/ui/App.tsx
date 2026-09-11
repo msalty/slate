@@ -18,6 +18,8 @@ import { editLinkAtCaret, handleUriClick } from './linkActions'
 import { openDueMenu } from './DueMenu'
 import { applyDue } from '../editor/due'
 import { MobileCalendar, MobileMore, MobileNav, MobileTasks } from './Mobile'
+import { QuickAdd, closeQuickAdd, openQuickAdd, quickAddOpen } from './QuickAdd'
+import { clearedSearch, parseLaunchIntent } from '../core/capture'
 import { settings, update } from '../core/settings'
 import { connectBackend } from '../app/backend'
 import { recentConflicts, recentFailures, status, sync } from '../core/sync'
@@ -32,6 +34,7 @@ import {
   mobileTab,
   nextEditorMode,
   notify,
+  openDailyNote,
   openNote,
   paletteOpen,
   propertiesOpen,
@@ -54,7 +57,7 @@ import {
   toggleRail,
   toggleSidebar,
 } from './layout'
-import { relativeTime } from '../core/util'
+import { relativeTime, startOfDay } from '../core/util'
 import { IconSettings, IconSync, IconWarn } from './Icons'
 
 export function App() {
@@ -257,6 +260,27 @@ export function App() {
     return () => removeEventListener('keydown', onKey)
   }, [])
 
+  /* ---- what the URL asked for on the way in ------------------------- */
+  /*
+   * A launcher shortcut, the Android share sheet, or an iOS Shortcut pointed
+   * at the same URL. The parameters are cleared before anything is written, so
+   * a reload — or a tab the browser restores tomorrow — cannot capture the
+   * same line twice; that also makes this effect a no-op on every run after
+   * the first, since there is then nothing left in the URL to parse.
+   */
+  useEffect(() => {
+    if (!ready.value) return
+    const intent = parseLaunchIntent(location.search)
+    if (!intent) return
+    history.replaceState(
+      null,
+      '',
+      `${location.pathname}${clearedSearch(location.search)}${location.hash}`,
+    )
+    if (intent.kind === 'daily') void openDailyNote(startOfDay(Date.now()))
+    else openQuickAdd({ mode: intent.mode, text: intent.text })
+  }, [ready.value])
+
   /* ---- select something sensible on first load ---------------------- */
   useEffect(() => {
     if (!ready.value || activePath.value) return
@@ -272,7 +296,10 @@ export function App() {
   useEffect(() => {
     if (mode !== 'compact') return
     const onPop = () => {
-      if (lightboxPath.value) lightboxPath.value = undefined
+      // Innermost first: the capture sheet is over everything else, so Back
+      // puts it away rather than leaving the app from underneath it.
+      if (quickAddOpen.value) closeQuickAdd()
+      else if (lightboxPath.value) lightboxPath.value = undefined
       else if (mobileEditorOpen.value) closeMobileEditor()
       history.pushState(null, '')
     }
@@ -437,6 +464,7 @@ export function App() {
       <ConfirmDialog />
       <Lightbox />
       <ContextMenu />
+      <QuickAdd />
       <Toaster />
     </>
   )

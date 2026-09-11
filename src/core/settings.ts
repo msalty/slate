@@ -41,6 +41,9 @@ const SHARED_KEYS = [
   'taskGroupBy',
   'showDoneTasks',
   'calendarDayOpens',
+  'quickAddTaskTarget',
+  'quickAddTaskHeading',
+  'quickAddNoteFolder',
   'collapseFolders',
   'collapseTagFolders',
   'collapseTags',
@@ -74,6 +77,9 @@ function defaults(): AppSettings {
     taskGroupBy: 'none',
     showDoneTasks: false,
     calendarDayOpens: 'filter',
+    quickAddTaskTarget: 'daily',
+    quickAddTaskHeading: '## Tasks',
+    quickAddNoteFolder: '',
     collapseFolders: false,
     collapseTagFolders: false,
     collapseTags: false,
@@ -132,10 +138,15 @@ export async function loadSettings(): Promise<void> {
  * shared write is on a long timer — a pane resizer would otherwise write a
  * vault file on every frame of a drag — so a reload inside the window used to
  * read back the value from before the change and silently undo it.
+ *
+ * Answers whether there was a file to read at all. A device installed a minute
+ * ago has not been sent one yet, and boot.ts reads that `false` as "come back
+ * after the first sync" rather than leaving the device on its own defaults for
+ * the rest of the session.
  */
-export async function applySharedSettings(): Promise<void> {
+export async function applySharedSettings(): Promise<boolean> {
   const shared = await readBackstage<Partial<AppSettings>>('config.json')
-  if (!shared) return
+  if (!shared) return false
   const next = { ...settings.value }
   for (const k of SHARED_KEYS) {
     if (unwritten.has(k)) continue
@@ -145,6 +156,7 @@ export async function applySharedSettings(): Promise<void> {
   settings.value = next
   suppressWrite = false
   agreed = sharedSnapshot(next)
+  return true
 }
 
 let suppressWrite = false

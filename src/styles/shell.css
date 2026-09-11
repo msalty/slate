@@ -341,7 +341,7 @@
   transition: color var(--dur), background var(--dur);
   -webkit-tap-highlight-color: transparent;
 }
-.tabbar-item[aria-selected='true'] {
+.tabbar-item[aria-current='page'] {
   color: var(--accent);
   background: var(--accent-soft);
 }
@@ -789,4 +789,232 @@
   padding-top: 10px;
   border-radius: 0 0 8px 8px;
   color: var(--text-muted);
+}
+
+/* ==========================================================================
+   Quick capture
+   ==========================================================================
+
+   The sheet is in the DOM whether or not it is open, because iOS raises the
+   keyboard only for a focus() made inside the tap that asked for it — see the
+   note at the top of QuickAdd.tsx. Closed, it is a 1px box in the corner with
+   nothing in it visible; it must not be display:none or visibility:hidden,
+   since neither can hold focus.
+
+   z-index sits below the context menu's 80 on purpose: the date picker opens
+   over this sheet, and a picker underneath the thing it was opened from is
+   a picker nobody can use. */
+
+.qa-root {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  pointer-events: none;
+  /* The keyboard and the sheet both live at the bottom of the screen, and the
+     layout viewport does not shrink for the keyboard. Same rule as .menu-scrim-sheet. */
+  padding-bottom: var(--kb-inset, 0px);
+}
+.qa-root[data-open='0'] {
+  inset: auto auto 0 0;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  opacity: 0;
+}
+
+.qa-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  pointer-events: auto;
+  animation: fade var(--dur) ease;
+}
+
+.qa-sheet {
+  position: relative;
+  pointer-events: auto;
+  width: 100%;
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--surface-float);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 16px 16px 0 0;
+  /* The home indicator is covered by the keyboard, so its inset is redundant. */
+  padding: 10px 12px calc(12px + max(0px, env(safe-area-inset-bottom, 0px) - var(--kb-inset, 0px)));
+  box-shadow: var(--shadow-float);
+  animation: sheet-in 220ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+.qa-root[data-open='0'] .qa-sheet {
+  animation: none;
+}
+
+/* With room to spare it is a panel in the middle rather than a sheet at the
+   bottom: there is no keyboard down there to sit above. */
+@media (min-width: 720px) {
+  .qa-root {
+    align-items: center;
+  }
+  .qa-sheet {
+    max-width: 520px;
+    border-bottom: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    animation: menu-in 110ms ease;
+  }
+}
+
+.qa-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.qa-seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--row-hover);
+  border-radius: 8px;
+}
+.qa-seg-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.qa-seg-btn[aria-pressed='true'] {
+  background: var(--surface-float);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+/* What this sitting of the sheet has put away — and the way back to it, since
+   the note it went to is almost never the list you are looking at. */
+.qa-added {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.qa-added:hover {
+  background: var(--accent-soft);
+}
+
+.qa-input {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 8px 8px 8px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+.qa-field {
+  flex: 1;
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.45;
+  resize: none;
+  /* Never let the field itself scroll the page on a phone. */
+  max-height: 33vh;
+}
+/* The box is what is focused, as far as the eye is concerned: a ring drawn
+   round the text area inside an already-bordered box is two edges saying the
+   same thing. Specific enough to beat the global :focus-visible outline. */
+.qa-field:focus,
+.qa-field:focus-visible {
+  outline: none;
+}
+.qa-input:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.qa-add {
+  flex: none;
+  padding: 6px 14px;
+  border-radius: 7px;
+  background: var(--accent);
+  color: var(--text-on-accent);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.qa-add:disabled {
+  opacity: 0.4;
+}
+
+.qa-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.qa-chip {
+  padding: 4px 11px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.qa-chip[aria-pressed='true'] {
+  background: var(--accent-soft);
+  border-color: transparent;
+  color: var(--accent);
+  font-weight: 600;
+}
+/* The destination is the one chip that reports rather than chooses, so it sits
+   apart from the dates and names a file rather than a word. */
+.qa-dest {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- the + in the tab bar ---- */
+
+.tabbar-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  -webkit-tap-highlight-color: transparent;
+  /* A long press here is a menu, so the browser must not also offer its own
+     selection callout over the top of it. */
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+.tabbar-add-dot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--text-on-accent);
+  transition: transform var(--dur);
+}
+.tabbar-add:active .tabbar-add-dot {
+  transform: scale(0.9);
 }

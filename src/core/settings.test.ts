@@ -32,6 +32,14 @@ async function boot(name: string): Promise<{ s: Settings; v: Vault; db: DB }> {
 /** A fresh database, vault and settings module per case. */
 const fresh = () => boot(`slate-settings-${++seq}`)
 
+/** The same, plus the two modules the after-the-first-sync retry runs through. */
+async function freshBoot() {
+  const mods = await fresh()
+  const boot = await import('../app/boot')
+  const sync = await import('./sync')
+  return { ...mods, boot, sync }
+}
+
 const sharedFile = (v: Vault) => v.readBackstage<Record<string, unknown>>('config.json')
 
 describe('flushSettings', () => {
@@ -131,5 +139,66 @@ describe('a change that never reached the file', () => {
     const again = await boot(name)
     await again.s.applySharedSettings()
     expect(again.s.settings.value.sortBy).toBe('title')
+  })
+})
+
+/*
+ * A device that has just been installed has no config.json to read: the file
+ * arrives with the first sync, moments after boot. Nothing looked at it again
+ * until the next reload, so the session ran on defaults with the real
+ * preferences sitting in the vault — which is what "I reinstalled the app and
+ * my editor mode went back" actually was.
+ */
+describe('a shared file that has not arrived yet', () => {
+  it('says so, rather than looking the same as an empty one', async () => {
+    const { s, v } = await fresh()
+    expect(await s.applySharedSettings()).toBe(false)
+
+    await v.writeBackstage('config.json', { editorMode: 'rich' })
+    expect(await s.applySharedSettings()).toBe(true)
+    expect(s.settings.value.editorMode).toBe('rich')
+  })
+
+  it('is read again after the first sync finishes, without a reload', async () => {
+    const { s, v, boot, sync } = await freshBoot()
+    s.update({ backend: 'webdav' })
+    expect(s.settings.value.editorMode).toBe('live')
+
+    // Boot with nothing to read: the device keeps its own defaults and arms.
+    await boot.applySharedSettingsSafe()
+    expect(s.settings.value.editorMode).toBe('live')
+
+    // The first run brings the file down and reports a time.
+    await v.writeBackstage('config.json', { editorMode: 'rich' })
+    sync.status.value = { ...sync.status.value, lastSyncAt: Date.now() }
+
+    await vi.waitFor(() => expect(s.settings.value.editorMode).toBe('rich'))
+  })
+
+  it('does not undo a preference changed while it was waiting', async () => {
+    const { s, v, boot, sync } = await freshBoot()
+    s.update({ backend: 'webdav' })
+    await boot.applySharedSettingsSafe()
+
+    // Set on this device before the file landed; the file disagrees.
+    s.update({ editorMode: 'source' })
+    await v.writeBackstage('config.json', { editorMode: 'rich', sortBy: 'title' })
+    sync.status.value = { ...sync.status.value, lastSyncAt: Date.now() }
+
+    // The rest of the file is adopted, and the key this device set is kept.
+    await vi.waitFor(() => expect(s.settings.value.sortBy).toBe('title'))
+    expect(s.settings.value.editorMode).toBe('source')
+  })
+
+  it('waits for nothing on a vault with no backend', async () => {
+    const { s, v, boot, sync } = await freshBoot()
+    await boot.applySharedSettingsSafe()
+
+    // Local-only: no sync will ever run, so nothing should be listening — a
+    // file appearing by other means is not a reason to re-read.
+    await v.writeBackstage('config.json', { editorMode: 'rich' })
+    sync.status.value = { ...sync.status.value, lastSyncAt: Date.now() }
+    await new Promise((r) => setTimeout(r, 30))
+    expect(s.settings.value.editorMode).toBe('live')
   })
 })

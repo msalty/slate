@@ -1600,6 +1600,7 @@ button.property-kind:hover {
  */
 .day-note-row + .task-row,
 .day-create-row + .task-row,
+.day-add-row + .task-row,
 .rail-empty + .task-row {
   margin-top: 6px;
 }
@@ -1761,7 +1762,10 @@ button.property-kind:hover {
  * Both are the accent colour and neither is a note row: an action that makes a
  * file should not look like a file that already exists.
  */
-.day-create-row {
+/* Two rows that look alike and are not the same offer: one makes the day's
+   note, the other captures a task into whichever note the setting names. */
+.day-create-row,
+.day-add-row {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1773,8 +1777,14 @@ button.property-kind:hover {
   font-size: 13px;
   color: var(--accent);
 }
-.day-create-row:hover {
+.day-create-row:hover,
+.day-add-row:hover {
   background: var(--row-hover);
+}
+/* Quieter than the offer above it: capturing is the everyday act, and two
+   rows competing in the accent colour make a panel look like a form. */
+.day-add-row {
+  color: var(--text-muted);
 }
 
 .daily-row {
@@ -2071,6 +2081,18 @@ button.property-kind:hover {
 .field {
   display: block;
   margin-top: 14px;
+}
+/* A named run of fields inside a tab, where one tab holds more than one
+   subject — a rule above it, so the break is visible before it is read. */
+.set-group {
+  margin: 26px 0 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
 }
 .field > span {
   display: block;

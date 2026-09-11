@@ -60,6 +60,62 @@ function pdfAssets(): Plugin {
   }
 }
 
+/**
+ * The capture entry points, in one place: the URLs the app reads on the way in
+ * (see core/capture.ts), and the launcher shortcuts that point at them.
+ *
+ * These are Android's, and there is no iOS equivalent — not for want of trying.
+ * Two findings, both from a device, and the second is why there is no second
+ * attempt here:
+ *
+ *   **iOS launches an installed web app at the address it was installed with.**
+ *   `start_url` is baked into the web clip when you add it, and anything
+ *   appended to the URL afterwards — by a Shortcut, a link, the `webapp://`
+ *   scheme — is discarded before the page loads. So a shortcut cannot ask an
+ *   installed Slate for a capture sheet.
+ *
+ *   **And a second icon is a second Slate.** iOS gives every web clip its own
+ *   storage, separate from Safari and from every other clip of the same site.
+ *   The obvious way round the first finding — a page and a manifest per entry
+ *   point, so the address is baked in at the moment you add it — therefore
+ *   installs an app with an empty vault: a capture made there is invisible in
+ *   the real one, and on a device with no backend configured it is stranded.
+ *   That was built, tested on a phone, and taken back out; the storage is the
+ *   platform's to partition and nothing in a page can opt out of it.
+ *
+ * What is left on an iPhone is the app itself, where capture is two taps: the
+ * icon, then the + in the middle of the pill bar.
+ */
+const CAPTURE = [
+  {
+    slug: 'new-task',
+    label: 'New task',
+    short: 'Task',
+    query: '?add=task',
+    blurb: 'opens Slate with the quick-add sheet up, on a new task',
+  },
+  {
+    slug: 'new-note',
+    label: 'New note',
+    short: 'Note',
+    query: '?add=note',
+    blurb: 'opens Slate with the quick-add sheet up, on a new note',
+  },
+  {
+    slug: 'today',
+    label: 'Today’s note',
+    short: 'Today',
+    query: '?open=today',
+    blurb: 'opens today’s daily note, making it if the day hasn’t got one',
+  },
+] as const
+
+const ICONS = [
+  { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+  { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' },
+  { src: 'icons/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+]
+
 export default defineConfig({
   /*
    * Relative asset paths by default, so a built `dist/` works wherever it is
@@ -172,11 +228,38 @@ export default defineConfig({
         orientation: 'any',
         start_url: '.',
         scope: '.',
-        icons: [
-          { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png' },
-          { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' },
-          { src: 'icons/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
-        ],
+        icons: ICONS,
+        /*
+         * Long-press the launcher icon. These are the fastest way into the app
+         * there is — no cold start into a list you then have to navigate — and
+         * they cost nothing but a URL each, which App.tsx reads on the way in.
+         *
+         * Relative, like start_url and scope above, because dist/ has to keep
+         * working dropped into a subdirectory of somebody's web server.
+         *
+         * Android only: iOS Safari implements neither this nor the share
+         * target below, and cannot be given either from here — see the note
+         * above CAPTURE for the two reasons an iPhone has no equivalent.
+         */
+        shortcuts: CAPTURE.map((c) => ({
+          name: c.label,
+          short_name: c.short,
+          url: `./${c.query}`,
+        })),
+        /*
+         * Share text or a link from any other app into capture.
+         *
+         * A GET target on purpose: the parameters arrive in the URL, which the
+         * app already knows how to read, and no service worker has to sit in
+         * the request path to receive a POST. It also means a share works with
+         * no network — `navigateFallback` serves index.html out of the
+         * precache and the write is local, like every other write here.
+         */
+        share_target: {
+          action: '.',
+          method: 'GET',
+          params: { title: 'title', text: 'text', url: 'url' },
+        },
       },
       workbox: {
         /*
