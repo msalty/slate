@@ -584,20 +584,6 @@ export function Settings() {
                 </small>
               </label>
 
-              {/*
-                Deliberately not a link. A web app cannot install another one, so
-                tapping this from inside an installed Slate would do nothing —
-                the address has to be opened in Safari itself.
-              */}
-              <div class="callout">
-                <strong>A capture icon on your Home Screen.</strong> iOS launches an installed web
-                app at the address it was installed with, and discards anything added to the URL
-                afterwards — so no shortcut can ask this one for a capture sheet. Open{' '}
-                <code>{new URL('new-task.html', location.href).href}</code> in <b>Safari</b> and add{' '}
-                <em>that</em> page to your Home Screen instead: the icon it makes opens straight
-                into the sheet. There are <code>new-note.html</code> and <code>today.html</code>{' '}
-                beside it. On Android none of this is needed — long-press the Slate icon.
-              </div>
             </>
           )}
 

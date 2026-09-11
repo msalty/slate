@@ -816,26 +816,22 @@ filled in. Both work with no network — the URL is served from the precache and
 the write is local, like every other write here. Both are the manifest rather
 than the app, so see *Known limits* for what that costs.
 
-**On an iPhone the icons are the answer, not a shortcut.** iOS launches an
-installed web app at the address it was installed with and throws away anything
-added to the URL afterwards, so nothing — a link, a Shortcut, the `webapp://`
-scheme — can ask an already-installed Slate to open a capture sheet. Tested on a
-device: it opens the app, at its start page, every time.
+**On an iPhone there is no equivalent, and the app is the answer.** Two
+findings, both from a device. iOS launches an installed web app at the address
+it was installed with and throws away anything added to the URL afterwards, so
+nothing — a link, a Shortcut, the `webapp://` scheme — can ask an already
+installed Slate to open a capture sheet; it opens the app, at its start page,
+every time. The way round that would be an icon per entry point, each installed
+from a page carrying its own `start_url` — and that is the second finding: iOS
+gives every home-screen web app its own storage, separate from Safari and from
+every other icon of the same site. A second Slate icon is a second Slate, with
+an empty vault. It was built, tested on a phone, and taken back out, because a
+task captured into a vault you cannot see is worse than one more tap.
 
-What does work is baking the address in at the moment you add the icon. The
-build ships one small page per entry point for exactly that, each linking a
-manifest of its own:
-
-| Open in Safari | Add to Home Screen and you get |
-|---|---|
-| `new-task.html` | **New task** — opens with the sheet up, on a task |
-| `new-note.html` | **New note** — opens with the sheet up, on a note |
-| `today.html` | **Today** — opens today's daily note, making it if needed |
-
-Add them from **Safari**; a web app cannot install another one, so the pages do
-nothing from inside Slate. They are one tap from the home screen, which is
-fewer than a Shortcut, and the same URLs work in a Shortcut's *Open URL* if you
-would rather have one — `webapp://` + the address the icon was added with.
+So on an iPhone capture is two taps — the icon, then the **+** — and that is the
+whole of it. If you sync over WebDAV and want it down to one, the vault is
+plain markdown over HTTP: an iOS Shortcut can append `- [ ] …` to today's note
+on the server directly, and Slate picks it up on its next sync.
 
 **One layout that doesn't jump.** Three modes — phone, mid-size, wide — chosen
 explicitly rather than by CSS reacting to width on its own. The editor holds a
@@ -1441,14 +1437,17 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
   document opens and scrolls; some of its text may come out as boxes, and a form
   will not calculate. The three decoders that matter for ordinary and scanned
   documents — JBIG2, JPEG 2000 and colour profiles — *are* bundled.
-- **The launcher shortcuts and the share target are Android's.** iOS Safari
-  implements neither, so on an iPhone the home-screen icon has no long-press
-  menu and Slate does not appear in the share sheet. Worse, a URL cannot stand
-  in for them: iOS launches an installed web app at its `start_url` and drops
-  anything appended afterwards, so `?add=task` reaches the app only on a launch
-  that *starts* there. The per-entry-point pages above are the way around it,
-  and they cost an icon each rather than a menu. On Android there is a second
-  cost, and it is the manifest's:
+- **The launcher shortcuts and the share target are Android's, and iOS has no
+  substitute.** Safari implements neither, so on an iPhone the home-screen icon
+  has no long-press menu and Slate is not in the share sheet. A URL cannot stand
+  in: iOS launches an installed web app at its `start_url` and drops anything
+  appended afterwards, so `?add=task` only ever reaches the app on a launch that
+  *starts* there. And the obvious fix for that — an icon per entry point,
+  installed from a page carrying the right `start_url` — founders on iOS
+  partitioning storage per web clip: the second icon gets its own empty vault,
+  which for a local-first app is a trap rather than a shortcut. Both were
+  verified on a device. On Android there is a second cost, and it is the
+  manifest's:
   Chrome bakes the manifest into the WebAPK at install time, so an app that was
   installed before this shipped shows neither until it is uninstalled and
   installed again. Nothing short of that does it — see the long note in
@@ -1486,7 +1485,7 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 
 ```bash
 npm test                # 722 unit + two-device sync tests
-node scripts/smoke.mjs  # 541 checks in headless Chromium against dist/
+node scripts/smoke.mjs  # 535 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 
