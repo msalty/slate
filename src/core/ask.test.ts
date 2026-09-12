@@ -13,6 +13,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   ALL,
+  answerSystem,
   appendTurn,
   isDerived,
   conversationTitle,
@@ -24,12 +25,15 @@ import {
   newConversation,
   openTurn,
   parseTerms,
+  pinTitle,
+  pinsOf,
   provenanceCallout,
   readTurns,
   sourceLabel,
   sourceOf,
+  withPins,
 } from './ask'
-import { parseFrontmatter } from './markdown'
+import { parseFrontmatter, scanWikiLinks } from './markdown'
 
 describe('what makes a note a conversation', () => {
   it('is the frontmatter, and nothing else', () => {
@@ -314,6 +318,84 @@ describe('writing a turn into the note', () => {
   })
 })
 
+/*
+ * `include:` is hand-editable by design, so the reader has to cope with every
+ * way somebody might reasonably write a note's name — and the writer has to
+ * produce something a rename can find, because a pin that silently stops
+ * pinning is the failure this whole feature has to avoid.
+ */
+describe('the notes a conversation pins', () => {
+  const conv = (...fm: string[]) => ['---', 'type: conversation', ...fm, '---', '', '# Ask', ''].join('\n')
+
+  it('reads a block list of wikilinks', () => {
+    expect(pinsOf(conv('include:', '  - "[[Migration plan]]"', '  - "[[Team charter]]"'))).toEqual([
+      'Migration plan',
+      'Team charter',
+    ])
+  })
+
+  it('takes a bare title, an embed, an alias or an anchor — a pin is the note', () => {
+    expect(pinTitle('Migration plan')).toBe('Migration plan')
+    expect(pinTitle('[[Migration plan]]')).toBe('Migration plan')
+    expect(pinTitle('![[Migration plan]]')).toBe('Migration plan')
+    expect(pinTitle('[[Migration plan#Rollback]]')).toBe('Migration plan')
+    expect(pinTitle('[[Migration plan|the plan]]')).toBe('Migration plan')
+  })
+
+  it('takes a single value as a list of one', () => {
+    expect(pinsOf(conv('include: "[[Migration plan]]"'))).toEqual(['Migration plan'])
+  })
+
+  it('is empty when there is no key, and drops blanks', () => {
+    expect(pinsOf(conv())).toEqual([])
+    expect(pinsOf(conv('include:', '  - "[[]]"', '  - "[[A]]"'))).toEqual(['A'])
+  })
+
+  it('does not pin the same note twice under two spellings', () => {
+    expect(pinsOf(conv('include:', '  - "[[Plan]]"', '  - "[[plan]]"'))).toEqual(['Plan'])
+  })
+
+  it('writes links a rename can find, and reads them back unchanged', () => {
+    const out = withPins(conv(), ['Migration plan', 'Team charter'])
+    expect(scanWikiLinks(out).map((l) => l.target)).toEqual(['Migration plan', 'Team charter'])
+    expect(pinsOf(out)).toEqual(['Migration plan', 'Team charter'])
+    expect(sourceOf(out)).toBe(ALL)
+    expect(isConversation(out)).toBe(true)
+  })
+
+  it('survives a comma in a note name', () => {
+    const out = withPins(conv(), ['Plan, revised'])
+    expect(pinsOf(out)).toEqual(['Plan, revised'])
+  })
+
+  it('unpins everything without taking the rest of the frontmatter with it', () => {
+    const pinned = withPins(conv('source: "#work"'), ['A'])
+    const bare = withPins(pinned, [])
+    expect(pinsOf(bare)).toEqual([])
+    expect(sourceOf(bare)).toBe('#work')
+    expect(isConversation(bare)).toBe(true)
+  })
+})
+
+describe('what the answering model is told it has', () => {
+  it('describes a plain search plainly', () => {
+    const s = answerSystem('#work')
+    expect(s).toContain('the notes that matched a search of #work')
+    expect(s).not.toContain('every question')
+  })
+
+  /* A pinned note matched nothing; calling it a search hit would be a small lie. */
+  it('does not pass a pinned note off as something the search found', () => {
+    const s = answerSystem('#work', 2)
+    expect(s).toContain('2 notes the person keeps in front of you for every question')
+    expect(s).toContain('followed by the notes that matched a search of #work')
+  })
+
+  it('counts one pin in the singular', () => {
+    expect(answerSystem('All notes', 1)).toContain('1 note the person keeps')
+  })
+})
+
 describe('the provenance callout', () => {
   it('is folded, so it is in the file without being in the way', () => {
     const c = provenanceCallout({ terms: ['migrat'], matched: 3, read: ['Postmortem'], tokens: 900, dropped: 0, beyondLimit: 0, limit: 6 })
@@ -370,5 +452,82 @@ describe('the provenance callout', () => {
     const c = provenanceCallout({ terms: ['x'], matched: 0, read: [], tokens: 0, dropped: 0, beyondLimit: 0, limit: 6 })
     expect(c).toContain('read nothing')
     expect(c).toContain('0 notes matched')
+  })
+
+  it('marks which of the notes it read were there because they are pinned', () => {
+    const c = provenanceCallout({
+      terms: ['migrat'],
+      matched: 3,
+      read: ['Migration plan', 'Postmortem'],
+      tokens: 900,
+      dropped: 0,
+      beyondLimit: 0,
+      limit: 6,
+      pinned: ['Migration plan'],
+    })
+    expect(c).toContain('[[Migration plan]] (pinned)')
+    expect(c).toContain('[[Postmortem]]')
+    expect(c).not.toContain('[[Postmortem]] (pinned)')
+  })
+
+  /*
+   * The most important line in the callout. A pin that quietly stops pinning
+   * produces answers that look exactly as normal as ones that had read the
+   * note, and you would go on believing they had.
+   */
+  it('names a pin that no longer resolves, rather than skipping it', () => {
+    const c = provenanceCallout({
+      terms: ['x'],
+      matched: 2,
+      read: ['A'],
+      tokens: 400,
+      dropped: 0,
+      beyondLimit: 0,
+      limit: 6,
+      missingPins: ['Team charter'],
+    })
+    expect(c).toContain('Pinned but not found: “Team charter”')
+    expect(c).toContain('renamed or deleted')
+    // Quoted, not linked: a link that is broken on purpose would put every
+    // stale pin into the broken-link report too.
+    expect(c).not.toContain('[[Team charter]]')
+  })
+
+  it('says when a pin was resolved and still did not get sent', () => {
+    const c = provenanceCallout({
+      terms: ['x'],
+      matched: 4,
+      read: ['A'],
+      tokens: 400,
+      dropped: 2,
+      beyondLimit: 0,
+      limit: 6,
+      pinned: ['A'],
+      pinsSkipped: 2,
+    })
+    expect(c).toContain('2 pinned notes did not fit')
+    expect(c).toContain('Notes per question')
+  })
+
+  it('says when the pins alone used up the limit', () => {
+    const c = provenanceCallout({
+      terms: ['x'],
+      matched: 9,
+      read: ['A', 'B'],
+      tokens: 900,
+      dropped: 0,
+      beyondLimit: 9,
+      limit: 2,
+      pinned: ['A', 'B'],
+      pinsSkipped: 0,
+    })
+    expect(c).toContain('is taken up by pins')
+    expect(c).toContain('nothing the search found was sent')
+  })
+
+  it('says nothing about pins on a conversation that has none', () => {
+    const c = provenanceCallout({ terms: ['x'], matched: 2, read: ['A'], tokens: 400, dropped: 0, beyondLimit: 0, limit: 6 })
+    expect(c).not.toContain('pinned')
+    expect(c).not.toContain('pins')
   })
 })

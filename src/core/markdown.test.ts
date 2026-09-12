@@ -13,6 +13,7 @@ import {
   scanVars,
   scanWikiLinks,
   setFrontmatterKey,
+  setFrontmatterList,
   splitSizeFragment,
   stripInline,
   varText,
@@ -50,6 +51,74 @@ describe('frontmatter', () => {
     const out = setFrontmatterKey('Just a body', 'pinned', 'true')
     expect(out.startsWith('---\npinned: true\n---')).toBe(true)
     expect(out).toContain('Just a body')
+  })
+})
+
+/*
+ * The block form is not a style preference. The flow reader splits on commas,
+ * so `include: ["[[Plan, revised]]"]` comes back as two broken halves — and a
+ * note name with a comma in it is an ordinary note name. Every case below is
+ * really asking the same question: does a value survive a round trip intact?
+ */
+describe('a frontmatter key holding a list', () => {
+  const read = (text: string, key: string) => parseFrontmatter(text).data[key]
+
+  it('round-trips values with commas in them', () => {
+    const out = setFrontmatterList('---\ntype: conversation\n---\n\nBody\n', 'include', [
+      '[[Plan, revised]]',
+      '[[Team charter]]',
+    ])
+    expect(read(out, 'include')).toEqual(['[[Plan, revised]]', '[[Team charter]]'])
+    expect(read(out, 'type')).toBe('conversation')
+    expect(out.endsWith('Body\n')).toBe(true)
+  })
+
+  it('replaces the old items rather than adding to them', () => {
+    const first = setFrontmatterList('---\ntitle: A\n---\n\nBody\n', 'include', ['[[One]]', '[[Two]]'])
+    const second = setFrontmatterList(first, 'include', ['[[Three]]'])
+    expect(read(second, 'include')).toEqual(['[[Three]]'])
+    expect(read(second, 'title')).toBe('A')
+  })
+
+  /*
+   * The failure this guards: leaving `- "[[One]]"` behind after the key above
+   * it is gone. The orphaned items do not vanish — they reattach to whichever
+   * key now sits above them and quietly join a different list.
+   */
+  it('takes the whole list away with the key, leaving nothing orphaned', () => {
+    const withList = setFrontmatterList('---\ntitle: A\nsource: all\n---\n\nBody\n', 'include', [
+      '[[One]]',
+      '[[Two]]',
+    ])
+    const empty = setFrontmatterList(withList, 'include', [])
+    expect(empty).not.toContain('include')
+    expect(empty).not.toContain('One')
+    expect(read(empty, 'source')).toBe('all')
+    expect(read(empty, 'title')).toBe('A')
+  })
+
+  it('replaces a hand-written flow list too', () => {
+    const out = setFrontmatterList('---\ninclude: [A, B]\ntitle: T\n---\n\nBody\n', 'include', ['[[C]]'])
+    expect(read(out, 'include')).toEqual(['[[C]]'])
+    expect(read(out, 'title')).toBe('T')
+  })
+
+  it('adds a block when the note has none, and adds nothing for an empty list', () => {
+    expect(setFrontmatterList('Just a body', 'include', ['[[A]]'])).toBe(
+      '---\ninclude:\n  - "[[A]]"\n---\n\nJust a body',
+    )
+    expect(setFrontmatterList('Just a body', 'include', [])).toBe('Just a body')
+  })
+
+  it('drops the frontmatter entirely rather than leaving an empty block', () => {
+    const only = '---\ninclude:\n  - "[[A]]"\n---\n\nBody\n'
+    expect(setFrontmatterList(only, 'include', [])).toBe('\nBody\n')
+  })
+
+  /* Wikilinks in frontmatter are what makes a pin survive a rename. */
+  it('writes links the rename pass can see', () => {
+    const out = setFrontmatterList('---\ntype: conversation\n---\n\nBody\n', 'include', ['[[Migration plan]]'])
+    expect(scanWikiLinks(out).map((l) => l.target)).toEqual(['Migration plan'])
   })
 })
 

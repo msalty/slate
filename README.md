@@ -18,7 +18,7 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 857 unit and two-device sync tests
+npm test               # 880 unit and two-device sync tests
 node scripts/smoke.mjs # 612-check browser smoke test against dist/
 ```
 
@@ -936,7 +936,7 @@ before anything is written.**
 | **Transcribe** | the ⧉ button in the image viewer | one picture |
 | **Change this passage** | the ✦ in the note's header, or on the formatting bar — or ⌘⇧U | the text you selected |
 | **Summarise these notes** | the **⋯** above the note list | the notes in the list, after you confirm the count |
-| **Ask your notes** | the same **⋯** | up to 6 notes that matched the search, per question |
+| **Ask your notes** | the same **⋯** | up to 6 notes per question: the ones you pinned, then the ones the search matched |
 
 All three are in the command palette too (**⌘K**), but none of them is *only*
 there — a feature you can reach only by knowing its name is one most people
@@ -1039,6 +1039,8 @@ callout underneath it:
 date: 2026-09-12
 type: conversation
 source: "#work"
+include:
+  - "[[Migration plan]]"
 ---
 
 # Ask — What went wrong with the Q3 migration
@@ -1049,7 +1051,7 @@ It ran cleanly on the Thursday night, but two indexes had to be rebuilt
 afterwards and that took longer than the migration itself — see
 [[Migration plan]] and [[Postmortem 2026-08-14]].
 
-> [!note]- Searched “migrat”, “index”, “rollback” · read [[Migration plan]], [[Postmortem 2026-08-14]]
+> [!note]- Searched “migrat”, “index”, “rollback” · read [[Migration plan]] (pinned), [[Postmortem 2026-08-14]]
 > 6 notes matched; 2 sent, about 3100 tokens.
 ```
 
@@ -1069,6 +1071,28 @@ about what it could see, and you can change it by editing the frontmatter or
 from the chip beside the composer. Starting a conversation from a narrowed list
 scopes it to that list, which is worth doing: a smaller haystack gives a small
 local model a much better chance.
+
+**Pinning is the opposite of scope.** `source:` is a filter — it says what may be
+*searched*, and a note inside it still has to win the keyword search to be read.
+`include:` is a guarantee: those notes are sent with every question, whatever it
+is, and they go first. That is the difference between "answer from my work
+notes" and "always have the migration plan in front of you".
+
+Pin from the chip next to the scope chip, which opens a picker — nowhere does
+Slate ask you to *type* a note's name, because a typo'd reference is a silent
+nothing that looks exactly like a working one. The frontmatter stays
+hand-editable all the same; the picker is just the way that cannot go wrong.
+
+Pins are stored as wikilinks, which buys two things: renaming a pinned note
+repoints the pin, because the rename pass scans whole files and frontmatter is
+not exempt from it; and the pinned note lists the conversation in its own
+backlinks, so *what is standing on this note* is answerable from the note.
+
+They **count against Notes per question**, so four pins against a limit of four
+leave the search nothing — and the callout says so when that happens, along with
+any pin that no longer resolves to anything. A pin that quietly stopped pinning
+is the worst failure this feature has: every answer afterwards looks exactly as
+normal as one that had read the note.
 
 **How a question is answered.** Two requests. First the model is asked what to
 *search for* — not to answer — because your phrasing is rarely your notes'
@@ -1125,11 +1149,12 @@ more, and the number decides whether summarising thirty notes is one request or
 six. Guessing high gets a refusal from the server; guessing low only makes more
 passes than it needed, so the default (16k) errs low.
 
-**Notes per question** is how many of the notes a question matches get sent —
-six by default, and usually the limit that actually binds. Every answer's
-callout says how many matched, how many were sent, and which of the two limits
-cut the rest, so you can tell a question that found nothing from one that found
-thirty things and could only read six.
+**Notes per question** is how many notes get sent with a question — six by
+default, and usually the limit that actually binds. Notes pinned to the
+conversation come out of the same allowance. Every answer's callout says how
+many matched, how many were sent, which of the two limits cut the rest, and
+whether the pins took the lot, so you can tell a question that found nothing
+from one that found thirty things and could only read six.
 
 **All four of these are per device** — provider, address, key and model alike.
 They live in this browser's local database, beside the WebDAV password and for
@@ -1661,7 +1686,7 @@ src/
 │  ├─ summary.ts     how many passes a set of notes takes, what goes in each,
 │  │                  and the frontmatter that says what made the result
 │  ├─ ask.ts        a conversation as a markdown file: the turns, the scope
-│  │                  rule, and what retrieval refuses to read
+│  │                  rule, the notes it pins, and what retrieval refuses to read
 │  └─ settings.ts     device-local vs vault-wide preferences
 ├─ adapters/      webdav.ts · gdrive.ts · llm.ts · memory.ts (tests)
 ├─ editor/        CodeMirror 6: live preview, widgets, completion, paste
@@ -1695,6 +1720,9 @@ src/
    ├─ DueChip.tsx    a task's date, as a control rather than a caption
    ├─ FilePicker.tsx the vault's own files, as somewhere to insert one from
    ├─ pickFile.ts    what that picker matches on, and the order it answers in
+   ├─ NotePicker.tsx the same palette over notes, so nowhere has to ask
+   │                 anybody to type a note's name
+   ├─ pickNote.ts    what it was opened for, and what to leave out of it
    ├─ QuickAdd.tsx   the capture sheet, kept mounted so the keyboard can be
    │                 raised inside the tap that asked for it
    └─ Mobile.tsx     phone tab bar and full-screen tab views
@@ -1793,7 +1821,12 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
   the thing you asked about without ever naming it is not found. Semantic recall
   needs embeddings, which would be a store to keep current and to sync; this is
   the version that works with no such thing, and it says what it searched so you
-  can see when the search was the problem.
+  can see when the search was the problem. Pinning a note is the way round it
+  for a note you already know you want read.
+- **A pin is a whole note, and it is spent every question.** There is no way to
+  pin a section, and a long pinned note eats the budget on questions it has
+  nothing to do with. The callout tells you when it crowded the search out; the
+  remedy is fewer pins, not a cleverer pin.
 - **Notes go whole, or not at all.** There is no chunking and no ranking within
   a note, so one long note can crowd out three short ones — the callout says how
   many matched and which limit cut the rest, but the remedy is a bigger budget
@@ -1828,8 +1861,8 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 857 unit + two-device sync tests
-node scripts/smoke.mjs  # 612 checks in headless Chromium against dist/
+npm test                # 880 unit + two-device sync tests
+node scripts/smoke.mjs  # 625 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

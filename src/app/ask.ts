@@ -16,6 +16,7 @@ import {
   answerUser,
   historyFor,
   parseTerms,
+  pinsOf,
   readTurns,
   sourceLabel,
   termsSystem,
@@ -28,7 +29,7 @@ import { parseFrontmatter } from '../core/markdown'
 import { settings } from '../core/settings'
 import { estimateTokens } from '../core/summary'
 import { parseQuery } from '../core/tagquery'
-import { createNote, getText, search } from '../core/vault'
+import { createNote, getEntry, getText, resolveLink, search } from '../core/vault'
 import type { NoteIndexEntry } from '../core/types'
 
 /** Is there anywhere to send a question? The composer is absent without one. */
@@ -96,7 +97,12 @@ export function scopedNotes(source: string): NoteIndexEntry[] | undefined {
  * the index rebuild are both worth reading, and demanding both words appear in
  * one note finds neither.
  */
-function findNotes(terms: string[], source: string, self: string): NoteIndexEntry[] {
+function findNotes(
+  terms: string[],
+  source: string,
+  self: string,
+  already: Set<string>,
+): NoteIndexEntry[] {
   const allowed = scopedNotes(source)
   const permitted = allowed && new Set(allowed.map((n) => n.path))
 
@@ -104,6 +110,10 @@ function findNotes(terms: string[], source: string, self: string): NoteIndexEntr
   for (const term of terms) {
     for (const hit of search(term, 40)) {
       if (permitted && !permitted.has(hit.entry.path)) continue
+      // A pinned note is already going; finding it again would cost a slot and
+      // send it twice, and would make the match count read higher than the
+      // search actually earned.
+      if (already.has(hit.entry.path)) continue
       // Never this conversation, and never anything the app wrote. A
       // conversation is the strongest keyword match for its own questions, so
       // without this it reads itself back and gets more confident every turn.
@@ -120,15 +130,57 @@ function findNotes(terms: string[], source: string, self: string): NoteIndexEntr
   return [...best.values()].sort((a, b) => b.score - a.score).map((h) => h.entry)
 }
 
+export interface ResolvedPins {
+  /** In the order they were pinned — the order they will be sent in. */
+  entries: NoteIndexEntry[]
+  /** Named in the frontmatter, resolving to nothing. */
+  missing: string[]
+}
+
+/**
+ * Turn the titles in `include:` into notes.
+ *
+ * Unlike search, this does not apply the scope: a pin is an explicit
+ * instruction, and silently refusing one because it sits outside `source:`
+ * would be exactly the quiet failure the callout exists to prevent. It does not
+ * apply `isDerived` either, for the same reason — the rule that keeps generated
+ * notes out of *retrieval* is about what the search may reach for on its own,
+ * not about what you may hand it deliberately.
+ *
+ * The conversation itself is the one thing that cannot be pinned. A note that
+ * cites itself gets more confident every turn, and somebody who pinned the
+ * conversation they were sitting in would have built that loop by accident.
+ */
+export function resolvePins(titles: string[], self: string): ResolvedPins {
+  const entries: NoteIndexEntry[] = []
+  const missing: string[] = []
+  const seen = new Set<string>([self])
+  for (const title of titles) {
+    const path = resolveLink(title)
+    const entry = path && getEntry(path)
+    if (!entry) {
+      missing.push(title)
+      continue
+    }
+    if (seen.has(entry.path)) continue
+    seen.add(entry.path)
+    entries.push(entry)
+  }
+  return { entries, missing }
+}
+
+/** A gathered note, carrying the path so the caller can tell pins from hits. */
+type Gathered = AskSource & { path: string }
+
 /** Fill the budget with whole notes, best first. */
 function gather(
   found: NoteIndexEntry[],
   budgetTokens: number,
   limit: number,
-): { sources: AskSource[]; tokens: number } {
+): { sources: Gathered[]; tokens: number } {
   // Room for the instructions, the conversation so far and the answer itself.
   const room = Math.max(500, Math.floor(budgetTokens * 0.6))
-  const sources: AskSource[] = []
+  const sources: Gathered[] = []
   let tokens = 0
   for (const entry of found.slice(0, limit)) {
     const text = getText(entry.path)
@@ -137,7 +189,7 @@ function gather(
     if (!body) continue
     const cost = estimateTokens(body) + 8
     if (sources.length && tokens + cost > room) break
-    sources.push({ title: entry.title, body })
+    sources.push({ title: entry.title, body, path: entry.path })
     tokens += cost
   }
   return { sources, tokens }
@@ -160,6 +212,7 @@ export async function askTurn(
   const ai = settings.value.ai
   const limit = Math.max(1, ai.notesPerQuestion || 6)
   const history = historyFor(readTurns(noteText))
+  const pins = resolvePins(pinsOf(noteText), selfPath)
 
   let terms = opts.terms?.filter((t) => t.trim()) ?? []
   if (!terms.length) {
@@ -172,8 +225,18 @@ export async function askTurn(
   }
 
   opts.onStatus?.(`Searching ${terms.map((t) => `“${t}”`).join(', ')}…`)
-  const found = findNotes(terms, source, selfPath)
-  const { sources, tokens } = gather(found, ai.contextTokens, limit)
+  const pinnedPaths = new Set(pins.entries.map((e) => e.path))
+  const found = findNotes(terms, source, selfPath, pinnedPaths)
+  /*
+   * Pins first, so that when the limit or the budget runs out it is the weakest
+   * search hit that goes rather than the note you asked for by name — and so
+   * that they sit at the top of the material, where a model reading a long
+   * prompt is most likely to use them.
+   */
+  const { sources, tokens } = gather([...pins.entries, ...found], ai.contextTokens, limit)
+
+  const sentPaths = new Set(sources.map((s) => s.path))
+  const pinsSent = pins.entries.filter((e) => sentPaths.has(e.path))
 
   opts.onStatus?.(
     sources.length
@@ -183,11 +246,19 @@ export async function askTurn(
 
   const answer = await streamText(
     ai,
-    answerSystem(sourceLabel(source)),
+    answerSystem(sourceLabel(source), pinsSent.length),
     answerUser(question, sources, history),
     { signal: opts.signal, onChunk: opts.onChunk },
   )
 
+  /*
+   * `matched` stays what the *search* found, so the number keeps meaning what
+   * it has always meant: how well the search did. Pins are not a search result
+   * and counting them here would flatter it. They do count against the limit,
+   * though, which is why the two below are measured over the whole candidate
+   * list rather than over `found` alone.
+   */
+  const candidates = pins.entries.length + found.length
   return {
     answer: answer.trim(),
     provenance: {
@@ -195,9 +266,12 @@ export async function askTurn(
       matched: found.length,
       read: sources.map((s) => s.title),
       tokens,
-      dropped: Math.max(0, Math.min(found.length, limit) - sources.length),
-      beyondLimit: Math.max(0, found.length - limit),
+      dropped: Math.max(0, Math.min(candidates, limit) - sources.length),
+      beyondLimit: Math.max(0, candidates - limit),
       limit,
+      pinned: pinsSent.map((e) => e.title),
+      missingPins: pins.missing,
+      pinsSkipped: pins.entries.length - pinsSent.length,
     },
   }
 }

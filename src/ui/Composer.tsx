@@ -27,14 +27,18 @@ import {
   dropLastTurn,
   lastTurn,
   openTurn,
+  pinsOf,
   provenanceCallout,
   sourceLabel,
   sourceOf,
+  withPins,
 } from '../core/ask'
 import { setFrontmatterKey } from '../core/markdown'
 import { isConfigured } from '../core/llm'
 import { settings } from '../core/settings'
+import { resolveLink } from '../core/vault'
 import { openMenu, type MenuItem } from './Menu'
+import { openNotePicker } from './pickNote'
 import { openPrompt } from './PromptDialog'
 import { notify, scope, scopeLabel, scopeRule } from './state'
 import { IconChevron, IconClose, IconSparkle } from './Icons'
@@ -52,11 +56,23 @@ export const pendingQuestion = signal<{ path: string; question: string } | undef
 export interface ComposerProps {
   /** Read at send time: the view is rebuilt whenever the open note changes. */
   getView: () => EditorView | null
+  /**
+   * The note as the vault holds it.
+   *
+   * The chips are drawn from this rather than from the view, and that is not a
+   * detail. A component re-renders because a signal it read changed; the
+   * editor's document is neither, so a composer that read the buffer was right
+   * only by luck of timing — reopen a conversation and the view is rebuilt in
+   * an effect, after this has already drawn itself from whatever view was there
+   * before, with nothing left to tell it otherwise. The symptom was a
+   * conversation whose pins were in the file and not on the chip.
+   */
+  text: string
   /** The note this composer belongs to, so a handed-over question can be matched. */
   path: string
 }
 
-export function Composer({ getView, path }: ComposerProps) {
+export function Composer({ getView, text, path }: ComposerProps) {
   const [question, setQuestion] = useState('')
   const [status, setStatus] = useState<string | undefined>()
   const [error, setError] = useState<string | undefined>()
@@ -83,9 +99,20 @@ export function Composer({ getView, path }: ComposerProps) {
     requestAnimationFrame(() => void sendRef.current?.(handed.question))
   }, [pendingQuestion.value, path])
 
-  const view = getView()
-  const doc = view?.state.doc.toString() ?? ''
+  /*
+   * The vault is a save behind the buffer, and a chip that takes half a second
+   * to admit what you just told it reads as a control that did not work. So a
+   * write puts its own result up immediately and hands back to the vault as
+   * soon as the save lands — which is also what clears it, since `text`
+   * changing is exactly the save arriving.
+   */
+  const [justWritten, setJustWritten] = useState<string | undefined>(undefined)
+  useEffect(() => setJustWritten(undefined), [text, path])
+
+  const doc = justWritten ?? text
   const source = sourceOf(doc)
+  const pins = pinsOf(doc)
+  const missingPins = pins.filter((t) => !resolveLink(t))
   const hasTurn = !!lastTurn(doc)
   /* The standing line has to name the setting's value, not the old constant. */
   const limit = Math.max(1, settings.value.ai.notesPerQuestion || 6)
@@ -120,13 +147,73 @@ export function Composer({ getView, path }: ComposerProps) {
   }
 
   const setSource = (v: EditorView, next: string) => {
-    const text = v.state.doc.toString()
-    const updated = setFrontmatterKey(text, 'source', next)
-    if (updated === text) return
+    const now = v.state.doc.toString()
+    const updated = setFrontmatterKey(now, 'source', next)
+    if (updated === now) return
     v.dispatch({
-      changes: { from: 0, to: text.length, insert: updated },
+      changes: { from: 0, to: now.length, insert: updated },
       userEvent: 'input.ask.scope',
     })
+    setJustWritten(updated)
+  }
+
+  /**
+   * Notes this conversation sends whatever the question is.
+   *
+   * The scope chip next door says what may be *searched*; this says what is sent
+   * without being searched for. Both end up in the note's frontmatter, because
+   * both are part of what the conversation is rather than a setting somewhere
+   * else — a reader three weeks later can see that every answer had the
+   * migration plan in front of it.
+   *
+   * The menu is the whole editor for it: the pinned notes, each one click from
+   * being unpinned, and one row that opens the picker. Nobody types a title.
+   */
+  const pinMenu = (e: MouseEvent) => {
+    const v = getView()
+    if (!v) return
+    const items: MenuItem[] = pins.map((title) => ({
+      label: missingPins.includes(title) ? `${title} — not found` : title,
+      checked: !missingPins.includes(title),
+      danger: missingPins.includes(title),
+      onSelect: () => setPins(v, pins.filter((t) => t !== title)),
+    }))
+    items.push({
+      label: 'Pin a note…',
+      separated: items.length > 0,
+      onSelect: () =>
+        openNotePicker({
+          title: 'Pin a note to this conversation',
+          placeholder: 'Search your notes…',
+          // The conversation cannot pin itself — it would read itself back and
+          // grow more certain every turn — and a note already pinned is not a
+          // choice.
+          exclude: [path, ...pins.map((t) => resolveLink(t)).filter((p): p is string => !!p)],
+          onPick: (entry) => {
+            const live = getView()
+            if (live) setPins(live, [...pins, entry.title])
+          },
+        }),
+    })
+    if (pins.length > 1) {
+      items.push({
+        label: 'Unpin all',
+        danger: true,
+        onSelect: () => setPins(v, []),
+      })
+    }
+    openMenu(e, items, 'Always send')
+  }
+
+  const setPins = (v: EditorView, titles: string[]) => {
+    const now = v.state.doc.toString()
+    const updated = withPins(now, titles)
+    if (updated === now) return
+    v.dispatch({
+      changes: { from: 0, to: now.length, insert: updated },
+      userEvent: 'input.ask.pins',
+    })
+    setJustWritten(updated)
   }
 
   /**
@@ -275,6 +362,23 @@ export function Composer({ getView, path }: ComposerProps) {
           <IconChevron size={10} />
         </button>
 
+        <button
+          class="composer-scope"
+          data-id="composer-pins"
+          onClick={pinMenu}
+          disabled={running}
+          title="Notes sent with every question, whatever it is"
+        >
+          <span>
+            {!pins.length
+              ? 'Pin a note'
+              : missingPins.length
+                ? `${pins.length} pinned, ${missingPins.length} missing`
+                : `${pins.length} pinned`}
+          </span>
+          <IconChevron size={10} />
+        </button>
+
         {/*
           * Only once there is an exchange to redo, which is also the only time
           * it would mean anything — a conversation with no turns has no terms
@@ -332,7 +436,14 @@ export function Composer({ getView, path }: ComposerProps) {
 
       <div class="composer-foot">
         {status ??
-          `Answers are drawn from up to ${limit} ${limit === 1 ? 'note' : 'notes'} in ${sourceLabel(source).toLowerCase()}, and cite what they used.`}
+          (pins.length
+            ? /*
+               * Pins count against the limit, so the line has to say so — the
+               * alternative is somebody pinning four notes against a limit of
+               * four and never working out why the search stopped mattering.
+               */
+              `Up to ${limit} ${limit === 1 ? 'note' : 'notes'} a question, starting with the ${pins.length} pinned; the rest from ${sourceLabel(source).toLowerCase()}.`
+            : `Answers are drawn from up to ${limit} ${limit === 1 ? 'note' : 'notes'} in ${sourceLabel(source).toLowerCase()}, and cite what they used.`)}
       </div>
     </div>
   )

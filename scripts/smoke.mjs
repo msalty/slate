@@ -1086,6 +1086,131 @@ try {
     check('the callout records the terms you chose', /Searched “trousers”, “socks”/.test(redoConvo ?? ''))
     llm.replyFor = null
 
+    /* ---- pinning a note to the conversation ------------------------------
+     * `source:` filters what may be *searched*; `include:` guarantees what is
+     * *sent*. The whole check turns on a note the search cannot reach: the
+     * terms below match nothing in it, so if it turns up in the material the
+     * pin is the only thing that could have put it there.
+     */
+    await page.click('[title^="New note"]')
+    await page.waitForTimeout(250)
+    await page.locator('.editor-title-input').fill('Team Charter')
+    await page.locator('.editor-title-input').press('Enter')
+    await page.locator('.cm-content').click()
+    await page
+      .locator('.cm-content')
+      .pressSequentially('Quorum is four, and decisions are written down the same day.', { delay: 8 })
+    await page.waitForTimeout(700)
+
+    /*
+     * Matched on the row's title rather than on the row, because by now the
+     * conversation quotes "Team Charter" in its own answer and would otherwise
+     * be the row that "has text" — and the newest note is the one at the top.
+     */
+    const rowTitled = (t) => page.locator(`.note-row:has(.note-row-title:has-text("${t}"))`).first()
+
+    await rowTitled('Ask — What did we pack').click()
+    await page.waitForSelector('.composer', { timeout: 10000 })
+
+    const pinChip = page.locator('[data-id="composer-pins"]')
+    check('the composer offers pinning next to the scope', (await pinChip.count()) === 1)
+    check('and says so plainly when nothing is pinned', /Pin a note/.test(await pinChip.innerText()))
+
+    await pinChip.click()
+    await page.waitForTimeout(300)
+    await page.locator('.menu-item:has-text("Pin a note…")').click()
+    await page.waitForSelector('[data-id="note-picker"]', { timeout: 5000 })
+    check('which opens the picker rather than asking you to type a title', true)
+
+    /*
+     * Typed as a search, chosen from the list: the title is never entered by
+     * hand, so a typo cannot reach the frontmatter.
+     */
+    await page.locator('[data-id="note-picker"] input').pressSequentially('team char', { delay: 20 })
+    await page.waitForTimeout(400)
+    const firstRow = page.locator('[data-id="note-picker"] .palette-row').first()
+    check('narrowing finds the note', /Team Charter/.test(await firstRow.innerText()))
+    await firstRow.click()
+    await page.locator('[data-id="note-picker"]').waitFor({ state: 'detached', timeout: 5000 })
+    await page.waitForTimeout(400)
+    check('the chip counts what is pinned', /1 pinned/.test(await pinChip.innerText()))
+
+    const pinnedFile = await savedConvo('Team Charter')
+    check(
+      'the pin is written into the note as a wikilink, so a rename can find it',
+      /^\s+- "\[\[Team Charter\]\]"$/m.test(pinnedFile ?? ''),
+      (pinnedFile ?? '').split('\n').slice(0, 8).join(' · '),
+    )
+
+    llm.replyFor = (body) => {
+      const sys = body.messages?.[0]?.content ?? ''
+      // Terms that match nothing in the pinned note, on purpose.
+      if (/choosing what to look for/i.test(sys)) return 'lisbon, packing'
+      if (/answering questions about/i.test(sys)) return 'Quorum is four — see [[Team Charter]].'
+      return 'unexpected'
+    }
+
+    const beforePinned = llm.requests.length
+    await page.locator('.composer-input').click()
+    await page.locator('.composer-input').pressSequentially('What is quorum?', { delay: 15 })
+    await page.keyboard.press('Enter')
+    await page.waitForFunction(
+      () => /Quorum is four —/.test(document.querySelector('.cm-content')?.textContent ?? ''),
+      null,
+      { timeout: 30000 },
+    )
+    await page.waitForTimeout(1200)
+
+    const pinnedAnswer = llm.requests
+      .slice(beforePinned)
+      .find((r) => /answering questions about/i.test(r.messages?.[0]?.content ?? ''))
+    const material = pinnedAnswer?.messages?.[1]?.content ?? ''
+    check('a pinned note is sent whatever the search found', /Quorum is four, and decisions/.test(material))
+    check(
+      'and goes first, ahead of anything the search turned up',
+      material.indexOf('## Team Charter') === material.indexOf('## '),
+      material.slice(0, 60).replace(/\n/g, ' · '),
+    )
+
+    const quorumConvo = await savedConvo('Quorum is four —')
+    const quorumSection = (quorumConvo ?? '').slice((quorumConvo ?? '').lastIndexOf('## What is quorum'))
+    check('the callout says which notes were there because they are pinned', /\[\[Team Charter\]\] \(pinned\)/.test(quorumSection))
+
+    /*
+     * The failure that matters most. A pin that quietly stops pinning produces
+     * answers indistinguishable from ones that read the note, so a name that no
+     * longer resolves has to be reported rather than skipped — on screen and in
+     * the file.
+     */
+    await rowTitled('Team Charter').click()
+    await page.waitForTimeout(500)
+    check('the pinned note is the one open', (await page.locator('.editor-title-input').inputValue()) === 'Team Charter')
+    await page.locator('.editor-title-input').fill('Working Agreements')
+    await page.locator('.editor-title-input').press('Enter')
+    await page.waitForTimeout(1200)
+    await rowTitled('Ask — What did we pack').click()
+    await page.waitForSelector('.composer', { timeout: 10000 })
+    await page.waitForTimeout(600)
+    check(
+      'renaming a pinned note repoints the pin rather than breaking it',
+      /^1 pinned$/.test((await pinChip.innerText()).trim()),
+      await pinChip.innerText(),
+    )
+    const renamedFile = await savedConvo('Working Agreements')
+    check(
+      'because the pin is a wikilink the rename pass can see',
+      /- "\[\[Working Agreements\]\]"/.test(renamedFile ?? ''),
+      (renamedFile ?? '').split('\n').slice(0, 8).join(' · '),
+    )
+
+    /* Removing it by hand is the case a rename cannot save. */
+    await pinChip.click()
+    await page.waitForTimeout(300)
+    await page.locator('.menu-item:has-text("Working Agreements")').click()
+    await page.waitForTimeout(500)
+    check('unpinning from the same menu puts it back', /Pin a note/.test(await pinChip.innerText()))
+    llm.replyFor = null
+
     /* ---- one key, one meaning -------------------------------------------
      * ⌘K opens the palette even with the caret in a note, and the wikilink it
      * displaced answers ⌘⇧K. The second is not a formality: CodeMirror resolves

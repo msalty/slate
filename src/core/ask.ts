@@ -26,7 +26,7 @@
  * Everything here is pure. The searching and the requests are in `app/ask.ts`.
  */
 
-import { parseFrontmatter } from './markdown'
+import { parseFrontmatter, setFrontmatterList } from './markdown'
 import { unfence } from './llm'
 import { safeSegment, ymd } from './util'
 
@@ -67,6 +67,65 @@ export function isDerived(text: string): boolean {
 /** How a scope reads in the composer's chip and in the note's own heading. */
 export function sourceLabel(source: string): string {
   return source === ALL || !source.trim() ? 'All notes' : source
+}
+
+/* ---------------------------------------------------------------- the pins */
+
+/**
+ * `include:` — notes this conversation sends whatever the question is.
+ *
+ * The counterpart to `source:`, and the opposite kind of thing. Scope is a
+ * *filter*: it says what may be searched, and a note inside it still has to win
+ * the keyword search to be read. A pin is a *guarantee*: it skips the search
+ * entirely. That is the difference between "answer from my work notes" and
+ * "always have the migration plan in front of you".
+ *
+ * It lives on the conversation rather than as a flag on each note, because the
+ * reason a note is pinned belongs to the conversation that wanted it — a flag
+ * on the note itself would be a standing tax paid by every conversation, set in
+ * a file you would have to remember to go and unset, and unbounded by
+ * construction.
+ *
+ * Stored as wikilinks — `- "[[Migration plan]]"` — which buys two things for
+ * free: renaming a pinned note rewrites the pin, because the rename pass scans
+ * whole files and frontmatter is not excluded from it; and the pinned note
+ * lists the conversation in its own backlinks, so "what is standing on this"
+ * is answerable from the note.
+ */
+export const PINS = 'include'
+
+/**
+ * The note a pin names.
+ *
+ * Tolerant of however it was written, because this is hand-editable: a bare
+ * title, a wikilink, an embed, or a link into a heading. A pin is the note, not
+ * a place in it, so an anchor or an alias is dropped.
+ */
+export function pinTitle(raw: string): string {
+  const wiki = /^!?\[\[(.*)\]\]$/.exec(raw.trim())
+  return (wiki ? wiki[1] : raw).split(/[#|]/)[0].trim()
+}
+
+/** The notes a conversation pins, in the order they were pinned. */
+export function pinsOf(text: string): string[] {
+  const raw = parseFrontmatter(text).data[PINS]
+  const list = Array.isArray(raw) ? raw : typeof raw === 'string' && raw.trim() ? [raw] : []
+  const out: string[] = []
+  for (const item of list) {
+    const title = pinTitle(String(item))
+    if (!title) continue
+    if (!out.some((t) => t.toLowerCase() === title.toLowerCase())) out.push(title)
+  }
+  return out
+}
+
+/** The note with its pins set to exactly these, written as wikilinks. */
+export function withPins(text: string, titles: string[]): string {
+  return setFrontmatterList(
+    text,
+    PINS,
+    titles.map((t) => `[[${t.trim()}]]`),
+  )
 }
 
 /* ------------------------------------------------------------ the new note */
@@ -252,9 +311,18 @@ export interface AskSource {
  * answer it" is what stands between this and a model filling the gap with
  * something plausible.
  */
-export function answerSystem(scopeLabel: string): string {
+export function answerSystem(scopeLabel: string, pinned = 0): string {
+  /*
+   * The material is described accurately or not at all. A pinned note did not
+   * match any search — it is there because somebody said it always should be —
+   * and telling the model everything in front of it was a search hit is a small
+   * lie that costs nothing to avoid.
+   */
+  const given = pinned
+    ? `You have been given ${pinned} ${pinned === 1 ? 'note the person keeps' : 'notes the person keeps'} in front of you for every question, followed by the notes that matched a search of ${scopeLabel}.`
+    : `You have been given the notes that matched a search of ${scopeLabel}.`
   return [
-    `You are answering questions about somebody's own notes. You have been given the notes that matched a search of ${scopeLabel}.`,
+    `You are answering questions about somebody's own notes. ${given}`,
     '',
     'Rules:',
     '- Answer only from the notes given. They are the whole of what you know.',
@@ -301,6 +369,20 @@ export interface Provenance {
   beyondLimit: number
   /** The limit in force, so the message can name the number to change. */
   limit: number
+  /** Of `read`, the ones that were there because they are pinned. */
+  pinned?: string[]
+  /**
+   * Pinned notes that no longer resolve to anything — renamed outside a rename,
+   * deleted, or mistyped by hand.
+   *
+   * Reported rather than skipped, and this is the most important line in the
+   * callout. A pin that quietly stops pinning is the worst failure this feature
+   * has: every answer afterwards looks exactly as normal as one that had read
+   * the note, and you would go on believing it had.
+   */
+  missingPins?: string[]
+  /** Pinned, resolved, and still not sent — the limit or the budget ran out. */
+  pinsSkipped?: number
 }
 
 /**
@@ -313,12 +395,34 @@ export interface Provenance {
  * behaviour this wants and none of the code.
  */
 export function provenanceCallout(p: Provenance): string {
+  const pinned = p.pinned ?? []
+  const missing = p.missingPins ?? []
+  const skipped = p.pinsSkipped ?? 0
   const searched = p.terms.length ? `Searched ${p.terms.map((t) => `“${t}”`).join(', ')}` : 'No search terms'
-  const read = p.read.length ? p.read.map((t) => `[[${t}]]`).join(', ') : 'nothing'
+  const read = p.read.length
+    ? p.read.map((t) => (pinned.includes(t) ? `[[${t}]] (pinned)` : `[[${t}]]`)).join(', ')
+    : 'nothing'
   const lines = [
     `> [!note]- ${searched} · read ${read}`,
     `> ${p.matched} ${p.matched === 1 ? 'note' : 'notes'} matched; ${p.read.length} sent, about ${p.tokens} tokens.`,
   ]
+  if (missing.length) {
+    // Quoted rather than wikilinked: these resolve to nothing by definition, and
+    // writing a link that is broken on purpose would turn every pin that went
+    // stale into an entry in the broken-link report as well.
+    lines.push(
+      `> Pinned but not found: ${missing.map((t) => `“${t}”`).join(', ')} — renamed or deleted, and not sent.`,
+    )
+  }
+  if (skipped > 0) {
+    lines.push(
+      `> ${skipped} pinned ${skipped === 1 ? 'note' : 'notes'} did not fit — raise Notes per question or the context budget in Settings → AI.`,
+    )
+  } else if (pinned.length >= p.limit && p.matched > 0) {
+    lines.push(
+      `> The limit of ${p.limit} ${p.limit === 1 ? 'note' : 'notes'} a question is taken up by pins, so nothing the search found was sent.`,
+    )
+  }
   if (p.dropped > 0) {
     lines.push(
       `> ${p.dropped} did not fit the context budget — raise it in Settings → AI, or ask something narrower.`,

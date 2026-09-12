@@ -11,6 +11,7 @@ import { ContextMenu } from './Menu'
 import { TagFolderDialog } from './TagFolderDialog'
 import { LinkDialog } from './LinkDialog'
 import { FilePicker } from './FilePicker'
+import { NotePicker } from './NotePicker'
 import { PromptDialog } from './PromptDialog'
 import { ConfirmDialog } from './ConfirmDialog'
 import { TranscribeDialog } from './TranscribeDialog'
@@ -480,6 +481,7 @@ export function App() {
       <TagFolderDialog />
       <LinkDialog />
       <FilePicker />
+      <NotePicker />
       <PromptDialog />
       <ConfirmDialog />
       <Lightbox />

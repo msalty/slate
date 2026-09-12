@@ -478,9 +478,11 @@ export function EditorPane() {
   const links = backlinkMap.value.get(path) ?? []
   /*
    * The note's text as the vault holds it, for the questions the chrome asks
-   * about the note rather than about the buffer — currently one: is this a
-   * conversation? Read here rather than off the view because a component reads
-   * signals to re-render, and `rev` is what changes when a save lands.
+   * about the note rather than about the buffer: is this a conversation, and
+   * what does its frontmatter say. Read here rather than off the view because
+   * a component reads signals to re-render, and `rev` is what changes when a
+   * save lands — chrome drawn from the buffer instead is redrawn only by
+   * coincidence, and goes stale the moment the view is rebuilt underneath it.
    */
   void rev
   const noteText = getRaw(path)?.text ?? ''
@@ -942,7 +944,7 @@ export function EditorPane() {
         */}
       {!trashed && canAsk() && isConversation(noteText) &&
         !(compact && formatSheetOpen.value) && (
-          <Composer getView={() => viewRef.current} path={path} />
+          <Composer getView={() => viewRef.current} text={noteText} path={path} />
         )}
 
       {links.length > 0 && (
