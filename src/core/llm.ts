@@ -68,6 +68,17 @@ export interface AiSettings {
    * large one merely makes more passes than necessary, so the default errs low.
    */
   contextTokens: number
+  /**
+   * How many notes one question may be answered from.
+   *
+   * The other half of the budget, and the one that actually binds: a question
+   * about a busy tag matches thirty notes and only the best few are worth
+   * sending. Separate from `contextTokens` because the two limits answer
+   * different questions — how much the model can hold, and how much is worth
+   * giving it — and because a hosted model with room for forty notes still
+   * produces a better answer from the best eight.
+   */
+  notesPerQuestion: number
 }
 
 /** What a given request needs the model to be able to do. */

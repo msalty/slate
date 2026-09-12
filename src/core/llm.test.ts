@@ -34,6 +34,7 @@ const ollama = (over: Partial<AiSettings> = {}): AiSettings => ({
   visionModel: 'llama3.2-vision',
   textModel: '',
   contextTokens: 16000,
+  notesPerQuestion: 6,
   ...over,
 })
 
@@ -44,6 +45,7 @@ const gemini = (over: Partial<AiSettings> = {}): AiSettings => ({
   visionModel: 'gemini-2.0-flash',
   textModel: '',
   contextTokens: 16000,
+  notesPerQuestion: 6,
   ...over,
 })
 

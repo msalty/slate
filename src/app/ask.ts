@@ -31,9 +31,6 @@ import { parseQuery } from '../core/tagquery'
 import { createNote, getText, search } from '../core/vault'
 import type { NoteIndexEntry } from '../core/types'
 
-/** How many notes one question may be answered from, however much room there is. */
-export const MAX_NOTES = 6
-
 /** Is there anywhere to send a question? The composer is absent without one. */
 export function canAsk(): boolean {
   return isConfigured(settings.value.ai)
@@ -63,6 +60,15 @@ export interface TurnOptions {
   /** The answer as it is written. */
   onChunk?: (text: string) => void
   signal?: AbortSignal
+  /**
+   * Search for these instead of asking the model what to look for.
+   *
+   * What "redo this, but search for something else" passes in. It skips the
+   * first request entirely, which is the point: when the callout shows the
+   * search was the weak link, spending another request asking the same model
+   * for the same wrong terms is the one thing that cannot help.
+   */
+  terms?: string[]
 }
 
 /**
@@ -115,12 +121,16 @@ function findNotes(terms: string[], source: string, self: string): NoteIndexEntr
 }
 
 /** Fill the budget with whole notes, best first. */
-function gather(found: NoteIndexEntry[], budgetTokens: number): { sources: AskSource[]; tokens: number } {
+function gather(
+  found: NoteIndexEntry[],
+  budgetTokens: number,
+  limit: number,
+): { sources: AskSource[]; tokens: number } {
   // Room for the instructions, the conversation so far and the answer itself.
   const room = Math.max(500, Math.floor(budgetTokens * 0.6))
   const sources: AskSource[] = []
   let tokens = 0
-  for (const entry of found.slice(0, MAX_NOTES)) {
+  for (const entry of found.slice(0, limit)) {
     const text = getText(entry.path)
     if (text === undefined) continue
     const body = text.slice(parseFrontmatter(text).bodyStart).trim()
@@ -148,18 +158,22 @@ export async function askTurn(
   opts: TurnOptions = {},
 ): Promise<TurnResult> {
   const ai = settings.value.ai
+  const limit = Math.max(1, ai.notesPerQuestion || 6)
   const history = historyFor(readTurns(noteText))
 
-  opts.onStatus?.('Working out what to look for…')
-  const termReply = await streamText(ai, termsSystem(), termsUser(question, history), {
-    signal: opts.signal,
-  })
-  const terms = parseTerms(termReply)
-  if (!terms.length) throw new LlmError('The model did not suggest anything to search for.')
+  let terms = opts.terms?.filter((t) => t.trim()) ?? []
+  if (!terms.length) {
+    opts.onStatus?.('Working out what to look for…')
+    const termReply = await streamText(ai, termsSystem(), termsUser(question, history), {
+      signal: opts.signal,
+    })
+    terms = parseTerms(termReply)
+    if (!terms.length) throw new LlmError('The model did not suggest anything to search for.')
+  }
 
   opts.onStatus?.(`Searching ${terms.map((t) => `“${t}”`).join(', ')}…`)
   const found = findNotes(terms, source, selfPath)
-  const { sources, tokens } = gather(found, ai.contextTokens)
+  const { sources, tokens } = gather(found, ai.contextTokens, limit)
 
   opts.onStatus?.(
     sources.length
@@ -181,7 +195,9 @@ export async function askTurn(
       matched: found.length,
       read: sources.map((s) => s.title),
       tokens,
-      dropped: Math.max(0, Math.min(found.length, MAX_NOTES) - sources.length),
+      dropped: Math.max(0, Math.min(found.length, limit) - sources.length),
+      beyondLimit: Math.max(0, found.length - limit),
+      limit,
     },
   }
 }

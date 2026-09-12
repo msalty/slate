@@ -278,13 +278,29 @@ export function answerUser(question: string, sources: AskSource[], history: stri
 
 export interface Provenance {
   terms: string[]
-  /** How many notes the search matched, before the budget cut it down. */
+  /** Everything the search matched, before any limit was applied. */
   matched: number
   /** The ones actually sent. */
   read: string[]
   tokens: number
-  /** Notes left out because the budget ran out. */
+  /**
+   * Matched, within the limit, and still left out because the context budget
+   * filled up first.
+   */
   dropped: number
+  /**
+   * Matched and never even considered, because the notes-per-question limit cut
+   * the list before the budget got a look.
+   *
+   * Separate from `dropped` because they are different problems with different
+   * fixes, and the first version of this said neither: twenty notes could match,
+   * six be sent, and the callout report "20 matched; 6 sent" with no hint that
+   * fourteen were never opened. Silence there is the worst case — the whole
+   * point of this callout is telling you when retrieval was the weak link.
+   */
+  beyondLimit: number
+  /** The limit in force, so the message can name the number to change. */
+  limit: number
 }
 
 /**
@@ -305,10 +321,73 @@ export function provenanceCallout(p: Provenance): string {
   ]
   if (p.dropped > 0) {
     lines.push(
-      `> ${p.dropped} more matched and did not fit the context budget — narrow the question, or raise the budget in Settings → AI.`,
+      `> ${p.dropped} did not fit the context budget — raise it in Settings → AI, or ask something narrower.`,
+    )
+  }
+  if (p.beyondLimit > 0) {
+    lines.push(
+      `> ${p.beyondLimit} more were past the limit of ${p.limit} notes a question — raise Notes per question in Settings → AI.`,
     )
   }
   return lines.join('\n')
+}
+
+/**
+ * The terms out of a callout this module wrote.
+ *
+ * So that "search for something else instead" can start from what was actually
+ * searched, after a reload and on another device — the callout is the record,
+ * and reading it back is what makes it one rather than decoration.
+ */
+export function termsInCallout(line: string): string[] {
+  const out: string[] = []
+  for (const m of line.matchAll(/[“"]([^”"]+)[”"]/g)) {
+    const term = m[1].trim()
+    if (term) out.push(term)
+  }
+  return out
+}
+
+export interface LastTurn {
+  question: string
+  terms: string[]
+  /** Offset where this turn's heading begins, so it can be replaced wholesale. */
+  at: number
+}
+
+/**
+ * Where the last exchange starts, what it asked, and what it searched for.
+ *
+ * Used to redo a turn: the note *is* the state, so re-asking reads the question
+ * back out of the file rather than keeping it in memory — which means it works
+ * on a conversation opened fresh, or one synced from another device, and it
+ * respects an edit you made to the question in the meantime.
+ */
+export function lastTurn(text: string): LastTurn | undefined {
+  const body = text.slice(parseFrontmatter(text).bodyStart)
+  const offset = text.length - body.length
+
+  let found: { question: string; at: number } | undefined
+  let terms: string[] = []
+  let pos = 0
+  for (const line of body.split('\n')) {
+    const h = /^##\s+(.*\S)\s*$/.exec(line)
+    if (h) {
+      found = { question: h[1], at: offset + pos }
+      terms = []
+    } else if (found && /^>\s*\[!/.test(line)) {
+      terms = termsInCallout(line)
+    }
+    pos += line.length + 1
+  }
+  return found ? { ...found, terms } : undefined
+}
+
+/** The note with its last exchange removed, ready for a fresh answer. */
+export function dropLastTurn(text: string): string {
+  const last = lastTurn(text)
+  if (!last) return text
+  return `${text.slice(0, last.at).replace(/\s+$/, '')}\n`
 }
 
 /**

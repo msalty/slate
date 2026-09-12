@@ -824,6 +824,27 @@ export function Settings() {
                       </small>
                     </label>
                     <label class="field">
+                      <span>Notes per question</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={50}
+                        value={s.ai.notesPerQuestion}
+                        onInput={(e) =>
+                          updateAi({
+                            notesPerQuestion: Math.min(
+                              50,
+                              Math.max(1, Number((e.target as HTMLInputElement).value) || 1),
+                            ),
+                          })
+                        }
+                      />
+                      <small>
+                        How many of the notes a question matches are sent. The limit that usually
+                        binds — every answer says how many matched and how many it could take.
+                      </small>
+                    </label>
+                    <label class="field">
                       <span>Context budget</span>
                       <input
                         type="number"

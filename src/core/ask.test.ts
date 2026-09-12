@@ -16,6 +16,9 @@ import {
   appendTurn,
   isDerived,
   conversationTitle,
+  dropLastTurn,
+  lastTurn,
+  termsInCallout,
   historyFor,
   isConversation,
   newConversation,
@@ -208,6 +211,72 @@ describe('the search terms a model comes back with', () => {
   })
 })
 
+describe('reading a turn back, to ask it again', () => {
+  const note = [
+    '---',
+    'type: conversation',
+    '---',
+    '',
+    '# Ask — x',
+    '',
+    '## First question?',
+    '',
+    'First answer.',
+    '',
+    '> [!note]- Searched “alpha”, “beta” · read [[A]]',
+    '',
+    '## Second question?',
+    '',
+    'Second answer.',
+    '',
+    '> [!note]- Searched “gamma” · read [[B]]',
+    '',
+  ].join('\n')
+
+  it('finds the last question and what it searched for', () => {
+    const last = lastTurn(note)
+    expect(last?.question).toBe('Second question?')
+    expect(last?.terms).toEqual(['gamma'])
+  })
+
+  it('does not carry the previous turn’s terms into the last one', () => {
+    // The scan has to reset per heading, or a turn whose callout was deleted
+    // would silently inherit the terms of the turn before it.
+    const trimmed = note.replace('> [!note]- Searched “gamma” · read [[B]]\n', '')
+    expect(lastTurn(trimmed)?.terms).toEqual([])
+  })
+
+  it('reads terms out of a callout, quotes and all', () => {
+    expect(termsInCallout('> [!note]- Searched “a b”, “c” · read [[X]]')).toEqual(['a b', 'c'])
+    expect(termsInCallout('> [!note]- No search terms · read nothing')).toEqual([])
+  })
+
+  it('takes the last exchange off, leaving everything before it', () => {
+    const dropped = dropLastTurn(note)
+    expect(dropped).toContain('## First question?')
+    expect(dropped).toContain('First answer.')
+    expect(dropped).not.toContain('Second question?')
+    expect(dropped).not.toContain('gamma')
+    expect(readTurns(dropped)).toHaveLength(1)
+  })
+
+  it('leaves a conversation with no turns exactly as it is', () => {
+    const empty = '---\ntype: conversation\n---\n\n# Ask — x\n'
+    expect(lastTurn(empty)).toBeUndefined()
+    expect(dropLastTurn(empty)).toBe(empty)
+  })
+
+  it('round-trips: drop the last turn, write it again, and the note matches', () => {
+    const again = appendTurn(dropLastTurn(note), {
+      question: 'Second question?',
+      answer: 'Second answer.',
+      provenance: { terms: ['gamma'], matched: 1, read: ['B'], tokens: 10, dropped: 0, beyondLimit: 0, limit: 6 },
+    })
+    expect(readTurns(again)).toHaveLength(2)
+    expect(lastTurn(again)?.terms).toEqual(['gamma'])
+  })
+})
+
 describe('writing a turn into the note', () => {
   const base = '---\ntype: conversation\n---\n\n# Ask — x\n'
 
@@ -247,7 +316,7 @@ describe('writing a turn into the note', () => {
 
 describe('the provenance callout', () => {
   it('is folded, so it is in the file without being in the way', () => {
-    const c = provenanceCallout({ terms: ['migrat'], matched: 3, read: ['Postmortem'], tokens: 900, dropped: 0 })
+    const c = provenanceCallout({ terms: ['migrat'], matched: 3, read: ['Postmortem'], tokens: 900, dropped: 0, beyondLimit: 0, limit: 6 })
     expect(c.startsWith('> [!note]-')).toBe(true)
   })
 
@@ -258,20 +327,47 @@ describe('the provenance callout', () => {
       read: ['Migration plan', 'Postmortem'],
       tokens: 2100,
       dropped: 0,
+      beyondLimit: 0,
+      limit: 6,
     })
     expect(c).toContain('“migrat”, “rollback”')
     expect(c).toContain('[[Migration plan]]')
     expect(c).toContain('5 notes matched')
   })
 
-  it('says when the budget cut notes out, and what to do about it', () => {
-    const c = provenanceCallout({ terms: ['x'], matched: 9, read: ['A'], tokens: 800, dropped: 3 })
-    expect(c).toContain('3 more matched')
-    expect(c).toContain('context budget')
+  it('says when the context budget cut notes out, and what to do about it', () => {
+    const c = provenanceCallout({ terms: ['x'], matched: 9, read: ['A'], tokens: 800, dropped: 3, beyondLimit: 0, limit: 6 })
+    expect(c).toContain('3 did not fit the context budget')
+    expect(c).toContain('Settings → AI')
+  })
+
+  /*
+   * The silence this replaced: twenty notes match, the best six are sent, and
+   * the callout used to report "20 matched; 6 sent" with nothing at all about
+   * the fourteen it never opened — the one number that would have told you the
+   * search was not the weak link, the limit was.
+   */
+  it('says when the limit cut the list before the budget saw it', () => {
+    const c = provenanceCallout({ terms: ['x'], matched: 20, read: ['A'], tokens: 800, dropped: 0, beyondLimit: 14, limit: 6 })
+    expect(c).toContain('20 notes matched')
+    expect(c).toContain('14 more were past the limit of 6')
+    expect(c).toContain('Notes per question')
+  })
+
+  it('names both when both cut, because they are different problems', () => {
+    const c = provenanceCallout({ terms: ['x'], matched: 20, read: ['A'], tokens: 800, dropped: 5, beyondLimit: 14, limit: 6 })
+    expect(c).toContain('5 did not fit the context budget')
+    expect(c).toContain('14 more were past the limit')
+  })
+
+  it('says neither when nothing was cut', () => {
+    const c = provenanceCallout({ terms: ['x'], matched: 2, read: ['A', 'B'], tokens: 800, dropped: 0, beyondLimit: 0, limit: 6 })
+    expect(c).not.toContain('did not fit')
+    expect(c).not.toContain('past the limit')
   })
 
   it('is honest when a search found nothing', () => {
-    const c = provenanceCallout({ terms: ['x'], matched: 0, read: [], tokens: 0, dropped: 0 })
+    const c = provenanceCallout({ terms: ['x'], matched: 0, read: [], tokens: 0, dropped: 0, beyondLimit: 0, limit: 6 })
     expect(c).toContain('read nothing')
     expect(c).toContain('0 notes matched')
   })

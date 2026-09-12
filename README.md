@@ -18,8 +18,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 848 unit and two-device sync tests
-node scripts/smoke.mjs # 606-check browser smoke test against dist/
+npm test               # 857 unit and two-device sync tests
+node scripts/smoke.mjs # 612-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -1012,6 +1012,14 @@ note too long for one request is cut rather than dropped, and the dialog says
 that too. Frontmatter never goes — the block at the top is metadata for the app
 and the likeliest place for something you would not have chosen to send.
 
+**Ask it again, searching for something else.** The callout tells you what was
+searched for, which is usually enough to see that a wrong answer came from a
+wrong *search* rather than a wrong model — and **Redo** beside the composer acts
+on that: it opens the terms it used, lets you replace them, and re-answers the
+same question, putting the new exchange where the old one was. It skips the
+first request entirely, because asking the same model for terms a second time is
+the one thing that cannot help.
+
 The result is **a new note**, not a panel: it syncs, it versions, you can edit
 it, and deleting it is the same keystroke as deleting anything else. Its
 frontmatter says what made it — `generated: true`, the model, the query, the
@@ -1116,6 +1124,12 @@ no defensible default: a local 8B model is often 8k and a hosted one 128k or
 more, and the number decides whether summarising thirty notes is one request or
 six. Guessing high gets a refusal from the server; guessing low only makes more
 passes than it needed, so the default (16k) errs low.
+
+**Notes per question** is how many of the notes a question matches get sent —
+six by default, and usually the limit that actually binds. Every answer's
+callout says how many matched, how many were sent, and which of the two limits
+cut the rest, so you can tell a question that found nothing from one that found
+thirty things and could only read six.
 
 **All four of these are per device** — provider, address, key and model alike.
 They live in this browser's local database, beside the WebDAV password and for
@@ -1780,9 +1794,10 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
   needs embeddings, which would be a store to keep current and to sync; this is
   the version that works with no such thing, and it says what it searched so you
   can see when the search was the problem.
-- **Six notes per question, whole.** There is no chunking and no ranking within
-  a note, so one long note can crowd out three short ones. The callout says how
-  many matched and how many fitted.
+- **Notes go whole, or not at all.** There is no chunking and no ranking within
+  a note, so one long note can crowd out three short ones — the callout says how
+  many matched and which limit cut the rest, but the remedy is a bigger budget
+  rather than a cleverer slice.
 - **A summary is of the notes, not of the vault.** It reads what is in the list,
   so what it covers is exactly what you narrowed to and nothing else — there is
   no "and anything related". The token figure is an estimate from character
@@ -1813,8 +1828,8 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 848 unit + two-device sync tests
-node scripts/smoke.mjs  # 606 checks in headless Chromium against dist/
+npm test                # 857 unit + two-device sync tests
+node scripts/smoke.mjs  # 612 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

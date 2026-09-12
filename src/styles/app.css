@@ -2470,6 +2470,11 @@ button.property-kind:hover {
   opacity: 0.5;
 }
 
+/* Reads as a sibling of the scope chip: both are small, both act on the turn. */
+.composer-redo {
+  font-variant: inherit;
+}
+
 .composer-input {
   flex: 1;
   min-width: 0;

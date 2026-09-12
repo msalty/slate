@@ -67,6 +67,7 @@ function defaults(): AppSettings {
       visionModel: '',
       textModel: '',
       contextTokens: 16000,
+      notesPerQuestion: 6,
     },
     autoSync: true,
     syncIntervalSec: 60,

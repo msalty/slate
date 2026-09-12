@@ -1025,6 +1025,67 @@ try {
     check('and both turns are in the one note', /## What did we pack/.test(convo2 ?? '') && /## And what about the weather/.test(convo2 ?? ''))
     llm.replyFor = null
 
+    /* ---- asking the same thing, searching for something else -------------
+     * The lever the provenance callout points at. It records what was searched
+     * for; Redo lets you change that and re-answer, replacing the old exchange
+     * rather than appending a second answer to the same question.
+     */
+    /*
+     * The terms never reach the answer request — they only decide which notes
+     * are found — so the two answers are told apart by counting rather than by
+     * looking for the terms in the body.
+     */
+    llm.replyFor = (body) => {
+      const sys = body.messages?.[0]?.content ?? ''
+      if (/choosing what to look for/i.test(sys)) return 'lisbon, packing'
+      // Only the redo runs under this reply, so it can answer unconditionally —
+      // the terms never reach the answer request, only the notes they found do.
+      if (/answering questions about/i.test(sys)) return 'Answered again, from [[Packing List]].'
+      return 'unexpected'
+    }
+
+    const beforeRedo = llm.requests.length
+    await page.locator('.composer-redo').click()
+    await page.waitForSelector('.prompt-input', { timeout: 5000 })
+    const termBox = page.locator('.prompt-input')
+    // The dialog fills its field from an effect, which runs after the paint, so
+    // reading the instant the element exists catches it empty.
+    await page
+      .waitForFunction(() => (document.querySelector('.prompt-input')?.value ?? '') !== '', null, {
+        timeout: 3000,
+      })
+      .catch(() => {})
+    check('Redo starts from the terms the callout recorded', (await termBox.inputValue()).includes('lisbon'))
+    await termBox.fill('trousers, socks')
+    await page.click('.dialog-foot .btn-primary')
+    await page.waitForFunction(
+      () => /Answered again/.test(document.querySelector('.cm-content')?.textContent ?? ''),
+      null,
+      { timeout: 30000 },
+    )
+    await page.waitForTimeout(1200)
+
+    const redone = llm.requests.slice(beforeRedo)
+    check(
+      'it does not ask the model for terms again',
+      !redone.some((r) => /choosing what to look for/i.test(r.messages?.[0]?.content ?? '')),
+    )
+    const redoConvo = await savedConvo('Answered again')
+    /*
+     * Only the *last* exchange is replaced, so the first turn's answer is still
+     * there and rightly so — the check has to look at the section the redo
+     * owned rather than at the whole note.
+     */
+    const lastSection = (redoConvo ?? '').slice((redoConvo ?? '').lastIndexOf('## And what about the weather'))
+    check('the new answer replaced the old one', !/trip notes cover Lisbon/.test(lastSection))
+    check('and the first turn was left alone', /trip notes cover Lisbon/.test(redoConvo ?? ''))
+    check(
+      'and the question was asked once, not twice',
+      ((redoConvo ?? '').match(/^## And what about the weather/gm) ?? []).length === 1,
+    )
+    check('the callout records the terms you chose', /Searched “trousers”, “socks”/.test(redoConvo ?? ''))
+    llm.replyFor = null
+
     /* ---- one key, one meaning -------------------------------------------
      * ⌘K opens the palette even with the caret in a note, and the wikilink it
      * displaced answers ⌘⇧K. The second is not a formality: CodeMirror resolves

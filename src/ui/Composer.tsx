@@ -23,11 +23,19 @@ import { useEffect, useRef, useState } from 'preact/hooks'
 import { signal } from '@preact/signals'
 import { EditorView } from '@codemirror/view'
 import { askTurn } from '../app/ask'
-import { openTurn, provenanceCallout, sourceLabel, sourceOf } from '../core/ask'
+import {
+  dropLastTurn,
+  lastTurn,
+  openTurn,
+  provenanceCallout,
+  sourceLabel,
+  sourceOf,
+} from '../core/ask'
 import { setFrontmatterKey } from '../core/markdown'
 import { isConfigured } from '../core/llm'
 import { settings } from '../core/settings'
 import { openMenu, type MenuItem } from './Menu'
+import { openPrompt } from './PromptDialog'
 import { notify, scope, scopeLabel, scopeRule } from './state'
 import { IconChevron, IconClose, IconSparkle } from './Icons'
 
@@ -78,6 +86,9 @@ export function Composer({ getView, path }: ComposerProps) {
   const view = getView()
   const doc = view?.state.doc.toString() ?? ''
   const source = sourceOf(doc)
+  const hasTurn = !!lastTurn(doc)
+  /* The standing line has to name the setting's value, not the old constant. */
+  const limit = Math.max(1, settings.value.ai.notesPerQuestion || 6)
 
   /**
    * Change what the conversation is allowed to read.
@@ -118,13 +129,53 @@ export function Composer({ getView, path }: ComposerProps) {
     })
   }
 
+  /**
+   * Ask the last question again, searching for something else.
+   *
+   * The lever the provenance callout was always pointing at. It shows what was
+   * searched for, so when an answer is wrong you can usually see that the
+   * *search* was wrong — and until now that diagnosis was a dead end, because
+   * the only way to act on it was to delete the answer by hand and rephrase the
+   * question hoping for luckier terms. Asking the same model for terms again
+   * would be the one thing that cannot help; these go straight to the index.
+   *
+   * The question and the old terms are read back out of the note rather than
+   * kept in memory, so this works on a conversation opened fresh or synced from
+   * another device — and honours an edit you made to the question meanwhile.
+   */
+  const redo = () => {
+    const v = getView()
+    if (!v || running) return
+    const last = lastTurn(v.state.doc.toString())
+    if (!last) {
+      notify('Nothing to ask again yet', 'error')
+      return
+    }
+    openPrompt({
+      title: 'Search for something else',
+      label: 'Search terms, separated by commas',
+      value: last.terms.join(', '),
+      placeholder: 'rollback, downtime',
+      hint: `“${last.question}” is asked again, searching for these instead. The answer it gave is replaced.`,
+      confirm: 'Ask again',
+      onSubmit: (value) => {
+        const terms = value
+          .split(',')
+          .map((t) => t.trim())
+          .filter(Boolean)
+        if (!terms.length) return
+        void send(last.question, { terms, replaceLast: true })
+      },
+    })
+  }
+
   const stop = () => {
     abort.current?.abort()
     abort.current = null
     setStatus(undefined)
   }
 
-  const send = async (override?: string) => {
+  const send = async (override?: string, opts: { terms?: string[]; replaceLast?: boolean } = {}) => {
     const q = (override ?? question).trim()
     const v = getView()
     if (!q || !v || running) return
@@ -145,7 +196,12 @@ export function Composer({ getView, path }: ComposerProps) {
      * right: you asked it, the record should say so, and an empty heading is an
      * obvious invitation to press the button again rather than a silent nothing.
      */
-    const before = v.state.doc.toString()
+    /*
+     * A redo takes the old exchange out first, so the note ends up with one
+     * answer to the question rather than two — and the same question heading is
+     * written back, which keeps the file identical in shape to a fresh turn.
+     */
+    const before = opts.replaceLast ? dropLastTurn(v.state.doc.toString()) : v.state.doc.toString()
     const withHeading = openTurn(before, q)
     v.dispatch({
       changes: { from: 0, to: before.length, insert: withHeading },
@@ -172,6 +228,7 @@ export function Composer({ getView, path }: ComposerProps) {
 
     try {
       const { answer, provenance } = await askTurn(q, before, source, path, {
+        terms: opts.terms,
         signal: controller.signal,
         onStatus: setStatus,
         onChunk: (c) => {
@@ -218,6 +275,22 @@ export function Composer({ getView, path }: ComposerProps) {
           <IconChevron size={10} />
         </button>
 
+        {/*
+          * Only once there is an exchange to redo, which is also the only time
+          * it would mean anything — a conversation with no turns has no terms
+          * to start from and no answer to replace.
+          */}
+        {hasTurn && (
+          <button
+            class="composer-scope composer-redo"
+            onClick={redo}
+            disabled={running}
+            title="Ask the last question again, searching for something else"
+          >
+            Redo
+          </button>
+        )}
+
         <textarea
           ref={box}
           class="composer-input"
@@ -258,7 +331,8 @@ export function Composer({ getView, path }: ComposerProps) {
       </div>
 
       <div class="composer-foot">
-        {status ?? `Answers are drawn from up to 6 notes in ${sourceLabel(source).toLowerCase()}, and cite what they used.`}
+        {status ??
+          `Answers are drawn from up to ${limit} ${limit === 1 ? 'note' : 'notes'} in ${sourceLabel(source).toLowerCase()}, and cite what they used.`}
       </div>
     </div>
   )

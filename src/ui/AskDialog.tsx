@@ -163,8 +163,8 @@ export function AskDialog() {
           </label>
 
           <div class="callout">
-            Each question searches {sourceLabel(source).toLowerCase()} and sends up to 6 matching
-            notes to your provider. The conversation is an ordinary note in{' '}
+            Each question searches {sourceLabel(source).toLowerCase()} and sends up to{' '}
+            {settings.value.ai.notesPerQuestion} matching notes to your provider. The conversation is an ordinary note in{' '}
             <code>{folder || 'the vault root'}</code>, and every answer records what it read.
           </div>
         </div>
