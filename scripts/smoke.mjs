@@ -1120,6 +1120,54 @@ try {
     await rowTitled('Ask — What did we pack').click()
     await page.waitForSelector('.composer', { timeout: 10000 })
 
+    /* ---- the shape of the composer ---------------------------------------
+     * The field owns a row and the controls own the one beneath it, so the
+     * thing you type into is never squeezed by a scope rule that ran long —
+     * and Ask is the widest control in its row, because it is the default
+     * action and Enter does the same thing.
+     */
+    const boxRect = async (sel) => page.locator(sel).first().boundingBox()
+    const fieldBox = await boxRect('.composer-input')
+    const controlsBox = await boxRect('.composer-controls')
+    check(
+      'the question field sits on its own row above the controls',
+      fieldBox.y + fieldBox.height <= controlsBox.y + 1,
+      `field ends ${Math.round(fieldBox.y + fieldBox.height)}, controls start ${Math.round(controlsBox.y)}`,
+    )
+    check(
+      'and takes the full width of the composer',
+      fieldBox.width > controlsBox.width * 0.9,
+      `${Math.round(fieldBox.width)} vs ${Math.round(controlsBox.width)}`,
+    )
+    const sendBox = await boxRect('.composer-send')
+    const chipBoxes = await Promise.all(
+      (await page.locator('.composer-controls .composer-scope').all()).map((c) => c.boundingBox()),
+    )
+    check(
+      'Ask is the widest control in the row',
+      chipBoxes.every((c) => sendBox.width > c.width),
+      `Ask ${Math.round(sendBox.width)}, chips ${chipBoxes.map((c) => Math.round(c.width)).join('/')}`,
+    )
+    check(
+      'and sits on the same row as the chips rather than under them',
+      chipBoxes.every((c) => Math.abs(c.y + c.height / 2 - (sendBox.y + sendBox.height / 2)) < 14),
+    )
+    check('the button says what it does, not just ✦', /Ask/.test(await page.locator('.composer-send').innerText()))
+    await page.locator('.composer-input').click()
+    await page.locator('.composer-input').pressSequentially('A question to fill the field', { delay: 8 })
+    await page.waitForTimeout(200)
+    await page.screenshot({
+      path: join(SHOTS, '32-composer.png'),
+      clip: {
+        x: Math.max(0, fieldBox.x - 24),
+        y: Math.max(0, fieldBox.y - 24),
+        width: Math.min(1440 - fieldBox.x + 24, fieldBox.width + 96),
+        height: 150,
+      },
+    })
+    await page.locator('.composer-input').fill('')
+    await page.waitForTimeout(150)
+
     const pinChip = page.locator('[data-id="composer-pins"]')
     check('the composer offers pinning next to the scope', (await pinChip.count()) === 1)
     check('and says so plainly when nothing is pinned', /Pin a note/.test(await pinChip.innerText()))

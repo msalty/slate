@@ -129,7 +129,7 @@ export function sourceLabel(source: string): string {
  */
 export function sourceDescription(source: string): string {
   const ns = noteScope(source)
-  if (ns) return ns.kind === 'note' ? `“${ns.title}” and nothing else` : `“${ns.title}” and the notes linked to it`
+  if (ns) return ns.kind === 'note' ? `“${ns.title}” and nothing else` : `“${ns.title}” and its links`
   return source === ALL || !source.trim() ? 'all notes' : source
 }
 

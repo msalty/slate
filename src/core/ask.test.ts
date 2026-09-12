@@ -397,9 +397,7 @@ describe('scoping a conversation to one note', () => {
     expect(sourceLabel('note:Migration plan')).toBe('Only Migration plan')
     expect(sourceLabel('links:Migration plan')).toBe('Migration plan + links')
     expect(sourceDescription('note:Migration plan')).toBe('“Migration plan” and nothing else')
-    expect(sourceDescription('links:Migration plan')).toBe(
-      '“Migration plan” and the notes linked to it',
-    )
+    expect(sourceDescription('links:Migration plan')).toBe('“Migration plan” and its links')
   })
 
   /*

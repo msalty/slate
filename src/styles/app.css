@@ -2440,22 +2440,44 @@ button.property-kind:hover {
   padding: 8px 12px 10px;
 }
 
-.composer-row {
+/*
+ * The field and its controls are one control, so the border goes round both
+ * and the field inside is transparent. Focus lights the whole box, which is
+ * what makes the row of chips underneath read as part of the thing you are
+ * typing into rather than as a toolbar that happens to sit below it.
+ */
+.composer-box {
   display: flex;
-  align-items: flex-end;
+  flex-direction: column;
   gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.composer-box:focus-within {
+  border-color: var(--accent);
+}
+
+.composer-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  /* A narrow pane puts the button on its own line rather than crushing it. */
+  flex-wrap: wrap;
 }
 
 .composer-scope {
-  flex: none;
+  /* Shrinks before the send button does, and ellipses rather than wrapping. */
+  flex: 0 1 auto;
+  min-width: 0;
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  max-width: 40%;
   padding: 6px 8px;
   border: 1px solid var(--border);
   border-radius: 999px;
-  background: var(--surface);
+  background: var(--surface-2);
   color: var(--text-muted);
   font-size: 12px;
   white-space: nowrap;
@@ -2475,24 +2497,37 @@ button.property-kind:hover {
   font-variant: inherit;
 }
 
+/*
+ * No border and no background of its own: the box around it is the field. The
+ * floor is here rather than in the auto-grow handler so that emptying the
+ * field on send does not collapse the box to one line and jump the note.
+ */
 .composer-input {
-  flex: 1;
+  width: 100%;
   min-width: 0;
   resize: none;
-  max-height: 120px;
-  padding: 8px 11px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
+  min-height: 46px;
+  max-height: 160px;
+  padding: 2px 3px;
+  border: 0;
+  background: none;
   line-height: 1.5;
 }
+.composer-input:focus {
+  outline: none;
+}
 
+/*
+ * The widest thing in the row, because it is the default action — Enter does
+ * the same thing, and a primary button that is the smallest target in its own
+ * row says the opposite.
+ */
 .composer-send {
-  flex: none;
+  flex: 1 0 96px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 40px;
+  gap: 6px;
   height: 34px;
 }
 

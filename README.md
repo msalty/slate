@@ -1066,6 +1066,13 @@ The one new piece of chrome is a **composer** at the bottom of the editor, on
 notes whose frontmatter says `type: conversation` and nowhere else. Type, press
 Enter, and the answer streams into the note while you watch.
 
+It is one box: the question on its own row, and the controls that qualify it —
+scope, pins, Redo, Ask — on the row beneath. The two used to share a line, which
+put the field in the middle of a row of chips and left Ask as a 40px square at
+the end of it: the control pressed most often was the smallest target, and the
+field was the thing that got squeezed whenever a scope rule ran long. Ask now
+takes whatever the chips leave, so the default action is also the widest one.
+
 **The scope is a rule in the note.** `source:` holds a Tag Folder rule — `#work`,
 `folder:Projects`, or `all` — re-read on every question, so the note is honest
 about what it could see, and you can change it by editing the frontmatter or
@@ -1905,7 +1912,7 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 
 ```bash
 npm test                # 902 unit + two-device sync tests
-node scripts/smoke.mjs  # 644 checks in headless Chromium against dist/
+node scripts/smoke.mjs  # 649 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

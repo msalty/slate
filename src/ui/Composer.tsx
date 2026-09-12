@@ -368,6 +368,15 @@ export function Composer({ getView, text, path }: ComposerProps) {
 
   sendRef.current = send
 
+  /*
+   * Pins count against the limit, so the line has to say so — the alternative
+   * is somebody pinning four notes against a limit of four and never working
+   * out why the search stopped mattering.
+   */
+  const footnote = pins.length
+    ? `Up to ${limit} ${limit === 1 ? 'note' : 'notes'} a question — ${pins.length} pinned, the rest from ${sourceDescription(source)}.`
+    : `Up to ${limit} ${limit === 1 ? 'note' : 'notes'} from ${sourceDescription(source)}, cited in the answer.`
+
   return (
     <div class="composer">
       {error && (
@@ -379,54 +388,22 @@ export function Composer({ getView, text, path }: ComposerProps) {
         </div>
       )}
 
-      <div class="composer-row">
-        <button
-          class="composer-scope"
-          onClick={pickScope}
-          disabled={running}
-          title="What these answers may be drawn from"
-        >
-          <span>{sourceLabel(source)}</span>
-          <IconChevron size={10} />
-        </button>
-
-        <button
-          class="composer-scope"
-          data-id="composer-pins"
-          onClick={pinMenu}
-          disabled={running}
-          title="Notes sent with every question, whatever it is"
-        >
-          <span>
-            {!pins.length
-              ? 'Pin a note'
-              : missingPins.length
-                ? `${pins.length} pinned, ${missingPins.length} missing`
-                : `${pins.length} pinned`}
-          </span>
-          <IconChevron size={10} />
-        </button>
-
-        {/*
-          * Only once there is an exchange to redo, which is also the only time
-          * it would mean anything — a conversation with no turns has no terms
-          * to start from and no answer to replace.
-          */}
-        {hasTurn && (
-          <button
-            class="composer-scope composer-redo"
-            onClick={redo}
-            disabled={running}
-            title="Ask the last question again, searching for something else"
-          >
-            Redo
-          </button>
-        )}
-
+      {/*
+        * One box: the question on its own row, and the controls that qualify it
+        * on a row beneath. The two used to share a line, which put the field in
+        * the middle of a row of chips and left the send button as a 40px square
+        * at the end of it — so the thing you press most often was the smallest
+        * target, and the thing you type into was the one that got squeezed
+        * whenever a scope rule ran long.
+        *
+        * The border is on the box rather than the field, so the whole thing
+        * lights up as one control when the caret is in it.
+        */}
+      <div class="composer-box">
         <textarea
           ref={box}
           class="composer-input"
-          rows={1}
+          rows={2}
           placeholder={running ? '' : 'Ask about your notes…'}
           value={question}
           disabled={running}
@@ -435,8 +412,10 @@ export function Composer({ getView, text, path }: ComposerProps) {
             setQuestion(el.value)
             // Grow with the question, up to a point — a long one should be
             // readable before it is sent, and the note still needs the screen.
+            // CSS holds the floor, so a field emptied by a send does not
+            // collapse to one line and take the box down with it.
             el.style.height = 'auto'
-            el.style.height = `${Math.min(el.scrollHeight, 120)}px`
+            el.style.height = `${Math.min(el.scrollHeight, 160)}px`
           }}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -446,32 +425,81 @@ export function Composer({ getView, text, path }: ComposerProps) {
           }}
         />
 
-        {running ? (
-          <button class="btn composer-send" onClick={stop}>
-            Stop
-          </button>
-        ) : (
+        <div class="composer-controls">
           <button
-            class="btn btn-primary composer-send"
-            disabled={!question.trim()}
-            onClick={() => void send()}
-            title="Ask (Enter)"
+            class="composer-scope"
+            onClick={pickScope}
+            disabled={running}
+            title="What these answers may be drawn from"
           >
-            <IconSparkle size={15} />
+            <span>{sourceLabel(source)}</span>
+            <IconChevron size={10} />
           </button>
-        )}
+
+          <button
+            class="composer-scope"
+            data-id="composer-pins"
+            onClick={pinMenu}
+            disabled={running}
+            title="Notes sent with every question, whatever it is"
+          >
+            <span>
+              {!pins.length
+                ? 'Pin a note'
+                : missingPins.length
+                  ? `${pins.length} pinned, ${missingPins.length} missing`
+                  : `${pins.length} pinned`}
+            </span>
+            <IconChevron size={10} />
+          </button>
+
+          {/*
+            * Only once there is an exchange to redo, which is also the only time
+            * it would mean anything — a conversation with no turns has no terms
+            * to start from and no answer to replace.
+            */}
+          {hasTurn && (
+            <button
+              class="composer-scope composer-redo"
+              onClick={redo}
+              disabled={running}
+              title="Ask the last question again, searching for something else"
+            >
+              Redo
+            </button>
+          )}
+
+          {/*
+            * Takes whatever the chips leave, so it is the widest thing in the
+            * row and reads as the default action — which it is, since Enter
+            * does the same thing.
+            */}
+          {running ? (
+            <button class="btn composer-send" onClick={stop}>
+              Stop
+            </button>
+          ) : (
+            <button
+              class="btn btn-primary composer-send"
+              disabled={!question.trim()}
+              onClick={() => void send()}
+              title="Ask (Enter)"
+            >
+              <IconSparkle size={15} />
+              <span>Ask</span>
+            </button>
+          )}
+        </div>
       </div>
 
-      <div class="composer-foot">
-        {status ??
-          (pins.length
-            ? /*
-               * Pins count against the limit, so the line has to say so — the
-               * alternative is somebody pinning four notes against a limit of
-               * four and never working out why the search stopped mattering.
-               */
-              `Up to ${limit} ${limit === 1 ? 'note' : 'notes'} a question, starting with the ${pins.length} pinned; the rest from ${sourceDescription(source)}.`
-            : `Answers are drawn from up to ${limit} ${limit === 1 ? 'note' : 'notes'} in ${sourceDescription(source)}, and cite what they used.`)}
+      {/*
+        * One line, and the title carries the whole of it: the status replaces
+        * the standing explanation rather than pushing the note up a row every
+        * time a turn starts, and a rule naming a long note title would
+        * otherwise decide how tall the composer is.
+        */}
+      <div class="composer-foot" title={footnote}>
+        {status ?? footnote}
       </div>
     </div>
   )
