@@ -867,6 +867,115 @@ try {
     await page.keyboard.press('Escape')
     await page.waitForTimeout(300)
 
+    /* ---- the two clickable ways in ---------------------------------------
+     * Both features were reachable only from the command palette, which is to
+     * say reachable only by people who already knew they existed. These are the
+     * affordances that fix that, so they are checked as affordances: present,
+     * in the right state, and actually doing the thing.
+     */
+    /*
+     * The header button, which is the one that matters: the formatting bar
+     * only exists in rich text, and rich text is not the default mode, so a
+     * button that lived only there would be invisible to most people — which is
+     * the same failure as living only in the palette.
+     */
+    const headBtn = page.locator('.editor-pane .icon-btn[aria-label^="Change the selected passage"]')
+    check('the note header carries a button for it', (await headBtn.count()) === 1)
+
+    await page.locator('.cm-line').first().click()
+    await page.keyboard.press('Control+a')
+    await page.waitForTimeout(250)
+    await headBtn.click()
+    const headOpened = await page
+      .waitForSelector('.transform-presets', { timeout: 5000 })
+      .then(() => true)
+      .catch(() => false)
+    check('pressing it opens the rewrite dialog', headOpened)
+    await page.keyboard.press('Escape')
+    await page.locator('.transform-presets').waitFor({ state: 'detached', timeout: 5000 })
+    await page.waitForTimeout(200)
+
+    /* And the same control on the bar, in the mode that has one. */
+    await page.click('.pane-head .icon-btn[title^="Settings"]')
+    await page.waitForSelector('.dialog')
+    await page.click('.tab:has-text("Editor")')
+    await page.waitForTimeout(250)
+    await page.locator('.dialog label.field:has(span:text-is("Default mode")) select').selectOption('rich')
+    await page.click('.dialog-foot .btn-primary')
+    await page.waitForTimeout(400)
+    const aiBtn = page.locator('.fmt-bar [data-id="transform"]')
+    check('the formatting bar carries it too, in rich text', (await aiBtn.count()) === 1)
+    await page.locator('.cm-line').first().click()
+    await page.waitForTimeout(250)
+    check('greyed out with nothing selected', await aiBtn.isDisabled())
+    await page.keyboard.press('Control+a')
+    await page.waitForTimeout(250)
+    check('and live once something is', !(await aiBtn.isDisabled()))
+    await page.click('.pane-head .icon-btn[title^="Settings"]')
+    await page.waitForSelector('.dialog')
+    await page.click('.tab:has-text("Editor")')
+    await page.waitForTimeout(250)
+    await page.locator('.dialog label.field:has(span:text-is("Default mode")) select').selectOption('live')
+    await page.click('.dialog-foot .btn-primary')
+    await page.waitForTimeout(400)
+
+    await page.locator('.pane.list-pane .icon-btn[aria-label="List actions"]').click()
+    await page.waitForTimeout(300)
+    const listMenuText = await page.locator('.menu, .sheet').first().innerText()
+    check('the list has a ⋯ menu on a desktop too', /Summarise these/.test(listMenuText), listMenuText.replace(/\n/g, ' · '))
+    check('which also offers the palette, named and with its key', /All commands/.test(listMenuText))
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(300)
+
+    /* ---- one key, one meaning -------------------------------------------
+     * ⌘K opens the palette even with the caret in a note, and the wikilink it
+     * displaced answers ⌘⇧K. The second is not a formality: CodeMirror resolves
+     * a shifted letter by trying the unshifted binding first, so ⌘⇧K only works
+     * at all *because* ⌘K is no longer bound in the editor.
+     */
+    await page.locator('.cm-line').first().click()
+    await page.keyboard.press('Control+End')
+    await page.keyboard.press('Control+k')
+    const paletteFromEditor = await page
+      .waitForSelector('.palette input', { timeout: 2500 })
+      .then(() => true)
+      .catch(() => false)
+    check('⌘K opens the palette from inside the editor', paletteFromEditor)
+    // The palette closes from its own input's handler, so the key has to go
+    // there rather than to whatever the page happens to have focused.
+    await page.locator('.palette input').press('Escape')
+    await page.locator('.palette').waitFor({ state: 'detached', timeout: 5000 })
+
+    await page.locator('.cm-line').first().click()
+    await page.keyboard.press('Control+End')
+    const beforeWiki = await page.locator('.cm-content').innerText()
+    await page.keyboard.type('\nPacking List\n')
+    await page.waitForTimeout(300)
+    await page.keyboard.press('ArrowUp')
+    await page.keyboard.press('Home')
+    await page.keyboard.press('Shift+End')
+    await page.keyboard.press('Control+Shift+k')
+    await page.waitForTimeout(400)
+    const wikified = await page.locator('.cm-content').innerText()
+    check('⌘⇧K still wraps a selection in a wikilink', wikified.includes('[[Packing List]]'))
+    check(
+      'and it really is the wikilink, not the palette',
+      (await page.locator('.palette').count()) === 0,
+    )
+    /*
+     * Put the note back exactly as it was. Undo, but counted against the text
+     * rather than against a guess at how many transactions that took —
+     * CodeMirror groups typing by time, so "press ⌘Z twice" is right until the
+     * machine is slow and then silently leaves a line behind for every later
+     * check in this file to trip over.
+     */
+    for (let i = 0; i < 10; i++) {
+      if ((await page.locator('.cm-content').innerText()) === beforeWiki) break
+      await page.keyboard.press('Control+z')
+      await page.waitForTimeout(120)
+    }
+    check('the note is back as it was afterwards', (await page.locator('.cm-content').innerText()) === beforeWiki)
+
     /* ---- summarising the list -------------------------------------------
      * Acts on whatever the note list is showing, and says what would leave the
      * device before any of it does.
@@ -886,11 +995,13 @@ try {
         ? 'Merged overview.\n\n**Themes**\n\n- Everything, at once'
         : 'An overview.\n\n**Themes**\n\n- Something recurring'
 
-    // ⌘K is deliberately ignored while the caret is in the editor, and the
-    // caret is exactly where the rewrite just left it — so step out first, the
-    // way a person reaching for the palette does.
-    await page.locator('.pane.list-pane .pane-title').click()
-    await page.waitForTimeout(200)
+    /*
+     * Straight from the editor, where the caret still is after the rewrite.
+     * This used to need a click somewhere else first, because ⌘K was the
+     * wikilink while writing and only opened the palette elsewhere — which is
+     * exactly the confusion that got it changed, and is why this is checked
+     * from here rather than from a convenient blank spot.
+     */
     // Let the note saves settle before opening it: the palette's input is a
     // controlled one, and a `fill` that lands in the same tick as a re-render
     // driven by a save is silently dropped. Typed key by key, then checked,

@@ -494,6 +494,15 @@ export interface FormatSnapshot {
   canOutdent: boolean
   /** True when the caret sits in a link — the Link button then edits it. */
   link: boolean
+  /**
+   * Whether anything is actually selected.
+   *
+   * Every other field here describes the line or the caret, and works the same
+   * with a selection or without one. This exists for the controls that need a
+   * *range* rather than a position — rewriting a passage is the first — so they
+   * can be greyed out rather than pressed and then complaining.
+   */
+  hasSelection: boolean
   /** Where in a table the caret is, so the table controls know what to act on. */
   table: { row: number; col: number; rows: number; cols: number; align: Align } | null
 }
@@ -515,6 +524,7 @@ export const EMPTY_SNAPSHOT: FormatSnapshot = {
   marks: NO_MARKS,
   canIndent: false,
   canOutdent: false,
+  hasSelection: false,
   link: false,
   table: null,
 }
@@ -542,6 +552,7 @@ export function inspect(state: EditorState): FormatSnapshot {
     canIndent: canIndent(state, 1),
     canOutdent: canIndent(state, -1),
     link: !!(linkAt(state, head.head) ?? bareUriAt(state, head.head)),
+    hasSelection: !head.empty,
     table: t
       ? {
           row: t.row,

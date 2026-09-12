@@ -113,13 +113,27 @@ const formattingKeymap = [
   { key: 'Mod-Shift-x', run: applyInline('strike') },
   { key: 'Mod-Shift-h', run: applyInline('highlight') },
   { key: 'Mod-e', run: applyInline('code') },
-  { key: 'Mod-k', run: makeWikiLink },
   /*
-   * The other kind of link: one that leaves the vault.
+   * A wikilink is ⌘⇧K, and ⌘K belongs to the command palette.
    *
-   * Not ⌘⇧K, however natural that looks beside ⌘K. CodeMirror resolves a
-   * shifted letter by trying the unshifted binding first, so ⌘K's wikilink
-   * would answer the shifted press and this would never run.
+   * It used to be the other way round, which made ⌘K mean two different things
+   * depending on where the caret was — a wikilink while writing, the palette
+   * anywhere else. That is the worst kind of shortcut: it always does
+   * *something*, so there is nothing to notice and correct, and the palette was
+   * unreachable from the one place people spend their time. One key, one
+   * meaning; `[[` still opens the same completion for anyone who never learns
+   * this.
+   *
+   * ⌘⇧K is only available *because* ⌘K is now unbound here. CodeMirror resolves
+   * a shifted letter by trying the unshifted binding first, so while ⌘K carried
+   * the wikilink it also answered the shifted press and nothing on ⌘⇧K could
+   * ever run — which is why the external-link binding below is ⌘⇧L.
+   */
+  { key: 'Mod-Shift-k', run: makeWikiLink },
+  /*
+   * The other kind of link: one that leaves the vault. ⌘⇧L rather than anything
+   * on K, both because it reads as "link" and because it predates the swap
+   * above; moving it now would cost more than the tidiness is worth.
    */
   {
     key: 'Mod-Shift-l',

@@ -19,7 +19,7 @@ npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
 npm test               # 809 unit and two-device sync tests
-node scripts/smoke.mjs # 575-check browser smoke test against dist/
+node scripts/smoke.mjs # 586-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -931,11 +931,15 @@ app at all.
 Three things, and one rule they all keep: **you start it, and you see the result
 before anything is written.**
 
-| | Where | What leaves the device |
+| | Where to find it | What leaves the device |
 | --- | --- | --- |
-| **Transcribe** | the image viewer | one picture |
-| **Change this passage** | ⌘⇧U in a note | the text you selected |
-| **Summarise these notes** | the command palette | the notes in the list, after you confirm the count |
+| **Transcribe** | the ⧉ button in the image viewer | one picture |
+| **Change this passage** | the ✦ in the note's header, or on the formatting bar — or ⌘⇧U | the text you selected |
+| **Summarise these notes** | the **⋯** above the note list | the notes in the list, after you confirm the count |
+
+All three are in the command palette too (**⌘K**), but none of them is *only*
+there — a feature you can reach only by knowing its name is one most people
+never find.
 
 ### Reading the text out of a picture
 
@@ -954,7 +958,9 @@ version-history snapshot and is undone from the same dialog — and a note with
 
 ### Changing a passage
 
-Select something and press **⌘⇧U**. Five presets — *Tighten*, *Proofread*,
+Select something, then press the **✦** in the note's header — or **⌘⇧U**. (It is
+on the formatting bar too, where rich text has one; the header is where it lives
+in every mode.) Five presets — *Tighten*, *Proofread*,
 *Make a table*, *Make a list*, *Make tasks* — or type what you want done to it.
 The answer streams in as it is written, because a local model can take a minute
 on a paragraph and a dialog that shows nothing for a minute is one you close.
@@ -986,8 +992,8 @@ with a message rather than pasted over the wrong paragraph.
 ### Summarising a set of notes
 
 **The list is the query.** Rather than a button on tags, another on Tag Folders
-and a third on folders, *Summarise these notes* in the command palette acts on
-whatever the note list is showing — a tag, a saved rule, a folder, a search, a
+and a third on folders, *Summarise these notes* — in the **⋯** menu above the
+note list — acts on whatever that list is showing — a tag, a saved rule, a folder, a search, a
 day on the calendar. Whatever you narrowed it to is what gets summarised.
 
 Nothing is sent until you have seen the size of it: the dialog opens on how many
@@ -1192,7 +1198,7 @@ bar above the list carries an **Edit** next to the **Close**.
 
 | | |
 |---|---|
-| ⌘K | Command palette / jump to note |
+| ⌘K | Command palette / jump to note — from anywhere, the editor included |
 | ⌘N | New note |
 | ⌘S | Sync now |
 | ⌘F | Find in note |
@@ -1204,8 +1210,9 @@ bar above the list carries an **Edit** next to the **Close**.
 | ⌘B / ⌘I / ⌘U | Bold / italic / underline |
 | ⌘⇧X / ⌘⇧H / ⌘E | Strikethrough / highlight / monospace |
 | ⌘⌥1 / ⌘⌥2 / ⌘⌥3 / ⌘⌥0 | Title / Heading / Subheading / Body |
-| ⌘K *(with a selection)* | Wrap in a wikilink |
+| ⌘⇧K *(with a selection)* | Wrap in a wikilink |
 | ⌘⇧L | Add or edit an external link |
+| ⌘⇧U *(with a selection)* | Change this passage with a model |
 | ⌘⇧7 / ⌘⇧8 / ⌘⇧0 | Checklist / bullets / numbers |
 | ⌘⌥D *(on a task line)* | Set a due date |
 | ⌘⇧9 | Block quote |
@@ -1721,7 +1728,7 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 
 ```bash
 npm test                # 809 unit + two-device sync tests
-node scripts/smoke.mjs  # 575 checks in headless Chromium against dist/
+node scripts/smoke.mjs  # 586 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

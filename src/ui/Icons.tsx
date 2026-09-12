@@ -136,6 +136,14 @@ export const IconImage = (p: P) => (
   </Svg>
 )
 
+/** A four-pointed star: something a model did, rather than something you typed. */
+export const IconSparkle = (p: P) => (
+  <Svg {...p}>
+    <path d="M12 3.5c0 3.6 1.9 5.5 5.5 5.5-3.6 0-5.5 1.9-5.5 5.5 0-3.6-1.9-5.5-5.5-5.5 3.6 0 5.5-1.9 5.5-5.5Z" />
+    <path d="M17.5 14.5c0 1.9 1 2.9 2.9 2.9-1.9 0-2.9 1-2.9 2.9 0-1.9-1-2.9-2.9-2.9 1.9 0 2.9-1 2.9-2.9Z" />
+  </Svg>
+)
+
 /** Lines of text inside a frame's corners: reading words out of a picture. */
 export const IconTextScan = (p: P) => (
   <Svg {...p}>

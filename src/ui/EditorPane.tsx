@@ -27,6 +27,7 @@ import {
   trashTitle,
 } from '../core/vault'
 import { activeEditor } from '../editor/context'
+import { canTransform, openTransform } from './TransformDialog'
 import { focusedCell } from '../editor/table'
 import { rebaseBuffer } from '../core/rebase'
 import { settings, update } from '../core/settings'
@@ -71,6 +72,7 @@ import {
   IconEye,
   IconHistory,
   IconImagePlus,
+  IconSparkle,
   IconLock,
   IconMaximize,
   IconMinimize,
@@ -678,6 +680,33 @@ export function EditorPane() {
             aria-label="Insert photo or file"
           >
             <IconImagePlus />
+          </button>
+        )}
+        {/*
+          * Here as well as on the formatting bar, because the bar is rich
+          * text's alone — and rich text is not the default. A control that only
+          * appears in a mode you have to go and choose is a control most people
+          * never meet, which was the whole problem with putting this in the
+          * command palette and nowhere else.
+          *
+          * Not greyed out without a selection, unlike its twin on the bar. The
+          * bar is a row of selection-sensitive controls and greying is what the
+          * rest of them do; a lone header icon that is dim almost all the time
+          * reads as broken, and pressing it says what to do instead.
+          */}
+        {!reading && !trashed && canTransform() && (
+          <button
+            class="icon-btn"
+            // The press is what moves focus out of the note, and this acts on
+            // what is selected there — so the default is cancelled and the
+            // editor keeps both its selection and its caret, the same way every
+            // button on the formatting bar does it.
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => openTransform()}
+            title="Change this passage (⌘⇧U)"
+            aria-label="Change the selected passage with a model"
+          >
+            <IconSparkle />
           </button>
         )}
         {trashed ? (

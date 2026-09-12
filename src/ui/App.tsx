@@ -231,7 +231,14 @@ export function App() {
       const k = e.key.toLowerCase()
 
       if (k === 'k' && !e.shiftKey) {
-        if ((e.target as HTMLElement)?.closest?.('.cm-editor')) return
+        /*
+         * From inside the editor too, which it did not used to be.
+         *
+         * ⌘K was the wikilink while writing and the palette everywhere else, so
+         * the one shortcut for reaching anything in the app was the one
+         * shortcut that did not work where people actually are. The wikilink
+         * moved to ⌘⇧K; this is now unconditional.
+         */
         e.preventDefault()
         paletteOpen.value = !paletteOpen.value
       } else if (k === 'n' && !e.shiftKey) {

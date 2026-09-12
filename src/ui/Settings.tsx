@@ -867,8 +867,9 @@ export function Settings() {
                   <div class="callout">
                     <strong>What this switches on.</strong> Three things, each of which you start
                     and each of which shows you the result before anything is written:{' '}
-                    <em>Transcribe</em> in the image viewer, <em>Change the selected passage</em>{' '}
-                    (⌘⇧U) in a note, and <em>Summarise these notes</em> in the command palette.
+                    <em>Transcribe</em> in the image viewer, <em>Change this passage</em> from the ✦
+                    in a note's header (⌘⇧U), and <em>Summarise these notes</em> in the ⋯ menu
+                    above the note list.
                     Nothing runs on its own and nothing is sent in the background — the only things
                     that ever leave this device are a picture you pressed the button on, a passage
                     you selected, or notes you confirmed by count.

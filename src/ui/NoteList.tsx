@@ -18,7 +18,10 @@ import {
 import { dailyNoteFor } from '../core/daily'
 import { excerptOf, setFrontmatterKey } from '../core/markdown'
 import { getRaw, saveNote } from '../core/vault'
-import type { NoteIndexEntry, VaultFile } from '../core/types'
+import type { AppSettings, NoteIndexEntry, VaultFile } from '../core/types'
+
+/** The three orders the list can take, named once for the menu below. */
+type SortBy = AppSettings['sortBy']
 import { basename, formatBytes, mediaClass, relativeTime, startOfDay, ymd } from '../core/util'
 import { familyName, fileFamily, fileIconSvg } from '../core/filetypes'
 import {
@@ -29,6 +32,7 @@ import {
   openDailyNote,
   openNote,
   orphansOnly,
+  paletteOpen,
   query,
   scope,
   queryTerms,
@@ -50,6 +54,7 @@ import {
   tasksForSmartFolder,
 } from '../core/folders'
 import { TasksPanel } from './RightRail'
+import { canSummarise, openSummary } from './SummaryDialog'
 import { openMenu, useLongPress, type MenuItem } from './Menu'
 import { SwipeRow, type SwipeAction } from './SwipeRow'
 import { Highlight } from './Highlight'
@@ -175,6 +180,54 @@ function openMoveMenu(entry: NoteIndexEntry) {
   )
 }
 
+/**
+ * The ⋯ menu on the list header: things that act on the list as a whole.
+ *
+ * Sort lives here on a phone only, where there is no room for the dropdown that
+ * sits beside this button on a desktop. Everything else is offered at every
+ * size, because the point of this menu is that the actions in it are *findable*
+ * — an action reachable only by knowing its name in a palette is an action most
+ * people never discover exists, which is the mistake this menu is fixing.
+ */
+function listMenu(compact: boolean): MenuItem[] {
+  const items: MenuItem[] = []
+
+  if (canSummarise()) {
+    const n = visibleNotes.value.length
+    items.push({
+      label:
+        n === 0 ? 'Summarise these notes…' : n === 1 ? 'Summarise this note…' : `Summarise these ${n} notes…`,
+      onSelect: openSummary,
+    })
+  }
+
+  items.push({
+    label: 'All commands… (⌘K)',
+    separated: items.length > 0,
+    onSelect: () => {
+      paletteOpen.value = true
+    },
+  })
+
+  if (compact) {
+    const sorts: Array<[SortBy, string]> = [
+      ['mtime', 'Sort by date edited'],
+      ['ctime', 'Sort by date created'],
+      ['title', 'Sort by title'],
+    ]
+    items.push(
+      ...sorts.map(([id, label], i) => ({
+        label,
+        separated: i === 0,
+        checked: settings.value.sortBy === id,
+        onSelect: () => update({ sortBy: id }),
+      })),
+    )
+  }
+
+  return items
+}
+
 /** Actions on a note row, shared by right-click and long-press. */
 function noteMenu(entry: NoteIndexEntry): MenuItem[] {
   const f = getRaw(entry.path)
@@ -295,25 +348,21 @@ export function NoteList({ children }: { children?: preact.ComponentChildren }) 
           {compact && !searching.value ? 'Notes' : title}
         </span>
         <span class="spacer" />
-        {compact && (
-          <button
-            class="icon-btn"
-            aria-label="Sort order"
-            onClick={(e) =>
-              openMenu(
-                e,
-                [
-                  { label: 'Sort by date edited', onSelect: () => update({ sortBy: 'mtime' }) },
-                  { label: 'Sort by date created', onSelect: () => update({ sortBy: 'ctime' }) },
-                  { label: 'Sort by title', onSelect: () => update({ sortBy: 'title' }) },
-                ],
-                'Sort',
-              )
-            }
-          >
-            <IconDots size={19} />
-          </button>
-        )}
+        {/*
+          * The ⋯ used to be the phone's alone, because sort was the only thing
+          * in it and a desktop has room for the dropdown beside it. It is here
+          * on every size now: things that act on *the list you are looking at*
+          * need somewhere to live, and a command palette is not that somewhere
+          * — it is where you go when you already know what a thing is called.
+          */}
+        <button
+          class="icon-btn"
+          aria-label="List actions"
+          title="More"
+          onClick={(e) => openMenu(e, listMenu(compact), compact ? 'Notes' : title)}
+        >
+          <IconDots size={19} />
+        </button>
         {!compact && (
         <select
           class="sort-select"
