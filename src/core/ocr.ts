@@ -23,6 +23,7 @@
  * calls to `adapters/llm.ts`.
  */
 
+import { unfence } from './llm'
 import { scanMdLinks, scanWikiLinks } from './markdown'
 
 /**
@@ -67,10 +68,7 @@ export const NO_TEXT = '(no text found)'
  * block, and stripping that would be stripping the content.
  */
 export function cleanTranscript(raw: string): string {
-  let text = raw.replace(/^﻿/, '').trim()
-  const fence = /^(`{3,}|~{3,})[^\n]*\n([\s\S]*?)\n?\1\s*$/.exec(text)
-  if (fence) text = fence[2].trim()
-  return text
+  return unfence(raw)
 }
 
 /** Did the model tell us the picture has nothing to read? */

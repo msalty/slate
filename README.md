@@ -18,8 +18,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 770 unit and two-device sync tests
-node scripts/smoke.mjs # 549-check browser smoke test against dist/
+npm test               # 809 unit and two-device sync tests
+node scripts/smoke.mjs # 575-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -921,13 +921,25 @@ files when not.
 
 ---
 
-## Reading the text out of a picture
+## The optional model
 
-Optional, off, and the only thing in Slate that sends anything anywhere other
+Off, optional, and the only thing in Slate that sends anything anywhere other
 than your own backend. With no provider configured in Settings → **AI**, none of
-this exists: no button, no request, nothing different about the app at all.
+this exists: no buttons, no commands, no requests, nothing different about the
+app at all.
 
-Configure one and the image viewer gains a **Transcribe** button. It sends that
+Three things, and one rule they all keep: **you start it, and you see the result
+before anything is written.**
+
+| | Where | What leaves the device |
+| --- | --- | --- |
+| **Transcribe** | the image viewer | one picture |
+| **Change this passage** | ⌘⇧U in a note | the text you selected |
+| **Summarise these notes** | the command palette | the notes in the list, after you confirm the count |
+
+### Reading the text out of a picture
+
+The image viewer gains a **Transcribe** button. It sends that
 one picture — a receipt, a whiteboard, a page of a book, a screenshot of an
 error nobody can copy out of — and shows you what came back **in a box you can
 edit, before anything is written**. *Insert* puts it in the note under the
@@ -940,6 +952,67 @@ The write goes through the same path as every other edit, so it takes a
 version-history snapshot and is undone from the same dialog — and a note with
 `lock: true` refuses it, the same as it refuses quick capture.
 
+### Changing a passage
+
+Select something and press **⌘⇧U**. Five presets — *Tighten*, *Proofread*,
+*Make a table*, *Make a list*, *Make tasks* — or type what you want done to it.
+The answer streams in as it is written, because a local model can take a minute
+on a paragraph and a dialog that shows nothing for a minute is one you close.
+
+**What comes back is shown as a diff, never on its own.** A rewrite that is good
+and a rewrite that quietly dropped your third sentence read identically in
+isolation; the only way to tell them apart is against what was there. Removed
+lines and added lines are marked with `−` and `+` as well as coloured, so the
+distinction survives a greyscale screenshot. *Replace the passage* applies
+exactly what the diff shows and nothing else — one undo puts it back. *Discard*
+writes nothing.
+
+Two replies are reported rather than offered: an empty one, because "delete this
+paragraph" is not an edit worth a button, and one identical to what you sent,
+which is a proofread finding nothing — a result, and a good one, but not a
+change.
+
+The passage goes as *material*, in its own message, never spliced into the
+instruction. A note that happens to contain the words "ignore the above" is then
+text that says something odd rather than a competing command. That is not
+prompt-injection-proof — nothing is — but it is the difference between text that
+must be misread as an instruction and text sitting in the instruction slot.
+
+If a sync lands while the dialog is open, the note underneath it changes and the
+offsets stop meaning what they meant. So the text at the range is checked
+against what was sent before anything is written, and the rewrite is refused
+with a message rather than pasted over the wrong paragraph.
+
+### Summarising a set of notes
+
+**The list is the query.** Rather than a button on tags, another on Tag Folders
+and a third on folders, *Summarise these notes* in the command palette acts on
+whatever the note list is showing — a tag, a saved rule, a folder, a search, a
+day on the calendar. Whatever you narrowed it to is what gets summarised.
+
+Nothing is sent until you have seen the size of it: the dialog opens on how many
+notes, roughly how many tokens, how many requests, and which model at which
+provider. Then a button that has to be pressed.
+
+**A set too big for one request is summarised in passes, not truncated.** A tag
+with two hundred notes is exactly the tag worth summarising, and quietly sending
+the first thirty would produce a summary that reads as complete and is not —
+which is the worst of the available behaviours. So it goes in batches that fit
+your **context budget**, and a final pass merges them. Past twenty passes it
+refuses and says so, because a summary distilled from that many is thinner than
+one of a set you actually meant. Empty notes are left out and counted; a single
+note too long for one request is cut rather than dropped, and the dialog says
+that too. Frontmatter never goes — the block at the top is metadata for the app
+and the likeliest place for something you would not have chosen to send.
+
+The result is **a new note**, not a panel: it syncs, it versions, you can edit
+it, and deleting it is the same keystroke as deleting anything else. Its
+frontmatter says what made it — `generated: true`, the model, the query, the
+date, how many notes — so it can never be mistaken for something you wrote. The
+summary cites notes as `[[wikilinks]]`, so it is navigable; a model that invents
+a title produces a broken link, which shows up as a broken link rather than
+passing unnoticed.
+
 ### Setting it up
 
 | Provider | Address |
@@ -951,9 +1024,20 @@ version-history snapshot and is undone from the same dialog — and a note with
 | **Custom** | anything OpenAI-compatible — vLLM, OpenRouter, your own gateway |
 
 Pick one, press **Test connection** — it lists what the server can run, which is
-also how the model field gets filled in — and choose a model **that can see**. A
-text-only model will take the picture, ignore it, and answer about nothing; the
-list cannot tell you which is which, so this is the one part you have to know.
+also how the model fields get filled in — and choose a **vision model**, one that
+can see. A text-only model will take the picture, ignore it, and answer about
+nothing; the list cannot tell you which is which, so this is the one part you
+have to know.
+
+**Text model** is optional and defaults to the vision one. Set it when the two
+jobs want different models — the slow expensive one that reads pictures, the
+fast cheap one that rewrites a paragraph or summarises thirty notes.
+
+**Context budget** is how much the model can read at once, in tokens. There is
+no defensible default: a local 8B model is often 8k and a hosted one 128k or
+more, and the number decides whether summarising thirty notes is one request or
+six. Guessing high gets a refusal from the server; guessing low only makes more
+passes than it needed, so the default (16k) errs low.
 
 **All four of these are per device** — provider, address, key and model alike.
 They live in this browser's local database, beside the WebDAV password and for
@@ -996,11 +1080,17 @@ origin already filled in.
 
 ### What it does not do
 
-One picture, one request, started by you. Nothing runs in the background,
-nothing is indexed, no note is read by any of it, and no note's text is ever
-sent — the only thing that leaves the device is the image you pressed the button
-on, re-encoded to JPEG or PNG first because plenty of servers decode nothing
-else. The dialog says how many bytes went, every time.
+Nothing runs in the background, nothing is indexed, nothing is sent on a timer,
+and no note is read by any of it that you did not point at. Every request is one
+you started, and the three of them between them send a picture you pressed a
+button on, a passage you selected, or notes you confirmed by count — and each
+says what went.
+
+A picture is re-encoded to JPEG or PNG on the way out. Most providers take WebP
+quite happily; plenty of OpenAI-compatible servers — llama.cpp's among them —
+decode only these two, and a refusal there is indistinguishable from every other
+refusal. The same pass caps it at 1568px, which is where vision models resample
+to anyway, so it costs one canvas operation and saves tokens.
 
 ---
 
@@ -1447,7 +1537,8 @@ src/
 │  ├─ vault.ts        in-memory source of truth, derived indexes
 │  ├─ db.ts           IndexedDB: cache, journal, version history
 │  ├─ sync.ts         the reconcile engine
-│  ├─ merge.ts        three-way merge (diff3)
+│  ├─ merge.ts        three-way merge (diff3), and the two-way diff a rewrite
+│  │                  is shown as
 │  ├─ rebase.ts       folding a synced change into the buffer being typed in
 │  ├─ markdown.ts     frontmatter, links, tags, tasks, due dates
 │  ├─ properties.ts   the same frontmatter as an ordered, editable list
@@ -1469,6 +1560,10 @@ src/
 │  │                  mostly — why a browser could not reach it
 │  ├─ ocr.ts         the transcription prompt, and where the text it produces
 │  │                  lands in the note
+│  ├─ transform.ts   rewriting a selection: what is asked, and the check that
+│  │                  the range is still the range it was made from
+│  ├─ summary.ts     how many passes a set of notes takes, what goes in each,
+│  │                  and the frontmatter that says what made the result
 │  └─ settings.ts     device-local vs vault-wide preferences
 ├─ adapters/      webdav.ts · gdrive.ts · llm.ts · memory.ts (tests)
 ├─ editor/        CodeMirror 6: live preview, widgets, completion, paste
@@ -1586,13 +1681,20 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
   "add this to the note I am reading". A note that is open is the one place the
   editor is already better at.
 
-- **Transcription is one picture at a time, and cannot tell you whether your
-  model can see.** There is no "transcribe every image in this note", and the
-  model list a server returns says nothing about which of its entries handle
-  images — so picking a text-only one gets you a confident answer about nothing,
-  and the only symptom is that the answer is wrong. Guessing from the model's
-  name would be wrong often enough to be worse than saying nothing. The failure
-  when a model returns empty does at least name the likely cause.
+- **Nothing tells you whether your model can see.** The model list a server
+  returns says nothing about which of its entries handle images, so picking a
+  text-only one gets you a confident answer about nothing, and the only symptom
+  is that the answer is wrong. Guessing from the model's name would be wrong
+  often enough to be worse than saying nothing. The failure when a model returns
+  empty does at least name the likely cause.
+- **Transcription is one picture at a time.** There is no "transcribe every
+  image in this note", and no alt text — a `![[wikilink]]` embed has nowhere to
+  put any, since the pipe already means width.
+- **A summary is of the notes, not of the vault.** It reads what is in the list,
+  so what it covers is exactly what you narrowed to and nothing else — there is
+  no "and anything related". The token figure is an estimate from character
+  count rather than a real tokeniser: near enough to decide how many passes to
+  make, not a billing forecast.
 - **No encryption at rest.** Notes are plain files on your server. Per-file
   encryption before upload would fit cleanly behind the adapter interface.
 - **iOS PWA storage can be evicted** after ~7 days of not opening the app, which
@@ -1618,8 +1720,8 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 770 unit + two-device sync tests
-node scripts/smoke.mjs  # 549 checks in headless Chromium against dist/
+npm test                # 809 unit + two-device sync tests
+node scripts/smoke.mjs  # 575 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

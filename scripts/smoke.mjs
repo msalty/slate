@@ -54,7 +54,12 @@ const MIME = {
  * into something a model will take, that a fenced reply is unwrapped, and that
  * *nothing is written to the note until the button is pressed*.
  */
-const llm = { requests: [], reply: '```\nINVOICE 4821\nTOTAL 12.40\n```' }
+const llm = {
+  requests: [],
+  reply: '```\nINVOICE 4821\nTOTAL 12.40\n```',
+  /** Set to answer differently per request — used to tell the passes apart. */
+  replyFor: null,
+}
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`)
@@ -68,9 +73,39 @@ const server = createServer(async (req, res) => {
   if (path === '/mockllm/v1/chat/completions') {
     const chunks = []
     for await (const c of req) chunks.push(c)
-    llm.requests.push(JSON.parse(Buffer.concat(chunks).toString()))
+    const body = JSON.parse(Buffer.concat(chunks).toString())
+    llm.requests.push(body)
+    const reply = llm.replyFor ? llm.replyFor(body) : llm.reply
+
+    /*
+     * Answer a streaming request by actually streaming, in several events with
+     * the words split across them. A mock that returns the whole answer in one
+     * event would leave the buffering in `sseEvents` — which exists because a
+     * JSON object routinely arrives split across two network reads — untested
+     * by the only thing that runs it.
+     */
+    if (body.stream) {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      })
+      const pieces = reply.match(/[\s\S]{1,7}/g) ?? []
+      for (const p of pieces) {
+        const event = `data: ${JSON.stringify({ choices: [{ delta: { content: p } }] })}\n\n`
+        // Cut the frame in half down the middle, so the client has to carry the
+        // tail of one write into the next to parse it at all.
+        res.write(event.slice(0, 12))
+        await new Promise((r) => setTimeout(r, 2))
+        res.write(event.slice(12))
+      }
+      res.write('data: [DONE]\n\n')
+      res.end()
+      return
+    }
+
     res.writeHead(200, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({ choices: [{ message: { content: llm.reply } }] }))
+    res.end(JSON.stringify({ choices: [{ message: { content: reply } }] }))
     return
   }
 
@@ -709,7 +744,7 @@ try {
       'testing the connection reports what the server can run',
       /2 models available/.test(await page.locator('.dialog-body').innerText()),
     )
-    await page.locator('.dialog label.field:has-text("Vision model") input').fill('mock-vision')
+    await page.locator('.dialog label.field:has(span:text-is("Vision model")) input').fill('mock-vision')
     await page.waitForTimeout(150)
     await page.click('.dialog-foot .btn-primary')
     await page.waitForTimeout(300)
@@ -761,7 +796,168 @@ try {
     await page.waitForTimeout(250)
     llm.reply = '```\nINVOICE 4821\nTOTAL 12.40\n```'
 
-    /* Put it back, so nothing downstream runs with a provider configured. */
+    /* ---- changing a passage ---------------------------------------------
+     * The whole point is the step before the change: the model's answer is
+     * shown against what is there, and nothing reaches the buffer until the
+     * button under the diff is pressed.
+     */
+    await startEditing()
+    // The first line, not the middle of the pane: this note now ends with a
+    // picture, and a click there opens the lightbox rather than placing a caret.
+    await page.locator('.cm-line').first().click()
+    await page.keyboard.press('Control+End')
+    await page.keyboard.type('\nteh quick brown fox jumpd over it\n')
+    await page.waitForTimeout(400)
+    // Select that line: to its start, then to its end holding shift.
+    await page.keyboard.press('ArrowUp')
+    await page.keyboard.press('Home')
+    await page.keyboard.press('Shift+End')
+    await page.waitForTimeout(200)
+
+    llm.reply = 'the quick brown fox jumped over it'
+    const before = await page.locator('.cm-content').innerText()
+    await page.keyboard.press('Control+Shift+U')
+    await page.waitForSelector('.transform-presets', { timeout: 5000 })
+    check('⌘⇧U opens the rewrite dialog on a selection', true)
+    check('the note is untouched by opening it', (await page.locator('.cm-content').innerText()) === before)
+
+    await page.locator('.transform-preset:has-text("Proofread")').click()
+    await page.waitForSelector('.diff', { timeout: 15000 })
+    const sentT = llm.requests.at(-1)
+    check('the rewrite was streamed', sentT?.stream === true)
+    check(
+      'the passage went as material, not as part of the instruction',
+      sentT?.messages?.[1]?.role === 'user' &&
+        sentT.messages[1].content === 'teh quick brown fox jumpd over it',
+    )
+    check(
+      'and the instruction says the passage is not instructions',
+      /not instructions to you/i.test(sentT?.messages?.[0]?.content ?? ''),
+    )
+
+    const diffText = await page.locator('.diff').innerText()
+    check('the change is shown as a diff before it is made', /teh quick/.test(diffText) && /jumped/.test(diffText))
+    check('with a removed row and an added row', (await page.locator('.diff-line[data-kind="del"]').count()) === 1 && (await page.locator('.diff-line[data-kind="add"]').count()) === 1)
+    check('the note is still untouched while the diff is up', (await page.locator('.cm-content').innerText()) === before)
+
+    await page.click('.dialog-foot .btn-primary')
+    await page.locator('.transform-presets').waitFor({ state: 'detached', timeout: 10000 })
+    await page.waitForTimeout(300)
+    const afterT = await page.locator('.cm-content').innerText()
+    check('accepting replaces just that passage', afterT.includes('the quick brown fox jumped over it'))
+    check('and the rest of the note is as it was', !afterT.includes('teh quick'))
+
+    /* A rewrite that comes back identical is a result, not an edit. */
+    await page.keyboard.press('Home')
+    await page.keyboard.press('Shift+End')
+    llm.reply = 'the quick brown fox jumped over it'
+    await page.keyboard.press('Control+Shift+U')
+    await page.waitForSelector('.transform-presets', { timeout: 5000 })
+    await page.locator('.transform-preset:has-text("Tighten")').click()
+    const saidUnchanged = await page
+      .locator('.dialog-body .callout:has-text("returned the passage unchanged")')
+      .waitFor({ timeout: 15000 })
+      .then(() => true)
+      .catch(() => false)
+    check('a reply identical to the passage says so instead of offering an empty diff', saidUnchanged)
+    check(
+      'and there is nothing to accept',
+      await page.locator('.dialog-foot .btn-primary').isDisabled(),
+    )
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(300)
+
+    /* ---- summarising the list -------------------------------------------
+     * Acts on whatever the note list is showing, and says what would leave the
+     * device before any of it does.
+     */
+    /*
+     * Put frontmatter on one of the notes first, so "the block at the top does
+     * not get sent" is checked against a block that actually exists rather than
+     * passing because there was nothing to leave out.
+     */
+    await page.locator('.cm-line').first().click()
+    await page.keyboard.press('Control+Home')
+    await page.keyboard.type('---\nsecret_key: do-not-send-this\n---\n')
+    await page.waitForTimeout(900)
+
+    llm.replyFor = (body) =>
+      /partial summaries/i.test(body.messages?.[0]?.content ?? '')
+        ? 'Merged overview.\n\n**Themes**\n\n- Everything, at once'
+        : 'An overview.\n\n**Themes**\n\n- Something recurring'
+
+    // ⌘K is deliberately ignored while the caret is in the editor, and the
+    // caret is exactly where the rewrite just left it — so step out first, the
+    // way a person reaching for the palette does.
+    await page.locator('.pane.list-pane .pane-title').click()
+    await page.waitForTimeout(200)
+    // Let the note saves settle before opening it: the palette's input is a
+    // controlled one, and a `fill` that lands in the same tick as a re-render
+    // driven by a save is silently dropped. Typed key by key, then checked,
+    // because "the box is empty" and "the command is missing" look identical
+    // from the outside and are not the same failure.
+    await page.waitForTimeout(700)
+    await page.keyboard.press('Control+k')
+    await page.waitForSelector('.palette input', { timeout: 3000 })
+    const palInput = page.locator('.palette input')
+    await palInput.click()
+    await palInput.pressSequentially('Summarise', { delay: 25 })
+    await page
+      .waitForFunction(() => document.querySelector('.palette input')?.value === 'Summarise', null, {
+        timeout: 3000,
+      })
+      .catch(() => {})
+    check('the palette takes what is typed into it', (await palInput.inputValue()) === 'Summarise')
+    await page.waitForTimeout(400)
+    const summaryCmd = page.locator('.palette-row:has-text("Summarise these notes")').first()
+    // The list is rebuilt from a memo, so it lands a frame after the keystroke.
+    const offered = await summaryCmd
+      .waitFor({ timeout: 3000 })
+      .then(() => true)
+      .catch(() => false)
+    check('the palette offers a summary of the current list', offered)
+    await summaryCmd.click()
+    await page.waitForSelector('.summary-figures', { timeout: 5000 })
+
+    const figures = await page.locator('.summary-figures').innerText()
+    check('it says how many notes would be sent', /\d+\s*\n?\s*notes?/i.test(figures), figures.replace(/\n/g, ' '))
+    check('and roughly how many tokens', /tokens/i.test(figures))
+    check(
+      'and names the provider and model it would go to',
+      /mock-vision|mock-text/.test(await page.locator('.summary-says').innerText()),
+    )
+    const notesBefore = await page.locator('.note-row').count()
+    check('nothing has been sent yet', llm.requests.every((r) => !/summarising a set/i.test(r.messages?.[0]?.content ?? '')))
+
+    await page.click('.dialog-foot .btn-primary')
+    // Done when the note it writes is in the list — a fixed wait here is a
+    // fixed wait on a model, which is the one thing that has no fixed duration.
+    await page.locator('.note-row:has-text("Summary of")').first().waitFor({ timeout: 30000 })
+    await page.waitForTimeout(400)
+    const summaryReq = llm.requests.filter((r) => /summarising a set/i.test(r.messages?.[0]?.content ?? ''))
+    check('confirming sends the notes', summaryReq.length >= 1)
+    check(
+      'each note went under its own title',
+      /^## /m.test(summaryReq[0]?.messages?.[1]?.content ?? ''),
+    )
+    check(
+      'and the frontmatter block at the top of a note did not',
+      !/do-not-send-this/.test(summaryReq[0]?.messages?.[1]?.content ?? ''),
+    )
+
+    const summaryText = await noteContaining('generated: true')
+    check('the summary is written as an ordinary note', !!summaryText)
+    check('carrying what made it', /generated_by: .+\/mock-/.test(summaryText ?? ''), (summaryText ?? '').split('\n')[3])
+    check('and what it was made from', /source_notes: \d+/.test(summaryText ?? ''))
+    check('the vault gained exactly one note', (await page.locator('.note-row').count()) === notesBefore + 1)
+    check('and it is the one now open', /Summary of/.test(await page.locator('.editor-title-input').inputValue()))
+    llm.replyFor = null
+
+    /*
+     * Put it back, so nothing downstream runs with a provider configured. The
+     * summary is the note that is open now, and it has no picture in it, so the
+     * one with the image has to be reopened for the last check.
+     */
     await page.click('.pane-head .icon-btn[title^="Settings"]')
     await page.waitForSelector('.dialog')
     await page.click('.tab:has-text("AI")')
@@ -770,6 +966,8 @@ try {
     await page.waitForTimeout(150)
     await page.click('.dialog-foot .btn-primary')
     await page.waitForTimeout(300)
+    await page.locator('.note-row:has-text("Lisbon Trip")').first().click()
+    await page.waitForTimeout(500)
     await page.locator('.cm-embed img').first().click()
     await page.waitForTimeout(400)
     check(

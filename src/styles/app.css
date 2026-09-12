@@ -2251,6 +2251,123 @@ button.property-kind:hover {
   color: var(--text-faint);
 }
 
+/* ---- transform: presets, the stream, and the diff ---------------------- */
+
+.transform-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+.transform-preset[aria-pressed='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/*
+ * The half-written answer. Monospaced and dimmed because it is not the thing
+ * being decided on — the diff underneath is — and a stream styled like the
+ * result invites reading it as one.
+ */
+.transform-stream {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  max-height: 30vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-muted);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+/*
+ * The diff. Colour carries the meaning but never alone: every row also has a
+ * +/− in its own column, so it reads the same to somebody who cannot tell the
+ * two tints apart, and survives being printed or screenshotted in greyscale.
+ */
+.diff {
+  margin-top: 14px;
+  max-height: 42vh;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.diff-line {
+  display: flex;
+  gap: 8px;
+  padding: 1px 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.diff-mark {
+  flex: none;
+  width: 1ch;
+  color: var(--text-faint);
+  user-select: none;
+}
+.diff-text {
+  flex: 1;
+  min-width: 0;
+}
+.diff-line[data-kind='del'] {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+.diff-line[data-kind='del'] .diff-mark {
+  color: var(--danger);
+}
+.diff-line[data-kind='add'] {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+.diff-line[data-kind='add'] .diff-mark {
+  color: var(--accent);
+}
+.diff-line[data-kind='same'] {
+  color: var(--text-muted);
+}
+
+/* ---- summary: what is about to be sent --------------------------------- */
+
+.summary-figures {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.summary-figure {
+  flex: 1 1 120px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+.summary-figure-n {
+  display: block;
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.1;
+}
+.summary-figure-label {
+  display: block;
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+.summary-says {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--text-muted);
+}
+
 /* ---- lightbox ---------------------------------------------------------- */
 
 .lightbox {

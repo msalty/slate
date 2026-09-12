@@ -31,6 +31,8 @@ const ollama = (over: Partial<AiSettings> = {}): AiSettings => ({
   baseUrl: 'http://localhost:11434/v1',
   apiKey: '',
   visionModel: 'llama3.2-vision',
+  textModel: '',
+  contextTokens: 16000,
   ...over,
 })
 
@@ -39,6 +41,8 @@ const gemini = (over: Partial<AiSettings> = {}): AiSettings => ({
   baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
   apiKey: 'k',
   visionModel: 'gemini-2.0-flash',
+  textModel: '',
+  contextTokens: 16000,
   ...over,
 })
 

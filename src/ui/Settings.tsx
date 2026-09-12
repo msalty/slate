@@ -784,6 +784,44 @@ export function Settings() {
                     </small>
                   </label>
 
+                  <div class="field-row">
+                    <label class="field">
+                      <span>Text model</span>
+                      <input
+                        type="text"
+                        list="ai-models"
+                        placeholder="Same as above"
+                        value={s.ai.textModel}
+                        onInput={(e) => updateAi({ textModel: (e.target as HTMLInputElement).value })}
+                      />
+                      <small>
+                        For rewriting and summarising. Leave blank to use the vision model for
+                        everything.
+                      </small>
+                    </label>
+                    <label class="field">
+                      <span>Context budget</span>
+                      <input
+                        type="number"
+                        min={1000}
+                        step={1000}
+                        value={s.ai.contextTokens}
+                        onInput={(e) =>
+                          updateAi({
+                            contextTokens: Math.max(
+                              1000,
+                              Number((e.target as HTMLInputElement).value) || 1000,
+                            ),
+                          })
+                        }
+                      />
+                      <small>
+                        Tokens the model can read at once. Decides how many passes a big summary
+                        takes — 8000 for a small local model, 100000+ for a hosted one.
+                      </small>
+                    </label>
+                  </div>
+
                   {/*
                     * Said before the request rather than after it. A page served
                     * over https cannot call http, and the browser's error for
@@ -827,10 +865,13 @@ export function Settings() {
                   </div>
 
                   <div class="callout">
-                    <strong>What this switches on.</strong> One thing so far: <em>Transcribe</em> in
-                    the image viewer, which sends that one picture to the provider above and shows
-                    you the text before anything is written. Nothing runs on its own, nothing is sent
-                    in the background, and no note is read by any of it.
+                    <strong>What this switches on.</strong> Three things, each of which you start
+                    and each of which shows you the result before anything is written:{' '}
+                    <em>Transcribe</em> in the image viewer, <em>Change the selected passage</em>{' '}
+                    (⌘⇧U) in a note, and <em>Summarise these notes</em> in the command palette.
+                    Nothing runs on its own and nothing is sent in the background — the only things
+                    that ever leave this device are a picture you pressed the button on, a passage
+                    you selected, or notes you confirmed by count.
                   </div>
                 </>
               )}

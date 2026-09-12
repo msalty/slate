@@ -72,6 +72,50 @@ function lcsPairs(a: string[], b: string[]): Array<[number, number]> {
   return pairs
 }
 
+/* --------------------------------------------------------------- two-way diff */
+
+export type DiffKind = 'same' | 'del' | 'add'
+
+export interface DiffLine {
+  kind: DiffKind
+  text: string
+}
+
+/**
+ * A line-by-line diff of `a` against `b`, for showing somebody a change before
+ * they accept it.
+ *
+ * The same LCS the three-way merge runs on, asked a simpler question: two
+ * versions rather than three, and no attempt to reconcile them. Unlike the
+ * merge, nothing here has to be *correct* in the sense of being safe to write —
+ * it is read by a person who then decides — so a diff that groups a change
+ * oddly costs a moment's squinting rather than a lost edit.
+ *
+ * Deletions before insertions in each run, which is the order every diff tool
+ * uses and therefore the order people read without being told.
+ */
+export function diffLines(a: string, b: string): DiffLine[] {
+  const left = a.split('\n')
+  const right = b.split('\n')
+  const pairs = lcsPairs(left, right)
+
+  const out: DiffLine[] = []
+  let i = 0
+  let j = 0
+  const flush = (toI: number, toJ: number) => {
+    for (; i < toI; i++) out.push({ kind: 'del', text: left[i] })
+    for (; j < toJ; j++) out.push({ kind: 'add', text: right[j] })
+  }
+  for (const [ai, bi] of pairs) {
+    flush(ai, bi)
+    out.push({ kind: 'same', text: left[ai] })
+    i = ai + 1
+    j = bi + 1
+  }
+  flush(left.length, right.length)
+  return out
+}
+
 interface Chunk {
   baseStart: number
   baseEnd: number

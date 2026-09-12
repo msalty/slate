@@ -23,6 +23,7 @@ import {
   openNote,
   paletteOpen,
   scope,
+  scopeLabel,
   setScope,
   settingsOpen,
 } from './state'
@@ -30,6 +31,8 @@ import { relativeTime, startOfDay } from '../core/util'
 import { newNoteInFolder } from './EditorPane'
 import { canShareFiles, shareNote } from './shareNote'
 import { openQuickAdd } from './QuickAdd'
+import { canTransform, openTransform } from './TransformDialog'
+import { canSummarise, openSummary } from './SummaryDialog'
 
 interface Cmd {
   id: string
@@ -87,6 +90,32 @@ export function CommandPalette() {
           await shareNote(path)
         },
       },
+      /*
+       * The two AI commands are absent rather than disabled when no provider is
+       * configured — the same rule the Transcribe button follows. A palette
+       * that lists what you cannot do is a palette people scroll past.
+       */
+      ...(canTransform()
+        ? ([
+            {
+              id: 'transform',
+              label: 'Change the selected passage…',
+              hint: '⌘⇧U',
+              run: () => {
+                openTransform()
+              },
+            },
+          ] satisfies Cmd[])
+        : []),
+      ...(canSummarise()
+        ? ([
+            {
+              id: 'summarise',
+              label: `Summarise these notes — ${scopeLabel(scope.value)}`,
+              run: () => openSummary(),
+            },
+          ] satisfies Cmd[])
+        : []),
       {
         id: 'daily',
         label: "Open today's note",
@@ -167,7 +196,7 @@ export function CommandPalette() {
       { id: 'trash', label: 'Show Deleted', run: () => setScope({ kind: 'trash' }) },
       { id: 'files', label: 'Show all files', run: () => setScope({ kind: 'files' }) },
     ],
-    [settings.value, day, notes.value, editorMaximized.value, layoutMode.value],
+    [settings.value, day, notes.value, scope.value, editorMaximized.value, layoutMode.value],
   )
 
   const results = useMemo(() => {
