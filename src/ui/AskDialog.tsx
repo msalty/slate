@@ -15,7 +15,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks'
 import { signal } from '@preact/signals'
 import { canAsk, startConversation } from '../app/ask'
-import { ALL, sourceLabel } from '../core/ask'
+import { ALL, noteScopeRule, sourceDescription } from '../core/ask'
 import { settings } from '../core/settings'
 import { notify, openNote, scope, scopeLabel, scopeRule, visibleNotes } from './state'
 import { pendingQuestion } from './Composer'
@@ -46,14 +46,16 @@ export { canAsk }
 export function openAsk(opts: { pin?: string } = {}) {
   const rule = scopeRule(scope.value)
   /*
-   * Asking *about* a note answers from the whole vault, not from the list you
-   * happened to be on. The note itself is guaranteed by the pin, so the search
-   * exists to bring in what else bears on it — and narrowing that to the
-   * current list would be an accident of where you were standing.
+   * Asking *about* a note starts scoped to that note's own neighbourhood, not
+   * to the whole vault and not to whichever list you were standing on. The
+   * first version answered from everything, and it read as a bug: you name a
+   * note, and back comes an answer citing four others that merely shared a
+   * word with your question. What is nearby in the graph is what the note is
+   * actually connected to — and "and nothing else" is one option along.
    */
   const about = !!opts.pin
   draft.value = {
-    source: about ? ALL : (rule ?? ALL),
+    source: about ? noteScopeRule('links', opts.pin!) : (rule ?? ALL),
     label: !about && rule ? scopeLabel(scope.value) : 'All notes',
     count: !about && rule ? visibleNotes.value.length : 0,
     pin: opts.pin,
@@ -127,6 +129,7 @@ export function AskDialog() {
 
   const folder = settings.value.generatedFolder
   const scoped = source !== ALL
+  const onlyTheNote = !!d.pin && source === noteScopeRule('note', d.pin)
 
   return (
     <div class="scrim" onClick={close}>
@@ -174,10 +177,24 @@ export function AskDialog() {
               disabled={busy}
               onChange={(e) => setSource((e.target as HTMLSelectElement).value)}
             >
-              {d.source !== ALL && (
-                <option value={d.source}>
-                  {d.label} — {d.count} {d.count === 1 ? 'note' : 'notes'}
-                </option>
+              {/*
+                * Asking about a note offers that note's own neighbourhood
+                * before it offers the vault — widening is a choice you make,
+                * not the starting point.
+                */}
+              {d.pin ? (
+                <>
+                  <option value={noteScopeRule('links', d.pin)}>
+                    This note and the notes linked to it
+                  </option>
+                  <option value={noteScopeRule('note', d.pin)}>This note and nothing else</option>
+                </>
+              ) : (
+                d.source !== ALL && (
+                  <option value={d.source}>
+                    {d.label} — {d.count} {d.count === 1 ? 'note' : 'notes'}
+                  </option>
+                )
               )}
               <option value={ALL}>All notes</option>
             </select>
@@ -192,11 +209,11 @@ export function AskDialog() {
             {d.pin && (
               <>
                 <strong>{d.pin}</strong> is pinned to the conversation, so every question has it in
-                front of it — the search is for whatever else bears on what you ask. Unpin it from
-                the composer at any point.{' '}
+                front of it{onlyTheNote ? ' — and nothing else is searched at all' : ''}. Both the
+                pin and the scope can be changed from the composer later.{' '}
               </>
             )}
-            Each question searches {sourceLabel(source).toLowerCase()} and sends up to{' '}
+            Each question searches {sourceDescription(source)} and sends up to{' '}
             {settings.value.ai.notesPerQuestion} notes to your provider. The conversation is an ordinary note in{' '}
             <code>{folder || 'the vault root'}</code>, and every answer records what it read.
           </div>

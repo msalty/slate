@@ -14,15 +14,17 @@ import {
   citedWithoutReading,
   isDerived,
   newConversation,
+  noteScope,
   answerUser,
   historyFor,
   parseTerms,
   pinsOf,
   readTurns,
-  sourceLabel,
+  sourceDescription,
   termsSystem,
   termsUser,
   type AskSource,
+  type NoteScope,
   type Provenance,
 } from '../core/ask'
 import { notesMatching } from '../core/folders'
@@ -30,7 +32,7 @@ import { parseFrontmatter } from '../core/markdown'
 import { settings } from '../core/settings'
 import { estimateTokens } from '../core/summary'
 import { parseQuery } from '../core/tagquery'
-import { createNote, getEntry, getText, resolveLink, search } from '../core/vault'
+import { backlinkMap, createNote, getEntry, getText, resolveLink, search } from '../core/vault'
 import type { NoteIndexEntry } from '../core/types'
 
 /** Is there anywhere to send a question? The composer is absent without one. */
@@ -80,17 +82,51 @@ export interface TurnOptions {
 /**
  * The set of notes a conversation is allowed to see.
  *
- * `all` is the whole vault; anything else is a Tag Folder rule, evaluated by the
- * same parser that powers Tag Folders. A rule that no longer parses — somebody
- * edited the frontmatter and got it slightly wrong — falls back to the whole
- * vault rather than silently answering from nothing, which is the failure that
- * would look like the feature being broken.
+ * `all` is the whole vault; `note:` and `links:` name one note and its
+ * neighbourhood; anything else is a Tag Folder rule, evaluated by the same
+ * parser that powers Tag Folders. A Tag Folder rule that no longer parses —
+ * somebody edited the frontmatter and got it slightly wrong — falls back to the
+ * whole vault rather than silently answering from nothing, which is the failure
+ * that would look like the feature being broken.
  */
 export function scopedNotes(source: string): NoteIndexEntry[] | undefined {
   if (!source || source === ALL) return undefined
+  const ns = noteScope(source)
+  /*
+   * A note scope that names a note the vault no longer has returns *nothing*,
+   * not everything. The fallback above is right for a rule somebody mistyped —
+   * a Tag Folder rule that will not parse is a syntax error, and answering from
+   * the whole vault is the least surprising thing to do with one. A scope
+   * naming a missing note is not a syntax error, and widening it to the vault
+   * would be the exact surprise this rule exists to remove.
+   */
+  if (ns) return notesAround(ns)
   const parsed = parseQuery(source)
   if (!parsed.node) return undefined
   return notesMatching(parsed.node)
+}
+
+/** The note a scope names, and — for `links:` — everything one hop from it. */
+function notesAround(ns: NoteScope): NoteIndexEntry[] {
+  const path = resolveLink(ns.title)
+  const entry = path ? getEntry(path) : undefined
+  if (!entry) return []
+  const out = [entry]
+  if (ns.kind === 'note') return out
+
+  const seen = new Set([entry.path])
+  const add = (p: string | undefined) => {
+    const e = p ? getEntry(p) : undefined
+    if (!e || seen.has(e.path)) return
+    seen.add(e.path)
+    out.push(e)
+  }
+  // Out, then in. `entry.links` is what this note points at (embeds excluded,
+  // so an image it shows is not a note it links to); the backlink map is
+  // everything pointing back.
+  for (const target of entry.links) add(resolveLink(target))
+  for (const from of backlinkMap.value.get(entry.path) ?? []) add(from)
+  return out
 }
 
 /**
@@ -104,11 +140,10 @@ export function scopedNotes(source: string): NoteIndexEntry[] | undefined {
  */
 function findNotes(
   terms: string[],
-  source: string,
+  allowed: NoteIndexEntry[] | undefined,
   self: string,
   already: Set<string>,
 ): NoteIndexEntry[] {
-  const allowed = scopedNotes(source)
   const permitted = allowed && new Set(allowed.map((n) => n.path))
 
   const best = new Map<string, { entry: NoteIndexEntry; score: number }>()
@@ -218,9 +253,21 @@ export async function askTurn(
   const limit = Math.max(1, ai.notesPerQuestion || 6)
   const history = historyFor(readTurns(noteText))
   const pins = resolvePins(pinsOf(noteText), selfPath)
+  const pinnedPaths = new Set(pins.entries.map((e) => e.path))
+  const allowed = scopedNotes(source)
+
+  /*
+   * A scope holding nothing the pins are not already sending has no search to
+   * do. That is "ask about this note" scoped to the note alone: the note is
+   * pinned, the searchable set is that same note, and asking a model what to
+   * look for would be a whole request spent choosing terms for a search over
+   * nothing. It saves the round trip and, more to the point, stops the callout
+   * reporting a search that never had anywhere to look.
+   */
+  const nothingToSearch = !!allowed && allowed.every((e) => pinnedPaths.has(e.path))
 
   let terms = opts.terms?.filter((t) => t.trim()) ?? []
-  if (!terms.length) {
+  if (!terms.length && !nothingToSearch) {
     opts.onStatus?.('Working out what to look for…')
     const termReply = await streamText(ai, termsSystem(), termsUser(question, history), {
       signal: opts.signal,
@@ -229,9 +276,8 @@ export async function askTurn(
     if (!terms.length) throw new LlmError('The model did not suggest anything to search for.')
   }
 
-  opts.onStatus?.(`Searching ${terms.map((t) => `“${t}”`).join(', ')}…`)
-  const pinnedPaths = new Set(pins.entries.map((e) => e.path))
-  const found = findNotes(terms, source, selfPath, pinnedPaths)
+  if (terms.length) opts.onStatus?.(`Searching ${terms.map((t) => `“${t}”`).join(', ')}…`)
+  const found = nothingToSearch ? [] : findNotes(terms, allowed, selfPath, pinnedPaths)
   /*
    * Pins first, so that when the limit or the budget runs out it is the weakest
    * search hit that goes rather than the note you asked for by name — and so
@@ -251,7 +297,7 @@ export async function askTurn(
 
   const answer = await streamText(
     ai,
-    answerSystem(sourceLabel(source), pinsSent.length),
+    answerSystem(sourceDescription(source), pinsSent.length),
     answerUser(question, sources, history),
     { signal: opts.signal, onChunk: opts.onChunk },
   )

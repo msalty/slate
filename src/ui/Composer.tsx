@@ -26,9 +26,12 @@ import { askTurn } from '../app/ask'
 import {
   dropLastTurn,
   lastTurn,
+  noteScope,
+  noteScopeRule,
   openTurn,
   pinsOf,
   provenanceCallout,
+  sourceDescription,
   sourceLabel,
   sourceOf,
   withPins,
@@ -130,13 +133,38 @@ export function Composer({ getView, text, path }: ComposerProps) {
     const v = getView()
     if (!v) return
     const here = scopeRule(scope.value)
-    const items: MenuItem[] = [
-      {
-        label: 'All notes',
-        checked: source === 'all',
-        onSelect: () => setSource(v, 'all'),
-      },
-    ]
+    const items: MenuItem[] = []
+
+    /*
+     * A conversation about a note gets its own two rungs before the vault, so
+     * the ladder in the menu is the same one the starter offered: the note, the
+     * note and its neighbours, everything. Which note that is comes from the
+     * scope already in the file rather than from the first pin — the scope is
+     * what "about" means here, and it survives unpinning and repinning.
+     */
+    const ns = noteScope(source)
+    const about = ns?.title ?? pins[0]
+    if (about) {
+      items.push(
+        {
+          label: `${about} and the notes linked to it`,
+          checked: ns?.kind === 'links',
+          onSelect: () => setSource(v, noteScopeRule('links', about)),
+        },
+        {
+          label: `${about} and nothing else`,
+          checked: ns?.kind === 'note',
+          onSelect: () => setSource(v, noteScopeRule('note', about)),
+        },
+      )
+    }
+
+    items.push({
+      label: 'All notes',
+      checked: source === 'all',
+      separated: items.length > 0,
+      onSelect: () => setSource(v, 'all'),
+    })
     if (here && here !== source) {
       items.push({
         label: `The list you were on — ${scopeLabel(scope.value)}`,
@@ -442,8 +470,8 @@ export function Composer({ getView, text, path }: ComposerProps) {
                * alternative is somebody pinning four notes against a limit of
                * four and never working out why the search stopped mattering.
                */
-              `Up to ${limit} ${limit === 1 ? 'note' : 'notes'} a question, starting with the ${pins.length} pinned; the rest from ${sourceLabel(source).toLowerCase()}.`
-            : `Answers are drawn from up to ${limit} ${limit === 1 ? 'note' : 'notes'} in ${sourceLabel(source).toLowerCase()}, and cite what they used.`)}
+              `Up to ${limit} ${limit === 1 ? 'note' : 'notes'} a question, starting with the ${pins.length} pinned; the rest from ${sourceDescription(source)}.`
+            : `Answers are drawn from up to ${limit} ${limit === 1 ? 'note' : 'notes'} in ${sourceDescription(source)}, and cite what they used.`)}
       </div>
     </div>
   )

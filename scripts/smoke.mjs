@@ -1282,11 +1282,6 @@ try {
 
     const about = await savedConvo('What is quorum here')
     check('the conversation starts already pinned to that note', /- "\[\[Working Agreements\]\]"/.test(about ?? ''))
-    check(
-      'and it answers from the whole vault, not the list you were on',
-      /^source: all$/m.test(about ?? ''),
-      (about ?? '').split('\n').find((l) => l.startsWith('source:')),
-    )
     check('the pinned note is marked as read because it is pinned', /\[\[Working Agreements\]\] \(pinned\)/.test(about ?? ''))
 
     /*
@@ -1308,6 +1303,87 @@ try {
     check(
       'the note it really did read is not accused of anything',
       !/Cited[^\n]*Working Agreements/.test(about ?? ''),
+    )
+
+    /*
+     * The scope it starts in is the note's own neighbourhood, not the vault.
+     * Answering "about this note" from everything reads as a bug — you name a
+     * note and back comes an answer citing whatever shared a word with the
+     * question.
+     */
+    check(
+      'and it is scoped to that note and its links, not the whole vault',
+      /^source: "links:Working Agreements"$/m.test(about ?? ''),
+      (about ?? '').split('\n').find((l) => l.startsWith('source:')),
+    )
+    const scopedAnswer = llm.requests
+      .slice()
+      .reverse()
+      .find((r) => /answering questions about/i.test(r.messages?.[0]?.content ?? ''))
+    check(
+      'the search was held to the scope — nothing from the rest of the vault went',
+      !/## Packing List/.test(scopedAnswer?.messages?.[1]?.content ?? ''),
+      (scopedAnswer?.messages?.[1]?.content ?? '').match(/^## .*$/gm)?.join(' · ') ?? '',
+    )
+    llm.replyFor = null
+
+    /* ---- narrowing it to the note alone ----------------------------------
+     * The strictest reading of "about this note", one menu item away: the
+     * pinned note is the whole of what may be read, so there is no search to
+     * run — and the turn does not spend a request asking a model what to look
+     * for in a set of one it is already sending.
+     */
+    llm.replyFor = (body) => {
+      const sys = body.messages?.[0]?.content ?? ''
+      if (/choosing what to look for/i.test(sys)) return 'should, not, happen'
+      if (/answering questions about/i.test(sys)) return 'Four, per [[Working Agreements]].'
+      return 'unexpected'
+    }
+
+    const scopeChip = page.locator('.composer-scope').first()
+    await scopeChip.click()
+    await page.waitForTimeout(300)
+    const scopeMenu = await page.locator('.menu, .sheet').first().innerText()
+    check('the composer offers the same ladder the starter did', /and nothing else/.test(scopeMenu), scopeMenu.replace(/\n/g, ' · '))
+    await page.locator('.menu-item:has-text("and nothing else")').click()
+    await page.waitForTimeout(500)
+    check('the chip says the conversation narrowed', /Only Working Agreements/.test(await scopeChip.innerText()))
+
+    const beforeNarrow = llm.requests.length
+    await page.locator('.composer-input').click()
+    await page.locator('.composer-input').pressSequentially('And how is it recorded?', { delay: 15 })
+    await page.keyboard.press('Enter')
+    await page.waitForFunction(
+      () => /Four, per/.test(document.querySelector('.cm-content')?.textContent ?? ''),
+      null,
+      { timeout: 30000 },
+    )
+    await page.waitForTimeout(1200)
+
+    const narrowed = llm.requests.slice(beforeNarrow)
+    check(
+      'a scope of one pinned note costs one request, not two',
+      !narrowed.some((r) => /choosing what to look for/i.test(r.messages?.[0]?.content ?? '')),
+      `${narrowed.length} request(s)`,
+    )
+    const onlyAnswer = narrowed.find((r) => /answering questions about/i.test(r.messages?.[0]?.content ?? ''))
+    const onlyMaterial = onlyAnswer?.messages?.[1]?.content ?? ''
+    check(
+      'and exactly one note goes with the question',
+      (onlyMaterial.match(/^## /gm) ?? []).length === 1 && /## Working Agreements/.test(onlyMaterial),
+      (onlyMaterial.match(/^## .*$/gm) ?? []).join(' · '),
+    )
+    const narrowFile = (await savedConvo('And how is it recorded')) ?? ''
+    /*
+     * The last turn only. Against the whole file this passes on an earlier
+     * turn's callout — every conversation here has several, and one of them
+     * saying the right thing is not this one saying it.
+     */
+    const narrowSection = narrowFile.slice(narrowFile.lastIndexOf('## And how is it recorded'))
+    check(
+      'the callout is honest that no search was run',
+      /No search terms/.test(narrowSection),
+      narrowSection.split('\n').find((l) => l.startsWith('> [!note]')),
     )
     llm.replyFor = null
 

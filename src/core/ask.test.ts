@@ -26,11 +26,14 @@ import {
   isConversation,
   newConversation,
   openTurn,
+  noteScope,
+  noteScopeRule,
   parseTerms,
   pinTitle,
   pinsOf,
   provenanceCallout,
   readTurns,
+  sourceDescription,
   sourceLabel,
   sourceOf,
   withPins,
@@ -339,6 +342,77 @@ describe('writing a turn into the note', () => {
  * produce something a rename can find, because a pin that silently stops
  * pinning is the failure this whole feature has to avoid.
  */
+/*
+ * The Tag Folder language has no way to say "this note" — it is about tags and
+ * folders, and this is about the graph. These two rules exist because "ask
+ * about this note" answering from the whole vault reads as a bug: you name a
+ * note and back comes an answer citing four others that happened to share a
+ * word with the question.
+ */
+describe('scoping a conversation to one note', () => {
+  it('reads both rules, title and all', () => {
+    expect(noteScope('note:Migration plan')).toEqual({ kind: 'note', title: 'Migration plan' })
+    expect(noteScope('links:Migration plan')).toEqual({ kind: 'links', title: 'Migration plan' })
+  })
+
+  it('is not confused by an ordinary rule', () => {
+    expect(noteScope('#work')).toBeUndefined()
+    expect(noteScope('folder:Projects')).toBeUndefined()
+    expect(noteScope(ALL)).toBeUndefined()
+    expect(noteScope('')).toBeUndefined()
+  })
+
+  it('ignores a prefix with no note after it', () => {
+    expect(noteScope('note:')).toBeUndefined()
+    expect(noteScope('links:   ')).toBeUndefined()
+  })
+
+  it('keeps the title’s own case while matching the prefix loosely', () => {
+    expect(noteScope('NOTE:Migration Plan')).toEqual({ kind: 'note', title: 'Migration Plan' })
+  })
+
+  /* A title with a colon in it is a note name, not a second prefix. */
+  it('takes everything after the first colon as the title', () => {
+    expect(noteScope('note:Q3: what happened')).toEqual({ kind: 'note', title: 'Q3: what happened' })
+  })
+
+  it('round-trips through the rule it writes', () => {
+    for (const kind of ['note', 'links'] as const) {
+      const rule = noteScopeRule(kind, 'Migration plan')
+      expect(noteScope(rule)).toEqual({ kind, title: 'Migration plan' })
+    }
+  })
+
+  it('survives the frontmatter it is stored in', () => {
+    const n = newConversation({
+      question: 'q',
+      source: noteScopeRule('links', 'Migration plan'),
+      now: new Date('2026-09-12T09:00:00Z'),
+    })
+    expect(sourceOf(n.text)).toBe('links:Migration plan')
+    expect(noteScope(sourceOf(n.text))?.title).toBe('Migration plan')
+  })
+
+  it('says what it means, in a chip and in a sentence', () => {
+    expect(sourceLabel('note:Migration plan')).toBe('Only Migration plan')
+    expect(sourceLabel('links:Migration plan')).toBe('Migration plan + links')
+    expect(sourceDescription('note:Migration plan')).toBe('“Migration plan” and nothing else')
+    expect(sourceDescription('links:Migration plan')).toBe(
+      '“Migration plan” and the notes linked to it',
+    )
+  })
+
+  /*
+   * The prose used to lowercase whatever the chip said, which is right for
+   * `all notes` and `#work` and wrong the moment a rule carries a note title.
+   */
+  it('does not mangle a title’s capitals in prose', () => {
+    expect(sourceDescription('note:NASA Debrief')).toContain('NASA Debrief')
+    expect(sourceDescription(ALL)).toBe('all notes')
+    expect(sourceDescription('#work')).toBe('#work')
+  })
+})
+
 describe('the notes a conversation pins', () => {
   const conv = (...fm: string[]) => ['---', 'type: conversation', ...fm, '---', '', '# Ask', ''].join('\n')
 

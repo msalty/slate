@@ -18,7 +18,7 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 893 unit and two-device sync tests
+npm test               # 902 unit and two-device sync tests
 node scripts/smoke.mjs # 612-check browser smoke test against dist/
 ```
 
@@ -937,7 +937,7 @@ before anything is written.**
 | **Change this passage** | the ✦ in the note's header, or on the formatting bar — or ⌘⇧U | the text you selected |
 | **Summarise these notes** | the **⋯** above the note list | the notes in the list, after you confirm the count |
 | **Ask your notes** | the same **⋯** | up to 6 notes per question: the ones you pinned, then the ones the search matched |
-| **Ask about this note** | the same ✦ | the note itself, every question, plus what the search adds |
+| **Ask about this note** | the same ✦ | the note itself, every question, plus what the search finds among the notes linked to it |
 
 All of them are in the command palette too (**⌘K**), but none of them is *only*
 there — a feature you can reach only by knowing its name is one most people
@@ -1073,6 +1073,19 @@ from the chip beside the composer. Starting a conversation from a narrowed list
 scopes it to that list, which is worth doing: a smaller haystack gives a small
 local model a much better chance.
 
+Two rules the Tag Folder language has no way to express live here too, because
+they are about the graph rather than about tags and folders:
+
+| Rule | What may be read |
+| --- | --- |
+| `note:Migration plan` | that note, and nothing else at all |
+| `links:Migration plan` | that note, everything it links to, and everything that links to it |
+
+A hop counts **both directions** on purpose. What a note links out to is its
+references; what links in to it is everything written since about the thing it
+describes — a postmortem naming the migration plan is as much about the plan as
+anything the plan itself cites.
+
 **Pinning is the opposite of scope.** `source:` is a filter — it says what may be
 *searched*, and a note inside it still has to win the keyword search to be read.
 `include:` is a guarantee: those notes are sent with every question, whatever it
@@ -1095,10 +1108,19 @@ any pin that no longer resolves to anything. A pin that quietly stopped pinning
 is the worst failure this feature has: every answer afterwards looks exactly as
 normal as one that had read the note.
 
-**"Ask about this note"** is the shortest road to a pin: the ✦ in a note's
-header starts a conversation with that note already pinned, answering from the
-whole vault rather than from whichever list you were standing on. The note is
-guaranteed; the search is there for whatever else bears on what you ask.
+**"Ask about this note"** is the shortest road to both: the ✦ in a note's header
+starts a conversation with that note pinned *and* scoped to `links:` it — the
+note is guaranteed, and the search may reach only as far as the notes it is
+actually connected to. Answering from the whole vault would read as a bug: you
+name a note, and back comes an answer citing four others that merely shared a
+word with your question. The starter offers `note:` (that note and nothing
+else) and `All notes` alongside it, and the composer's scope chip moves between
+the three afterwards.
+
+Scoped to `note:` alone there is **no search to run** — the note is pinned, so
+the searchable set is one note already being sent. The turn skips the
+terms request entirely and costs one round trip instead of two, and the callout
+says `No search terms` rather than reporting a search that had nowhere to look.
 
 **How a question is answered.** Two requests. First the model is asked what to
 *search for* — not to answer — because your phrasing is rarely your notes'
@@ -1838,7 +1860,12 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
   needs embeddings, which would be a store to keep current and to sync; this is
   the version that works with no such thing, and it says what it searched so you
   can see when the search was the problem. Pinning a note is the way round it
-  for a note you already know you want read.
+  for a note you already know you want read, and `links:` is the way round it
+  when the connection you care about is one you drew yourself.
+- **The graph goes one hop, and only as a scope.** `links:` narrows what may be
+  searched to a note's immediate neighbours; it does not widen an ordinary
+  conversation to follow citations outward, and it does not chase a second hop.
+  Two hops from anything in a well-linked vault is most of the vault.
 - **A pin is a whole note, and it is spent every question.** There is no way to
   pin a section, and a long pinned note eats the budget on questions it has
   nothing to do with. The callout tells you when it crowded the search out; the
@@ -1877,8 +1904,8 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 893 unit + two-device sync tests
-node scripts/smoke.mjs  # 638 checks in headless Chromium against dist/
+npm test                # 902 unit + two-device sync tests
+node scripts/smoke.mjs  # 644 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

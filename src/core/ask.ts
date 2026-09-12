@@ -64,9 +64,73 @@ export function isDerived(text: string): boolean {
   return String(data.type ?? '').toLowerCase() === CONVERSATION || data.generated === true
 }
 
+/* ------------------------------------------------------ scoping to one note */
+
+/**
+ * `source: "note:Migration plan"` and `source: "links:Migration plan"`.
+ *
+ * Two rules the Tag Folder language has no way to express, because they are
+ * about the graph rather than about tags and folders: one note, or one note and
+ * everything a hop away from it in either direction.
+ *
+ * They exist because "ask about this note" answering from the whole vault is
+ * the wrong default and reads as a bug — you named a note, and the answer came
+ * back citing four others. The note itself is guaranteed by the pin; these say
+ * what *else* may be drawn on, and the honest answers to that are "nothing" and
+ * "the notes it is connected to".
+ *
+ * A hop counts both directions on purpose. What a note links *out* to is its
+ * references, and what links *in* to it is everything written since about the
+ * thing it describes — a postmortem naming the migration plan is as much about
+ * the plan as anything the plan cites, and dropping half the graph would make
+ * the option quietly worse than it looks.
+ */
+export const NOTE_SCOPE = 'note:'
+export const LINKS_SCOPE = 'links:'
+
+export interface NoteScope {
+  kind: 'note' | 'links'
+  title: string
+}
+
+/** The note scope a rule names, or nothing if it is an ordinary Tag Folder rule. */
+export function noteScope(source: string): NoteScope | undefined {
+  const s = source.trim()
+  const lower = s.toLowerCase()
+  for (const [prefix, kind] of [
+    [NOTE_SCOPE, 'note'],
+    [LINKS_SCOPE, 'links'],
+  ] as const) {
+    if (!lower.startsWith(prefix)) continue
+    const title = s.slice(prefix.length).trim()
+    return title ? { kind, title } : undefined
+  }
+  return undefined
+}
+
+/** The rule that scopes a conversation to one note, written the way it is stored. */
+export function noteScopeRule(kind: NoteScope['kind'], title: string): string {
+  return `${kind === 'note' ? NOTE_SCOPE : LINKS_SCOPE}${title.trim()}`
+}
+
 /** How a scope reads in the composer's chip and in the note's own heading. */
 export function sourceLabel(source: string): string {
+  const ns = noteScope(source)
+  if (ns) return ns.kind === 'note' ? `Only ${ns.title}` : `${ns.title} + links`
   return source === ALL || !source.trim() ? 'All notes' : source
+}
+
+/**
+ * The same scope in a sentence.
+ *
+ * Separate from the chip's label because the prose used to lowercase whatever
+ * the chip said — fine for `all notes` and `#work`, and wrong the moment a rule
+ * carries somebody's note title in it.
+ */
+export function sourceDescription(source: string): string {
+  const ns = noteScope(source)
+  if (ns) return ns.kind === 'note' ? `“${ns.title}” and nothing else` : `“${ns.title}” and the notes linked to it`
+  return source === ALL || !source.trim() ? 'all notes' : source
 }
 
 /* ---------------------------------------------------------------- the pins */
