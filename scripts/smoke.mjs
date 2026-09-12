@@ -43,9 +43,72 @@ const MIME = {
   '.map': 'application/json',
 }
 
+/**
+ * A stand-in for an OpenAI-compatible model server.
+ *
+ * Served from this same origin on purpose. CORS is the interesting failure in
+ * real life and precisely the thing a test cannot stage — a browser's refusal
+ * is opaque by design, which is why the diagnosis for it lives in unit-tested
+ * pure code. What is worth driving through a real browser is everything else:
+ * that the settings reach the request, that a WebP attachment is re-encoded
+ * into something a model will take, that a fenced reply is unwrapped, and that
+ * *nothing is written to the note until the button is pressed*.
+ */
+const llm = {
+  requests: [],
+  reply: '```\nINVOICE 4821\nTOTAL 12.40\n```',
+  /** Set to answer differently per request — used to tell the passes apart. */
+  replyFor: null,
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`)
   const path = decodeURIComponent(url.pathname)
+
+  if (path === '/mockllm/v1/models') {
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ data: [{ id: 'mock-vision' }, { id: 'mock-text' }] }))
+    return
+  }
+  if (path === '/mockllm/v1/chat/completions') {
+    const chunks = []
+    for await (const c of req) chunks.push(c)
+    const body = JSON.parse(Buffer.concat(chunks).toString())
+    llm.requests.push(body)
+    const reply = llm.replyFor ? llm.replyFor(body) : llm.reply
+
+    /*
+     * Answer a streaming request by actually streaming, in several events with
+     * the words split across them. A mock that returns the whole answer in one
+     * event would leave the buffering in `sseEvents` — which exists because a
+     * JSON object routinely arrives split across two network reads — untested
+     * by the only thing that runs it.
+     */
+    if (body.stream) {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      })
+      const pieces = reply.match(/[\s\S]{1,7}/g) ?? []
+      for (const p of pieces) {
+        const event = `data: ${JSON.stringify({ choices: [{ delta: { content: p } }] })}\n\n`
+        // Cut the frame in half down the middle, so the client has to carry the
+        // tail of one write into the next to parse it at all.
+        res.write(event.slice(0, 12))
+        await new Promise((r) => setTimeout(r, 2))
+        res.write(event.slice(12))
+      }
+      res.write('data: [DONE]\n\n')
+      res.end()
+      return
+    }
+
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ choices: [{ message: { content: reply } }] }))
+    return
+  }
+
   if (!path.startsWith(BASE)) {
     res.writeHead(404, { 'Content-Type': 'text/html' }).end('<html>outside the app</html>')
     return
@@ -647,6 +710,1015 @@ try {
 
     await page.keyboard.press('Escape')
     await page.waitForTimeout(300)
+  }
+
+  /* ---- transcribing a picture -------------------------------------------
+   * The first feature that sends anything anywhere. Checked from both ends:
+   * with no provider configured there is no button at all, and with one there
+   * is a review step that has to be pressed before the note changes.
+   */
+  if (imgCount > 0) {
+    await page.locator('.cm-embed img').first().click()
+    await page.waitForTimeout(400)
+    check(
+      'with no AI provider there is no Transcribe button',
+      (await page.locator('.lightbox-bar .icon-btn[title^="Transcribe"]').count()) === 0,
+    )
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(250)
+
+    await page.click('.pane-head .icon-btn[title^="Settings"]')
+    await page.waitForSelector('.dialog')
+    await page.click('.tab:has-text("AI")')
+    await page.waitForTimeout(250)
+    check('Settings has somewhere to put a model', (await page.locator('.dialog:has-text("Provider")').count()) === 1)
+
+    await page.locator('.dialog label.field:has-text("Provider") select').selectOption('custom')
+    await page.waitForTimeout(150)
+    await page
+      .locator('.dialog label.field:has-text("API address") input')
+      .fill(`http://localhost:${PORT}/mockllm/v1`)
+    await page.locator('.dialog .btn-primary:has-text("Test connection")').click()
+    await page.waitForTimeout(600)
+    check(
+      'testing the connection reports what the server can run',
+      /2 models available/.test(await page.locator('.dialog-body').innerText()),
+    )
+    await page.locator('.dialog label.field:has(span:text-is("Vision model")) input').fill('mock-vision')
+    await page.waitForTimeout(150)
+    await page.click('.dialog-foot .btn-primary')
+    await page.waitForTimeout(300)
+
+    const noteBefore = await page.locator('.cm-content').innerText()
+
+    await page.locator('.cm-embed img').first().click()
+    await page.waitForTimeout(400)
+    const transcribeBtn = page.locator('.lightbox-bar .icon-btn[title^="Transcribe"]')
+    check('configuring a provider puts Transcribe in the viewer', (await transcribeBtn.count()) === 1)
+    await transcribeBtn.click()
+    await page.waitForSelector('.transcribe-text', { timeout: 10000 })
+    await page.waitForTimeout(300)
+
+    const sent = llm.requests.at(-1)
+    const dataUrl = sent?.messages?.[0]?.content?.[1]?.image_url?.url ?? ''
+    check('the model was sent the picture', dataUrl.startsWith('data:image/'), dataUrl.slice(0, 22))
+    check(
+      'and it was re-encoded into a format every server takes',
+      /^data:image\/(jpeg|png);base64,/.test(dataUrl),
+      `stored as ${sizes?.mime ?? 'webp'}`,
+    )
+    check('the prompt asks for a verbatim transcription', /verbatim/i.test(sent?.messages?.[0]?.content?.[0]?.text ?? ''))
+
+    const shown = await page.locator('.transcribe-text').inputValue()
+    check('the reply is shown for review, unwrapped from its code fence', shown === 'INVOICE 4821\nTOTAL 12.40', shown)
+    check('the dialog says what left the device', /Sent to your provider/.test(await page.locator('.dialog-body').innerText()))
+    check('and the note has not been touched yet', (await page.locator('.cm-content').innerText()) === noteBefore)
+
+    // Edited before inserting, which is the point of the box being a box.
+    await page.locator('.transcribe-text').fill('INVOICE 4821\nTOTAL 12.40 (checked)')
+    await page.click('.dialog-foot .btn-primary')
+    await page.waitForTimeout(700)
+    const noteAfter = await page.locator('.cm-content').innerText()
+    check('inserting writes the edited text into the note', noteAfter.includes('TOTAL 12.40 (checked)'))
+    check('nothing that was in the note was lost', noteBefore.split('\n').every((l) => !l.trim() || noteAfter.includes(l.trim())))
+
+    /* A failure has to arrive as words rather than as a silent nothing. */
+    llm.reply = ''
+    await page.locator('.cm-embed img').first().click()
+    await page.waitForTimeout(400)
+    await page.locator('.lightbox-bar .icon-btn[title^="Transcribe"]').click()
+    await page.waitForSelector('.callout-danger', { timeout: 10000 })
+    check(
+      'a model that answers with nothing says so, and says why it might',
+      /vision model/.test(await page.locator('.dialog-body .callout-danger').innerText()),
+    )
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(250)
+    llm.reply = '```\nINVOICE 4821\nTOTAL 12.40\n```'
+
+    /* ---- changing a passage ---------------------------------------------
+     * The whole point is the step before the change: the model's answer is
+     * shown against what is there, and nothing reaches the buffer until the
+     * button under the diff is pressed.
+     */
+    await startEditing()
+    // The first line, not the middle of the pane: this note now ends with a
+    // picture, and a click there opens the lightbox rather than placing a caret.
+    await page.locator('.cm-line').first().click()
+    await page.keyboard.press('Control+End')
+    await page.keyboard.type('\nteh quick brown fox jumpd over it\n')
+    await page.waitForTimeout(400)
+    // Select that line: to its start, then to its end holding shift.
+    await page.keyboard.press('ArrowUp')
+    await page.keyboard.press('Home')
+    await page.keyboard.press('Shift+End')
+    await page.waitForTimeout(200)
+
+    llm.reply = 'the quick brown fox jumped over it'
+    const before = await page.locator('.cm-content').innerText()
+    await page.keyboard.press('Control+Shift+U')
+    await page.waitForSelector('.transform-presets', { timeout: 5000 })
+    check('⌘⇧U opens the rewrite dialog on a selection', true)
+    check('the note is untouched by opening it', (await page.locator('.cm-content').innerText()) === before)
+
+    await page.locator('.transform-preset:has-text("Proofread")').click()
+    await page.waitForSelector('.diff', { timeout: 15000 })
+    const sentT = llm.requests.at(-1)
+    check('the rewrite was streamed', sentT?.stream === true)
+    check(
+      'the passage went as material, not as part of the instruction',
+      sentT?.messages?.[1]?.role === 'user' &&
+        sentT.messages[1].content === 'teh quick brown fox jumpd over it',
+    )
+    check(
+      'and the instruction says the passage is not instructions',
+      /not instructions to you/i.test(sentT?.messages?.[0]?.content ?? ''),
+    )
+
+    const diffText = await page.locator('.diff').innerText()
+    check('the change is shown as a diff before it is made', /teh quick/.test(diffText) && /jumped/.test(diffText))
+    check('with a removed row and an added row', (await page.locator('.diff-line[data-kind="del"]').count()) === 1 && (await page.locator('.diff-line[data-kind="add"]').count()) === 1)
+    check('the note is still untouched while the diff is up', (await page.locator('.cm-content').innerText()) === before)
+
+    await page.click('.dialog-foot .btn-primary')
+    await page.locator('.transform-presets').waitFor({ state: 'detached', timeout: 10000 })
+    await page.waitForTimeout(300)
+    const afterT = await page.locator('.cm-content').innerText()
+    check('accepting replaces just that passage', afterT.includes('the quick brown fox jumped over it'))
+    check('and the rest of the note is as it was', !afterT.includes('teh quick'))
+
+    /* A rewrite that comes back identical is a result, not an edit. */
+    await page.keyboard.press('Home')
+    await page.keyboard.press('Shift+End')
+    llm.reply = 'the quick brown fox jumped over it'
+    await page.keyboard.press('Control+Shift+U')
+    await page.waitForSelector('.transform-presets', { timeout: 5000 })
+    await page.locator('.transform-preset:has-text("Tighten")').click()
+    const saidUnchanged = await page
+      .locator('.dialog-body .callout:has-text("returned the passage unchanged")')
+      .waitFor({ timeout: 15000 })
+      .then(() => true)
+      .catch(() => false)
+    check('a reply identical to the passage says so instead of offering an empty diff', saidUnchanged)
+    check(
+      'and there is nothing to accept',
+      await page.locator('.dialog-foot .btn-primary').isDisabled(),
+    )
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(300)
+
+    /* ---- the two clickable ways in ---------------------------------------
+     * Both features were reachable only from the command palette, which is to
+     * say reachable only by people who already knew they existed. These are the
+     * affordances that fix that, so they are checked as affordances: present,
+     * in the right state, and actually doing the thing.
+     */
+    /*
+     * The header button, which is the one that matters: the formatting bar
+     * only exists in rich text, and rich text is not the default mode, so a
+     * button that lived only there would be invisible to most people — which is
+     * the same failure as living only in the palette.
+     */
+    const headBtn = page.locator('.editor-pane [data-id="note-ai"]')
+    check('the note header carries a button for it', (await headBtn.count()) === 1)
+
+    await page.locator('.cm-line').first().click()
+    await page.keyboard.press('Control+a')
+    await page.waitForTimeout(250)
+    await headBtn.click()
+    await page.waitForTimeout(300)
+    await page.locator('.menu-item:has-text("Change this passage")').click()
+    const headOpened = await page
+      .waitForSelector('.transform-presets', { timeout: 5000 })
+      .then(() => true)
+      .catch(() => false)
+    /*
+     * This is also the check that the selection survived the menu: an empty
+     * range never opens the dialog at all — it refuses with a notice — so the
+     * dialog being here is the proof that the press, the menu and the click
+     * between them cost the editor nothing.
+     */
+    check('pressing it opens the rewrite dialog on what was selected', headOpened)
+    /*
+     * The close button rather than Escape. The dialog's Escape handler is
+     * attached in an effect, which Preact runs after the paint — so for one
+     * frame it is on screen and deaf, and a key pressed the instant it appears
+     * is intermittently lost. A person would never notice; a test that presses
+     * within a millisecond does.
+     */
+    await page.locator('.dialog [aria-label="Close"]').click()
+    await page.locator('.transform-presets').waitFor({ state: 'detached', timeout: 5000 })
+    await page.waitForTimeout(200)
+
+    /* And the same control on the bar, in the mode that has one. */
+    await page.click('.pane-head .icon-btn[title^="Settings"]')
+    await page.waitForSelector('.dialog')
+    await page.click('.tab:has-text("Editor")')
+    await page.waitForTimeout(250)
+    await page.locator('.dialog label.field:has(span:text-is("Default mode")) select').selectOption('rich')
+    await page.click('.dialog-foot .btn-primary')
+    await page.waitForTimeout(400)
+    const aiBtn = page.locator('.fmt-bar [data-id="transform"]')
+    check('the formatting bar carries it too, in rich text', (await aiBtn.count()) === 1)
+    await page.locator('.cm-line').first().click()
+    await page.waitForTimeout(250)
+    check('greyed out with nothing selected', await aiBtn.isDisabled())
+    await page.keyboard.press('Control+a')
+    await page.waitForTimeout(250)
+    check('and live once something is', !(await aiBtn.isDisabled()))
+    await page.click('.pane-head .icon-btn[title^="Settings"]')
+    await page.waitForSelector('.dialog')
+    await page.click('.tab:has-text("Editor")')
+    await page.waitForTimeout(250)
+    await page.locator('.dialog label.field:has(span:text-is("Default mode")) select').selectOption('live')
+    await page.click('.dialog-foot .btn-primary')
+    await page.waitForTimeout(400)
+
+    await page.locator('.pane.list-pane .icon-btn[aria-label="List actions"]').click()
+    await page.waitForTimeout(300)
+    const listMenuText = await page.locator('.menu, .sheet').first().innerText()
+    check('the list has a ⋯ menu on a desktop too', /Summarise these/.test(listMenuText), listMenuText.replace(/\n/g, ' · '))
+    check('which also offers the palette, named and with its key', /All commands/.test(listMenuText))
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(300)
+
+    /* ---- asking the notes ------------------------------------------------
+     * The conversation is a note, so nearly all of this is checked by reading
+     * the file back: the question is a heading, the answer is under it, and the
+     * provenance callout says what was searched and read.
+     */
+    llm.replyFor = (body) => {
+      const sys = body.messages?.[0]?.content ?? ''
+      if (/choosing what to look for/i.test(sys)) return 'lisbon, packing'
+      if (/answering questions about/i.test(sys))
+        return 'The trip notes cover Lisbon and what to take — see [[Packing List]].'
+      return 'unexpected'
+    }
+
+    await page.locator('.pane.list-pane .icon-btn[aria-label="List actions"]').click()
+    await page.waitForTimeout(300)
+    const askItem = page.locator('.menu-item:has-text("Ask these notes")')
+    check('the list menu offers a conversation', (await askItem.count()) === 1)
+    await askItem.click()
+    await page.waitForSelector('.ask-question', { timeout: 5000 })
+    check('and asks for the first question up front', true)
+
+    const askBox = page.locator('.ask-question')
+    await askBox.click()
+    await askBox.pressSequentially('What did we pack for Lisbon', { delay: 15 })
+    await page.waitForTimeout(200)
+    await page.click('.dialog-foot .btn-primary')
+
+    // Done when the composer is on screen and the answer has landed in the note.
+    await page.waitForSelector('.composer', { timeout: 10000 })
+    check('the conversation opens with a composer under it', true)
+    await page.waitForFunction(
+      () => /Packing List/.test(document.querySelector('.cm-content')?.textContent ?? ''),
+      null,
+      { timeout: 30000 },
+    )
+
+    /*
+     * The buffer has the answer; the file has it 400ms later. Everything below
+     * reads the *file*, so it waits for the save rather than for the paint.
+     */
+    const savedConvo = async (needle) => {
+      for (let i = 0; i < 40; i++) {
+        const text = await noteContaining(needle)
+        if (text) return text
+        await page.waitForTimeout(250)
+      }
+      return undefined
+    }
+
+    const convo = await savedConvo('[[Packing List]]')
+    check('the conversation is an ordinary note', !!convo)
+    check('named after the first question', /Ask — What did we pack/.test(await page.locator('.editor-title-input').inputValue()))
+    check('the question is a heading', /^## What did we pack for Lisbon$/m.test(convo ?? ''))
+    check('the answer cites a note as a wikilink', /\[\[Packing List\]\]/.test(convo ?? ''))
+    check('with a folded callout saying what it read', /^> \[!note\]- Searched/m.test(convo ?? ''), (convo ?? '').split('\n').find((l) => l.startsWith('> [!note]')))
+    check(
+      'the scope it may read is written in the note',
+      /^source: /m.test(convo ?? ''),
+      (convo ?? '').split('\n').find((l) => l.startsWith('source:')),
+    )
+
+    const termReq = llm.requests.find((r) => /choosing what to look for/i.test(r.messages?.[0]?.content ?? ''))
+    check('the model was asked what to search for first', !!termReq)
+    const answerReq = llm.requests.find((r) => /answering questions about/i.test(r.messages?.[0]?.content ?? ''))
+    check('and then answered from the notes that were found', /## /.test(answerReq?.messages?.[1]?.content ?? ''))
+    check(
+      'the question went as material, not as part of the instruction',
+      (answerReq?.messages?.[1]?.content ?? '').includes('What did we pack for Lisbon'),
+    )
+
+    /* A follow-up reads the conversation back out of the file. */
+    const askedBefore = llm.requests.length
+    await page.locator('.composer-input').click()
+    await page.locator('.composer-input').pressSequentially('And what about the weather?', { delay: 15 })
+    await page.keyboard.press('Enter')
+    await page.waitForFunction(
+      () => (document.querySelectorAll('.cm-content .cm-line').length ?? 0) > 0 &&
+        /weather/i.test(document.querySelector('.cm-content')?.textContent ?? ''),
+      null,
+      { timeout: 30000 },
+    )
+    await page.waitForTimeout(1200)
+    const followUp = llm.requests.slice(askedBefore).find((r) => /choosing what to look for/i.test(r.messages?.[0]?.content ?? ''))
+    check(
+      'a follow-up carries the conversation so far',
+      /What did we pack for Lisbon/.test(followUp?.messages?.[1]?.content ?? ''),
+    )
+    const convo2 = await savedConvo('And what about the weather')
+    check('and both turns are in the one note', /## What did we pack/.test(convo2 ?? '') && /## And what about the weather/.test(convo2 ?? ''))
+    llm.replyFor = null
+
+    /* ---- asking the same thing, searching for something else -------------
+     * The lever the provenance callout points at. It records what was searched
+     * for; Redo lets you change that and re-answer, replacing the old exchange
+     * rather than appending a second answer to the same question.
+     */
+    /*
+     * The terms never reach the answer request — they only decide which notes
+     * are found — so the two answers are told apart by counting rather than by
+     * looking for the terms in the body.
+     */
+    llm.replyFor = (body) => {
+      const sys = body.messages?.[0]?.content ?? ''
+      if (/choosing what to look for/i.test(sys)) return 'lisbon, packing'
+      // Only the redo runs under this reply, so it can answer unconditionally —
+      // the terms never reach the answer request, only the notes they found do.
+      if (/answering questions about/i.test(sys)) return 'Answered again, from [[Packing List]].'
+      return 'unexpected'
+    }
+
+    const beforeRedo = llm.requests.length
+    await page.locator('.composer-redo').click()
+    await page.waitForSelector('.prompt-input', { timeout: 5000 })
+    const termBox = page.locator('.prompt-input')
+    // The dialog fills its field from an effect, which runs after the paint, so
+    // reading the instant the element exists catches it empty.
+    await page
+      .waitForFunction(() => (document.querySelector('.prompt-input')?.value ?? '') !== '', null, {
+        timeout: 3000,
+      })
+      .catch(() => {})
+    check('Redo starts from the terms the callout recorded', (await termBox.inputValue()).includes('lisbon'))
+    await termBox.fill('trousers, socks')
+    await page.click('.dialog-foot .btn-primary')
+    await page.waitForFunction(
+      () => /Answered again/.test(document.querySelector('.cm-content')?.textContent ?? ''),
+      null,
+      { timeout: 30000 },
+    )
+    await page.waitForTimeout(1200)
+
+    const redone = llm.requests.slice(beforeRedo)
+    check(
+      'it does not ask the model for terms again',
+      !redone.some((r) => /choosing what to look for/i.test(r.messages?.[0]?.content ?? '')),
+    )
+    const redoConvo = await savedConvo('Answered again')
+    /*
+     * Only the *last* exchange is replaced, so the first turn's answer is still
+     * there and rightly so — the check has to look at the section the redo
+     * owned rather than at the whole note.
+     */
+    const lastSection = (redoConvo ?? '').slice((redoConvo ?? '').lastIndexOf('## And what about the weather'))
+    check('the new answer replaced the old one', !/trip notes cover Lisbon/.test(lastSection))
+    check('and the first turn was left alone', /trip notes cover Lisbon/.test(redoConvo ?? ''))
+    check(
+      'and the question was asked once, not twice',
+      ((redoConvo ?? '').match(/^## And what about the weather/gm) ?? []).length === 1,
+    )
+    check('the callout records the terms you chose', /Searched “trousers”, “socks”/.test(redoConvo ?? ''))
+    llm.replyFor = null
+
+    /* ---- pinning a note to the conversation ------------------------------
+     * `source:` filters what may be *searched*; `include:` guarantees what is
+     * *sent*. The whole check turns on a note the search cannot reach: the
+     * terms below match nothing in it, so if it turns up in the material the
+     * pin is the only thing that could have put it there.
+     */
+    /*
+     * A small graph, because the `links:` scope further down has to be shown
+     * reaching something. The charter links out to one note and is linked to
+     * from another; a fourth note matches the same search terms and is
+     * connected to nothing at all, which is what makes it the note that proves
+     * the scope is doing the work rather than the search coming up short.
+     */
+    const makeNote = async (title, body) => {
+      await page.click('[title^="New note"]')
+      await page.waitForTimeout(250)
+      await page.locator('.editor-title-input').fill(title)
+      await page.locator('.editor-title-input').press('Enter')
+      await page.locator('.cm-content').click()
+      if (body) await page.locator('.cm-content').pressSequentially(body, { delay: 8 })
+      await page.waitForTimeout(700)
+    }
+    /** A wikilink typed the way a person types one: prefix, then the list. */
+    const typeLink = async (target) => {
+      await page.locator('.cm-content').pressSequentially(`[[${target.slice(0, 5)}`, { delay: 25 })
+      await page.waitForTimeout(600)
+      if (await page.locator('.cm-tooltip-autocomplete').isVisible().catch(() => false)) {
+        await page.keyboard.press('Enter')
+      } else {
+        await page.locator('.cm-content').pressSequentially(`${target.slice(5)}]]`, { delay: 10 })
+      }
+      await page.waitForTimeout(500)
+    }
+
+    await makeNote('Decision Log', 'Every quorum call is recorded here, with who was present.')
+    await makeNote('Quorum Elsewhere', 'Quorum came up again here, linked to nothing at all.')
+
+    await makeNote('Team Charter', 'Quorum is four, and decisions are written down the same day. See ')
+    await typeLink('Decision Log')
+    await page.waitForTimeout(700)
+
+    await makeNote('Retro Notes', 'Looking back at how quorum held under the ')
+    await typeLink('Team Charter')
+    await page.waitForTimeout(700)
+
+    check(
+      'the charter links out to one note and is linked to from another',
+      /\[\[Decision Log\]\]/.test((await noteContaining('Quorum is four')) ?? '') &&
+        /\[\[Team Charter\]\]/.test((await noteContaining('Looking back at how quorum')) ?? ''),
+      `${(await noteContaining('Quorum is four')) ?? ''} / ${(await noteContaining('Looking back at how quorum')) ?? ''}`.replace(/\n/g, ' '),
+    )
+
+    /*
+     * Matched on the row's title rather than on the row, because by now the
+     * conversation quotes "Team Charter" in its own answer and would otherwise
+     * be the row that "has text" — and the newest note is the one at the top.
+     */
+    const rowTitled = (t) => page.locator(`.note-row:has(.note-row-title:has-text("${t}"))`).first()
+
+    await rowTitled('Ask — What did we pack').click()
+    await page.waitForSelector('.composer', { timeout: 10000 })
+
+    /* ---- the shape of the composer ---------------------------------------
+     * The field owns a row and the controls own the one beneath it, so the
+     * thing you type into is never squeezed by a scope rule that ran long —
+     * and Ask is the widest control in its row, because it is the default
+     * action and Enter does the same thing.
+     */
+    const boxRect = async (sel) => page.locator(sel).first().boundingBox()
+    const fieldBox = await boxRect('.composer-input')
+    const controlsBox = await boxRect('.composer-controls')
+    check(
+      'the question field sits on its own row above the controls',
+      fieldBox.y + fieldBox.height <= controlsBox.y + 1,
+      `field ends ${Math.round(fieldBox.y + fieldBox.height)}, controls start ${Math.round(controlsBox.y)}`,
+    )
+    check(
+      'and takes the full width of the composer',
+      fieldBox.width > controlsBox.width * 0.9,
+      `${Math.round(fieldBox.width)} vs ${Math.round(controlsBox.width)}`,
+    )
+    const sendBox = await boxRect('.composer-send')
+    const chipBoxes = await Promise.all(
+      (await page.locator('.composer-controls .composer-scope').all()).map((c) => c.boundingBox()),
+    )
+    check(
+      'Ask is the widest control in the row',
+      chipBoxes.every((c) => sendBox.width > c.width),
+      `Ask ${Math.round(sendBox.width)}, chips ${chipBoxes.map((c) => Math.round(c.width)).join('/')}`,
+    )
+    check(
+      'and sits on the same row as the chips rather than under them',
+      chipBoxes.every((c) => Math.abs(c.y + c.height / 2 - (sendBox.y + sendBox.height / 2)) < 14),
+    )
+    check('the button says what it does, not just ✦', /Ask/.test(await page.locator('.composer-send').innerText()))
+    await page.locator('.composer-input').click()
+    await page.locator('.composer-input').pressSequentially('A question to fill the field', { delay: 8 })
+    await page.waitForTimeout(200)
+    await page.screenshot({
+      path: join(SHOTS, '32-composer.png'),
+      clip: {
+        x: Math.max(0, fieldBox.x - 24),
+        y: Math.max(0, fieldBox.y - 24),
+        width: Math.min(1440 - fieldBox.x + 24, fieldBox.width + 96),
+        height: 150,
+      },
+    })
+    await page.locator('.composer-input').fill('')
+    await page.waitForTimeout(150)
+
+    const pinChip = page.locator('[data-id="composer-pins"]')
+    check('the composer offers pinning next to the scope', (await pinChip.count()) === 1)
+    check('and says so plainly when nothing is pinned', /Pin a note/.test(await pinChip.innerText()))
+
+    await pinChip.click()
+    await page.waitForTimeout(300)
+    await page.locator('.menu-item:has-text("Pin a note…")').click()
+    await page.waitForSelector('[data-id="note-picker"]', { timeout: 5000 })
+    check('which opens the picker rather than asking you to type a title', true)
+
+    /*
+     * Typed as a search, chosen from the list: the title is never entered by
+     * hand, so a typo cannot reach the frontmatter.
+     */
+    await page.locator('[data-id="note-picker"] input').pressSequentially('team char', { delay: 20 })
+    await page.waitForTimeout(400)
+    const firstRow = page.locator('[data-id="note-picker"] .palette-row').first()
+    check('narrowing finds the note', /Team Charter/.test(await firstRow.innerText()))
+    await firstRow.click()
+    await page.locator('[data-id="note-picker"]').waitFor({ state: 'detached', timeout: 5000 })
+    await page.waitForTimeout(400)
+    check('the chip counts what is pinned', /1 pinned/.test(await pinChip.innerText()))
+
+    const pinnedFile = await savedConvo('Team Charter')
+    check(
+      'the pin is written into the note as a wikilink, so a rename can find it',
+      /^\s+- "\[\[Team Charter\]\]"$/m.test(pinnedFile ?? ''),
+      (pinnedFile ?? '').split('\n').slice(0, 8).join(' · '),
+    )
+
+    llm.replyFor = (body) => {
+      const sys = body.messages?.[0]?.content ?? ''
+      // Terms that match nothing in the pinned note, on purpose.
+      if (/choosing what to look for/i.test(sys)) return 'lisbon, packing'
+      if (/answering questions about/i.test(sys)) return 'Quorum is four — see [[Team Charter]].'
+      return 'unexpected'
+    }
+
+    const beforePinned = llm.requests.length
+    await page.locator('.composer-input').click()
+    await page.locator('.composer-input').pressSequentially('What is quorum?', { delay: 15 })
+    await page.keyboard.press('Enter')
+    await page.waitForFunction(
+      () => /Quorum is four —/.test(document.querySelector('.cm-content')?.textContent ?? ''),
+      null,
+      { timeout: 30000 },
+    )
+    await page.waitForTimeout(1200)
+
+    const pinnedAnswer = llm.requests
+      .slice(beforePinned)
+      .find((r) => /answering questions about/i.test(r.messages?.[0]?.content ?? ''))
+    const material = pinnedAnswer?.messages?.[1]?.content ?? ''
+    check('a pinned note is sent whatever the search found', /Quorum is four, and decisions/.test(material))
+    check(
+      'and goes first, ahead of anything the search turned up',
+      material.indexOf('## Team Charter') === material.indexOf('## '),
+      material.slice(0, 60).replace(/\n/g, ' · '),
+    )
+
+    const quorumConvo = await savedConvo('Quorum is four —')
+    const quorumSection = (quorumConvo ?? '').slice((quorumConvo ?? '').lastIndexOf('## What is quorum'))
+    check('the callout says which notes were there because they are pinned', /\[\[Team Charter\]\] \(pinned\)/.test(quorumSection))
+
+    /*
+     * The failure that matters most. A pin that quietly stops pinning produces
+     * answers indistinguishable from ones that read the note, so a name that no
+     * longer resolves has to be reported rather than skipped — on screen and in
+     * the file.
+     */
+    await rowTitled('Team Charter').click()
+    await page.waitForTimeout(500)
+    check('the pinned note is the one open', (await page.locator('.editor-title-input').inputValue()) === 'Team Charter')
+    await page.locator('.editor-title-input').fill('Working Agreements')
+    await page.locator('.editor-title-input').press('Enter')
+    await page.waitForTimeout(1200)
+    await rowTitled('Ask — What did we pack').click()
+    await page.waitForSelector('.composer', { timeout: 10000 })
+    await page.waitForTimeout(600)
+    check(
+      'renaming a pinned note repoints the pin rather than breaking it',
+      /^1 pinned$/.test((await pinChip.innerText()).trim()),
+      await pinChip.innerText(),
+    )
+    const renamedFile = await savedConvo('Working Agreements')
+    check(
+      'because the pin is a wikilink the rename pass can see',
+      /- "\[\[Working Agreements\]\]"/.test(renamedFile ?? ''),
+      (renamedFile ?? '').split('\n').slice(0, 8).join(' · '),
+    )
+
+    /* Removing it by hand is the case a rename cannot save. */
+    await pinChip.click()
+    await page.waitForTimeout(300)
+    await page.locator('.menu-item:has-text("Working Agreements")').click()
+    await page.waitForTimeout(500)
+    check('unpinning from the same menu puts it back', /Pin a note/.test(await pinChip.innerText()))
+    llm.replyFor = null
+
+    /* ---- asking about the note in front of you ---------------------------
+     * Both ways into a conversation used to be list-shaped, so the most
+     * obvious question there is — one about the note on screen — could only be
+     * asked by going somewhere else first. This is the same conversation
+     * machinery, started with the open note already pinned.
+     */
+    llm.replyFor = (body) => {
+      const sys = body.messages?.[0]?.content ?? ''
+      if (/choosing what to look for/i.test(sys)) return 'quorum, charter'
+      if (/answering questions about/i.test(sys))
+        // Cites one note it was given and two it was not: one that exists, one
+        // that does not. Both have to end up named in the callout.
+        return 'Quorum is four — see [[Working Agreements]], [[Lisbon Trip]] and [[Ledger 2019]].'
+      return 'unexpected'
+    }
+
+    await rowTitled('Working Agreements').click()
+    await page.waitForTimeout(500)
+    const noteAi = page.locator('[data-id="note-ai"]')
+    check('the note header carries the ✦ whatever mode it is in', (await noteAi.count()) === 1)
+    await noteAi.click()
+    await page.waitForTimeout(300)
+    /*
+     * Opened from the list, so the note is being read: there is no caret in it
+     * and so no passage to change. The menu says only what is actually
+     * available, rather than offering a row whose only answer is to explain
+     * why it cannot work.
+     */
+    const readingMenu = await page.locator('.menu, .sheet').first().innerText()
+    check('which offers a question about the note while you are reading it', /Ask about this note/.test(readingMenu), readingMenu.replace(/\n/g, ' · '))
+    check('and does not offer a rewrite with nothing to rewrite', !/Change this passage/.test(readingMenu))
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(300)
+
+    /* With a caret in the note, both are there. */
+    await startEditing()
+    await noteAi.click()
+    await page.waitForTimeout(300)
+    const editingMenu = await page.locator('.menu, .sheet').first().innerText()
+    check('and both once the note is being edited', /Ask about this note/.test(editingMenu) && /Change this passage/.test(editingMenu), editingMenu.replace(/\n/g, ' · '))
+    check('with the rewrite still naming its key', /Change this passage.*⌘⇧U/s.test(editingMenu))
+
+    await page.locator('.menu-item:has-text("Ask about this note")').click()
+    await page.waitForSelector('.ask-question', { timeout: 5000 })
+    const starter = await page.locator('.dialog').innerText()
+    check('the starter says which note it is about', /Ask about “Working Agreements”/.test(starter))
+    check('and that the note is pinned rather than searched for', /pinned to the conversation/.test(starter))
+
+    const aboutBox = page.locator('.ask-question')
+    await aboutBox.click()
+    await aboutBox.pressSequentially('What is quorum here', { delay: 15 })
+    await page.waitForTimeout(200)
+    await page.click('.dialog-foot .btn-primary')
+    await page.waitForSelector('.composer', { timeout: 10000 })
+    await page.waitForFunction(
+      () => /Quorum is four —/.test(document.querySelector('.cm-content')?.textContent ?? ''),
+      null,
+      { timeout: 30000 },
+    )
+    await page.waitForTimeout(1200)
+
+    const about = await savedConvo('What is quorum here')
+    check('the conversation starts already pinned to that note', /- "\[\[Working Agreements\]\]"/.test(about ?? ''))
+    check('the pinned note is marked as read because it is pinned', /\[\[Working Agreements\]\] \(pinned\)/.test(about ?? ''))
+
+    /*
+     * The citation rule was an instruction with nothing checking it. A made-up
+     * `[[note]]` renders exactly like a real one, so an answer that cites what
+     * it was never given has to say so in the callout — the model is not asked
+     * again, the text it already returned is simply read.
+     */
+    check(
+      'a citation of a real note that was not sent is named',
+      /Cited without reading: \[\[Lisbon Trip\]\]/.test(about ?? ''),
+      (about ?? '').split('\n').find((l) => l.includes('Cited without')),
+    )
+    check(
+      'and a citation of a note that does not exist is called invented',
+      /Cited but no such note: “Ledger 2019”/.test(about ?? '') && /the name was invented/.test(about ?? ''),
+      (about ?? '').split('\n').find((l) => l.includes('no such note')),
+    )
+    check(
+      'the note it really did read is not accused of anything',
+      !/Cited[^\n]*Working Agreements/.test(about ?? ''),
+    )
+
+    /*
+     * The scope it starts in is the note's own neighbourhood, not the vault.
+     * Answering "about this note" from everything reads as a bug — you name a
+     * note and back comes an answer citing whatever shared a word with the
+     * question.
+     */
+    check(
+      'and it is scoped to that note and its links, not the whole vault',
+      /^source: "links:Working Agreements"$/m.test(about ?? ''),
+      (about ?? '').split('\n').find((l) => l.startsWith('source:')),
+    )
+    const scopedAnswer = llm.requests
+      .slice()
+      .reverse()
+      .find((r) => /answering questions about/i.test(r.messages?.[0]?.content ?? ''))
+    const scopedMaterial = scopedAnswer?.messages?.[1]?.content ?? ''
+    const sentHeadings = scopedMaterial.match(/^## .*$/gm)?.join(' · ') ?? ''
+    /*
+     * The hop has to actually reach something, in both directions — the first
+     * version of this check pointed at a note with no links at all, so it
+     * proved the scope kept the vault out while never once expanding.
+     */
+    check('a note the scope reached by a link out of it is sent', /^## Decision Log$/m.test(scopedMaterial), sentHeadings)
+    check('and one it reached by a link back to it', /^## Retro Notes$/m.test(scopedMaterial), sentHeadings)
+    /*
+     * The note that makes the check mean something: it matches the same search
+     * as the two above and is connected to nothing, so the only thing that can
+     * be keeping it out is the scope.
+     */
+    check(
+      'but not one that matched the search and is linked to nothing',
+      !/^## Quorum Elsewhere$/m.test(scopedMaterial),
+      sentHeadings,
+    )
+    llm.replyFor = null
+
+    /* ---- narrowing it to the note alone ----------------------------------
+     * The strictest reading of "about this note", one menu item away: the
+     * pinned note is the whole of what may be read, so there is no search to
+     * run — and the turn does not spend a request asking a model what to look
+     * for in a set of one it is already sending.
+     */
+    llm.replyFor = (body) => {
+      const sys = body.messages?.[0]?.content ?? ''
+      if (/choosing what to look for/i.test(sys)) return 'should, not, happen'
+      if (/answering questions about/i.test(sys)) return 'Four, per [[Working Agreements]].'
+      return 'unexpected'
+    }
+
+    const scopeChip = page.locator('.composer-scope').first()
+    check(
+      'Redo is offered while there is a search it could change',
+      (await page.locator('.composer-redo').count()) === 1,
+    )
+    await scopeChip.click()
+    await page.waitForTimeout(300)
+    const scopeMenu = await page.locator('.menu, .sheet').first().innerText()
+    check('the composer offers the same ladder the starter did', /and nothing else/.test(scopeMenu), scopeMenu.replace(/\n/g, ' · '))
+    await page.locator('.menu-item:has-text("and nothing else")').click()
+    await page.waitForTimeout(500)
+    check('the chip says the conversation narrowed', /Only Working Agreements/.test(await scopeChip.innerText()))
+    /*
+     * And Redo goes with it. Its whole offer is "searching for something else",
+     * and with one pinned note as the entire searchable set there is nothing
+     * else to search — a control that cannot do the thing it names.
+     */
+    check(
+      'and Redo is gone, because there is no other search to run',
+      (await page.locator('.composer-redo').count()) === 0,
+    )
+
+    const beforeNarrow = llm.requests.length
+    await page.locator('.composer-input').click()
+    await page.locator('.composer-input').pressSequentially('And how is it recorded?', { delay: 15 })
+    await page.keyboard.press('Enter')
+    await page.waitForFunction(
+      () => /Four, per/.test(document.querySelector('.cm-content')?.textContent ?? ''),
+      null,
+      { timeout: 30000 },
+    )
+    await page.waitForTimeout(1200)
+
+    const narrowed = llm.requests.slice(beforeNarrow)
+    check(
+      'a scope of one pinned note costs one request, not two',
+      !narrowed.some((r) => /choosing what to look for/i.test(r.messages?.[0]?.content ?? '')),
+      `${narrowed.length} request(s)`,
+    )
+    const onlyAnswer = narrowed.find((r) => /answering questions about/i.test(r.messages?.[0]?.content ?? ''))
+    const onlyMaterial = onlyAnswer?.messages?.[1]?.content ?? ''
+    check(
+      'and exactly one note goes with the question',
+      (onlyMaterial.match(/^## /gm) ?? []).length === 1 && /## Working Agreements/.test(onlyMaterial),
+      (onlyMaterial.match(/^## .*$/gm) ?? []).join(' · '),
+    )
+    const narrowFile = (await savedConvo('And how is it recorded')) ?? ''
+    /*
+     * The last turn only. Against the whole file this passes on an earlier
+     * turn's callout — every conversation here has several, and one of them
+     * saying the right thing is not this one saying it.
+     */
+    const narrowSection = narrowFile.slice(narrowFile.lastIndexOf('## And how is it recorded'))
+    check(
+      'the callout is honest that no search was run',
+      /No search terms/.test(narrowSection),
+      narrowSection.split('\n').find((l) => l.startsWith('> [!note]')),
+    )
+    llm.replyFor = null
+
+    /* ---- one key, one meaning -------------------------------------------
+     * ⌘K opens the palette even with the caret in a note, and the wikilink it
+     * displaced answers ⌘⇧K. The second is not a formality: CodeMirror resolves
+     * a shifted letter by trying the unshifted binding first, so ⌘⇧K only works
+     * at all *because* ⌘K is no longer bound in the editor.
+     */
+    await page.locator('.cm-line').first().click()
+    await page.keyboard.press('Control+End')
+    await page.keyboard.press('Control+k')
+    const paletteFromEditor = await page
+      .waitForSelector('.palette input', { timeout: 2500 })
+      .then(() => true)
+      .catch(() => false)
+    check('⌘K opens the palette from inside the editor', paletteFromEditor)
+    // The palette closes from its own input's handler, so the key has to go
+    // there rather than to whatever the page happens to have focused.
+    await page.locator('.palette input').press('Escape')
+    await page.locator('.palette').waitFor({ state: 'detached', timeout: 5000 })
+
+    await page.locator('.cm-line').first().click()
+    await page.keyboard.press('Control+End')
+    const beforeWiki = await page.locator('.cm-content').innerText()
+    await page.keyboard.type('\nPacking List\n')
+    await page.waitForTimeout(300)
+    await page.keyboard.press('ArrowUp')
+    await page.keyboard.press('Home')
+    await page.keyboard.press('Shift+End')
+    await page.keyboard.press('Control+Shift+k')
+    await page.waitForTimeout(400)
+    const wikified = await page.locator('.cm-content').innerText()
+    check('⌘⇧K still wraps a selection in a wikilink', wikified.includes('[[Packing List]]'))
+    check(
+      'and it really is the wikilink, not the palette',
+      (await page.locator('.palette').count()) === 0,
+    )
+    /*
+     * Put the note back exactly as it was. Undo, but counted against the text
+     * rather than against a guess at how many transactions that took —
+     * CodeMirror groups typing by time, so "press ⌘Z twice" is right until the
+     * machine is slow and then silently leaves a line behind for every later
+     * check in this file to trip over.
+     */
+    for (let i = 0; i < 10; i++) {
+      if ((await page.locator('.cm-content').innerText()) === beforeWiki) break
+      await page.keyboard.press('Control+z')
+      await page.waitForTimeout(120)
+    }
+    check('the note is back as it was afterwards', (await page.locator('.cm-content').innerText()) === beforeWiki)
+
+    /* ---- summarising the list -------------------------------------------
+     * Acts on whatever the note list is showing, and says what would leave the
+     * device before any of it does.
+     */
+    /*
+     * Put frontmatter on one of the notes first, so "the block at the top does
+     * not get sent" is checked against a block that actually exists rather than
+     * passing because there was nothing to leave out.
+     */
+    await page.locator('.cm-line').first().click()
+    await page.keyboard.press('Control+Home')
+    await page.keyboard.type('---\nsecret_key: do-not-send-this\n---\n')
+    await page.waitForTimeout(900)
+
+    llm.replyFor = (body) =>
+      /partial summaries/i.test(body.messages?.[0]?.content ?? '')
+        ? 'Merged overview.\n\n**Themes**\n\n- Everything, at once'
+        : 'An overview.\n\n**Themes**\n\n- Something recurring'
+
+    /*
+     * Straight from the editor, where the caret still is after the rewrite.
+     * This used to need a click somewhere else first, because ⌘K was the
+     * wikilink while writing and only opened the palette elsewhere — which is
+     * exactly the confusion that got it changed, and is why this is checked
+     * from here rather than from a convenient blank spot.
+     */
+    // Let the note saves settle before opening it: the palette's input is a
+    // controlled one, and a `fill` that lands in the same tick as a re-render
+    // driven by a save is silently dropped. Typed key by key, then checked,
+    // because "the box is empty" and "the command is missing" look identical
+    // from the outside and are not the same failure.
+    await page.waitForTimeout(700)
+    await page.keyboard.press('Control+k')
+    await page.waitForSelector('.palette input', { timeout: 3000 })
+    const palInput = page.locator('.palette input')
+    await palInput.click()
+    await palInput.pressSequentially('Summarise', { delay: 25 })
+    await page
+      .waitForFunction(() => document.querySelector('.palette input')?.value === 'Summarise', null, {
+        timeout: 3000,
+      })
+      .catch(() => {})
+    check('the palette takes what is typed into it', (await palInput.inputValue()) === 'Summarise')
+    await page.waitForTimeout(400)
+    const summaryCmd = page.locator('.palette-row:has-text("Summarise these notes")').first()
+    // The list is rebuilt from a memo, so it lands a frame after the keystroke.
+    const offered = await summaryCmd
+      .waitFor({ timeout: 3000 })
+      .then(() => true)
+      .catch(() => false)
+    check('the palette offers a summary of the current list', offered)
+    await summaryCmd.click()
+    await page.waitForSelector('.summary-figures', { timeout: 5000 })
+
+    const figures = await page.locator('.summary-figures').innerText()
+    check('it says how many notes would be sent', /\d+\s*\n?\s*notes?/i.test(figures), figures.replace(/\n/g, ' '))
+    check('and roughly how many tokens', /tokens/i.test(figures))
+    check(
+      'and names the provider and model it would go to',
+      /mock-vision|mock-text/.test(await page.locator('.summary-says').innerText()),
+    )
+    const notesBefore = await page.locator('.note-row').count()
+    check('nothing has been sent yet', llm.requests.every((r) => !/summarising a set/i.test(r.messages?.[0]?.content ?? '')))
+
+    await page.click('.dialog-foot .btn-primary')
+    // Done when the note it writes is in the list — a fixed wait here is a
+    // fixed wait on a model, which is the one thing that has no fixed duration.
+    await page.locator('.note-row:has-text("Summary of")').first().waitFor({ timeout: 30000 })
+    await page.waitForTimeout(400)
+    const summaryReq = llm.requests.filter((r) => /summarising a set/i.test(r.messages?.[0]?.content ?? ''))
+    check('confirming sends the notes', summaryReq.length >= 1)
+    check(
+      'each note went under its own title',
+      /^## /m.test(summaryReq[0]?.messages?.[1]?.content ?? ''),
+    )
+    check(
+      'and the frontmatter block at the top of a note did not',
+      !/do-not-send-this/.test(summaryReq[0]?.messages?.[1]?.content ?? ''),
+    )
+
+    const summaryText = await noteContaining('generated: true')
+    check('the summary is written as an ordinary note', !!summaryText)
+    check('carrying what made it', /generated_by: .+\/mock-/.test(summaryText ?? ''), (summaryText ?? '').split('\n')[3])
+    check('and what it was made from', /source_notes: \d+/.test(summaryText ?? ''))
+    check('the vault gained exactly one note', (await page.locator('.note-row').count()) === notesBefore + 1)
+    check('and it is the one now open', /Summary of/.test(await page.locator('.editor-title-input').inputValue()))
+    llm.replyFor = null
+
+    /* ---- a text-only setup ------------------------------------------------
+     * Only transcription needs a model that can see. Requiring one before
+     * offering the other three took every AI affordance off the screen at once
+     * for anybody running a text-only model — with nothing left to say why,
+     * which is the worst way for a feature to fail.
+     */
+    await page.click('.pane-head .icon-btn[title^="Settings"]')
+    await page.waitForSelector('.dialog')
+    await page.click('.tab:has-text("AI")')
+    await page.waitForTimeout(250)
+    await page.locator('.dialog label.field:has(span:text-is("Vision model")) input').fill('')
+    await page.locator('.dialog label.field:has(span:text-is("Text model")) input').fill('mock-text')
+    await page.waitForTimeout(300)
+    const status = await page.locator('.ai-status').innerText()
+    check('the panel says which features the settings switch on', /Transcribe/.test(status), status.replace(/\n/g, ' · '))
+    check('and why one of them is off', /needs a vision model/.test(status))
+    await page.click('.dialog-foot .btn-primary')
+    await page.waitForTimeout(400)
+
+    await page.locator('.pane.list-pane .icon-btn[aria-label="List actions"]').click()
+    await page.waitForTimeout(350)
+    const textOnlyMenu = await page.locator('.menu, .sheet').first().innerText()
+    check('with no vision model, summarise is still offered', /Summarise these/.test(textOnlyMenu))
+    check('and so is a conversation', /Ask these notes/.test(textOnlyMenu))
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(300)
+
+    /*
+     * Back to the note with the picture in it: the conversation just opened is
+     * the active one now, and it has no embed for the viewer to open. Editing
+     * too, because the ✦ shares the Insert button's rule and neither is on
+     * screen while a note is being read.
+     */
+    await page.locator('.note-row:has-text("Lisbon Trip")').first().click()
+    await page.waitForTimeout(500)
+    await startEditing()
+    check(
+      'and the header still offers a rewrite',
+      (await page.locator('.editor-pane [data-id="note-ai"]').count()) === 1,
+    )
+
+    await page.locator('.cm-embed img').first().click()
+    await page.waitForTimeout(400)
+    check(
+      'but Transcribe is gone, because that is the one that needs to see',
+      (await page.locator('.lightbox-bar .icon-btn[title^="Transcribe"]').count()) === 0,
+    )
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(300)
+
+    /* Put the vision model back for the teardown below. */
+    await page.click('.pane-head .icon-btn[title^="Settings"]')
+    await page.waitForSelector('.dialog')
+    await page.click('.tab:has-text("AI")')
+    await page.waitForTimeout(250)
+    await page.locator('.dialog label.field:has(span:text-is("Vision model")) input').fill('mock-vision')
+    await page.locator('.dialog label.field:has(span:text-is("Text model")) input').fill('')
+    await page.waitForTimeout(200)
+    await page.click('.dialog-foot .btn-primary')
+    await page.waitForTimeout(400)
+
+    /*
+     * Put it back, so nothing downstream runs with a provider configured. The
+     * summary is the note that is open now, and it has no picture in it, so the
+     * one with the image has to be reopened for the last check.
+     */
+    await page.click('.pane-head .icon-btn[title^="Settings"]')
+    await page.waitForSelector('.dialog')
+    await page.click('.tab:has-text("AI")')
+    await page.waitForTimeout(250)
+    await page.locator('.dialog label.field:has-text("Provider") select').selectOption('none')
+    await page.waitForTimeout(150)
+    await page.click('.dialog-foot .btn-primary')
+    await page.waitForTimeout(300)
+    await page.locator('.note-row:has-text("Lisbon Trip")').first().click()
+    await page.waitForTimeout(500)
+    await page.locator('.cm-embed img').first().click()
+    await page.waitForTimeout(400)
+    check(
+      'turning the provider off takes the button away again',
+      (await page.locator('.lightbox-bar .icon-btn[title^="Transcribe"]').count()) === 0,
+    )
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(250)
   }
 
   /* ---- calendar ------------------------------------------------------ */

@@ -1,7 +1,17 @@
 /** Settings: backend connection, sync behaviour, editor and image preferences. */
 
 import { useEffect, useState } from 'preact/hooks'
-import { settings, update, updateGdrive, updateWebdav } from '../core/settings'
+import { settings, update, updateAi, updateGdrive, updateWebdav } from '../core/settings'
+import {
+  isConfigured,
+  modelFor,
+  preflight,
+  presetFor,
+  PRESETS,
+  type Capability,
+  type LlmProvider,
+} from '../core/llm'
+import { listModels } from '../adapters/llm'
 import { buildAdapter, connectBackend } from '../app/backend'
 import { currentAdapter, status, sync } from '../core/sync'
 import { requestPersistence, storageEstimate } from '../core/db'
@@ -23,7 +33,30 @@ import { STARTER_TEMPLATES } from '../core/starters'
 import { hasSnippets, snippets, SNIPPETS_NOTE } from '../core/snippets'
 import { openNote } from './state'
 
-type Tab = 'sync' | 'editor' | 'files' | 'about'
+type Tab = 'sync' | 'editor' | 'files' | 'ai' | 'about'
+
+/**
+ * The four features, and what each of them needs to be switched on.
+ *
+ * Only the first wants a model that can see. The rest are text, which is why
+ * they are offered to somebody who has never filled the vision field in — and
+ * why this list says so rather than leaving it to be inferred from an empty
+ * screen.
+ */
+const AI_FEATURES: Array<{ label: string; capability: Capability; missing: string }> = [
+  { label: 'Transcribe', capability: 'vision', missing: 'needs a vision model' },
+  { label: 'Change this passage', capability: 'text', missing: 'needs a model' },
+  { label: 'Summarise these notes', capability: 'text', missing: 'needs a model' },
+  { label: 'Ask your notes', capability: 'text', missing: 'needs a model' },
+]
+
+const TAB_LABEL: Record<Tab, string> = {
+  sync: 'Sync',
+  editor: 'Editor',
+  files: 'Images',
+  ai: 'AI',
+  about: 'About',
+}
 
 /**
  * Make `Templates/` and fill it with the starter set, then open the first one.
@@ -93,8 +126,12 @@ async function startSnippets() {
 export function Settings() {
   const [tab, setTab] = useState<Tab>('sync')
   const [testing, setTesting] = useState(false)
+  const [aiTesting, setAiTesting] = useState(false)
+  const [models, setModels] = useState<string[]>([])
   const [usage, setUsage] = useState<{ usage: number; quota: number }>()
   const s = settings.value
+  const preset = presetFor(s.ai.provider)
+  const pre = preflight(s.ai, location.origin)
 
   useEffect(() => {
     if (settingsOpen.value) void storageEstimate().then(setUsage)
@@ -130,6 +167,46 @@ export function Settings() {
     }
   }
 
+  /**
+   * Prove the address, the CORS configuration and the key in one request.
+   *
+   * Listing models rather than generating something: it is the cheapest call
+   * that exercises all three, it costs nothing on a metered provider, and it
+   * comes back with the list that fills the model field — so the test and the
+   * only tedious part of the setup are the same button.
+   *
+   * The model itself is deliberately *not* verified here. Whether a given model
+   * can see is not in the listing, and guessing from its name would be wrong
+   * often enough to be worse than silence; the transcription says so plainly if
+   * it turns out it cannot.
+   */
+  const testAi = async () => {
+    setAiTesting(true)
+    try {
+      const found = await listModels(settings.value.ai)
+      setModels(found)
+      if (!found.length) {
+        notify('Connected, but the server listed no models.', 'error')
+        return
+      }
+      const has = found.includes(settings.value.ai.visionModel)
+      if (!settings.value.ai.visionModel) {
+        notify(`Connected. ${found.length} models available — pick one that can read images.`)
+      } else if (has) {
+        notify(`Connected. ${settings.value.ai.visionModel} is available.`)
+      } else {
+        notify(
+          `Connected, but “${settings.value.ai.visionModel}” is not in the ${found.length} models this server lists.`,
+          'error',
+        )
+      }
+    } catch (e) {
+      notify((e as Error).message, 'error')
+    } finally {
+      setAiTesting(false)
+    }
+  }
+
   return (
     <div class="scrim" onClick={() => (settingsOpen.value = false)}>
       <div class="dialog" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
@@ -142,7 +219,7 @@ export function Settings() {
         </div>
 
         <div class="tabs" role="tablist">
-          {(['sync', 'editor', 'files', 'about'] as Tab[]).map((t) => (
+          {(['sync', 'editor', 'files', 'ai', 'about'] as Tab[]).map((t) => (
             <button
               key={t}
               class="tab"
@@ -150,7 +227,7 @@ export function Settings() {
               aria-selected={tab === t}
               onClick={() => setTab(t)}
             >
-              {t === 'sync' ? 'Sync' : t === 'editor' ? 'Editor' : t === 'files' ? 'Images' : 'About'}
+              {TAB_LABEL[t]}
             </button>
           ))}
         </div>
@@ -653,6 +730,240 @@ export function Settings() {
                 Originals are kept whenever re-encoding would make the file bigger, and animated
                 GIFs and SVGs are never touched.
               </div>
+            </>
+          )}
+
+          {tab === 'ai' && (
+            <>
+              <label class="field">
+                <span>Provider</span>
+                <select
+                  value={s.ai.provider}
+                  onChange={(e) => {
+                    const p = (e.target as HTMLSelectElement).value as LlmProvider
+                    // The preset *is* the address: picking one and then being
+                    // left with the last one's URL is the setting doing nothing.
+                    updateAi({ provider: p, baseUrl: presetFor(p)?.baseUrl ?? '' })
+                    setModels([])
+                  }}
+                >
+                  <option value="none">None — no AI features</option>
+                  {(Object.keys(PRESETS) as Array<Exclude<LlmProvider, 'none'>>).map((p) => (
+                    <option key={p} value={p}>
+                      {PRESETS[p].label}
+                    </option>
+                  ))}
+                </select>
+                <small>
+                  Off by default, and off is a complete state: with no provider, nothing in the app
+                  changes and nothing can leave this device.
+                </small>
+              </label>
+
+              {preset && (
+                <>
+                  <label class="field">
+                    <span>API address</span>
+                    <input
+                      type="url"
+                      placeholder={`e.g. ${preset.baseUrl || 'https://llm.example.com/v1'}`}
+                      value={s.ai.baseUrl}
+                      onInput={(e) => updateAi({ baseUrl: (e.target as HTMLInputElement).value })}
+                    />
+                    <small>
+                      Ends in <code>/v1</code> for anything OpenAI-compatible; Slate adds it if you
+                      leave it off a bare address.
+                    </small>
+                  </label>
+
+                  <label class="field">
+                    <span>API key{preset.needsKey ? '' : ' (optional)'}</span>
+                    <input
+                      type="password"
+                      autocomplete="off"
+                      value={s.ai.apiKey}
+                      onInput={(e) => updateAi({ apiKey: (e.target as HTMLInputElement).value })}
+                    />
+                    {!preset.needsKey && <small>Ollama and LM Studio do not use one by default.</small>}
+                  </label>
+
+                  <label class="field">
+                    <span>Vision model</span>
+                    <input
+                      type="text"
+                      list="ai-models"
+                      placeholder={preset.sampleModel ? `e.g. ${preset.sampleModel}` : 'Blank — no transcription'}
+                      value={s.ai.visionModel}
+                      onInput={(e) => updateAi({ visionModel: (e.target as HTMLInputElement).value })}
+                    />
+                    <datalist id="ai-models">
+                      {models.map((m) => (
+                        <option key={m} value={m} />
+                      ))}
+                    </datalist>
+                    <small>
+                      Only <em>Transcribe</em> uses this, and it has to be a model that can see — a
+                      text-only one will take the picture and answer about nothing. Leave it blank
+                      if you have no vision model; everything else still works.
+                    </small>
+                  </label>
+
+                  <div class="field-row">
+                    <label class="field">
+                      <span>Text model</span>
+                      <input
+                        type="text"
+                        list="ai-models"
+                        placeholder="Same as the vision model"
+                        value={s.ai.textModel}
+                        onInput={(e) => updateAi({ textModel: (e.target as HTMLInputElement).value })}
+                      />
+                      <small>
+                        Rewriting, summarising and asking questions all use this. Falls back to the
+                        vision model when blank, so one model in either field is enough.
+                      </small>
+                    </label>
+                    <label class="field">
+                      <span>Notes per question</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={50}
+                        value={s.ai.notesPerQuestion}
+                        onInput={(e) =>
+                          updateAi({
+                            notesPerQuestion: Math.min(
+                              50,
+                              Math.max(1, Number((e.target as HTMLInputElement).value) || 1),
+                            ),
+                          })
+                        }
+                      />
+                      <small>
+                        How many of the notes a question matches are sent. The limit that usually
+                        binds — every answer says how many matched and how many it could take.
+                      </small>
+                    </label>
+                    <label class="field">
+                      <span>Context budget</span>
+                      <input
+                        type="number"
+                        min={1000}
+                        step={1000}
+                        value={s.ai.contextTokens}
+                        onInput={(e) =>
+                          updateAi({
+                            contextTokens: Math.max(
+                              1000,
+                              Number((e.target as HTMLInputElement).value) || 1000,
+                            ),
+                          })
+                        }
+                      />
+                      <small>
+                        Tokens the model can read at once. Decides how many passes a big summary
+                        takes — 8000 for a small local model, 100000+ for a hosted one.
+                      </small>
+                    </label>
+                  </div>
+
+                  {/*
+                    * Said before the request rather than after it. A page served
+                    * over https cannot call http, and the browser's error for
+                    * that is the same TypeError as four other problems — so the
+                    * one failure that can be known in advance is reported in
+                    * advance, while the address is still on screen to fix.
+                    */}
+                  {(pre.kind === 'blocked' || pre.kind === 'caution') && (
+                    <div
+                      class={pre.kind === 'blocked' ? 'callout callout-danger' : 'callout'}
+                      style={{ whiteSpace: 'pre-wrap' }}
+                    >
+                      {pre.kind === 'blocked' && (
+                        <IconWarn size={13} style={{ verticalAlign: '-2px', marginRight: 4 }} />
+                      )}
+                      {pre.message}
+                    </div>
+                  )}
+
+                  <div style={{ marginTop: 18, display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <button class="btn btn-primary" disabled={aiTesting} onClick={testAi}>
+                      {aiTesting ? 'Testing…' : 'Test connection'}
+                    </button>
+                    <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>
+                      {models.length ? `${models.length} models available` : 'Not tested'}
+                    </span>
+                  </div>
+
+                  {preset.corsFix && (
+                    <div class="callout">
+                      <strong>If it cannot be reached,</strong> it is usually CORS — the server has
+                      to allow this origin (<code>{location.origin}</code>).{' '}
+                      {preset.corsFix(location.origin)}
+                    </div>
+                  )}
+
+                  <div class="callout">
+                    The key and the address are stored in this browser's local database, beside the
+                    WebDAV password and for the same reason: they are never written into the vault,
+                    so they never sync to your other devices.
+                  </div>
+
+                  <label class="field">
+                    <span>Where generated notes go</span>
+                    <input
+                      type="text"
+                      placeholder="The vault root"
+                      value={s.generatedFolder}
+                      onInput={(e) =>
+                        update({ generatedFolder: (e.target as HTMLInputElement).value })
+                      }
+                    />
+                    <small>
+                      Summaries and conversations are written here. Leave blank for the vault root.
+                      Unlike everything else on this tab, this one is a filing preference rather
+                      than a secret, so it follows you to your other devices.
+                    </small>
+                  </label>
+
+                  {/*
+                    * What is actually on, right now, given what is in the fields
+                    * above. This exists because of the way this went wrong once:
+                    * a blank Vision model took every AI feature off the screen at
+                    * the same moment, and with all of them gone there was nothing
+                    * left to explain itself. A panel that states its own effect
+                    * turns that from a mystery into a line of text.
+                    */}
+                  <div class="ai-status" role="status">
+                    {AI_FEATURES.map((f) => {
+                      const on = isConfigured(s.ai, f.capability)
+                      return (
+                        <div key={f.label} class="ai-status-row" data-on={on}>
+                          <span class="ai-status-mark" aria-hidden="true">
+                            {on ? '●' : '○'}
+                          </span>
+                          <span class="ai-status-name">{f.label}</span>
+                          <span class="ai-status-why">
+                            {on ? modelFor(s.ai, f.capability) : f.missing}
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  <div class="callout">
+                    <strong>What this switches on.</strong> Three things, each of which you start
+                    and each of which shows you the result before anything is written:{' '}
+                    <em>Transcribe</em> in the image viewer, <em>Change this passage</em> from the ✦
+                    in a note's header (⌘⇧U), and <em>Summarise these notes</em> in the ⋯ menu
+                    above the note list — which is also where <em>Ask your notes</em> starts a
+                    conversation.
+                    Nothing runs on its own and nothing is sent in the background — the only things
+                    that ever leave this device are a picture you pressed the button on, a passage
+                    you selected, or notes you confirmed by count.
+                  </div>
+                </>
+              )}
             </>
           )}
 

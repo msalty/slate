@@ -202,3 +202,92 @@ export function filesFromDataTransfer(dt: DataTransfer | null): File[] {
   if (!dt) return []
   return Array.from(dt.files ?? [])
 }
+
+/* ------------------------------------------------------------ for the wire */
+
+/**
+ * How big a picture is worth sending to a model.
+ *
+ * Vision models work from a fixed grid of tiles and throw away the rest, so a
+ * 4000px screenshot costs several times the tokens of a 1568px one and reads
+ * exactly the same words out of it. This number is the largest edge any of the
+ * common ones actually uses; above it you are paying for pixels that get
+ * resampled away before the model sees them.
+ */
+export const WIRE_MAX_EDGE = 1568
+
+/**
+ * The two formats every vision endpoint accepts.
+ *
+ * Slate's own default is WebP, which is the right choice for storing a pasted
+ * screenshot and the wrong one for sending: OpenAI and Gemini take it, but
+ * plenty of OpenAI-compatible servers — llama.cpp's included — decode only PNG
+ * and JPEG, and a refusal there is indistinguishable from a dozen other
+ * refusals. Converting costs one canvas pass and removes the whole class of
+ * problem, so a picture is always re-encoded rather than sent as it sits.
+ */
+const WIRE_TYPES = new Set(['image/jpeg', 'image/png'])
+
+export interface WireImage {
+  /** Base64 with no `data:` prefix — both wire formats want it bare. */
+  base64: string
+  mime: string
+  width: number
+  height: number
+  bytes: number
+}
+
+/**
+ * Re-encode an image into something a model will certainly accept.
+ *
+ * Alpha decides the format: JPEG is smaller and right for a photograph or a
+ * screenshot, and wrong for anything transparent, which it would flatten onto
+ * black. Quality is higher than the paste path uses — this picture is being
+ * read rather than looked at, and JPEG artefacts land hardest on exactly the
+ * thing being read, which is small text.
+ */
+export async function toWireImage(input: Blob, maxEdge = WIRE_MAX_EDGE): Promise<WireImage> {
+  let bitmap: ImageBitmap
+  try {
+    bitmap = await createImageBitmap(input)
+  } catch {
+    throw new Error('This image could not be decoded in the browser, so there is nothing to send.')
+  }
+  try {
+    const { width: sw, height: sh } = bitmap
+    const scale = Math.min(1, maxEdge / Math.max(sw, sh))
+    const w = Math.max(1, Math.round(sw * scale))
+    const h = Math.max(1, Math.round(sh * scale))
+    const type = (await hasAlpha(bitmap)) ? 'image/png' : 'image/jpeg'
+    const out = await encode(bitmap, w, h, type, 0.92)
+    if (!out) throw new Error('This image could not be prepared for sending.')
+    return {
+      base64: await toBase64(out),
+      mime: WIRE_TYPES.has(out.type) ? out.type : type,
+      width: w,
+      height: h,
+      bytes: out.size,
+    }
+  } finally {
+    bitmap.close?.()
+  }
+}
+
+/**
+ * Base64 for a blob, without building a megabyte-wide argument list.
+ *
+ * `btoa(String.fromCharCode(...bytes))` is the one-liner everybody writes and
+ * it throws on a picture: spreading a few hundred thousand arguments overflows
+ * the call stack. `FileReader` does the encoding itself and hands back a data
+ * URL, so the only work here is cutting the prefix off.
+ */
+async function toBase64(blob: Blob): Promise<string> {
+  const url = await new Promise<string>((resolve, reject) => {
+    const r = new FileReader()
+    r.onload = () => resolve(String(r.result))
+    r.onerror = () => reject(r.error ?? new Error('Could not read the image'))
+    r.readAsDataURL(blob)
+  })
+  const comma = url.indexOf(',')
+  return comma === -1 ? '' : url.slice(comma + 1)
+}

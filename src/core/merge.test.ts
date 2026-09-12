@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { merge3 } from './merge'
+import { diffLines, merge3 } from './merge'
 
 const base = ['# Trip', '', 'Flights booked.', 'Hotel pending.', '', 'Notes here.'].join('\n')
 
@@ -113,5 +113,54 @@ describe('merge3', () => {
     expect(r.conflict).toBe(false)
     expect(r.merged).toContain('line 10 edited by me')
     expect(r.merged).toContain('line 3900 edited by them')
+  })
+})
+
+/**
+ * The two-way diff, which is read by a person rather than written to a file.
+ *
+ * It shares the merge's LCS, so the cases below are about the shape it hands
+ * back rather than about the matching: every line of both sides accounted for,
+ * deletions before insertions, and the degenerate inputs a rewrite actually
+ * produces — one line becoming three, everything replaced, nothing changed.
+ */
+describe('diffLines', () => {
+  const kinds = (a: string, b: string) => diffLines(a, b).map((l) => `${l.kind}:${l.text}`)
+
+  it('reports an unchanged text as all same', () => {
+    expect(kinds('one\ntwo', 'one\ntwo')).toEqual(['same:one', 'same:two'])
+  })
+
+  it('puts the deletion before the insertion in a changed line', () => {
+    expect(kinds('teh cat', 'the cat')).toEqual(['del:teh cat', 'add:the cat'])
+  })
+
+  it('keeps the lines that did not change', () => {
+    expect(kinds('a\nb\nc', 'a\nB\nc')).toEqual(['same:a', 'del:b', 'add:B', 'same:c'])
+  })
+
+  it('handles one line becoming several — a list out of a paragraph', () => {
+    expect(kinds('a and b', '- a\n- b')).toEqual(['del:a and b', 'add:- a', 'add:- b'])
+  })
+
+  it('handles everything being replaced', () => {
+    expect(kinds('old', 'new')).toEqual(['del:old', 'add:new'])
+  })
+
+  it('accounts for every line of both sides', () => {
+    const a = 'one\ntwo\nthree\nfour'
+    const b = 'one\nTWO\nthree\nfour\nfive'
+    const d = diffLines(a, b)
+    expect(d.filter((l) => l.kind !== 'add').map((l) => l.text)).toEqual(a.split('\n'))
+    expect(d.filter((l) => l.kind !== 'del').map((l) => l.text)).toEqual(b.split('\n'))
+  })
+
+  it('keeps blank lines as rows, so paragraphs do not collapse', () => {
+    expect(kinds('a\n\nb', 'a\n\nB')).toEqual(['same:a', 'same:', 'del:b', 'add:B'])
+  })
+
+  it('copes with an empty side', () => {
+    expect(kinds('', 'new')).toEqual(['del:', 'add:new'])
+    expect(diffLines('gone', '').every((l) => l.kind !== 'same' || l.text === '')).toBe(true)
   })
 })

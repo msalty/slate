@@ -202,3 +202,119 @@ describe('a shared file that has not arrived yet', () => {
     expect(s.settings.value.editorMode).toBe('live')
   })
 })
+
+/**
+ * The line that keeps a credential on the device that typed it.
+ *
+ * Every preference here is either vault-wide or device-local, and getting one
+ * onto the wrong side is silent: a WebDAV password or a model API key written
+ * into `backstage/config.json` is a secret on every device you sync to and in
+ * every backup of the vault, with nothing in the UI to say so. So the rule is
+ * pinned from both directions — what reaches the file, and what does not —
+ * rather than left to whoever next edits `SHARED_KEYS`.
+ */
+describe('what is allowed into the shared file', () => {
+  it('never writes a secret into the vault, however much is changed', async () => {
+    const { s, v } = await fresh()
+    s.updateAi({ provider: 'openai', baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-secret', visionModel: 'gpt-4o-mini' })
+    s.updateWebdav({ url: 'https://dav.example.com', username: 'mike', password: 'hunter2' })
+    s.update({ sortBy: 'title' })
+    s.flushSettings()
+
+    const shared = await vi.waitFor(async () => {
+      const f = await sharedFile(v)
+      expect(f).toBeDefined()
+      return f!
+    })
+    expect(shared.ai).toBeUndefined()
+    expect(shared.webdav).toBeUndefined()
+    expect(shared.gdrive).toBeUndefined()
+    expect(JSON.stringify(shared)).not.toMatch(/sk-secret|hunter2/)
+    // The shared half still got through, so this is not passing vacuously.
+    expect(shared.sortBy).toBe('title')
+  })
+
+  it('does not take an AI provider from a shared file written by another device', async () => {
+    const { s, v } = await fresh()
+    // A config.json that names one — from an older build, a hand edit, or a
+    // vault shared with someone else. A device's own provider is its own.
+    await v.writeBackstage('config.json', {
+      sortBy: 'title',
+      ai: { provider: 'openai', baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-theirs', visionModel: 'gpt-4o-mini' },
+    })
+    await s.applySharedSettings()
+
+    expect(s.settings.value.sortBy).toBe('title')
+    expect(s.settings.value.ai.provider).toBe('none')
+    expect(s.settings.value.ai.apiKey).toBe('')
+  })
+
+  it('keeps the device-local half out of the file even after a shared read', async () => {
+    const { s, v } = await fresh()
+    s.updateAi({ provider: 'ollama', baseUrl: 'http://localhost:11434/v1', visionModel: 'llama3.2-vision' })
+    await v.writeBackstage('config.json', { theme: 'dark' })
+    await s.applySharedSettings()
+    s.update({ fontSize: 17 })
+    s.flushSettings()
+
+    await vi.waitFor(async () => expect((await sharedFile(v))?.fontSize).toBe(17))
+    expect((await sharedFile(v))?.ai).toBeUndefined()
+    // And this device kept what it had set.
+    expect(s.settings.value.ai.provider).toBe('ollama')
+  })
+})
+
+/**
+ * Settings written by an older build.
+ *
+ * The top-level spread copes with a new flat key on its own; the nested objects
+ * are the trap, because `{...defaults(), ...local}` replaces `ai` wholesale. A
+ * device that set up a provider before `contextTokens` existed would get it
+ * back as `undefined`, and the symptom is not an error — it is every budget
+ * calculation quietly becoming `NaN`.
+ */
+/**
+ * Write a settings object into a named database before anything boots against
+ * it. The module reset matters: `boot` resets too, and a `db` imported without
+ * one is still bound to whichever database the previous case named — so the
+ * seed lands somewhere nothing will ever read it.
+ */
+async function seed(name: string, value: unknown) {
+  vi.resetModules()
+  ;(globalThis as { __SLATE_DB__?: string }).__SLATE_DB__ = name
+  const db = await import('./db')
+  await db.setMeta('settings', value)
+}
+
+describe('settings from a build that had fewer keys', () => {
+  it('fills in the nested keys that did not exist yet', async () => {
+    const name = `slate-settings-old-${++seq}`
+    await seed(name, {
+      deviceId: 'kept',
+      ai: { provider: 'ollama', baseUrl: 'http://localhost:11434/v1', apiKey: '', visionModel: 'llava' },
+    })
+
+    const { s } = await boot(name)
+    expect(s.settings.value.ai.provider).toBe('ollama')
+    expect(s.settings.value.ai.visionModel).toBe('llava')
+    // The two that did not exist when this was written.
+    expect(s.settings.value.ai.textModel).toBe('')
+    expect(s.settings.value.ai.contextTokens).toBeGreaterThan(0)
+    // And the flat one.
+    expect(s.settings.value.generatedFolder).toBe('')
+  })
+
+  it('keeps a stored value rather than overwriting it with the default', async () => {
+    const name = `slate-settings-old-${++seq}`
+    await seed(name, {
+      deviceId: 'kept',
+      ai: { provider: 'openai', baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-x', visionModel: 'gpt-4o', textModel: 'gpt-4o-mini', contextTokens: 128000 },
+      webdav: { url: 'https://dav.example.com', username: 'mike', password: 'p', root: 'Notes' },
+    })
+
+    const { s } = await boot(name)
+    expect(s.settings.value.ai.contextTokens).toBe(128000)
+    expect(s.settings.value.ai.textModel).toBe('gpt-4o-mini')
+    expect(s.settings.value.webdav.root).toBe('Notes')
+  })
+})

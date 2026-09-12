@@ -18,8 +18,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 550 unit and two-device sync tests
-node scripts/smoke.mjs # 442-check browser smoke test against dist/
+npm test               # 918 unit and two-device sync tests
+node scripts/smoke.mjs # 612-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -921,6 +921,348 @@ files when not.
 
 ---
 
+## The optional model
+
+Off, optional, and the only thing in Slate that sends anything anywhere other
+than your own backend. With no provider configured in Settings → **AI**, none of
+this exists: no buttons, no commands, no requests, nothing different about the
+app at all.
+
+Three things, and one rule they all keep: **you start it, and you see the result
+before anything is written.**
+
+| | Where to find it | What leaves the device |
+| --- | --- | --- |
+| **Transcribe** | the ⧉ button in the image viewer | one picture |
+| **Change this passage** | the ✦ in the note's header, or on the formatting bar — or ⌘⇧U | the text you selected |
+| **Summarise these notes** | the **⋯** above the note list | the notes in the list, after you confirm the count |
+| **Ask your notes** | the same **⋯** | up to 6 notes per question: the ones you pinned, then the ones the search matched |
+| **Ask about this note** | the same ✦ | the note itself, every question, plus what the search finds among the notes linked to it |
+
+All of them are in the command palette too (**⌘K**), but none of them is *only*
+there — a feature you can reach only by knowing its name is one most people
+never find.
+
+### Reading the text out of a picture
+
+The image viewer gains a **Transcribe** button. It sends that
+one picture — a receipt, a whiteboard, a page of a book, a screenshot of an
+error nobody can copy out of — and shows you what came back **in a box you can
+edit, before anything is written**. *Insert* puts it in the note under the
+picture it came from, where it reads as a caption and needs no explaining.
+*Cancel* writes nothing. A transcription is ordinary text in an ordinary `.md`
+file: no sidecar, no marker, nothing that needs this feature to still exist in a
+year for the note to make sense.
+
+The write goes through the same path as every other edit, so it takes a
+version-history snapshot and is undone from the same dialog — and a note with
+`lock: true` refuses it, the same as it refuses quick capture.
+
+### Changing a passage
+
+Select something, then press the **✦** in the note's header — or **⌘⇧U**. (It is
+on the formatting bar too, where rich text has one; the header is where it lives
+in every mode.) Five presets — *Tighten*, *Proofread*,
+*Make a table*, *Make a list*, *Make tasks* — or type what you want done to it.
+The answer streams in as it is written, because a local model can take a minute
+on a paragraph and a dialog that shows nothing for a minute is one you close.
+
+**What comes back is shown as a diff, never on its own.** A rewrite that is good
+and a rewrite that quietly dropped your third sentence read identically in
+isolation; the only way to tell them apart is against what was there. Removed
+lines and added lines are marked with `−` and `+` as well as coloured, so the
+distinction survives a greyscale screenshot. *Replace the passage* applies
+exactly what the diff shows and nothing else — one undo puts it back. *Discard*
+writes nothing.
+
+Two replies are reported rather than offered: an empty one, because "delete this
+paragraph" is not an edit worth a button, and one identical to what you sent,
+which is a proofread finding nothing — a result, and a good one, but not a
+change.
+
+The passage goes as *material*, in its own message, never spliced into the
+instruction. A note that happens to contain the words "ignore the above" is then
+text that says something odd rather than a competing command. That is not
+prompt-injection-proof — nothing is — but it is the difference between text that
+must be misread as an instruction and text sitting in the instruction slot.
+
+If a sync lands while the dialog is open, the note underneath it changes and the
+offsets stop meaning what they meant. So the text at the range is checked
+against what was sent before anything is written, and the rewrite is refused
+with a message rather than pasted over the wrong paragraph.
+
+### Summarising a set of notes
+
+**The list is the query.** Rather than a button on tags, another on Tag Folders
+and a third on folders, *Summarise these notes* — in the **⋯** menu above the
+note list — acts on whatever that list is showing — a tag, a saved rule, a folder, a search, a
+day on the calendar. Whatever you narrowed it to is what gets summarised.
+
+Nothing is sent until you have seen the size of it: the dialog opens on how many
+notes, roughly how many tokens, how many requests, and which model at which
+provider. Then a button that has to be pressed.
+
+**A set too big for one request is summarised in passes, not truncated.** A tag
+with two hundred notes is exactly the tag worth summarising, and quietly sending
+the first thirty would produce a summary that reads as complete and is not —
+which is the worst of the available behaviours. So it goes in batches that fit
+your **context budget**, and a final pass merges them. Past twenty passes it
+refuses and says so, because a summary distilled from that many is thinner than
+one of a set you actually meant. Empty notes are left out and counted; a single
+note too long for one request is cut rather than dropped, and the dialog says
+that too. Frontmatter never goes — the block at the top is metadata for the app
+and the likeliest place for something you would not have chosen to send.
+
+**Ask it again, searching for something else.** The callout tells you what was
+searched for, which is usually enough to see that a wrong answer came from a
+wrong *search* rather than a wrong model — and **Redo** beside the composer acts
+on that: it opens the terms it used, lets you replace them, and re-answers the
+same question, putting the new exchange where the old one was. It skips the
+first request entirely, because asking the same model for terms a second time is
+the one thing that cannot help.
+
+It is absent when there is no search to change — a conversation scoped to
+`note:` its one pinned note has nothing else to look in, and a control whose
+whole offer is "searching for something else" should not be there when there is
+nothing else.
+
+The result is **a new note**, not a panel: it syncs, it versions, you can edit
+it, and deleting it is the same keystroke as deleting anything else. Its
+frontmatter says what made it — `generated: true`, the model, the query, the
+date, how many notes — so it can never be mistaken for something you wrote. The
+summary cites notes as `[[wikilinks]]`, so it is navigable; a model that invents
+a title produces a broken link, which shows up as a broken link rather than
+passing unnoticed.
+
+### Asking your notes
+
+**A conversation is a note.** Questions are `##` headings, answers are prose
+citing `[[the notes they came from]]`, and what produced each answer is a folded
+callout underneath it:
+
+```markdown
+---
+date: 2026-09-12
+type: conversation
+source: "#work"
+include:
+  - "[[Migration plan]]"
+---
+
+# Ask — What went wrong with the Q3 migration
+
+## What went wrong with the Q3 migration?
+
+It ran cleanly on the Thursday night, but two indexes had to be rebuilt
+afterwards and that took longer than the migration itself — see
+[[Migration plan]] and [[Postmortem 2026-08-14]].
+
+> [!note]- Searched “migrat”, “index”, “rollback” · read [[Migration plan]] (pinned), [[Postmortem 2026-08-14]]
+> 6 notes matched; 2 sent, about 3100 tokens.
+```
+
+Which means there is almost no new interface: it opens in the editor like any
+note, it syncs, it versions, it is searchable, and its citations are real
+wikilinks — so opening [[Migration plan]] shows you the conversations that
+referenced it. Edit an answer you disagree with. Delete a question. It is a
+file.
+
+The one new piece of chrome is a **composer** at the bottom of the editor, on
+notes whose frontmatter says `type: conversation` and nowhere else. Type, press
+Enter, and the answer streams into the note while you watch.
+
+It is one box: the question on its own row, and the controls that qualify it —
+scope, pins, Redo, Ask — on the row beneath. The two used to share a line, which
+put the field in the middle of a row of chips and left Ask as a 40px square at
+the end of it: the control pressed most often was the smallest target, and the
+field was the thing that got squeezed whenever a scope rule ran long. Ask now
+takes whatever the chips leave, so the default action is also the widest one.
+
+**The scope is a rule in the note.** `source:` holds a Tag Folder rule — `#work`,
+`folder:Projects`, or `all` — re-read on every question, so the note is honest
+about what it could see, and you can change it by editing the frontmatter or
+from the chip beside the composer. Starting a conversation from a narrowed list
+scopes it to that list, which is worth doing: a smaller haystack gives a small
+local model a much better chance.
+
+Two rules the Tag Folder language has no way to express live here too, because
+they are about the graph rather than about tags and folders:
+
+| Rule | What may be read |
+| --- | --- |
+| `note:Migration plan` | that note, and nothing else at all |
+| `links:Migration plan` | that note, everything it links to, and everything that links to it |
+
+A hop counts **both directions** on purpose. What a note links out to is its
+references; what links in to it is everything written since about the thing it
+describes — a postmortem naming the migration plan is as much about the plan as
+anything the plan itself cites.
+
+**Pinning is the opposite of scope.** `source:` is a filter — it says what may be
+*searched*, and a note inside it still has to win the keyword search to be read.
+`include:` is a guarantee: those notes are sent with every question, whatever it
+is, and they go first. That is the difference between "answer from my work
+notes" and "always have the migration plan in front of you".
+
+Pin from the chip next to the scope chip, which opens a picker — nowhere does
+Slate ask you to *type* a note's name, because a typo'd reference is a silent
+nothing that looks exactly like a working one. The frontmatter stays
+hand-editable all the same; the picker is just the way that cannot go wrong.
+
+Pins are stored as wikilinks, which buys two things: renaming a pinned note
+repoints the pin, because the rename pass scans whole files and frontmatter is
+not exempt from it; and the pinned note lists the conversation in its own
+backlinks, so *what is standing on this note* is answerable from the note.
+
+They **count against Notes per question**, so four pins against a limit of four
+leave the search nothing — and the callout says so when that happens, along with
+any pin that no longer resolves to anything. A pin that quietly stopped pinning
+is the worst failure this feature has: every answer afterwards looks exactly as
+normal as one that had read the note.
+
+**"Ask about this note"** is the shortest road to both: the ✦ in a note's header
+starts a conversation with that note pinned *and* scoped to `links:` it — the
+note is guaranteed, and the search may reach only as far as the notes it is
+actually connected to. Answering from the whole vault would read as a bug: you
+name a note, and back comes an answer citing four others that merely shared a
+word with your question. The starter offers `note:` (that note and nothing
+else) and `All notes` alongside it, and the composer's scope chip moves between
+the three afterwards.
+
+Scoped to `note:` alone there is **no search to run** — the note is pinned, so
+the searchable set is one note already being sent. The turn skips the
+terms request entirely and costs one round trip instead of two, and the callout
+says `No search terms` rather than reporting a search that had nowhere to look.
+
+**How a question is answered.** Two requests. First the model is asked what to
+*search for* — not to answer — because your phrasing is rarely your notes'
+phrasing, and a question about "what went wrong" wants a search for "rollback"
+and "index rebuild". Then Slate runs those terms through its own index, and the
+notes that matched go to the model with an instruction to answer only from them
+and to say so when they do not.
+
+Letting the model search for itself with tool calls would be better at
+multi-step questions, and it is the obvious next step — but it needs a model
+that is good at tool use, which small local ones are not, and it turns one
+question into an unpredictable number of requests. This works on everything.
+
+**The citations are checked, not trusted.** The instruction says never to invent
+a note title, and every answer is read back to find out whether it was obeyed:
+each `[[citation]]` is compared against the notes actually sent, and anything
+else is named in the callout — linked if a note by that name exists, quoted as
+*invented* if none does. This costs no extra request; it is a scan of text
+already in hand. It matters because a fabricated citation renders identically to
+a real one — same brackets, same colour — until somebody clicks it, which is
+long after the answer has been read and believed.
+
+**What it will not read.** Conversations and summaries are excluded from
+retrieval. A conversation is the strongest keyword match for its own questions,
+so left in it reads itself back and gets more confident every turn; a summary is
+a paraphrase of notes that are already in scope, and citing it launders a copy
+into a source. Your notes are the ground truth — the things the app wrote are
+derivatives of them.
+
+**The one rule this bends.** Every other AI feature shows you the cost before it
+sends: Transcribe names the bytes, Summarise makes you confirm a count. A
+conversation cannot — retrieval happens *after* you ask, so a confirmation per
+question would be two clicks per message. So the consent moves: starting the
+conversation is the consent, the composer states the policy standing under it,
+and every turn writes down exactly what it read.
+
+### Setting it up
+
+| Provider | Address |
+| --- | --- |
+| **Ollama** | `http://localhost:11434/v1` |
+| **LM Studio** | `http://localhost:1234/v1` |
+| **OpenAI** | `https://api.openai.com/v1` |
+| **Google Gemini** | `https://generativelanguage.googleapis.com/v1beta` |
+| **Custom** | anything OpenAI-compatible — vLLM, OpenRouter, your own gateway |
+
+Pick one, press **Test connection** — it lists what the server can run, which is
+also how the model fields get filled in — and put a model in **either** field.
+
+**Text model** is the one most of this uses: rewriting, summarising and asking
+questions are all text. **Vision model** is only for *Transcribe*, and it has to
+be a model that can actually see — a text-only one will take the picture, ignore
+it, and answer about nothing. The list cannot tell you which is which, so that
+is the one part you have to know. Either field falls back to the other, so one
+model is enough; leaving Vision blank costs you transcription and nothing else.
+
+Under them, the panel says which of the four features your settings switch on
+right now, and why any of them is off.
+
+**Context budget** is how much the model can read at once, in tokens. There is
+no defensible default: a local 8B model is often 8k and a hosted one 128k or
+more, and the number decides whether summarising thirty notes is one request or
+six. Guessing high gets a refusal from the server; guessing low only makes more
+passes than it needed, so the default (16k) errs low.
+
+**Notes per question** is how many notes get sent with a question — six by
+default, and usually the limit that actually binds. Notes pinned to the
+conversation come out of the same allowance. Every answer's callout says how
+many matched, how many were sent, which of the two limits cut the rest, and
+whether the pins took the lot, so you can tell a question that found nothing
+from one that found thirty things and could only read six.
+
+**All four of these are per device** — provider, address, key and model alike.
+They live in this browser's local database, beside the WebDAV password and for
+the same reason: nothing here is written into the vault, so nothing here syncs.
+A key in `backstage/config.json` would be a key on every machine you sync to and
+in every backup of the vault, with nothing on screen to say so.
+
+That is a deliberate feature rather than a limitation, and it is what makes the
+sensible arrangement possible: Ollama on the desktop that has the GPU, a hosted
+provider on the laptop, and nothing at all on the phone or on a machine you do
+not want this on. Turning it off on one device leaves the others as they were.
+The cost is that each device is set up by hand once — four fields.
+
+### The one thing that will go wrong: http
+
+A page served over HTTPS cannot call `http://`. Not with a flag, not with a
+permission, not on retry — so Slate installed from `https://notes.example.com`
+cannot reach Ollama on your desktop at `http://192.168.1.10:11434`, and that is
+the setup nearly everyone tries first. Settings says so before you press
+anything rather than after, because the browser's own error for it is the same
+unhelpful `TypeError` as four other problems.
+
+Three ways out, in the order they are worth trying:
+
+1. **Run the model on the machine you are reading notes on.**
+   `http://localhost` is exempt from the rule, so this simply works. Chrome now
+   asks permission the first time a page calls your local network, and Safari is
+   stricter than either — if it works in `curl` and not here, that is what it is.
+2. **Put the model behind TLS**, which is the only answer that works from a
+   phone. The Caddy block from the WebDAV section above does it; point it at
+   `localhost:11434` instead and use the https address.
+3. **Serve Slate itself over http** on the same machine, which trades the PWA
+   install for the convenience and is rarely what you want.
+
+CORS is the other half, and it is per provider: Ollama answers a browser only
+from origins it was started with (`OLLAMA_ORIGINS=https://notes.example.com`),
+and LM Studio refuses every browser until *Developer → Server settings → Enable
+CORS* is switched on. Both are named in the failure when it happens, with your
+origin already filled in.
+
+### What it does not do
+
+Nothing runs in the background, nothing is indexed, nothing is sent on a timer,
+and no note is read by any of it that you did not point at. Every request is one
+you started, and the three of them between them send a picture you pressed a
+button on, a passage you selected, or notes you confirmed by count — and each
+says what went.
+
+A conversation is the exception to "confirm before sending", for the reason
+given above, and the only one. Nothing else here relaxes it.
+
+A picture is re-encoded to JPEG or PNG on the way out. Most providers take WebP
+quite happily; plenty of OpenAI-compatible servers — llama.cpp's among them —
+decode only these two, and a refusal there is indistinguishable from every other
+refusal. The same pass caps it at 1568px, which is where vision models resample
+to anyway, so it costs one canvas operation and saves tokens.
+
+---
+
 ## Layout
 
 | | Shows | Side panels |
@@ -1019,7 +1361,7 @@ bar above the list carries an **Edit** next to the **Close**.
 
 | | |
 |---|---|
-| ⌘K | Command palette / jump to note |
+| ⌘K | Command palette / jump to note — from anywhere, the editor included |
 | ⌘N | New note |
 | ⌘S | Sync now |
 | ⌘F | Find in note |
@@ -1031,8 +1373,9 @@ bar above the list carries an **Edit** next to the **Close**.
 | ⌘B / ⌘I / ⌘U | Bold / italic / underline |
 | ⌘⇧X / ⌘⇧H / ⌘E | Strikethrough / highlight / monospace |
 | ⌘⌥1 / ⌘⌥2 / ⌘⌥3 / ⌘⌥0 | Title / Heading / Subheading / Body |
-| ⌘K *(with a selection)* | Wrap in a wikilink |
+| ⌘⇧K *(with a selection)* | Wrap in a wikilink |
 | ⌘⇧L | Add or edit an external link |
+| ⌘⇧U *(with a selection)* | Change this passage with a model |
 | ⌘⇧7 / ⌘⇧8 / ⌘⇧0 | Checklist / bullets / numbers |
 | ⌘⌥D *(on a task line)* | Set a due date |
 | ⌘⇧9 | Block quote |
@@ -1364,7 +1707,8 @@ src/
 │  ├─ vault.ts        in-memory source of truth, derived indexes
 │  ├─ db.ts           IndexedDB: cache, journal, version history
 │  ├─ sync.ts         the reconcile engine
-│  ├─ merge.ts        three-way merge (diff3)
+│  ├─ merge.ts        three-way merge (diff3), and the two-way diff a rewrite
+│  │                  is shown as
 │  ├─ rebase.ts       folding a synced change into the buffer being typed in
 │  ├─ markdown.ts     frontmatter, links, tags, tasks, due dates
 │  ├─ properties.ts   the same frontmatter as an ordered, editable list
@@ -1382,8 +1726,19 @@ src/
 │  │                  page drawn into a note
 │  ├─ capture.ts      quick capture: where a line goes, what it looks like
 │  │                  when it gets there, and what a launch URL is asking for
+│  ├─ llm.ts         the optional model connection: two wire formats, and —
+│  │                  mostly — why a browser could not reach it
+│  ├─ ocr.ts         the transcription prompt, and where the text it produces
+│  │                  lands in the note
+│  ├─ transform.ts   rewriting a selection: what is asked, and the check that
+│  │                  the range is still the range it was made from
+│  ├─ summary.ts     how many passes a set of notes takes, what goes in each,
+│  │                  and the frontmatter that says what made the result
+│  ├─ ask.ts        a conversation as a markdown file: the turns, the scope
+│  │                  rule, the notes it pins, what retrieval refuses to read,
+│  │                  and the check that an answer cited only what it was given
 │  └─ settings.ts     device-local vs vault-wide preferences
-├─ adapters/      webdav.ts · gdrive.ts · memory.ts (tests)
+├─ adapters/      webdav.ts · gdrive.ts · llm.ts · memory.ts (tests)
 ├─ editor/        CodeMirror 6: live preview, widgets, completion, paste
 │  ├─ format.ts     the formatting commands behind the rich-text bar
 │  ├─ caret.ts      the two edges of a line whose markup is hidden, and what
@@ -1415,6 +1770,9 @@ src/
    ├─ DueChip.tsx    a task's date, as a control rather than a caption
    ├─ FilePicker.tsx the vault's own files, as somewhere to insert one from
    ├─ pickFile.ts    what that picker matches on, and the order it answers in
+   ├─ NotePicker.tsx the same palette over notes, so nowhere has to ask
+   │                 anybody to type a note's name
+   ├─ pickNote.ts    what it was opened for, and what to leave out of it
    ├─ QuickAdd.tsx   the capture sheet, kept mounted so the keyboard can be
    │                 raised inside the tap that asked for it
    └─ Mobile.tsx     phone tab bar and full-screen tab views
@@ -1499,6 +1857,40 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
   "add this to the note I am reading". A note that is open is the one place the
   editor is already better at.
 
+- **Nothing tells you whether your model can see.** The model list a server
+  returns says nothing about which of its entries handle images, so picking a
+  text-only one gets you a confident answer about nothing, and the only symptom
+  is that the answer is wrong. Guessing from the model's name would be wrong
+  often enough to be worse than saying nothing. The failure when a model returns
+  empty does at least name the likely cause.
+- **Transcription is one picture at a time.** There is no "transcribe every
+  image in this note", and no alt text — a `![[wikilink]]` embed has nowhere to
+  put any, since the pipe already means width.
+- **A conversation finds notes by keyword, not by meaning.** The model chooses
+  the words and Slate's own index does the matching, so a note that discusses
+  the thing you asked about without ever naming it is not found. Semantic recall
+  needs embeddings, which would be a store to keep current and to sync; this is
+  the version that works with no such thing, and it says what it searched so you
+  can see when the search was the problem. Pinning a note is the way round it
+  for a note you already know you want read, and `links:` is the way round it
+  when the connection you care about is one you drew yourself.
+- **The graph goes one hop, and only as a scope.** `links:` narrows what may be
+  searched to a note's immediate neighbours; it does not widen an ordinary
+  conversation to follow citations outward, and it does not chase a second hop.
+  Two hops from anything in a well-linked vault is most of the vault.
+- **A pin is a whole note, and it is spent every question.** There is no way to
+  pin a section, and a long pinned note eats the budget on questions it has
+  nothing to do with. The callout tells you when it crowded the search out; the
+  remedy is fewer pins, not a cleverer pin.
+- **Notes go whole, or not at all.** There is no chunking and no ranking within
+  a note, so one long note can crowd out three short ones — the callout says how
+  many matched and which limit cut the rest, but the remedy is a bigger budget
+  rather than a cleverer slice.
+- **A summary is of the notes, not of the vault.** It reads what is in the list,
+  so what it covers is exactly what you narrowed to and nothing else — there is
+  no "and anything related". The token figure is an estimate from character
+  count rather than a real tokeniser: near enough to decide how many passes to
+  make, not a billing forecast.
 - **No encryption at rest.** Notes are plain files on your server. Per-file
   encryption before upload would fit cleanly behind the adapter interface.
 - **iOS PWA storage can be evicted** after ~7 days of not opening the app, which
@@ -1524,8 +1916,8 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 726 unit + two-device sync tests
-node scripts/smoke.mjs  # 535 checks in headless Chromium against dist/
+npm test                # 918 unit + two-device sync tests
+node scripts/smoke.mjs  # 654 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

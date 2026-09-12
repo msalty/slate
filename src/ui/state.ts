@@ -368,6 +368,32 @@ export const searchSnippets = computed(() => {
   return m
 })
 
+/**
+ * The current scope as a Tag Folder rule, for something that has to *store* it.
+ *
+ * A conversation records what it is allowed to read, in its own frontmatter, and
+ * re-reads that rule on every turn — so the scope has to survive as text rather
+ * than as a live object. Every scope that is a question about notes has a rule
+ * that means the same thing, and the ones that are not — the task list, the
+ * files browser, the trash — have no sensible answer and become the whole vault.
+ *
+ * A day is the interesting omission: `calendarDate` is not something the rule
+ * language can ask about yet, so a conversation started from a day would
+ * silently be scoped to everything. Better to say so than to imply otherwise.
+ */
+export function scopeRule(s: Scope): string | undefined {
+  switch (s.kind) {
+    case 'tag':
+      return `#${s.tag}`
+    case 'folder':
+      return s.path ? `folder:${s.path}` : undefined
+    case 'smart':
+      return smartFolderById(s.id)?.query
+    default:
+      return undefined
+  }
+}
+
 export function scopeLabel(s: Scope): string {
   switch (s.kind) {
     case 'all':

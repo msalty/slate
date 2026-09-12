@@ -7,7 +7,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
-import { notes, search } from '../core/vault'
+import { getEntry, notes, search } from '../core/vault'
 import { dailyNoteFor } from '../core/daily'
 import { sync } from '../core/sync'
 import { settings, update } from '../core/settings'
@@ -23,6 +23,7 @@ import {
   openNote,
   paletteOpen,
   scope,
+  scopeLabel,
   setScope,
   settingsOpen,
 } from './state'
@@ -30,6 +31,10 @@ import { relativeTime, startOfDay } from '../core/util'
 import { newNoteInFolder } from './EditorPane'
 import { canShareFiles, shareNote } from './shareNote'
 import { openQuickAdd } from './QuickAdd'
+import { canTransform, openTransform } from './TransformDialog'
+import { canSummarise, openSummary } from './SummaryDialog'
+import { askAboutNote, openAsk } from './AskDialog'
+import { canAsk } from '../app/ask'
 
 interface Cmd {
   id: string
@@ -54,6 +59,9 @@ export function CommandPalette() {
 
   // The day the calendar is filtered to, if it is filtered to one at all.
   const day = scope.value.kind === 'day' ? startOfDay(scope.value.date) : undefined
+
+  /** The open note, for the commands that are about a note rather than a list. */
+  const openEntry = activePath.value ? getEntry(activePath.value) : undefined
 
   const commands = useMemo<Cmd[]>(
     () => [
@@ -87,6 +95,51 @@ export function CommandPalette() {
           await shareNote(path)
         },
       },
+      /*
+       * The two AI commands are absent rather than disabled when no provider is
+       * configured — the same rule the Transcribe button follows. A palette
+       * that lists what you cannot do is a palette people scroll past.
+       */
+      ...(canTransform()
+        ? ([
+            {
+              id: 'transform',
+              label: 'Change the selected passage…',
+              hint: '⌘⇧U',
+              run: () => {
+                openTransform()
+              },
+            },
+          ] satisfies Cmd[])
+        : []),
+      ...(canAsk()
+        ? ([
+            {
+              id: 'ask',
+              label: 'Ask your notes…',
+              run: () => openAsk(),
+            },
+          ] satisfies Cmd[])
+        : []),
+      /* Only with a note open, since it is a question about that note. */
+      ...(canAsk() && openEntry
+        ? ([
+            {
+              id: 'ask-note',
+              label: `Ask about this note — ${openEntry.title}`,
+              run: () => askAboutNote(openEntry.title),
+            },
+          ] satisfies Cmd[])
+        : []),
+      ...(canSummarise()
+        ? ([
+            {
+              id: 'summarise',
+              label: `Summarise these notes — ${scopeLabel(scope.value)}`,
+              run: () => openSummary(),
+            },
+          ] satisfies Cmd[])
+        : []),
       {
         id: 'daily',
         label: "Open today's note",
@@ -167,7 +220,17 @@ export function CommandPalette() {
       { id: 'trash', label: 'Show Deleted', run: () => setScope({ kind: 'trash' }) },
       { id: 'files', label: 'Show all files', run: () => setScope({ kind: 'files' }) },
     ],
-    [settings.value, day, notes.value, editorMaximized.value, layoutMode.value],
+    [
+      settings.value,
+      day,
+      notes.value,
+      scope.value,
+      // Read at build time, not inside a `run` — the list has to change when
+      // the open note does, or "Ask about this note" names the last one.
+      activePath.value,
+      editorMaximized.value,
+      layoutMode.value,
+    ],
   )
 
   const results = useMemo(() => {

@@ -11,8 +11,13 @@ import { ContextMenu } from './Menu'
 import { TagFolderDialog } from './TagFolderDialog'
 import { LinkDialog } from './LinkDialog'
 import { FilePicker } from './FilePicker'
+import { NotePicker } from './NotePicker'
 import { PromptDialog } from './PromptDialog'
 import { ConfirmDialog } from './ConfirmDialog'
+import { TranscribeDialog } from './TranscribeDialog'
+import { TransformDialog, canTransform, openTransform } from './TransformDialog'
+import { SummaryDialog } from './SummaryDialog'
+import { AskDialog } from './AskDialog'
 import { PaneResizer } from './PaneResizer'
 import { editLinkAtCaret, handleUriClick } from './linkActions'
 import { openDueMenu } from './DueMenu'
@@ -228,7 +233,14 @@ export function App() {
       const k = e.key.toLowerCase()
 
       if (k === 'k' && !e.shiftKey) {
-        if ((e.target as HTMLElement)?.closest?.('.cm-editor')) return
+        /*
+         * From inside the editor too, which it did not used to be.
+         *
+         * ⌘K was the wikilink while writing and the palette everywhere else, so
+         * the one shortcut for reaching anything in the app was the one
+         * shortcut that did not work where people actually are. The wikilink
+         * moved to ⌘⇧K; this is now unconditional.
+         */
         e.preventDefault()
         paletteOpen.value = !paletteOpen.value
       } else if (k === 'n' && !e.shiftKey) {
@@ -254,6 +266,15 @@ export function App() {
         if (layoutMode.value === 'compact') return
         e.preventDefault()
         editorMaximized.value = !editorMaximized.value
+      } else if (k === 'u' && e.shiftKey) {
+        /*
+         * Reached from inside the editor, unlike ⌘K — which is the point. It
+         * acts on the selection, so the caret is necessarily in the text and
+         * the hand is on the keyboard that just made it.
+         */
+        if (!canTransform()) return
+        e.preventDefault()
+        openTransform()
       }
     }
     addEventListener('keydown', onKey)
@@ -460,9 +481,14 @@ export function App() {
       <TagFolderDialog />
       <LinkDialog />
       <FilePicker />
+      <NotePicker />
       <PromptDialog />
       <ConfirmDialog />
       <Lightbox />
+      <TranscribeDialog />
+      <TransformDialog />
+      <SummaryDialog />
+      <AskDialog />
       <ContextMenu />
       <QuickAdd />
       <Toaster />

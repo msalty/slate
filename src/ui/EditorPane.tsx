@@ -27,6 +27,11 @@ import {
   trashTitle,
 } from '../core/vault'
 import { activeEditor } from '../editor/context'
+import { canTransform, openTransform } from './TransformDialog'
+import { askAboutNote } from './AskDialog'
+import { Composer } from './Composer'
+import { canAsk } from '../app/ask'
+import { isConversation } from '../core/ask'
 import { focusedCell } from '../editor/table'
 import { rebaseBuffer } from '../core/rebase'
 import { settings, update } from '../core/settings'
@@ -71,6 +76,7 @@ import {
   IconEye,
   IconHistory,
   IconImagePlus,
+  IconSparkle,
   IconLock,
   IconMaximize,
   IconMinimize,
@@ -471,6 +477,16 @@ export function EditorPane() {
   }
 
   const links = backlinkMap.value.get(path) ?? []
+  /*
+   * The note's text as the vault holds it, for the questions the chrome asks
+   * about the note rather than about the buffer: is this a conversation, and
+   * what does its frontmatter say. Read here rather than off the view because
+   * a component reads signals to re-render, and `rev` is what changes when a
+   * save lands — chrome drawn from the buffer instead is redrawn only by
+   * coincidence, and goes stale the moment the view is rebuilt underneath it.
+   */
+  void rev
+  const noteText = getRaw(path)?.text ?? ''
   const mode = settings.value.editorMode
   const rich = mode === 'rich'
   // Reading: the note is a page. Nothing that needs a caret to mean anything —
@@ -680,6 +696,67 @@ export function EditorPane() {
             <IconImagePlus />
           </button>
         )}
+        {/*
+          * Here as well as on the formatting bar, because the bar is rich
+          * text's alone — and rich text is not the default. A control that only
+          * appears in a mode you have to go and choose is a control most people
+          * never meet, which was the whole problem with putting this in the
+          * command palette and nowhere else.
+          *
+          * Not greyed out without a selection, unlike its twin on the bar. The
+          * bar is a row of selection-sensitive controls and greying is what the
+          * rest of them do; a lone header icon that is dim almost all the time
+          * reads as broken, and pressing it says what to do instead.
+          */}
+        {/*
+          * A menu rather than the one action it used to be, because there are
+          * now two things a model can do with the note in front of you and the
+          * second — asking about it — had nowhere to live: both ways into a
+          * conversation were list-shaped, so the most obvious question there is
+          * could only be asked by going somewhere else first.
+          *
+          * The extra click this costs Change this passage is paid back by ⌘⇧U
+          * and by its twin on the formatting bar, which both still go straight
+          * there. What the ✦ says now is "the model, about this note", which is
+          * a more honest label for a button than a single hidden verb.
+          */}
+        {!trashed && canTransform() && (
+          <button
+            class="icon-btn"
+            data-id="note-ai"
+            // The press is what moves focus out of the note, and Change this
+            // passage acts on what is selected there — so the default is
+            // cancelled and the editor keeps both its selection and its caret,
+            // the same way every button on the formatting bar does it.
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={(e) =>
+              openMenu(
+                e,
+                [
+                  // Absent while reading: there is no selection to change, and
+                  // an item that can only tell you so is not worth a row.
+                  ...(reading
+                    ? []
+                    : [
+                        {
+                          label: 'Change this passage… (⌘⇧U)',
+                          onSelect: () => openTransform(),
+                        },
+                      ]),
+                  {
+                    label: 'Ask about this note…',
+                    onSelect: () => askAboutNote(entry.title),
+                  },
+                ],
+                entry.title,
+              )
+            }
+            title="Ask about this note, or change a passage"
+            aria-label="What a model can do with this note"
+          >
+            <IconSparkle />
+          </button>
+        )}
         {trashed ? (
           !detached && (
             <button
@@ -700,6 +777,15 @@ export function EditorPane() {
                 e,
                 [
                   ...modeItems,
+                  ...(canAsk()
+                    ? [
+                        {
+                          label: 'Ask about this note…',
+                          separated: true,
+                          onSelect: () => askAboutNote(entry.title),
+                        },
+                      ]
+                    : []),
                   {
                     label: 'Version history',
                     separated: true,
@@ -880,6 +966,30 @@ export function EditorPane() {
       {rich && compact && !trashed && !reading && formatSheetOpen.value && (
         <FormatBar variant="sheet" getView={() => viewRef.current} />
       )}
+
+      {/*
+        * The composer, on conversation notes only.
+        *
+        * Read off the buffer rather than off the file on disk, so that turning a
+        * note into a conversation — by typing `type: conversation` into its
+        * frontmatter — brings the strip up as you finish the word, and deleting
+        * the line takes it away again. It is a property of the note, so the note
+        * is what decides.
+        *
+        * Shown while the note is being *read*, unlike the formatting bar. Reading
+        * mode means "no caret in the text", which is the normal way to look at a
+        * conversation — and the composer is not a caret, it is the only way to
+        * add to one. Gating it on editing would mean pressing the pencil before
+        * every question, on a note whose entire purpose is the questions.
+        *
+        * Not in the trash, where nothing may write to the note at all. Hidden
+        * under the phone's Format sheet, which is already competing with the
+        * keyboard.
+        */}
+      {!trashed && canAsk() && isConversation(noteText) &&
+        !(compact && formatSheetOpen.value) && (
+          <Composer getView={() => viewRef.current} text={noteText} path={path} />
+        )}
 
       {links.length > 0 && (
         <div class="backlinks">

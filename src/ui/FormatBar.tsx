@@ -32,6 +32,7 @@ import { editLinkAtCaret } from './linkActions'
 import { menuAnchor, openMenu, type MenuItem } from './Menu'
 import { copyTable } from '../editor/paste'
 import { notify } from './state'
+import { canTransform, openTransform } from './TransformDialog'
 import {
   IconCode,
   IconHighlight,
@@ -41,6 +42,7 @@ import {
   IconListCheck,
   IconListNumber,
   IconMore,
+  IconSparkle,
   IconOutdent,
   IconQuote,
   IconTable,
@@ -346,6 +348,41 @@ export function FormatBar({ getView, variant }: FormatBarProps) {
     },
   ]
 
+  /*
+   * The model, where the model applies: on a selection.
+   *
+   * Here rather than only in the command palette, which is where it started and
+   * where nobody found it. The bar is already the thing that acts on selected
+   * text, so a control that rewrites selected text belongs beside the ones that
+   * embolden it — and being a group like any other, it collapses into the ⋯
+   * overflow when the pane is narrow and appears in the phone's Format sheet
+   * without another line of code.
+   *
+   * Absent rather than disabled when no provider is configured, the same as
+   * every other AI affordance; greyed out when there is nothing selected, since
+   * that is a thing you fix by selecting something rather than by going to
+   * Settings.
+   */
+  if (canTransform()) {
+    groups.push({
+      id: 'ai',
+      aria: 'Change with a model',
+      items: [
+        {
+          id: 'transform',
+          label: 'Change this passage…',
+          hint: f.hasSelection
+            ? 'Change this passage (⌘⇧U)'
+            : 'Select some text to change it (⌘⇧U)',
+          glyph: <IconSparkle size={18} />,
+          disabled: !f.hasSelection,
+          opens: true,
+          run: () => openTransform(),
+        },
+      ],
+    })
+  }
+
   /**
    * Wire a button to its command without stealing the selection.
    *
@@ -389,6 +426,7 @@ export function FormatBar({ getView, variant }: FormatBarProps) {
   const button = (it: BarItem) => (
     <button
       key={it.id}
+      data-id={it.id}
       class={it.pill ? `fmt-style fmt-style-${it.pill}` : 'fmt-btn'}
       title={it.hint}
       aria-label={it.hint}
@@ -445,7 +483,16 @@ export function FormatBar({ getView, variant }: FormatBarProps) {
         {groupRow(byId('marks'))}
         <div class="fmt-row fmt-row-split">
           {mergedRow(['lists', 'indent', 'quote'], 'Lists and indentation')}
-          {groupRow(byId('insert'))}
+          {/*
+            * The sheet lists its groups by name rather than walking `groups`,
+            * so anything added to the bar has to be named here too or the phone
+            * quietly never gets it. The model button rides with Insert: both
+            * open something rather than toggling it, and the sheet's three rows
+            * are worth more than a fourth for one control.
+            */}
+          {groups.some((g) => g.id === 'ai')
+            ? mergedRow(['insert', 'ai'], 'Insert and change')
+            : groupRow(byId('insert'))}
         </div>
       </div>
     )

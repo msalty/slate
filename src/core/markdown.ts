@@ -77,6 +77,45 @@ export function setFrontmatterKey(text: string, key: string, value: string): str
   return `---\n${lines.join('\n')}\n---\n${text.slice(fm.bodyStart)}`
 }
 
+/**
+ * Replace or insert a frontmatter key holding a list of values.
+ *
+ * Written in the block form — `key:` then `  - "value"` — rather than the flow
+ * form `key: [a, b]`, for one reason: the flow reader splits on commas, so a
+ * value containing one comes back in two pieces. A note called
+ * `Plan, revised` is an ordinary note name, and losing it to punctuation would
+ * be the kind of silent failure this list format exists to avoid.
+ *
+ * Every value is quoted, because the values this was written for are wikilinks
+ * and YAML reads a bare `[[A]]` as a nested sequence.
+ *
+ * An empty list removes the key rather than leaving `key: []` behind — a key
+ * that holds nothing is a key somebody has to work out the meaning of later.
+ */
+export function setFrontmatterList(text: string, key: string, values: string[]): string {
+  const clean = values.map((v) => v.trim()).filter(Boolean)
+  const block = [`${key}:`, ...clean.map((v) => `  - ${JSON.stringify(v)}`)]
+  const fm = parseFrontmatter(text)
+  if (!fm.raw) return clean.length ? `---\n${block.join('\n')}\n---\n\n${text}` : text
+
+  const inner = fm.raw.replace(/^---\r?\n/, '').replace(/\r?\n---[ \t]*\r?\n?$/, '')
+  const lines = inner.split(/\r?\n/)
+  const idx = lines.findIndex((l) => new RegExp(`^${key}\\s*:`).test(l))
+  if (idx >= 0) {
+    // A block list's `- item` lines belong to the key above them, so they are
+    // replaced with it. Left behind, they would reattach to whichever key ended
+    // up above them and quietly become part of a different list.
+    let end = idx + 1
+    while (end < lines.length && /^\s*-\s+/.test(lines[end])) end++
+    lines.splice(idx, end - idx, ...(clean.length ? block : []))
+  } else if (clean.length) {
+    lines.push(...block)
+  }
+  // Removing the only key leaves an empty block, which is worse than no block.
+  if (!lines.length) return text.slice(fm.bodyStart)
+  return `---\n${lines.join('\n')}\n---\n${text.slice(fm.bodyStart)}`
+}
+
 /* --------------------------------------------------------------- variables */
 
 /**
