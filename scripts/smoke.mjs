@@ -1162,6 +1162,67 @@ try {
     check('and it is the one now open', /Summary of/.test(await page.locator('.editor-title-input').inputValue()))
     llm.replyFor = null
 
+    /* ---- a text-only setup ------------------------------------------------
+     * Only transcription needs a model that can see. Requiring one before
+     * offering the other three took every AI affordance off the screen at once
+     * for anybody running a text-only model — with nothing left to say why,
+     * which is the worst way for a feature to fail.
+     */
+    await page.click('.pane-head .icon-btn[title^="Settings"]')
+    await page.waitForSelector('.dialog')
+    await page.click('.tab:has-text("AI")')
+    await page.waitForTimeout(250)
+    await page.locator('.dialog label.field:has(span:text-is("Vision model")) input').fill('')
+    await page.locator('.dialog label.field:has(span:text-is("Text model")) input').fill('mock-text')
+    await page.waitForTimeout(300)
+    const status = await page.locator('.ai-status').innerText()
+    check('the panel says which features the settings switch on', /Transcribe/.test(status), status.replace(/\n/g, ' · '))
+    check('and why one of them is off', /needs a vision model/.test(status))
+    await page.click('.dialog-foot .btn-primary')
+    await page.waitForTimeout(400)
+
+    await page.locator('.pane.list-pane .icon-btn[aria-label="List actions"]').click()
+    await page.waitForTimeout(350)
+    const textOnlyMenu = await page.locator('.menu, .sheet').first().innerText()
+    check('with no vision model, summarise is still offered', /Summarise these/.test(textOnlyMenu))
+    check('and so is a conversation', /Ask these notes/.test(textOnlyMenu))
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(300)
+
+    /*
+     * Back to the note with the picture in it: the conversation just opened is
+     * the active one now, and it has no embed for the viewer to open. Editing
+     * too, because the ✦ shares the Insert button's rule and neither is on
+     * screen while a note is being read.
+     */
+    await page.locator('.note-row:has-text("Lisbon Trip")').first().click()
+    await page.waitForTimeout(500)
+    await startEditing()
+    check(
+      'and the header still offers a rewrite',
+      (await page.locator('.editor-pane .icon-btn[aria-label^="Change the selected passage"]').count()) === 1,
+    )
+
+    await page.locator('.cm-embed img').first().click()
+    await page.waitForTimeout(400)
+    check(
+      'but Transcribe is gone, because that is the one that needs to see',
+      (await page.locator('.lightbox-bar .icon-btn[title^="Transcribe"]').count()) === 0,
+    )
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(300)
+
+    /* Put the vision model back for the teardown below. */
+    await page.click('.pane-head .icon-btn[title^="Settings"]')
+    await page.waitForSelector('.dialog')
+    await page.click('.tab:has-text("AI")')
+    await page.waitForTimeout(250)
+    await page.locator('.dialog label.field:has(span:text-is("Vision model")) input').fill('mock-vision')
+    await page.locator('.dialog label.field:has(span:text-is("Text model")) input').fill('')
+    await page.waitForTimeout(200)
+    await page.click('.dialog-foot .btn-primary')
+    await page.waitForTimeout(400)
+
     /*
      * Put it back, so nothing downstream runs with a provider configured. The
      * summary is the note that is open now, and it has no picture in it, so the

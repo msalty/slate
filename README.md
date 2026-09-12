@@ -18,8 +18,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 842 unit and two-device sync tests
-node scripts/smoke.mjs # 600-check browser smoke test against dist/
+npm test               # 848 unit and two-device sync tests
+node scripts/smoke.mjs # 606-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -1099,14 +1099,17 @@ and every turn writes down exactly what it read.
 | **Custom** | anything OpenAI-compatible — vLLM, OpenRouter, your own gateway |
 
 Pick one, press **Test connection** — it lists what the server can run, which is
-also how the model fields get filled in — and choose a **vision model**, one that
-can see. A text-only model will take the picture, ignore it, and answer about
-nothing; the list cannot tell you which is which, so this is the one part you
-have to know.
+also how the model fields get filled in — and put a model in **either** field.
 
-**Text model** is optional and defaults to the vision one. Set it when the two
-jobs want different models — the slow expensive one that reads pictures, the
-fast cheap one that rewrites a paragraph or summarises thirty notes.
+**Text model** is the one most of this uses: rewriting, summarising and asking
+questions are all text. **Vision model** is only for *Transcribe*, and it has to
+be a model that can actually see — a text-only one will take the picture, ignore
+it, and answer about nothing. The list cannot tell you which is which, so that
+is the one part you have to know. Either field falls back to the other, so one
+model is enough; leaving Vision blank costs you transcription and nothing else.
+
+Under them, the panel says which of the four features your settings switch on
+right now, and why any of them is off.
 
 **Context budget** is how much the model can read at once, in tokens. There is
 no defensible default: a local 8B model is often 8k and a hosted one 128k or
@@ -1810,8 +1813,8 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 842 unit + two-device sync tests
-node scripts/smoke.mjs  # 600 checks in headless Chromium against dist/
+npm test                # 848 unit + two-device sync tests
+node scripts/smoke.mjs  # 606 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

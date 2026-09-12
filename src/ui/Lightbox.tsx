@@ -237,7 +237,7 @@ export function Lightbox() {
           * toolbar than no button at all, and the setting that brings it back is
           * one panel away.
           */}
-        {kind === 'image' && !!url && isConfigured(settings.value.ai) && (
+        {kind === 'image' && !!url && isConfigured(settings.value.ai, 'vision') && (
           <button
             class="icon-btn"
             onClick={() => {

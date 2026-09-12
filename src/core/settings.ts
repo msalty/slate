@@ -113,9 +113,31 @@ export const settings = signal<AppSettings>(defaults())
 
 let loaded = false
 
+/**
+ * Fill in keys a stored settings object predates.
+ *
+ * The top-level spread handles new flat keys on its own, and the nested objects
+ * are the trap: `{...defaults(), ...local}` replaces `ai` wholesale, so a device
+ * that configured a provider before `textModel` and `contextTokens` existed gets
+ * them back as `undefined` rather than as their defaults. A missing string is
+ * merely a `.trim()` waiting to throw; a missing `contextTokens` is worse, since
+ * it turns every budget calculation into `NaN` and the symptom is a summary that
+ * silently sends one note.
+ */
+function withDefaults(local: Partial<AppSettings> | undefined): AppSettings {
+  const base = defaults()
+  return {
+    ...base,
+    ...local,
+    ai: { ...base.ai, ...local?.ai },
+    webdav: { ...base.webdav, ...local?.webdav },
+    gdrive: { ...base.gdrive, ...local?.gdrive },
+  }
+}
+
 export async function loadSettings(): Promise<void> {
   const local = await getMeta<Partial<AppSettings>>('settings')
-  const merged = { ...defaults(), ...local }
+  const merged = withDefaults(local)
   // Device identity is generated once and then never changes.
   if (!local?.deviceId) {
     merged.deviceId = defaults().deviceId

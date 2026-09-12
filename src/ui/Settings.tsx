@@ -2,7 +2,15 @@
 
 import { useEffect, useState } from 'preact/hooks'
 import { settings, update, updateAi, updateGdrive, updateWebdav } from '../core/settings'
-import { preflight, presetFor, PRESETS, type LlmProvider } from '../core/llm'
+import {
+  isConfigured,
+  modelFor,
+  preflight,
+  presetFor,
+  PRESETS,
+  type Capability,
+  type LlmProvider,
+} from '../core/llm'
 import { listModels } from '../adapters/llm'
 import { buildAdapter, connectBackend } from '../app/backend'
 import { currentAdapter, status, sync } from '../core/sync'
@@ -26,6 +34,21 @@ import { hasSnippets, snippets, SNIPPETS_NOTE } from '../core/snippets'
 import { openNote } from './state'
 
 type Tab = 'sync' | 'editor' | 'files' | 'ai' | 'about'
+
+/**
+ * The four features, and what each of them needs to be switched on.
+ *
+ * Only the first wants a model that can see. The rest are text, which is why
+ * they are offered to somebody who has never filled the vision field in — and
+ * why this list says so rather than leaving it to be inferred from an empty
+ * screen.
+ */
+const AI_FEATURES: Array<{ label: string; capability: Capability; missing: string }> = [
+  { label: 'Transcribe', capability: 'vision', missing: 'needs a vision model' },
+  { label: 'Change this passage', capability: 'text', missing: 'needs a model' },
+  { label: 'Summarise these notes', capability: 'text', missing: 'needs a model' },
+  { label: 'Ask your notes', capability: 'text', missing: 'needs a model' },
+]
 
 const TAB_LABEL: Record<Tab, string> = {
   sync: 'Sync',
@@ -743,7 +766,7 @@ export function Settings() {
                     <span>API address</span>
                     <input
                       type="url"
-                      placeholder={preset.baseUrl || 'https://llm.example.com/v1'}
+                      placeholder={`e.g. ${preset.baseUrl || 'https://llm.example.com/v1'}`}
                       value={s.ai.baseUrl}
                       onInput={(e) => updateAi({ baseUrl: (e.target as HTMLInputElement).value })}
                     />
@@ -769,7 +792,7 @@ export function Settings() {
                     <input
                       type="text"
                       list="ai-models"
-                      placeholder={preset.sampleModel}
+                      placeholder={preset.sampleModel ? `e.g. ${preset.sampleModel}` : 'Blank — no transcription'}
                       value={s.ai.visionModel}
                       onInput={(e) => updateAi({ visionModel: (e.target as HTMLInputElement).value })}
                     />
@@ -779,8 +802,9 @@ export function Settings() {
                       ))}
                     </datalist>
                     <small>
-                      It has to be a model that can see — a text-only one will take the picture and
-                      answer about nothing. Test the connection to fill this list.
+                      Only <em>Transcribe</em> uses this, and it has to be a model that can see — a
+                      text-only one will take the picture and answer about nothing. Leave it blank
+                      if you have no vision model; everything else still works.
                     </small>
                   </label>
 
@@ -790,13 +814,13 @@ export function Settings() {
                       <input
                         type="text"
                         list="ai-models"
-                        placeholder="Same as above"
+                        placeholder="Same as the vision model"
                         value={s.ai.textModel}
                         onInput={(e) => updateAi({ textModel: (e.target as HTMLInputElement).value })}
                       />
                       <small>
-                        For rewriting and summarising. Leave blank to use the vision model for
-                        everything.
+                        Rewriting, summarising and asking questions all use this. Falls back to the
+                        vision model when blank, so one model in either field is enough.
                       </small>
                     </label>
                     <label class="field">
@@ -880,6 +904,31 @@ export function Settings() {
                       than a secret, so it follows you to your other devices.
                     </small>
                   </label>
+
+                  {/*
+                    * What is actually on, right now, given what is in the fields
+                    * above. This exists because of the way this went wrong once:
+                    * a blank Vision model took every AI feature off the screen at
+                    * the same moment, and with all of them gone there was nothing
+                    * left to explain itself. A panel that states its own effect
+                    * turns that from a mystery into a line of text.
+                    */}
+                  <div class="ai-status" role="status">
+                    {AI_FEATURES.map((f) => {
+                      const on = isConfigured(s.ai, f.capability)
+                      return (
+                        <div key={f.label} class="ai-status-row" data-on={on}>
+                          <span class="ai-status-mark" aria-hidden="true">
+                            {on ? '●' : '○'}
+                          </span>
+                          <span class="ai-status-name">{f.label}</span>
+                          <span class="ai-status-why">
+                            {on ? modelFor(s.ai, f.capability) : f.missing}
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
 
                   <div class="callout">
                     <strong>What this switches on.</strong> Three things, each of which you start

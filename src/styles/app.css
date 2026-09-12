@@ -2368,6 +2368,53 @@ button.property-kind:hover {
   color: var(--text-muted);
 }
 
+/* ---- which AI features the current settings switch on ------------------ */
+
+.ai-status {
+  margin-top: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.ai-status-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 12px;
+  font-size: 12.5px;
+  border-top: 1px solid var(--border);
+}
+.ai-status-row:first-child {
+  border-top: 0;
+}
+/* Colour is never the only signal: ● and ○ say it in greyscale too. */
+.ai-status-row[data-on='true'] .ai-status-mark {
+  color: var(--accent);
+}
+.ai-status-row[data-on='false'] {
+  color: var(--text-faint);
+}
+.ai-status-mark {
+  flex: none;
+  font-size: 10px;
+  color: var(--text-faint);
+}
+.ai-status-name {
+  flex: none;
+}
+.ai-status-why {
+  flex: 1;
+  min-width: 0;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .ask-question {
   width: 100%;
   resize: vertical;

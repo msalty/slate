@@ -16,6 +16,7 @@ import {
   completionUrl,
   explainFailure,
   isConfigured,
+  modelFor,
   modelsUrl,
   normalizeBase,
   preflight,
@@ -94,6 +95,40 @@ describe('whether the feature is offered at all', () => {
   it('needs a key only where one is required', () => {
     expect(isConfigured(ollama({ apiKey: '' }))).toBe(true)
     expect(isConfigured(gemini({ apiKey: '' }))).toBe(false)
+  })
+
+  /*
+   * The regression this pins: asking for a *vision* model before offering the
+   * three text features made all four vanish at once for anyone running a
+   * text-only model, which is most people running one locally — and with every
+   * affordance gone there was nothing left on screen to explain why.
+   */
+  it('offers the text features to somebody with no vision model at all', () => {
+    const textOnly = ollama({ visionModel: '', textModel: 'qwen2.5:14b' })
+    expect(isConfigured(textOnly, 'text')).toBe(true)
+    expect(isConfigured(textOnly)).toBe(true)
+    expect(isConfigured(textOnly, 'vision')).toBe(false)
+  })
+
+  it('lets one model in either field serve everything it can', () => {
+    const visionOnly = ollama({ visionModel: 'llama3.2-vision', textModel: '' })
+    expect(isConfigured(visionOnly, 'text')).toBe(true)
+    expect(isConfigured(visionOnly, 'vision')).toBe(true)
+  })
+
+  it('still refuses when there is no model of any kind', () => {
+    const none = ollama({ visionModel: '', textModel: '' })
+    expect(isConfigured(none, 'text')).toBe(false)
+    expect(isConfigured(none, 'vision')).toBe(false)
+  })
+
+  it('survives settings stored before these fields existed', () => {
+    // A shallow merge hands the old four-key object straight through, so the
+    // two newer keys arrive as `undefined` rather than as empty strings.
+    const old = { provider: 'ollama', baseUrl: 'http://localhost:11434/v1', apiKey: '', visionModel: 'llava' }
+    expect(() => isConfigured(old as never)).not.toThrow()
+    expect(isConfigured(old as never)).toBe(true)
+    expect(modelFor(old as never, 'text')).toBe('llava')
   })
 })
 

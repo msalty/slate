@@ -73,10 +73,18 @@ export interface AiSettings {
 /** What a given request needs the model to be able to do. */
 export type Capability = 'text' | 'vision'
 
-/** Which model answers for this capability, after the fallback. */
+/**
+ * Which model answers for this capability, after the fallback.
+ *
+ * Tolerant of a field that is not there at all: settings stored by a build
+ * older than these two keys come back through a shallow merge, so `textModel`
+ * is `undefined` rather than `''` on any device that configured a provider
+ * before they existed.
+ */
 export function modelFor(ai: AiSettings, cap: Capability): string {
-  if (cap === 'vision') return ai.visionModel.trim()
-  return ai.textModel.trim() || ai.visionModel.trim()
+  const vision = (ai.visionModel ?? '').trim()
+  if (cap === 'vision') return vision
+  return (ai.textModel ?? '').trim() || vision
 }
 
 export interface Preset {
@@ -142,13 +150,23 @@ export function presetFor(p: LlmProvider): Preset | undefined {
   return p === 'none' ? undefined : PRESETS[p]
 }
 
-/** Is there enough here to try? Every AI feature asks this before offering itself. */
-export function isConfigured(ai: AiSettings): boolean {
+/**
+ * Is there enough here to try? Every AI feature asks this before offering itself.
+ *
+ * **Per capability, because the features do not all want the same thing.** Only
+ * transcription needs a model that can see; rewriting a passage, summarising and
+ * asking questions are text, and asking them to wait for a vision model is
+ * asking somebody running a text-only model locally — which is most people — to
+ * fill in a field that means nothing to them or lose every feature. Getting this
+ * wrong made all four disappear at once, which is a hard thing to diagnose from
+ * the outside because nothing is left on screen to explain itself.
+ */
+export function isConfigured(ai: AiSettings, capability: Capability = 'text'): boolean {
   const preset = presetFor(ai.provider)
   if (!preset) return false
-  if (!ai.baseUrl.trim()) return false
-  if (!ai.visionModel.trim()) return false
-  if (preset.needsKey && !ai.apiKey.trim()) return false
+  if (!(ai.baseUrl ?? '').trim()) return false
+  if (!modelFor(ai, capability)) return false
+  if (preset.needsKey && !(ai.apiKey ?? '').trim()) return false
   return true
 }
 
