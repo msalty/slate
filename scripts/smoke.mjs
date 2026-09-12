@@ -891,7 +891,14 @@ try {
       .then(() => true)
       .catch(() => false)
     check('pressing it opens the rewrite dialog', headOpened)
-    await page.keyboard.press('Escape')
+    /*
+     * The close button rather than Escape. The dialog's Escape handler is
+     * attached in an effect, which Preact runs after the paint — so for one
+     * frame it is on screen and deaf, and a key pressed the instant it appears
+     * is intermittently lost. A person would never notice; a test that presses
+     * within a millisecond does.
+     */
+    await page.locator('.dialog [aria-label="Close"]').click()
     await page.locator('.transform-presets').waitFor({ state: 'detached', timeout: 5000 })
     await page.waitForTimeout(200)
 
@@ -926,6 +933,97 @@ try {
     check('which also offers the palette, named and with its key', /All commands/.test(listMenuText))
     await page.keyboard.press('Escape')
     await page.waitForTimeout(300)
+
+    /* ---- asking the notes ------------------------------------------------
+     * The conversation is a note, so nearly all of this is checked by reading
+     * the file back: the question is a heading, the answer is under it, and the
+     * provenance callout says what was searched and read.
+     */
+    llm.replyFor = (body) => {
+      const sys = body.messages?.[0]?.content ?? ''
+      if (/choosing what to look for/i.test(sys)) return 'lisbon, packing'
+      if (/answering questions about/i.test(sys))
+        return 'The trip notes cover Lisbon and what to take — see [[Packing List]].'
+      return 'unexpected'
+    }
+
+    await page.locator('.pane.list-pane .icon-btn[aria-label="List actions"]').click()
+    await page.waitForTimeout(300)
+    const askItem = page.locator('.menu-item:has-text("Ask these notes")')
+    check('the list menu offers a conversation', (await askItem.count()) === 1)
+    await askItem.click()
+    await page.waitForSelector('.ask-question', { timeout: 5000 })
+    check('and asks for the first question up front', true)
+
+    const askBox = page.locator('.ask-question')
+    await askBox.click()
+    await askBox.pressSequentially('What did we pack for Lisbon', { delay: 15 })
+    await page.waitForTimeout(200)
+    await page.click('.dialog-foot .btn-primary')
+
+    // Done when the composer is on screen and the answer has landed in the note.
+    await page.waitForSelector('.composer', { timeout: 10000 })
+    check('the conversation opens with a composer under it', true)
+    await page.waitForFunction(
+      () => /Packing List/.test(document.querySelector('.cm-content')?.textContent ?? ''),
+      null,
+      { timeout: 30000 },
+    )
+
+    /*
+     * The buffer has the answer; the file has it 400ms later. Everything below
+     * reads the *file*, so it waits for the save rather than for the paint.
+     */
+    const savedConvo = async (needle) => {
+      for (let i = 0; i < 40; i++) {
+        const text = await noteContaining(needle)
+        if (text) return text
+        await page.waitForTimeout(250)
+      }
+      return undefined
+    }
+
+    const convo = await savedConvo('[[Packing List]]')
+    check('the conversation is an ordinary note', !!convo)
+    check('named after the first question', /Ask — What did we pack/.test(await page.locator('.editor-title-input').inputValue()))
+    check('the question is a heading', /^## What did we pack for Lisbon$/m.test(convo ?? ''))
+    check('the answer cites a note as a wikilink', /\[\[Packing List\]\]/.test(convo ?? ''))
+    check('with a folded callout saying what it read', /^> \[!note\]- Searched/m.test(convo ?? ''), (convo ?? '').split('\n').find((l) => l.startsWith('> [!note]')))
+    check(
+      'the scope it may read is written in the note',
+      /^source: /m.test(convo ?? ''),
+      (convo ?? '').split('\n').find((l) => l.startsWith('source:')),
+    )
+
+    const termReq = llm.requests.find((r) => /choosing what to look for/i.test(r.messages?.[0]?.content ?? ''))
+    check('the model was asked what to search for first', !!termReq)
+    const answerReq = llm.requests.find((r) => /answering questions about/i.test(r.messages?.[0]?.content ?? ''))
+    check('and then answered from the notes that were found', /## /.test(answerReq?.messages?.[1]?.content ?? ''))
+    check(
+      'the question went as material, not as part of the instruction',
+      (answerReq?.messages?.[1]?.content ?? '').includes('What did we pack for Lisbon'),
+    )
+
+    /* A follow-up reads the conversation back out of the file. */
+    const askedBefore = llm.requests.length
+    await page.locator('.composer-input').click()
+    await page.locator('.composer-input').pressSequentially('And what about the weather?', { delay: 15 })
+    await page.keyboard.press('Enter')
+    await page.waitForFunction(
+      () => (document.querySelectorAll('.cm-content .cm-line').length ?? 0) > 0 &&
+        /weather/i.test(document.querySelector('.cm-content')?.textContent ?? ''),
+      null,
+      { timeout: 30000 },
+    )
+    await page.waitForTimeout(1200)
+    const followUp = llm.requests.slice(askedBefore).find((r) => /choosing what to look for/i.test(r.messages?.[0]?.content ?? ''))
+    check(
+      'a follow-up carries the conversation so far',
+      /What did we pack for Lisbon/.test(followUp?.messages?.[1]?.content ?? ''),
+    )
+    const convo2 = await savedConvo('And what about the weather')
+    check('and both turns are in the one note', /## What did we pack/.test(convo2 ?? '') && /## And what about the weather/.test(convo2 ?? ''))
+    llm.replyFor = null
 
     /* ---- one key, one meaning -------------------------------------------
      * ⌘K opens the palette even with the caret in a note, and the wikilink it

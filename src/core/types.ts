@@ -335,6 +335,16 @@ export interface AppSettings {
   /** The folder a quick-captured note is created in. Empty is the vault root. */
   quickAddNoteFolder: string
   /**
+   * Where a note the app writes for you goes — a summary, a conversation.
+   *
+   * Vault-wide rather than device-local: it is a filing preference, not a
+   * secret, and a vault that keeps its summaries in `AI/` should keep them
+   * there whichever machine made them. Empty is the vault root, which is the
+   * default because inventing a folder in somebody's vault is not a thing to do
+   * without being asked.
+   */
+  generatedFolder: string
+  /**
    * Which of the sidebar's named sections are folded away.
    *
    * Three flags rather than one list, because settings are compared by value

@@ -18,8 +18,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 809 unit and two-device sync tests
-node scripts/smoke.mjs # 586-check browser smoke test against dist/
+npm test               # 842 unit and two-device sync tests
+node scripts/smoke.mjs # 600-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -936,6 +936,7 @@ before anything is written.**
 | **Transcribe** | the ⧉ button in the image viewer | one picture |
 | **Change this passage** | the ✦ in the note's header, or on the formatting bar — or ⌘⇧U | the text you selected |
 | **Summarise these notes** | the **⋯** above the note list | the notes in the list, after you confirm the count |
+| **Ask your notes** | the same **⋯** | up to 6 notes that matched the search, per question |
 
 All three are in the command palette too (**⌘K**), but none of them is *only*
 there — a feature you can reach only by knowing its name is one most people
@@ -1019,6 +1020,74 @@ summary cites notes as `[[wikilinks]]`, so it is navigable; a model that invents
 a title produces a broken link, which shows up as a broken link rather than
 passing unnoticed.
 
+### Asking your notes
+
+**A conversation is a note.** Questions are `##` headings, answers are prose
+citing `[[the notes they came from]]`, and what produced each answer is a folded
+callout underneath it:
+
+```markdown
+---
+date: 2026-09-12
+type: conversation
+source: "#work"
+---
+
+# Ask — What went wrong with the Q3 migration
+
+## What went wrong with the Q3 migration?
+
+It ran cleanly on the Thursday night, but two indexes had to be rebuilt
+afterwards and that took longer than the migration itself — see
+[[Migration plan]] and [[Postmortem 2026-08-14]].
+
+> [!note]- Searched “migrat”, “index”, “rollback” · read [[Migration plan]], [[Postmortem 2026-08-14]]
+> 6 notes matched; 2 sent, about 3100 tokens.
+```
+
+Which means there is almost no new interface: it opens in the editor like any
+note, it syncs, it versions, it is searchable, and its citations are real
+wikilinks — so opening [[Migration plan]] shows you the conversations that
+referenced it. Edit an answer you disagree with. Delete a question. It is a
+file.
+
+The one new piece of chrome is a **composer** at the bottom of the editor, on
+notes whose frontmatter says `type: conversation` and nowhere else. Type, press
+Enter, and the answer streams into the note while you watch.
+
+**The scope is a rule in the note.** `source:` holds a Tag Folder rule — `#work`,
+`folder:Projects`, or `all` — re-read on every question, so the note is honest
+about what it could see, and you can change it by editing the frontmatter or
+from the chip beside the composer. Starting a conversation from a narrowed list
+scopes it to that list, which is worth doing: a smaller haystack gives a small
+local model a much better chance.
+
+**How a question is answered.** Two requests. First the model is asked what to
+*search for* — not to answer — because your phrasing is rarely your notes'
+phrasing, and a question about "what went wrong" wants a search for "rollback"
+and "index rebuild". Then Slate runs those terms through its own index, and the
+notes that matched go to the model with an instruction to answer only from them
+and to say so when they do not.
+
+Letting the model search for itself with tool calls would be better at
+multi-step questions, and it is the obvious next step — but it needs a model
+that is good at tool use, which small local ones are not, and it turns one
+question into an unpredictable number of requests. This works on everything.
+
+**What it will not read.** Conversations and summaries are excluded from
+retrieval. A conversation is the strongest keyword match for its own questions,
+so left in it reads itself back and gets more confident every turn; a summary is
+a paraphrase of notes that are already in scope, and citing it launders a copy
+into a source. Your notes are the ground truth — the things the app wrote are
+derivatives of them.
+
+**The one rule this bends.** Every other AI feature shows you the cost before it
+sends: Transcribe names the bytes, Summarise makes you confirm a count. A
+conversation cannot — retrieval happens *after* you ask, so a confirmation per
+question would be two clicks per message. So the consent moves: starting the
+conversation is the consent, the composer states the policy standing under it,
+and every turn writes down exactly what it read.
+
 ### Setting it up
 
 | Provider | Address |
@@ -1091,6 +1160,9 @@ and no note is read by any of it that you did not point at. Every request is one
 you started, and the three of them between them send a picture you pressed a
 button on, a passage you selected, or notes you confirmed by count — and each
 says what went.
+
+A conversation is the exception to "confirm before sending", for the reason
+given above, and the only one. Nothing else here relaxes it.
 
 A picture is re-encoded to JPEG or PNG on the way out. Most providers take WebP
 quite happily; plenty of OpenAI-compatible servers — llama.cpp's among them —
@@ -1571,6 +1643,8 @@ src/
 │  │                  the range is still the range it was made from
 │  ├─ summary.ts     how many passes a set of notes takes, what goes in each,
 │  │                  and the frontmatter that says what made the result
+│  ├─ ask.ts        a conversation as a markdown file: the turns, the scope
+│  │                  rule, and what retrieval refuses to read
 │  └─ settings.ts     device-local vs vault-wide preferences
 ├─ adapters/      webdav.ts · gdrive.ts · llm.ts · memory.ts (tests)
 ├─ editor/        CodeMirror 6: live preview, widgets, completion, paste
@@ -1697,6 +1771,15 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 - **Transcription is one picture at a time.** There is no "transcribe every
   image in this note", and no alt text — a `![[wikilink]]` embed has nowhere to
   put any, since the pipe already means width.
+- **A conversation finds notes by keyword, not by meaning.** The model chooses
+  the words and Slate's own index does the matching, so a note that discusses
+  the thing you asked about without ever naming it is not found. Semantic recall
+  needs embeddings, which would be a store to keep current and to sync; this is
+  the version that works with no such thing, and it says what it searched so you
+  can see when the search was the problem.
+- **Six notes per question, whole.** There is no chunking and no ranking within
+  a note, so one long note can crowd out three short ones. The callout says how
+  many matched and how many fitted.
 - **A summary is of the notes, not of the vault.** It reads what is in the list,
   so what it covers is exactly what you narrowed to and nothing else — there is
   no "and anything related". The token figure is an estimate from character
@@ -1727,8 +1810,8 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 809 unit + two-device sync tests
-node scripts/smoke.mjs  # 586 checks in headless Chromium against dist/
+npm test                # 842 unit + two-device sync tests
+node scripts/smoke.mjs  # 600 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

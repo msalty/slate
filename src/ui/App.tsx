@@ -16,6 +16,7 @@ import { ConfirmDialog } from './ConfirmDialog'
 import { TranscribeDialog } from './TranscribeDialog'
 import { TransformDialog, canTransform, openTransform } from './TransformDialog'
 import { SummaryDialog } from './SummaryDialog'
+import { AskDialog } from './AskDialog'
 import { PaneResizer } from './PaneResizer'
 import { editLinkAtCaret, handleUriClick } from './linkActions'
 import { openDueMenu } from './DueMenu'
@@ -485,6 +486,7 @@ export function App() {
       <TranscribeDialog />
       <TransformDialog />
       <SummaryDialog />
+      <AskDialog />
       <ContextMenu />
       <QuickAdd />
       <Toaster />

@@ -98,5 +98,5 @@ export async function writeSummaryNote(
     provider: presetFor(ai.provider)?.label ?? ai.provider,
     noteCount,
   })
-  return createNote('', note.title, note.text)
+  return createNote(settings.value.generatedFolder, note.title, note.text)
 }

@@ -2368,6 +2368,114 @@ button.property-kind:hover {
   color: var(--text-muted);
 }
 
+.ask-question {
+  width: 100%;
+  resize: vertical;
+  min-height: 72px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  line-height: 1.5;
+}
+
+/* ---- the conversation composer ---------------------------------------- */
+
+/*
+ * A flex child of the editor pane rather than an overlay, the same as the
+ * phone's Format sheet: the note above it shrinks, so the last answer stays on
+ * screen while the next question is typed.
+ */
+.composer {
+  flex: none;
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+  padding: 8px 12px 10px;
+}
+
+.composer-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.composer-scope {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 40%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+}
+.composer-scope span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.composer-scope:disabled {
+  opacity: 0.5;
+}
+
+.composer-input {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  max-height: 120px;
+  padding: 8px 11px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  line-height: 1.5;
+}
+
+.composer-send {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  height: 34px;
+}
+
+.composer-foot {
+  margin-top: 6px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-faint);
+  /* One line: the status replaces the standing explanation rather than
+     pushing the note up a row every time a turn starts. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.composer-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--danger);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 12.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  color: var(--text-muted);
+}
+.composer-error span {
+  flex: 1;
+  min-width: 0;
+}
+
 /* ---- lightbox ---------------------------------------------------------- */
 
 .lightbox {

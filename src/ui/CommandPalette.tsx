@@ -33,6 +33,8 @@ import { canShareFiles, shareNote } from './shareNote'
 import { openQuickAdd } from './QuickAdd'
 import { canTransform, openTransform } from './TransformDialog'
 import { canSummarise, openSummary } from './SummaryDialog'
+import { openAsk } from './AskDialog'
+import { canAsk } from '../app/ask'
 
 interface Cmd {
   id: string
@@ -104,6 +106,15 @@ export function CommandPalette() {
               run: () => {
                 openTransform()
               },
+            },
+          ] satisfies Cmd[])
+        : []),
+      ...(canAsk()
+        ? ([
+            {
+              id: 'ask',
+              label: 'Ask your notes…',
+              run: () => openAsk(),
             },
           ] satisfies Cmd[])
         : []),

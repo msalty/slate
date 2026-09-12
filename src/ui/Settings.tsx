@@ -864,12 +864,30 @@ export function Settings() {
                     so they never sync to your other devices.
                   </div>
 
+                  <label class="field">
+                    <span>Where generated notes go</span>
+                    <input
+                      type="text"
+                      placeholder="The vault root"
+                      value={s.generatedFolder}
+                      onInput={(e) =>
+                        update({ generatedFolder: (e.target as HTMLInputElement).value })
+                      }
+                    />
+                    <small>
+                      Summaries and conversations are written here. Leave blank for the vault root.
+                      Unlike everything else on this tab, this one is a filing preference rather
+                      than a secret, so it follows you to your other devices.
+                    </small>
+                  </label>
+
                   <div class="callout">
                     <strong>What this switches on.</strong> Three things, each of which you start
                     and each of which shows you the result before anything is written:{' '}
                     <em>Transcribe</em> in the image viewer, <em>Change this passage</em> from the ✦
                     in a note's header (⌘⇧U), and <em>Summarise these notes</em> in the ⋯ menu
-                    above the note list.
+                    above the note list — which is also where <em>Ask your notes</em> starts a
+                    conversation.
                     Nothing runs on its own and nothing is sent in the background — the only things
                     that ever leave this device are a picture you pressed the button on, a passage
                     you selected, or notes you confirmed by count.

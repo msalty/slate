@@ -28,6 +28,9 @@ import {
 } from '../core/vault'
 import { activeEditor } from '../editor/context'
 import { canTransform, openTransform } from './TransformDialog'
+import { Composer } from './Composer'
+import { canAsk } from '../app/ask'
+import { isConversation } from '../core/ask'
 import { focusedCell } from '../editor/table'
 import { rebaseBuffer } from '../core/rebase'
 import { settings, update } from '../core/settings'
@@ -473,6 +476,14 @@ export function EditorPane() {
   }
 
   const links = backlinkMap.value.get(path) ?? []
+  /*
+   * The note's text as the vault holds it, for the questions the chrome asks
+   * about the note rather than about the buffer — currently one: is this a
+   * conversation? Read here rather than off the view because a component reads
+   * signals to re-render, and `rev` is what changes when a save lands.
+   */
+  void rev
+  const noteText = getRaw(path)?.text ?? ''
   const mode = settings.value.editorMode
   const rich = mode === 'rich'
   // Reading: the note is a page. Nothing that needs a caret to mean anything —
@@ -909,6 +920,30 @@ export function EditorPane() {
       {rich && compact && !trashed && !reading && formatSheetOpen.value && (
         <FormatBar variant="sheet" getView={() => viewRef.current} />
       )}
+
+      {/*
+        * The composer, on conversation notes only.
+        *
+        * Read off the buffer rather than off the file on disk, so that turning a
+        * note into a conversation — by typing `type: conversation` into its
+        * frontmatter — brings the strip up as you finish the word, and deleting
+        * the line takes it away again. It is a property of the note, so the note
+        * is what decides.
+        *
+        * Shown while the note is being *read*, unlike the formatting bar. Reading
+        * mode means "no caret in the text", which is the normal way to look at a
+        * conversation — and the composer is not a caret, it is the only way to
+        * add to one. Gating it on editing would mean pressing the pencil before
+        * every question, on a note whose entire purpose is the questions.
+        *
+        * Not in the trash, where nothing may write to the note at all. Hidden
+        * under the phone's Format sheet, which is already competing with the
+        * keyboard.
+        */}
+      {!trashed && canAsk() && isConversation(noteText) &&
+        !(compact && formatSheetOpen.value) && (
+          <Composer getView={() => viewRef.current} path={path} />
+        )}
 
       {links.length > 0 && (
         <div class="backlinks">

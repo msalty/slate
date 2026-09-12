@@ -55,6 +55,8 @@ import {
 } from '../core/folders'
 import { TasksPanel } from './RightRail'
 import { canSummarise, openSummary } from './SummaryDialog'
+import { openAsk } from './AskDialog'
+import { canAsk } from '../app/ask'
 import { openMenu, useLongPress, type MenuItem } from './Menu'
 import { SwipeRow, type SwipeAction } from './SwipeRow'
 import { Highlight } from './Highlight'
@@ -198,6 +200,13 @@ function listMenu(compact: boolean): MenuItem[] {
       label:
         n === 0 ? 'Summarise these notes…' : n === 1 ? 'Summarise this note…' : `Summarise these ${n} notes…`,
       onSelect: openSummary,
+    })
+  }
+
+  if (canAsk()) {
+    items.push({
+      label: 'Ask these notes…',
+      onSelect: () => openAsk(),
     })
   }
 
