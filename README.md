@@ -18,7 +18,7 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 902 unit and two-device sync tests
+npm test               # 918 unit and two-device sync tests
 node scripts/smoke.mjs # 612-check browser smoke test against dist/
 ```
 
@@ -1021,6 +1021,11 @@ same question, putting the new exchange where the old one was. It skips the
 first request entirely, because asking the same model for terms a second time is
 the one thing that cannot help.
 
+It is absent when there is no search to change — a conversation scoped to
+`note:` its one pinned note has nothing else to look in, and a control whose
+whole offer is "searching for something else" should not be there when there is
+nothing else.
+
 The result is **a new note**, not a panel: it syncs, it versions, you can edit
 it, and deleting it is the same keystroke as deleting anything else. Its
 frontmatter says what made it — `generated: true`, the model, the query, the
@@ -1911,8 +1916,8 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 902 unit + two-device sync tests
-node scripts/smoke.mjs  # 649 checks in headless Chromium against dist/
+npm test                # 918 unit + two-device sync tests
+node scripts/smoke.mjs  # 654 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

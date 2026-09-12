@@ -1100,15 +1100,51 @@ try {
      * terms below match nothing in it, so if it turns up in the material the
      * pin is the only thing that could have put it there.
      */
-    await page.click('[title^="New note"]')
-    await page.waitForTimeout(250)
-    await page.locator('.editor-title-input').fill('Team Charter')
-    await page.locator('.editor-title-input').press('Enter')
-    await page.locator('.cm-content').click()
-    await page
-      .locator('.cm-content')
-      .pressSequentially('Quorum is four, and decisions are written down the same day.', { delay: 8 })
+    /*
+     * A small graph, because the `links:` scope further down has to be shown
+     * reaching something. The charter links out to one note and is linked to
+     * from another; a fourth note matches the same search terms and is
+     * connected to nothing at all, which is what makes it the note that proves
+     * the scope is doing the work rather than the search coming up short.
+     */
+    const makeNote = async (title, body) => {
+      await page.click('[title^="New note"]')
+      await page.waitForTimeout(250)
+      await page.locator('.editor-title-input').fill(title)
+      await page.locator('.editor-title-input').press('Enter')
+      await page.locator('.cm-content').click()
+      if (body) await page.locator('.cm-content').pressSequentially(body, { delay: 8 })
+      await page.waitForTimeout(700)
+    }
+    /** A wikilink typed the way a person types one: prefix, then the list. */
+    const typeLink = async (target) => {
+      await page.locator('.cm-content').pressSequentially(`[[${target.slice(0, 5)}`, { delay: 25 })
+      await page.waitForTimeout(600)
+      if (await page.locator('.cm-tooltip-autocomplete').isVisible().catch(() => false)) {
+        await page.keyboard.press('Enter')
+      } else {
+        await page.locator('.cm-content').pressSequentially(`${target.slice(5)}]]`, { delay: 10 })
+      }
+      await page.waitForTimeout(500)
+    }
+
+    await makeNote('Decision Log', 'Every quorum call is recorded here, with who was present.')
+    await makeNote('Quorum Elsewhere', 'Quorum came up again here, linked to nothing at all.')
+
+    await makeNote('Team Charter', 'Quorum is four, and decisions are written down the same day. See ')
+    await typeLink('Decision Log')
     await page.waitForTimeout(700)
+
+    await makeNote('Retro Notes', 'Looking back at how quorum held under the ')
+    await typeLink('Team Charter')
+    await page.waitForTimeout(700)
+
+    check(
+      'the charter links out to one note and is linked to from another',
+      /\[\[Decision Log\]\]/.test((await noteContaining('Quorum is four')) ?? '') &&
+        /\[\[Team Charter\]\]/.test((await noteContaining('Looking back at how quorum')) ?? ''),
+      `${(await noteContaining('Quorum is four')) ?? ''} / ${(await noteContaining('Looking back at how quorum')) ?? ''}`.replace(/\n/g, ' '),
+    )
 
     /*
      * Matched on the row's title rather than on the row, because by now the
@@ -1368,10 +1404,24 @@ try {
       .slice()
       .reverse()
       .find((r) => /answering questions about/i.test(r.messages?.[0]?.content ?? ''))
+    const scopedMaterial = scopedAnswer?.messages?.[1]?.content ?? ''
+    const sentHeadings = scopedMaterial.match(/^## .*$/gm)?.join(' · ') ?? ''
+    /*
+     * The hop has to actually reach something, in both directions — the first
+     * version of this check pointed at a note with no links at all, so it
+     * proved the scope kept the vault out while never once expanding.
+     */
+    check('a note the scope reached by a link out of it is sent', /^## Decision Log$/m.test(scopedMaterial), sentHeadings)
+    check('and one it reached by a link back to it', /^## Retro Notes$/m.test(scopedMaterial), sentHeadings)
+    /*
+     * The note that makes the check mean something: it matches the same search
+     * as the two above and is connected to nothing, so the only thing that can
+     * be keeping it out is the scope.
+     */
     check(
-      'the search was held to the scope — nothing from the rest of the vault went',
-      !/## Packing List/.test(scopedAnswer?.messages?.[1]?.content ?? ''),
-      (scopedAnswer?.messages?.[1]?.content ?? '').match(/^## .*$/gm)?.join(' · ') ?? '',
+      'but not one that matched the search and is linked to nothing',
+      !/^## Quorum Elsewhere$/m.test(scopedMaterial),
+      sentHeadings,
     )
     llm.replyFor = null
 
@@ -1389,6 +1439,10 @@ try {
     }
 
     const scopeChip = page.locator('.composer-scope').first()
+    check(
+      'Redo is offered while there is a search it could change',
+      (await page.locator('.composer-redo').count()) === 1,
+    )
     await scopeChip.click()
     await page.waitForTimeout(300)
     const scopeMenu = await page.locator('.menu, .sheet').first().innerText()
@@ -1396,6 +1450,15 @@ try {
     await page.locator('.menu-item:has-text("and nothing else")').click()
     await page.waitForTimeout(500)
     check('the chip says the conversation narrowed', /Only Working Agreements/.test(await scopeChip.innerText()))
+    /*
+     * And Redo goes with it. Its whole offer is "searching for something else",
+     * and with one pinned note as the entire searchable set there is nothing
+     * else to search — a control that cannot do the thing it names.
+     */
+    check(
+      'and Redo is gone, because there is no other search to run',
+      (await page.locator('.composer-redo').count()) === 0,
+    )
 
     const beforeNarrow = llm.requests.length
     await page.locator('.composer-input').click()

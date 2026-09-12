@@ -22,7 +22,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks'
 import { signal } from '@preact/signals'
 import { EditorView } from '@codemirror/view'
-import { askTurn } from '../app/ask'
+import { askTurn, searchesAnything } from '../app/ask'
 import {
   dropLastTurn,
   lastTurn,
@@ -117,6 +117,13 @@ export function Composer({ getView, text, path }: ComposerProps) {
   const pins = pinsOf(doc)
   const missingPins = pins.filter((t) => !resolveLink(t))
   const hasTurn = !!lastTurn(doc)
+  /*
+   * Whether a search runs at all. Scoped to one pinned note there is nothing
+   * to search, so Redo — whose whole offer is "searching for something else" —
+   * would be a control that cannot do the thing it names. The same test decides
+   * it here and in the turn itself, so the chip and the request agree.
+   */
+  const searches = searchesAnything(source, pins, path)
   /* The standing line has to name the setting's value, not the old constant. */
   const limit = Math.max(1, settings.value.ai.notesPerQuestion || 6)
 
@@ -456,9 +463,10 @@ export function Composer({ getView, text, path }: ComposerProps) {
           {/*
             * Only once there is an exchange to redo, which is also the only time
             * it would mean anything — a conversation with no turns has no terms
-            * to start from and no answer to replace.
+            * to start from and no answer to replace, and one that searches
+            * nothing has no other terms to offer.
             */}
-          {hasTurn && (
+          {hasTurn && searches && (
             <button
               class="composer-scope composer-redo"
               onClick={redo}

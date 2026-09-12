@@ -130,6 +130,25 @@ function notesAround(ns: NoteScope): NoteIndexEntry[] {
 }
 
 /**
+ * Has the search anywhere to look, once the pins are accounted for?
+ *
+ * False when the scope holds nothing the pins are not already sending — which
+ * is "ask about this note" narrowed to `note:`, where the note is pinned and is
+ * the whole of what may be read. Two things hang off it: a turn in that state
+ * does not spend a request asking a model what to search for, and the composer
+ * does not offer a Redo whose whole promise is "searching for something else".
+ *
+ * Exported so those two agree by construction. A chip that offered a search the
+ * turn would not run is the same class of lie as a callout that under-reports.
+ */
+export function searchesAnything(source: string, pinnedTitles: string[], self: string): boolean {
+  const allowed = scopedNotes(source)
+  if (!allowed) return true
+  const pinned = new Set(resolvePins(pinnedTitles, self).entries.map((e) => e.path))
+  return allowed.some((e) => !pinned.has(e.path))
+}
+
+/**
  * Search within the scope, most relevant first.
  *
  * Each term is searched separately and the results merged rather than searched
@@ -263,8 +282,11 @@ export async function askTurn(
    * look for would be a whole request spent choosing terms for a search over
    * nothing. It saves the round trip and, more to the point, stops the callout
    * reporting a search that never had anywhere to look.
+   *
+   * The same test the composer uses to decide whether to offer Redo, computed
+   * from the scope already resolved here rather than by calling it again.
    */
-  const nothingToSearch = !!allowed && allowed.every((e) => pinnedPaths.has(e.path))
+  const nothingToSearch = !!allowed && !allowed.some((e) => !pinnedPaths.has(e.path))
 
   let terms = opts.terms?.filter((t) => t.trim()) ?? []
   if (!terms.length && !nothingToSearch) {
