@@ -28,6 +28,7 @@ import {
 } from '../core/vault'
 import { activeEditor } from '../editor/context'
 import { canTransform, openTransform } from './TransformDialog'
+import { askAboutNote } from './AskDialog'
 import { Composer } from './Composer'
 import { canAsk } from '../app/ask'
 import { isConversation } from '../core/ask'
@@ -707,17 +708,51 @@ export function EditorPane() {
           * rest of them do; a lone header icon that is dim almost all the time
           * reads as broken, and pressing it says what to do instead.
           */}
-        {!reading && !trashed && canTransform() && (
+        {/*
+          * A menu rather than the one action it used to be, because there are
+          * now two things a model can do with the note in front of you and the
+          * second — asking about it — had nowhere to live: both ways into a
+          * conversation were list-shaped, so the most obvious question there is
+          * could only be asked by going somewhere else first.
+          *
+          * The extra click this costs Change this passage is paid back by ⌘⇧U
+          * and by its twin on the formatting bar, which both still go straight
+          * there. What the ✦ says now is "the model, about this note", which is
+          * a more honest label for a button than a single hidden verb.
+          */}
+        {!trashed && canTransform() && (
           <button
             class="icon-btn"
-            // The press is what moves focus out of the note, and this acts on
-            // what is selected there — so the default is cancelled and the
-            // editor keeps both its selection and its caret, the same way every
-            // button on the formatting bar does it.
+            data-id="note-ai"
+            // The press is what moves focus out of the note, and Change this
+            // passage acts on what is selected there — so the default is
+            // cancelled and the editor keeps both its selection and its caret,
+            // the same way every button on the formatting bar does it.
             onMouseDown={(e) => e.preventDefault()}
-            onClick={() => openTransform()}
-            title="Change this passage (⌘⇧U)"
-            aria-label="Change the selected passage with a model"
+            onClick={(e) =>
+              openMenu(
+                e,
+                [
+                  // Absent while reading: there is no selection to change, and
+                  // an item that can only tell you so is not worth a row.
+                  ...(reading
+                    ? []
+                    : [
+                        {
+                          label: 'Change this passage… (⌘⇧U)',
+                          onSelect: () => openTransform(),
+                        },
+                      ]),
+                  {
+                    label: 'Ask about this note…',
+                    onSelect: () => askAboutNote(entry.title),
+                  },
+                ],
+                entry.title,
+              )
+            }
+            title="Ask about this note, or change a passage"
+            aria-label="What a model can do with this note"
           >
             <IconSparkle />
           </button>
@@ -742,6 +777,15 @@ export function EditorPane() {
                 e,
                 [
                   ...modeItems,
+                  ...(canAsk()
+                    ? [
+                        {
+                          label: 'Ask about this note…',
+                          separated: true,
+                          onSelect: () => askAboutNote(entry.title),
+                        },
+                      ]
+                    : []),
                   {
                     label: 'Version history',
                     separated: true,

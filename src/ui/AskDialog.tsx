@@ -28,6 +28,8 @@ interface Draft {
   label: string
   /** How many notes it covers right now, for the line under the field. */
   count: number
+  /** A note the conversation starts pinned to — what "ask about this note" sets. */
+  pin?: string
 }
 
 const draft = signal<Draft | undefined>(undefined)
@@ -41,13 +43,37 @@ export { canAsk }
  * the same thing, so they start from the whole vault — and the dialog says so
  * rather than implying a narrower conversation than it is about to have.
  */
-export function openAsk() {
+export function openAsk(opts: { pin?: string } = {}) {
   const rule = scopeRule(scope.value)
+  /*
+   * Asking *about* a note answers from the whole vault, not from the list you
+   * happened to be on. The note itself is guaranteed by the pin, so the search
+   * exists to bring in what else bears on it — and narrowing that to the
+   * current list would be an accident of where you were standing.
+   */
+  const about = !!opts.pin
   draft.value = {
-    source: rule ?? ALL,
-    label: rule ? scopeLabel(scope.value) : 'All notes',
-    count: rule ? visibleNotes.value.length : 0,
+    source: about ? ALL : (rule ?? ALL),
+    label: !about && rule ? scopeLabel(scope.value) : 'All notes',
+    count: !about && rule ? visibleNotes.value.length : 0,
+    pin: opts.pin,
   }
+}
+
+/**
+ * Start a conversation about the note you are looking at.
+ *
+ * The entry point this feature was missing. Both ways in were list-shaped —
+ * the note list's ⋯ and the palette — so the most obvious thing to want, a
+ * question about the note on screen, was the one thing you could not ask
+ * without first going somewhere else and describing it.
+ *
+ * It still goes through the dialog rather than starting straight away, because
+ * the first question is what the conversation is named after and that is worth
+ * being asked for.
+ */
+export function askAboutNote(title: string) {
+  openAsk({ pin: title })
 }
 
 export function AskDialog() {
@@ -85,7 +111,7 @@ export function AskDialog() {
     if (!q || busy) return
     setBusy(true)
     try {
-      const path = await startConversation(source, q)
+      const path = await startConversation(source, q, d.pin ? [d.pin] : [])
       close()
       openNote(path)
       /*
@@ -113,7 +139,7 @@ export function AskDialog() {
         aria-label="Ask your notes"
       >
         <div class="dialog-head">
-          <h2>Ask your notes</h2>
+          <h2>{d.pin ? `Ask about “${d.pin}”` : 'Ask your notes'}</h2>
           <span style={{ flex: 1 }} />
           <button class="icon-btn" onClick={close} aria-label="Close">
             <IconClose />
@@ -163,8 +189,15 @@ export function AskDialog() {
           </label>
 
           <div class="callout">
+            {d.pin && (
+              <>
+                <strong>{d.pin}</strong> is pinned to the conversation, so every question has it in
+                front of it — the search is for whatever else bears on what you ask. Unpin it from
+                the composer at any point.{' '}
+              </>
+            )}
             Each question searches {sourceLabel(source).toLowerCase()} and sends up to{' '}
-            {settings.value.ai.notesPerQuestion} matching notes to your provider. The conversation is an ordinary note in{' '}
+            {settings.value.ai.notesPerQuestion} notes to your provider. The conversation is an ordinary note in{' '}
             <code>{folder || 'the vault root'}</code>, and every answer records what it read.
           </div>
         </div>

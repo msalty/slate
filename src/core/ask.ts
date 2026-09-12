@@ -26,7 +26,7 @@
  * Everything here is pure. The searching and the requests are in `app/ask.ts`.
  */
 
-import { parseFrontmatter, setFrontmatterList } from './markdown'
+import { parseFrontmatter, scanWikiLinks, setFrontmatterList } from './markdown'
 import { unfence } from './llm'
 import { safeSegment, ymd } from './util'
 
@@ -146,6 +146,8 @@ export function newConversation(opts: {
   question: string
   source: string
   now?: Date
+  /** Notes the conversation starts pinned to — what "ask about this note" sets. */
+  pins?: string[]
 }): NewConversation {
   const now = opts.now ?? new Date()
   const title = conversationTitle(opts.question)
@@ -159,7 +161,7 @@ export function newConversation(opts: {
     `# ${title}`,
     '',
   ].join('\n')
-  return { title, text }
+  return { title, text: opts.pins?.length ? withPins(text, opts.pins) : text }
 }
 
 /**
@@ -342,6 +344,44 @@ export function answerUser(question: string, sources: AskSource[], history: stri
   return `${before}Notes found:\n\n${notes}\n\n---\n\nThe question: ${question}`
 }
 
+/* ------------------------------------------------------- checking the answer */
+
+/**
+ * The notes an answer claims to have used.
+ *
+ * An anchor or an alias is dropped, because `[[Migration plan#Rollback]]` cites
+ * the same note as `[[Migration plan]]` — and the material was sent as whole
+ * notes, so a heading is a claim about where in one, not about which one.
+ */
+export function citedNotes(answer: string): string[] {
+  const out: string[] = []
+  for (const link of scanWikiLinks(answer)) {
+    const title = link.target.trim()
+    if (!title) continue
+    if (!out.some((t) => t.toLowerCase() === title.toLowerCase())) out.push(title)
+  }
+  return out
+}
+
+/**
+ * Citations naming something the model was not given.
+ *
+ * The instruction says never to invent a note title, and until this nothing
+ * checked. That gap mattered more than it sounds: the stated safety property of
+ * this whole feature is that every claim points at something you can open, and
+ * a fabricated `[[Postmortem 2026-08-14]]` renders identically to a real
+ * citation — same colour, same brackets — until somebody clicks it, by which
+ * time the answer has been read and believed.
+ *
+ * Compared case-insensitively against the titles actually sent. A citation
+ * whose spelling drifted from the note it meant is reported too, and rightly:
+ * it is still a link that does not go where it says.
+ */
+export function citedWithoutReading(answer: string, sent: string[]): string[] {
+  const given = new Set(sent.map((t) => t.trim().toLowerCase()))
+  return citedNotes(answer).filter((t) => !given.has(t.toLowerCase()))
+}
+
 /* ----------------------------------------------------------- writing a turn */
 
 export interface Provenance {
@@ -383,6 +423,14 @@ export interface Provenance {
   missingPins?: string[]
   /** Pinned, resolved, and still not sent — the limit or the budget ran out. */
   pinsSkipped?: number
+  /**
+   * Cited by the answer, not among the notes sent — but a note by that name
+   * does exist. A link that goes somewhere, about something the model never
+   * read.
+   */
+  citedNotRead?: string[]
+  /** Cited by the answer, and no note by that name exists at all. */
+  citedNotFound?: string[]
 }
 
 /**
@@ -421,6 +469,24 @@ export function provenanceCallout(p: Provenance): string {
   } else if (pinned.length >= p.limit && p.matched > 0) {
     lines.push(
       `> The limit of ${p.limit} ${p.limit === 1 ? 'note' : 'notes'} a question is taken up by pins, so nothing the search found was sent.`,
+    )
+  }
+  /*
+   * A citation the model was not given. Linked when the note exists — you will
+   * want to open it and judge for yourself — and quoted when it does not,
+   * because writing `[[…]]` around a name nothing answers to would add a second
+   * broken link to a note that already has the model's one.
+   */
+  const notRead = p.citedNotRead ?? []
+  const notFound = p.citedNotFound ?? []
+  if (notRead.length) {
+    lines.push(
+      `> Cited without reading: ${notRead.map((t) => `[[${t}]]`).join(', ')} — a real note, but not one of the ones sent.`,
+    )
+  }
+  if (notFound.length) {
+    lines.push(
+      `> Cited but no such note: ${notFound.map((t) => `“${t}”`).join(', ')} — the name was invented.`,
     )
   }
   if (p.dropped > 0) {

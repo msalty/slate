@@ -7,7 +7,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
-import { notes, search } from '../core/vault'
+import { getEntry, notes, search } from '../core/vault'
 import { dailyNoteFor } from '../core/daily'
 import { sync } from '../core/sync'
 import { settings, update } from '../core/settings'
@@ -33,7 +33,7 @@ import { canShareFiles, shareNote } from './shareNote'
 import { openQuickAdd } from './QuickAdd'
 import { canTransform, openTransform } from './TransformDialog'
 import { canSummarise, openSummary } from './SummaryDialog'
-import { openAsk } from './AskDialog'
+import { askAboutNote, openAsk } from './AskDialog'
 import { canAsk } from '../app/ask'
 
 interface Cmd {
@@ -59,6 +59,9 @@ export function CommandPalette() {
 
   // The day the calendar is filtered to, if it is filtered to one at all.
   const day = scope.value.kind === 'day' ? startOfDay(scope.value.date) : undefined
+
+  /** The open note, for the commands that are about a note rather than a list. */
+  const openEntry = activePath.value ? getEntry(activePath.value) : undefined
 
   const commands = useMemo<Cmd[]>(
     () => [
@@ -115,6 +118,16 @@ export function CommandPalette() {
               id: 'ask',
               label: 'Ask your notes…',
               run: () => openAsk(),
+            },
+          ] satisfies Cmd[])
+        : []),
+      /* Only with a note open, since it is a question about that note. */
+      ...(canAsk() && openEntry
+        ? ([
+            {
+              id: 'ask-note',
+              label: `Ask about this note — ${openEntry.title}`,
+              run: () => askAboutNote(openEntry.title),
             },
           ] satisfies Cmd[])
         : []),
@@ -207,7 +220,17 @@ export function CommandPalette() {
       { id: 'trash', label: 'Show Deleted', run: () => setScope({ kind: 'trash' }) },
       { id: 'files', label: 'Show all files', run: () => setScope({ kind: 'files' }) },
     ],
-    [settings.value, day, notes.value, scope.value, editorMaximized.value, layoutMode.value],
+    [
+      settings.value,
+      day,
+      notes.value,
+      scope.value,
+      // Read at build time, not inside a `run` — the list has to change when
+      // the open note does, or "Ask about this note" names the last one.
+      activePath.value,
+      editorMaximized.value,
+      layoutMode.value,
+    ],
   )
 
   const results = useMemo(() => {

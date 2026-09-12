@@ -15,6 +15,8 @@ import {
   ALL,
   answerSystem,
   appendTurn,
+  citedNotes,
+  citedWithoutReading,
   isDerived,
   conversationTitle,
   dropLastTurn,
@@ -89,6 +91,19 @@ describe('the note a conversation starts as', () => {
 
   it('leaves a plain rule unquoted', () => {
     expect(newConversation({ question: 'q', source: ALL, now }).text).toContain('source: all')
+  })
+
+  /* What "ask about this note" starts: the note is guaranteed from turn one. */
+  it('can start pinned to a note, without disturbing anything else', () => {
+    const n = newConversation({ question: 'q', source: ALL, now, pins: ['Migration plan'] })
+    expect(pinsOf(n.text)).toEqual(['Migration plan'])
+    expect(isConversation(n.text)).toBe(true)
+    expect(sourceOf(n.text)).toBe(ALL)
+    expect(n.text).toContain('# Ask — q')
+  })
+
+  it('starts with no include key at all when nothing is pinned', () => {
+    expect(newConversation({ question: 'q', source: ALL, now }).text).not.toContain('include')
   })
 
   it('names itself after the first question', () => {
@@ -377,6 +392,57 @@ describe('the notes a conversation pins', () => {
   })
 })
 
+/*
+ * The citation rule was an instruction and nothing more: "never invent a note
+ * title", with nothing checking. That gap is the one that matters, because a
+ * fabricated citation renders identically to a real one — same brackets, same
+ * colour — until somebody clicks it, long after the answer has been believed.
+ */
+describe('checking what an answer cited', () => {
+  it('reads the notes an answer claims to have used', () => {
+    expect(citedNotes('Per [[Migration plan]] and [[Postmortem]], it was the indexes.')).toEqual([
+      'Migration plan',
+      'Postmortem',
+    ])
+  })
+
+  it('counts a note once however many times it is cited', () => {
+    expect(citedNotes('[[A]] says one thing and [[a]] says another, but [[A]] is clear.')).toEqual(['A'])
+  })
+
+  it('treats a link into a heading as a citation of the note', () => {
+    expect(citedNotes('See [[Migration plan#Rollback]] and [[Postmortem|the writeup]].')).toEqual([
+      'Migration plan',
+      'Postmortem',
+    ])
+  })
+
+  it('says nothing about an answer that cited only what it was given', () => {
+    const answer = 'The indexes were the problem — see [[Migration plan]].'
+    expect(citedWithoutReading(answer, ['Migration plan', 'Postmortem'])).toEqual([])
+  })
+
+  it('catches a citation of a note that was never sent', () => {
+    const answer = 'It was the indexes ([[Migration plan]]), and the rollback ([[Runbook]]).'
+    expect(citedWithoutReading(answer, ['Migration plan'])).toEqual(['Runbook'])
+  })
+
+  it('matches what was sent without caring about case', () => {
+    expect(citedWithoutReading('See [[migration PLAN]].', ['Migration plan'])).toEqual([])
+  })
+
+  /* A citation whose spelling drifted is still a link that goes nowhere. */
+  it('reports a near miss rather than forgiving it', () => {
+    expect(citedWithoutReading('See [[Migration plans]].', ['Migration plan'])).toEqual([
+      'Migration plans',
+    ])
+  })
+
+  it('ignores a code sample that happens to contain brackets', () => {
+    expect(citedNotes('Answer.\n\n```\nconst x = [[Not a note]]\n```\n')).toEqual([])
+  })
+})
+
 describe('what the answering model is told it has', () => {
   it('describes a plain search plainly', () => {
     const s = answerSystem('#work')
@@ -523,6 +589,54 @@ describe('the provenance callout', () => {
     })
     expect(c).toContain('is taken up by pins')
     expect(c).toContain('nothing the search found was sent')
+  })
+
+  it('names a citation the model was never given, and links it when it is real', () => {
+    const c = provenanceCallout({
+      terms: ['x'],
+      matched: 2,
+      read: ['Migration plan'],
+      tokens: 400,
+      dropped: 0,
+      beyondLimit: 0,
+      limit: 6,
+      citedNotRead: ['Runbook'],
+    })
+    expect(c).toContain('Cited without reading: [[Runbook]]')
+    expect(c).toContain('not one of the ones sent')
+  })
+
+  it('quotes an invented title rather than linking it', () => {
+    const c = provenanceCallout({
+      terms: ['x'],
+      matched: 2,
+      read: ['Migration plan'],
+      tokens: 400,
+      dropped: 0,
+      beyondLimit: 0,
+      limit: 6,
+      citedNotFound: ['Postmortem 2026-08-14'],
+    })
+    expect(c).toContain('Cited but no such note: “Postmortem 2026-08-14”')
+    expect(c).toContain('the name was invented')
+    // The answer above it already carries the model's broken link; a second one
+    // here would put the same non-existent note in the report twice.
+    expect(c).not.toContain('[[Postmortem 2026-08-14]]')
+  })
+
+  it('says nothing about citations when every one of them was read', () => {
+    const c = provenanceCallout({
+      terms: ['x'],
+      matched: 2,
+      read: ['A'],
+      tokens: 400,
+      dropped: 0,
+      beyondLimit: 0,
+      limit: 6,
+      citedNotRead: [],
+      citedNotFound: [],
+    })
+    expect(c).not.toContain('Cited')
   })
 
   it('says nothing about pins on a conversation that has none', () => {

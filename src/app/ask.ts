@@ -11,6 +11,7 @@ import { isConfigured, LlmError } from '../core/llm'
 import {
   ALL,
   answerSystem,
+  citedWithoutReading,
   isDerived,
   newConversation,
   answerUser,
@@ -45,8 +46,12 @@ export function canAsk(): boolean {
  * same path as the twentieth, and there is one code path to get wrong instead
  * of two.
  */
-export async function startConversation(source: string, firstQuestion: string): Promise<string> {
-  const { title, text } = newConversation({ question: firstQuestion, source })
+export async function startConversation(
+  source: string,
+  firstQuestion: string,
+  pins: string[] = [],
+): Promise<string> {
+  const { title, text } = newConversation({ question: firstQuestion, source, pins })
   return createNote(settings.value.generatedFolder, title, text)
 }
 
@@ -259,6 +264,12 @@ export async function askTurn(
    * list rather than over `found` alone.
    */
   const candidates = pins.entries.length + found.length
+  /*
+   * Checked rather than trusted. The instruction says never to invent a note
+   * title; this is the only thing that finds out whether it was obeyed, and it
+   * costs one scan of text already in hand.
+   */
+  const unread = citedWithoutReading(answer, sources.map((s) => s.title))
   return {
     answer: answer.trim(),
     provenance: {
@@ -272,6 +283,8 @@ export async function askTurn(
       pinned: pinsSent.map((e) => e.title),
       missingPins: pins.missing,
       pinsSkipped: pins.entries.length - pinsSent.length,
+      citedNotRead: unread.filter((t) => !!resolveLink(t)),
+      citedNotFound: unread.filter((t) => !resolveLink(t)),
     },
   }
 }

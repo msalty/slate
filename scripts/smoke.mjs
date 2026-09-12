@@ -879,18 +879,26 @@ try {
      * button that lived only there would be invisible to most people — which is
      * the same failure as living only in the palette.
      */
-    const headBtn = page.locator('.editor-pane .icon-btn[aria-label^="Change the selected passage"]')
+    const headBtn = page.locator('.editor-pane [data-id="note-ai"]')
     check('the note header carries a button for it', (await headBtn.count()) === 1)
 
     await page.locator('.cm-line').first().click()
     await page.keyboard.press('Control+a')
     await page.waitForTimeout(250)
     await headBtn.click()
+    await page.waitForTimeout(300)
+    await page.locator('.menu-item:has-text("Change this passage")').click()
     const headOpened = await page
       .waitForSelector('.transform-presets', { timeout: 5000 })
       .then(() => true)
       .catch(() => false)
-    check('pressing it opens the rewrite dialog', headOpened)
+    /*
+     * This is also the check that the selection survived the menu: an empty
+     * range never opens the dialog at all — it refuses with a notice — so the
+     * dialog being here is the proof that the press, the menu and the click
+     * between them cost the editor nothing.
+     */
+    check('pressing it opens the rewrite dialog on what was selected', headOpened)
     /*
      * The close button rather than Escape. The dialog's Escape handler is
      * attached in an effect, which Preact runs after the paint — so for one
@@ -1211,6 +1219,98 @@ try {
     check('unpinning from the same menu puts it back', /Pin a note/.test(await pinChip.innerText()))
     llm.replyFor = null
 
+    /* ---- asking about the note in front of you ---------------------------
+     * Both ways into a conversation used to be list-shaped, so the most
+     * obvious question there is — one about the note on screen — could only be
+     * asked by going somewhere else first. This is the same conversation
+     * machinery, started with the open note already pinned.
+     */
+    llm.replyFor = (body) => {
+      const sys = body.messages?.[0]?.content ?? ''
+      if (/choosing what to look for/i.test(sys)) return 'quorum, charter'
+      if (/answering questions about/i.test(sys))
+        // Cites one note it was given and two it was not: one that exists, one
+        // that does not. Both have to end up named in the callout.
+        return 'Quorum is four — see [[Working Agreements]], [[Lisbon Trip]] and [[Ledger 2019]].'
+      return 'unexpected'
+    }
+
+    await rowTitled('Working Agreements').click()
+    await page.waitForTimeout(500)
+    const noteAi = page.locator('[data-id="note-ai"]')
+    check('the note header carries the ✦ whatever mode it is in', (await noteAi.count()) === 1)
+    await noteAi.click()
+    await page.waitForTimeout(300)
+    /*
+     * Opened from the list, so the note is being read: there is no caret in it
+     * and so no passage to change. The menu says only what is actually
+     * available, rather than offering a row whose only answer is to explain
+     * why it cannot work.
+     */
+    const readingMenu = await page.locator('.menu, .sheet').first().innerText()
+    check('which offers a question about the note while you are reading it', /Ask about this note/.test(readingMenu), readingMenu.replace(/\n/g, ' · '))
+    check('and does not offer a rewrite with nothing to rewrite', !/Change this passage/.test(readingMenu))
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(300)
+
+    /* With a caret in the note, both are there. */
+    await startEditing()
+    await noteAi.click()
+    await page.waitForTimeout(300)
+    const editingMenu = await page.locator('.menu, .sheet').first().innerText()
+    check('and both once the note is being edited', /Ask about this note/.test(editingMenu) && /Change this passage/.test(editingMenu), editingMenu.replace(/\n/g, ' · '))
+    check('with the rewrite still naming its key', /Change this passage.*⌘⇧U/s.test(editingMenu))
+
+    await page.locator('.menu-item:has-text("Ask about this note")').click()
+    await page.waitForSelector('.ask-question', { timeout: 5000 })
+    const starter = await page.locator('.dialog').innerText()
+    check('the starter says which note it is about', /Ask about “Working Agreements”/.test(starter))
+    check('and that the note is pinned rather than searched for', /pinned to the conversation/.test(starter))
+
+    const aboutBox = page.locator('.ask-question')
+    await aboutBox.click()
+    await aboutBox.pressSequentially('What is quorum here', { delay: 15 })
+    await page.waitForTimeout(200)
+    await page.click('.dialog-foot .btn-primary')
+    await page.waitForSelector('.composer', { timeout: 10000 })
+    await page.waitForFunction(
+      () => /Quorum is four —/.test(document.querySelector('.cm-content')?.textContent ?? ''),
+      null,
+      { timeout: 30000 },
+    )
+    await page.waitForTimeout(1200)
+
+    const about = await savedConvo('What is quorum here')
+    check('the conversation starts already pinned to that note', /- "\[\[Working Agreements\]\]"/.test(about ?? ''))
+    check(
+      'and it answers from the whole vault, not the list you were on',
+      /^source: all$/m.test(about ?? ''),
+      (about ?? '').split('\n').find((l) => l.startsWith('source:')),
+    )
+    check('the pinned note is marked as read because it is pinned', /\[\[Working Agreements\]\] \(pinned\)/.test(about ?? ''))
+
+    /*
+     * The citation rule was an instruction with nothing checking it. A made-up
+     * `[[note]]` renders exactly like a real one, so an answer that cites what
+     * it was never given has to say so in the callout — the model is not asked
+     * again, the text it already returned is simply read.
+     */
+    check(
+      'a citation of a real note that was not sent is named',
+      /Cited without reading: \[\[Lisbon Trip\]\]/.test(about ?? ''),
+      (about ?? '').split('\n').find((l) => l.includes('Cited without')),
+    )
+    check(
+      'and a citation of a note that does not exist is called invented',
+      /Cited but no such note: “Ledger 2019”/.test(about ?? '') && /the name was invented/.test(about ?? ''),
+      (about ?? '').split('\n').find((l) => l.includes('no such note')),
+    )
+    check(
+      'the note it really did read is not accused of anything',
+      !/Cited[^\n]*Working Agreements/.test(about ?? ''),
+    )
+    llm.replyFor = null
+
     /* ---- one key, one meaning -------------------------------------------
      * ⌘K opens the palette even with the caret in a note, and the wikilink it
      * displaced answers ⌘⇧K. The second is not a formality: CodeMirror resolves
@@ -1386,7 +1486,7 @@ try {
     await startEditing()
     check(
       'and the header still offers a rewrite',
-      (await page.locator('.editor-pane .icon-btn[aria-label^="Change the selected passage"]').count()) === 1,
+      (await page.locator('.editor-pane [data-id="note-ai"]').count()) === 1,
     )
 
     await page.locator('.cm-embed img').first().click()

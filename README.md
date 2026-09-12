@@ -18,7 +18,7 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 880 unit and two-device sync tests
+npm test               # 893 unit and two-device sync tests
 node scripts/smoke.mjs # 612-check browser smoke test against dist/
 ```
 
@@ -937,8 +937,9 @@ before anything is written.**
 | **Change this passage** | the ✦ in the note's header, or on the formatting bar — or ⌘⇧U | the text you selected |
 | **Summarise these notes** | the **⋯** above the note list | the notes in the list, after you confirm the count |
 | **Ask your notes** | the same **⋯** | up to 6 notes per question: the ones you pinned, then the ones the search matched |
+| **Ask about this note** | the same ✦ | the note itself, every question, plus what the search adds |
 
-All three are in the command palette too (**⌘K**), but none of them is *only*
+All of them are in the command palette too (**⌘K**), but none of them is *only*
 there — a feature you can reach only by knowing its name is one most people
 never find.
 
@@ -1094,6 +1095,11 @@ any pin that no longer resolves to anything. A pin that quietly stopped pinning
 is the worst failure this feature has: every answer afterwards looks exactly as
 normal as one that had read the note.
 
+**"Ask about this note"** is the shortest road to a pin: the ✦ in a note's
+header starts a conversation with that note already pinned, answering from the
+whole vault rather than from whichever list you were standing on. The note is
+guaranteed; the search is there for whatever else bears on what you ask.
+
 **How a question is answered.** Two requests. First the model is asked what to
 *search for* — not to answer — because your phrasing is rarely your notes'
 phrasing, and a question about "what went wrong" wants a search for "rollback"
@@ -1105,6 +1111,15 @@ Letting the model search for itself with tool calls would be better at
 multi-step questions, and it is the obvious next step — but it needs a model
 that is good at tool use, which small local ones are not, and it turns one
 question into an unpredictable number of requests. This works on everything.
+
+**The citations are checked, not trusted.** The instruction says never to invent
+a note title, and every answer is read back to find out whether it was obeyed:
+each `[[citation]]` is compared against the notes actually sent, and anything
+else is named in the callout — linked if a note by that name exists, quoted as
+*invented* if none does. This costs no extra request; it is a scan of text
+already in hand. It matters because a fabricated citation renders identically to
+a real one — same brackets, same colour — until somebody clicks it, which is
+long after the answer has been read and believed.
 
 **What it will not read.** Conversations and summaries are excluded from
 retrieval. A conversation is the strongest keyword match for its own questions,
@@ -1686,7 +1701,8 @@ src/
 │  ├─ summary.ts     how many passes a set of notes takes, what goes in each,
 │  │                  and the frontmatter that says what made the result
 │  ├─ ask.ts        a conversation as a markdown file: the turns, the scope
-│  │                  rule, the notes it pins, and what retrieval refuses to read
+│  │                  rule, the notes it pins, what retrieval refuses to read,
+│  │                  and the check that an answer cited only what it was given
 │  └─ settings.ts     device-local vs vault-wide preferences
 ├─ adapters/      webdav.ts · gdrive.ts · llm.ts · memory.ts (tests)
 ├─ editor/        CodeMirror 6: live preview, widgets, completion, paste
@@ -1861,8 +1877,8 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 880 unit + two-device sync tests
-node scripts/smoke.mjs  # 625 checks in headless Chromium against dist/
+npm test                # 893 unit + two-device sync tests
+node scripts/smoke.mjs  # 638 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 
