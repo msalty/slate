@@ -60,6 +60,7 @@ function defaults(): AppSettings {
     backend: 'none',
     webdav: { url: '', username: '', password: '', root: '' },
     gdrive: { clientId: '', folderId: '', folderName: 'Slate' },
+    folder: { enabled: false, name: '', pollSec: 5 },
     ai: {
       provider: 'none',
       baseUrl: '',
@@ -133,6 +134,7 @@ function withDefaults(local: Partial<AppSettings> | undefined): AppSettings {
     ai: { ...base.ai, ...local?.ai },
     webdav: { ...base.webdav, ...local?.webdav },
     gdrive: { ...base.gdrive, ...local?.gdrive },
+    folder: { ...base.folder, ...local?.folder },
   }
 }
 
@@ -292,6 +294,10 @@ export function updateWebdav(patch: Partial<AppSettings['webdav']>): void {
 
 export function updateGdrive(patch: Partial<AppSettings['gdrive']>): void {
   settings.value = { ...settings.value, gdrive: { ...settings.value.gdrive, ...patch } }
+}
+
+export function updateFolder(patch: Partial<AppSettings['folder']>): void {
+  settings.value = { ...settings.value, folder: { ...settings.value.folder, ...patch } }
 }
 
 export function updateAi(patch: Partial<AppSettings['ai']>): void {

@@ -29,6 +29,14 @@ import { clearedSearch, parseLaunchIntent } from '../core/capture'
 import { settings, update } from '../core/settings'
 import { connectBackend } from '../app/backend'
 import { recentConflicts, recentFailures, status, sync } from '../core/sync'
+import {
+  folderConnected,
+  folderName,
+  folderNeedsPermission,
+  folderStatus,
+  folderSync,
+  reconnectFolder,
+} from '../core/foldersync'
 import { ready, resolveLink } from '../core/vault'
 import {
   activePath,
@@ -64,7 +72,7 @@ import {
   toggleSidebar,
 } from './layout'
 import { relativeTime, startOfDay } from '../core/util'
-import { IconSettings, IconSync, IconWarn } from './Icons'
+import { IconFolder, IconSettings, IconSync, IconWarn } from './Icons'
 
 export function App() {
   const s = settings.value
@@ -148,6 +156,8 @@ export function App() {
     s.gdrive.folderName,
     s.autoSync,
     s.syncIntervalSec,
+    s.folder.enabled,
+    s.folder.pollSec,
   ])
 
   /* ---- links, tags and embeds coming out of the editor -------------- */
@@ -499,6 +509,43 @@ export function App() {
   )
 }
 
+/**
+ * The connected folder's corner of the status bar.
+ *
+ * Only ever one of three things: nothing at all, the folder's name, or a button
+ * — because the one state a folder can get into that the app cannot fix for
+ * itself is a lost permission, and the only way out of it is a click. Leaving
+ * that to be discovered in Settings would mean a folder that has quietly
+ * stopped keeping up with the vault and says so nowhere anybody is looking.
+ */
+function FolderStatus() {
+  if (folderNeedsPermission.value) {
+    return (
+      <button
+        class="status-btn"
+        onClick={() => void reconnectFolder()}
+        title={`Slate needs permission to use “${folderName.value}” again`}
+      >
+        <IconWarn size={11} style={{ verticalAlign: '-1px', marginRight: 4 }} />
+        Reconnect “{folderName.value}”
+      </button>
+    )
+  }
+  if (!folderConnected.value) return null
+  const fs = folderStatus.value
+  return (
+    <button
+      class="status-btn"
+      onClick={() => void folderSync()}
+      title={fs.detail ?? `Connected to ${folderName.value}`}
+    >
+      <IconFolder size={11} style={{ verticalAlign: '-1px', marginRight: 4 }} />
+      {folderName.value}
+      {fs.pendingCount > 0 ? ` · ${fs.pendingCount}` : ''}
+    </button>
+  )
+}
+
 function StatusBar() {
   const st = status.value
   const s = settings.value
@@ -511,6 +558,7 @@ function StatusBar() {
       </span>
       {st.pendingCount > 0 && <span style={{ color: 'var(--accent)' }}>{st.pendingCount} pending</span>}
       <span style={{ flex: 1 }} />
+      <FolderStatus />
       {s.backend === 'none' ? (
         <button class="status-btn" onClick={() => (settingsOpen.value = true)}>
           Set up sync

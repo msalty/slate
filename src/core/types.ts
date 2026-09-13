@@ -12,6 +12,32 @@ import type { AiSettings } from './llm'
 
 export type FileKind = 'note' | 'attachment'
 
+/**
+ * Which target a piece of sync bookkeeping belongs to.
+ *
+ * A vault can be reconciled against two places at once, and they are not the
+ * same kind of place:
+ *
+ *  - `cloud` is the backend in Settings — WebDAV or Google Drive — reached over
+ *    the network and shared with your other devices, phones included.
+ *  - `folder` is a directory on this machine, opened through the File System
+ *    Access API, holding the vault as ordinary files that Obsidian, git, an
+ *    editor or a backup tool can read and write directly.
+ *
+ * They run independently, on their own schedules, and each keeps its own record
+ * of what it last agreed with. That is what makes the pair useful rather than
+ * merely redundant: an edit made in Obsidian is pulled off the disk into the
+ * vault by the folder run and pushed to WebDAV by the cloud run, so it reaches
+ * a phone that cannot see the folder at all — and the reverse for a note
+ * written on the phone, which lands in the folder for Obsidian to find.
+ *
+ * Two named slots rather than a keyed map: there is exactly one cloud backend
+ * and at most one connected folder, and naming them keeps the bookkeeping
+ * type-checked and the stored shape one a previous version of the app can still
+ * read.
+ */
+export type SyncSlot = 'cloud' | 'folder'
+
 /** Sync bookkeeping for one file. This is what makes conflict detection safe. */
 export interface SyncMeta {
   /**
@@ -28,7 +54,11 @@ export interface SyncMeta {
    * Not kept for attachments.
    */
   baseText?: string
-  /** Remote version identifier at last sync: an ETag (WebDAV) or headRevisionId (Drive). */
+  /**
+   * Remote version identifier at last sync: an ETag (WebDAV), a headRevisionId
+   * (Drive), or a modified-time-and-size stamp (a connected folder, which has
+   * no version identifier of its own).
+   */
   remoteRev?: string
   /** Remote-reported mtime in ms at last sync, for adapters without a usable rev. */
   remoteMtime?: number
@@ -52,7 +82,11 @@ export interface VaultFile {
   mtime: number
   /** ms epoch when this file was first created locally (or first seen). */
   ctime: number
-  /** True when local content differs from what the remote last confirmed. */
+  /**
+   * True when local content differs from what the *cloud* backend last
+   * confirmed. The connected folder answers the same question from `folder`
+   * below rather than from a second flag; see `pendingFor` in core/vault.ts.
+   */
   dirty: boolean
   /**
    * Tombstone. Deleted files are never dropped from the index until the
@@ -62,7 +96,19 @@ export interface VaultFile {
    */
   deleted?: boolean
   deletedAt?: number
+  /** What the cloud backend last confirmed about this file. */
   sync: SyncMeta
+  /**
+   * What the connected folder last confirmed about this file.
+   *
+   * Absent means "no folder has ever reconciled this file", which is exactly
+   * the state that makes a freshly-connected folder receive the whole vault:
+   * every file looks like something the folder has never seen, because it is.
+   * Disconnecting clears it back to absent for the same reason — reconnecting
+   * later must not trust a record of a folder that may since have been moved,
+   * restored from a backup, or replaced entirely.
+   */
+  folder?: SyncMeta
 }
 
 /** Lightweight projection used by the note list, search, calendar and graph. */
@@ -242,6 +288,32 @@ export interface AppSettings {
     /** Drive folder id of the vault root; created on first connect. */
     folderId: string
     folderName: string
+  }
+  /**
+   * The connected folder, if there is one.
+   *
+   * Device-local in its entirety and separate from `backend` above, because it
+   * is not one of the choices there: a folder is somewhere the vault *also*
+   * lives, beside whichever backend carries it to your phone. The directory
+   * handle itself is not here — it is not JSON, and a live capability handed to
+   * the operating system does not belong in a settings object that gets copied,
+   * spread and compared by value. It is kept beside these under its own key in
+   * IndexedDB; see core/foldersync.ts.
+   */
+  folder: {
+    /** Whether the folder should be reconnected on boot. */
+    enabled: boolean
+    /** The directory's own name, for the UI to show. Not a path — there isn't one. */
+    name: string
+    /**
+     * Seconds between sweeps of the folder looking for outside edits.
+     *
+     * A sweep is a directory walk and a stat of every file, which is local and
+     * cheap but not free, so it only runs while the tab is visible. Where the
+     * browser offers `FileSystemObserver` the sweep is a safety net rather than
+     * the mechanism, and outside edits arrive as soon as they are made.
+     */
+    pollSec: number
   }
   /**
    * The optional language-model connection.

@@ -20,6 +20,7 @@ import { formatBytes } from '../core/util'
 import { notify, settingsOpen } from './state'
 import { apply, BUILD_ID, check, reinstall, updateReady } from '../app/update'
 import { IconClose, IconWarn } from './Icons'
+import { FolderCard } from './FolderCard'
 import { createFolder } from '../core/folders'
 import { createNote } from '../core/vault'
 import {
@@ -235,6 +236,10 @@ export function Settings() {
         <div class="dialog-body">
           {tab === 'sync' && (
             <>
+              <FolderCard />
+
+              <hr class="settings-rule" />
+
               <label class="field">
                 <span>Backend</span>
                 <select

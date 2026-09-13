@@ -2217,6 +2217,48 @@ button.property-kind:hover {
   border-left-color: var(--danger);
 }
 
+/* ---- connected folder --------------------------------------------------- */
+
+.settings-rule {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 20px 0 4px;
+}
+
+/*
+ * The connected folder's own line, which reads like the status bar's rather
+ * than like a form field: a dot for the phase, the folder's name, and what it
+ * is doing. It is a report, not something to fill in.
+ */
+.folder-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  font-size: 13px;
+}
+.folder-detail {
+  color: var(--text-faint);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.folder-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.folder-preview {
+  margin: 8px 0 10px;
+  padding-left: 18px;
+}
+.folder-preview li {
+  margin: 3px 0;
+}
+
 /* ---- transcription review --------------------------------------------- */
 
 /*

@@ -1,121 +1,56 @@
 /**
- * The sync engine.
+ * The cloud half of syncing: one reconcile engine pointed at the backend chosen
+ * in Settings — WebDAV, Google Drive, or nothing at all — plus the scheduling
+ * that decides when it runs.
  *
- * Design rules, in priority order:
- *
- *   1. NEVER lose content. Every path through this file either preserves both
- *      sides or keeps the side that has content. There is no code path that
- *      discards an edit because a timestamp looked older.
- *   2. Never block the UI. Sync runs entirely off the interaction path; the
- *      vault is already readable and writable from IndexedDB before this file
- *      does anything at all.
- *   3. Converge. After a run completes on every device with no further edits,
- *      all devices hold identical content.
- *
- * The mechanism is a three-way reconcile per file, using the content hash and
- * remote revision captured at the last successful sync as the common ancestor.
- * Concurrent edits to the same note are merged line-wise when they touched
- * different regions, and preserved as two separate files when they did not.
+ * The reconcile itself lives in core/engine.ts, which is shared with the
+ * connected folder (core/foldersync.ts). Everything this file exports is the
+ * cloud engine's own: the status the status bar draws, the `sync()` ⌘S calls,
+ * and the timers and event listeners that make it automatic. It is the same
+ * surface it has always had, so nothing outside had to learn that there is now
+ * more than one engine.
  */
 
-import { signal } from '@preact/signals'
-import type { RemoteAdapter, RemoteEntry, SyncStatus, VaultFile } from './types'
-import { isPreconditionFailed } from './types'
-import { merge3 } from './merge'
-import {
-  forget,
-  installFromRemote,
+import { SyncEngine, editsSettled, onEditsSettled, setDeviceLabel } from './engine'
+import type { RemoteAdapter } from './types'
 
-  dirtyCount,
-  listAll,
-  markSynced,
-  getRaw,
-  addAttachment,
-  persistDeviceRegistry,
-} from './vault'
-import { isDevicePath, localDeviceName, recordWrite } from './devices'
-import { pushVersion } from './db'
-import { hashBlob, hashText, isNotePath, mimeForPath, ymd } from './util'
+export { setDeviceLabel }
 
-export const status = signal<SyncStatus>({ phase: 'idle', pendingCount: 0, conflictCount: 0 })
+/**
+ * The cloud engine.
+ *
+ * `needsNetwork`, because a backend behind a dead connection is not a backend
+ * and every file in the plan would fail the same way. `publishDevices`, because
+ * the write registry is how *other machines* learn who wrote a note, and the
+ * cloud is the only target that reaches one.
+ */
+const cloud = new SyncEngine({
+  slot: 'cloud',
+  lock: 'slate:sync',
+  needsNetwork: true,
+  publishDevices: true,
+  describeIdle: (a: RemoteAdapter) => `Synced with ${a.describe()}`,
+  idleDetail: 'Local only',
+})
 
+export const status = cloud.status
 /** Paths that produced a conflict copy in the most recent run, for the UI banner. */
-export const recentConflicts = signal<string[]>([])
-
-/**
- * Files the most recent run could not sync, and why.
- *
- * A run that fails on some of its files is not a run that succeeded. The whole
- * point of a per-file error being caught is that the *other* files still go
- * through; the price of that is that somebody has to remember which ones did
- * not, or "Synced" ends up meaning "tried".
- */
-export const recentFailures = signal<Array<{ path: string; error: string }>>([])
-
-let adapter: RemoteAdapter | undefined
-let running: Promise<void> | undefined
-/** Set when a sync is requested while one is already in flight. */
-let rerunRequested = false
-let deviceLabel = 'device'
-
-/**
- * Bumped every time the backend changes.
- *
- * A run is a plan drawn up against one remote — paths, revisions, ids — and
- * changing backends halfway through would push the second half of that plan at
- * a server that has never seen any of it. The run captures the number it
- * started with and every remote call checks it, so a switch abandons the run
- * instead of half-applying it.
- */
-let generation = 0
-let runGeneration = -1
-
-/**
- * The adapter this run is talking to, or an error if it is no longer the one
- * the app is configured for.
- */
-function remote(): RemoteAdapter {
-  if (!adapter || runGeneration !== generation)
-    throw new Error('The backend changed while syncing — this run was abandoned.')
-  return adapter
-}
+export const recentConflicts = cloud.recentConflicts
+/** Files the most recent run could not sync, and why. */
+export const recentFailures = cloud.recentFailures
 
 export function setAdapter(a: RemoteAdapter | undefined): void {
-  adapter = a
-  generation++
-  status.value = {
-    ...status.value,
-    phase: 'idle',
-    detail: a ? `Connected to ${a.describe()}` : 'Local only',
-    lastError: undefined,
-  }
+  cloud.setAdapter(a)
 }
 
 export function currentAdapter(): RemoteAdapter | undefined {
-  return adapter
+  return cloud.currentAdapter()
 }
 
-export function setDeviceLabel(name: string): void {
-  deviceLabel = name
-}
-
-/**
- * Number of local files waiting to be pushed. Drives the status pill.
- *
- * The vault keeps this as a running total. It used to be counted here, by
- * copying the whole file map and filtering it — which is cheap once and was not
- * being asked once: `setStatus` reads it, and a run over a large vault reports
- * progress a few hundred times.
- */
+/** Number of local files waiting to be pushed. Drives the status pill. */
 export function pendingCount(): number {
-  return dirtyCount()
+  return cloud.pendingCount()
 }
-
-function setStatus(patch: Partial<SyncStatus>) {
-  status.value = { ...status.value, ...patch, pendingCount: pendingCount() }
-}
-
-/* ------------------------------------------------------------------- entry */
 
 /**
  * Run a sync. Safe to call at any time from anywhere: concurrent calls
@@ -123,527 +58,10 @@ function setStatus(patch: Partial<SyncStatus>) {
  * it, so a burst of triggers can't stampede the server.
  */
 export function sync(): Promise<void> {
-  if (running) {
-    rerunRequested = true
-    return running
-  }
-  running = (async () => {
-    try {
-      await runOnce()
-    } finally {
-      running = undefined
-    }
-    if (rerunRequested) {
-      rerunRequested = false
-      await sync()
-    }
-  })()
-  return running
+  return cloud.run()
 }
 
-const SYNC_LOCK = 'slate:sync'
-
-/**
- * Run the body only if no other tab of this vault is syncing.
- *
- * Every ordinary tab boots its own backend, so without this two of them
- * reconcile the same vault against the same remote at the same time — the same
- * files listed, uploaded and stamped twice, and each one's write looking to the
- * other like a change from a different device. The tab that skips loses
- * nothing: writes are mirrored between windows, so whichever tab holds the lock
- * is pushing everything both of them have.
- *
- * Web Locks are released when the tab holding one goes away, crash included, so
- * a lock can never be left behind. Where the API is missing the behaviour is
- * exactly what it was before.
- */
-async function withSyncLock(body: () => Promise<void>): Promise<void> {
-  const locks = typeof navigator === 'undefined' ? undefined : navigator.locks
-  if (!locks) return body()
-  let ran = false
-  await locks.request(SYNC_LOCK, { ifAvailable: true }, async (lock) => {
-    if (!lock) return
-    ran = true
-    await body()
-  })
-  if (!ran) setStatus({ detail: 'Another window of this vault is syncing…' })
-}
-
-async function runOnce(): Promise<void> {
-  if (!adapter) {
-    setStatus({ phase: 'idle', detail: 'Local only' })
-    return
-  }
-  if (!navigator.onLine) {
-    setStatus({ phase: 'offline', detail: 'Offline — changes are saved locally' })
-    return
-  }
-  return withSyncLock(runLocked)
-}
-
-async function runLocked(): Promise<void> {
-  const conflicts: string[] = []
-  /** Files this run could not sync. See `recentFailures`. */
-  const failures: Array<{ path: string; error: string }> = []
-  runGeneration = generation
-  try {
-    // Anything this device pushed since the last run is written out now, so it
-    // travels with this run rather than waiting for the next one.
-    await persistDeviceRegistry()
-    setStatus({ phase: 'listing', detail: 'Checking for changes…', progress: 0, lastError: undefined })
-    if (!remote().isConnected()) await remote().connect()
-
-    const remoteList = await remote().list()
-    const remoteFiles = new Map<string, RemoteEntry>()
-    for (const e of remoteList) if (!e.isDir) remoteFiles.set(e.path, e)
-
-    const paths = new Set<string>([...listAll().map((f) => f.path), ...remoteFiles.keys()])
-    // Device records go first. They are tiny, and a note pulled after the file
-    // that says who wrote it can be attributed in this run instead of the next.
-    const ordered = [...paths].sort((a, b) => Number(isDevicePath(b)) - Number(isDevicePath(a)))
-    const plan: Array<() => Promise<void>> = []
-
-    for (const path of ordered) {
-      const R = remoteFiles.get(path)
-      // The local side is read when the item actually runs, not now: a run can
-      // take seconds, and an edit made in the meantime must not be reconciled
-      // away on the strength of a stale snapshot.
-      plan.push(() => reconcile(path, R, conflicts))
-    }
-
-    setStatus({ phase: 'pulling', detail: `Syncing ${plan.length} files…` })
-
-    // Bounded concurrency: enough to keep the pipe busy, low enough that a
-    // rate-limited backend does not start returning 403s.
-    const CONCURRENCY = 5
-    let done = 0
-    let cursor = 0
-    const workers = Array.from({ length: Math.min(CONCURRENCY, plan.length) }, async () => {
-      // A backend swapped out from under the run makes the rest of the plan
-      // meaningless, so the workers stop rather than failing every file in turn.
-      while (cursor < plan.length && runGeneration === generation) {
-        const i = cursor++
-        try {
-          await plan[i]()
-        } catch (e) {
-          // One bad file must not abort the whole run; the rest still sync and
-          // the failure is retried next time. It is recorded, though — a run
-          // that could not write half the vault must not report "Synced".
-          failures.push({ path: ordered[i], error: (e as Error).message ?? String(e) })
-          console.warn('[slate] sync item failed', ordered[i], e)
-        }
-        done++
-        if (done % 5 === 0 || done === plan.length)
-          setStatus({ progress: done / plan.length, detail: `Syncing ${done}/${plan.length}…` })
-      }
-    })
-    await Promise.all(workers)
-    await pushDeviceRegistry()
-
-    recentConflicts.value = conflicts
-    recentFailures.value = failures
-
-    if (failures.length) {
-      // Degraded, not done. `lastSyncAt` is the moment the two sides were last
-      // known to agree, and after this run they demonstrably do not, so it is
-      // left where it was. Those files are still dirty and go again next run.
-      const n = failures.length
-      const summary = `${n} file${n === 1 ? '' : 's'} could not sync (${failures[0].path}: ${failures[0].error})`
-      setStatus({
-        phase: 'error',
-        progress: undefined,
-        conflictCount: conflicts.length,
-        lastError: summary,
-        detail: `Synced ${done - n} of ${plan.length} — ${n} failed`,
-      })
-      return
-    }
-
-    setStatus({
-      phase: 'idle',
-      progress: undefined,
-      lastSyncAt: Date.now(),
-      conflictCount: conflicts.length,
-      detail: conflicts.length
-        ? `Synced — ${conflicts.length} conflict ${conflicts.length === 1 ? 'copy' : 'copies'} kept`
-        : `Synced with ${remote().describe()}`,
-    })
-  } catch (e) {
-    // Whatever got through before this still counts, and whatever did not is
-    // still worth naming — the banner reads "the last run", not "the last run
-    // that finished".
-    recentFailures.value = failures
-    const msg = (e as Error).message ?? String(e)
-    setStatus({
-      phase: 'error',
-      progress: undefined,
-      lastError: msg,
-      detail: msg,
-    })
-  }
-}
-
-/**
- * Save this run's record of what this device pushed, and push it too.
- *
- * It only becomes dirty at the very end of the run that filled it, so leaving
- * it to the next run would mean the other devices learn who wrote a note one
- * sync later than the note itself — and the pending-changes count would never
- * settle at zero. A failure here costs nothing but that delay.
- */
-async function pushDeviceRegistry(): Promise<void> {
-  try {
-    const path = await persistDeviceRegistry()
-    if (!path) return
-    const f = getRaw(path)
-    if (f?.dirty) await push(path, f, f.sync.remoteRev)
-  } catch (e) {
-    console.warn('[slate] could not publish the device registry', e)
-  }
-}
-
-/* --------------------------------------------------------------- reconcile */
-
-async function reconcile(
-  path: string,
-  R: RemoteEntry | undefined,
-  conflicts: string[],
-): Promise<void> {
-  const L = getRaw(path)
-
-  // ---- remote-only: a file another device created. Pull it.
-  if (!L && R) return pull(path, R, conflicts)
-
-  if (!L) return
-
-  // ---- tombstone handling
-  if (L.deleted) {
-    if (!R) {
-      // The remote agrees it is gone. The tombstone has done its job.
-      await forget(path)
-      return
-    }
-    const remoteMoved = remoteChanged(L, R)
-    if (remoteMoved) {
-      // Someone edited this file after we deleted it. An edit beats a delete —
-      // resurrect rather than destroy work we can't see.
-      await pull(path, R, conflicts)
-      return
-    }
-    // The revision goes with the delete. The check above was made against a
-    // listing that may be seconds old by the time this file's turn comes round,
-    // and a third device can write in that window; the adapter refuses rather
-    // than deleting a version nobody here has ever seen.
-    try {
-      await remote().remove(R, R.rev)
-    } catch (e) {
-      if (!isPreconditionFailed(e)) throw e
-      const fresh = (await remote().list()).find((x) => x.path === path && !x.isDir)
-      // Same rule as above, one round later: an edit beats a delete.
-      if (fresh) return pull(path, fresh, conflicts)
-      // Refused, and now absent — someone else deleted it first. Nothing to do
-      // but agree.
-    }
-    await forget(path)
-    return
-  }
-
-  // ---- local-only
-  if (!R) {
-    if (L.sync.baseHash === undefined) {
-      // Never synced: this is simply a new local file.
-      return push(path, L, undefined)
-    }
-    if (L.dirty) {
-      // Deleted remotely, but we have unpushed changes. Content wins: re-upload.
-      return push(path, L, undefined)
-    }
-    // Deleted remotely and we have nothing newer. Accept the deletion, but
-    // route it through the local trash so it stays recoverable on this device.
-    if (L.kind === 'note') {
-      await pushVersion({
-        path,
-        at: Date.now(),
-        text: L.text ?? '',
-        hash: L.hash,
-        reason: 'delete',
-        device: localDeviceName(),
-      })
-    }
-    await forget(path)
-    return
-  }
-
-  // ---- both sides exist
-  const localChanged = L.dirty
-  const rChanged = remoteChanged(L, R)
-
-  if (!localChanged && !rChanged) return
-  if (!localChanged && rChanged) return pull(path, R, conflicts)
-  if (localChanged && !rChanged) return push(path, L, L.sync.remoteRev)
-
-  // ---- both changed
-  return resolve(path, L, R, conflicts)
-}
-
-/**
- * Has the remote moved since we last agreed with it?
- *
- * Prefer the revision identifier. Fall back to modified time only when the
- * backend gives us no revision at all, and when in doubt answer "yes" — a
- * needless pull is harmless, a missed one loses an edit.
- */
-function remoteChanged(L: VaultFile, R: RemoteEntry): boolean {
-  if (R.rev !== undefined && L.sync.remoteRev !== undefined) return R.rev !== L.sync.remoteRev
-  if (R.rev !== undefined && L.sync.remoteRev === undefined) return true
-  if (R.mtime !== undefined && L.sync.remoteMtime !== undefined)
-    return Math.abs(R.mtime - L.sync.remoteMtime) > 1500
-  return true
-}
-
-/* -------------------------------------------------------------------- pull */
-
-async function pull(path: string, R: RemoteEntry, conflicts: string[]): Promise<void> {
-  const now = Date.now()
-  const existing = getRaw(path)
-  if (isNotePath(path) || path.endsWith('.json')) {
-    const { text, rev, mtime } = await remote().getText(R)
-    const hash = await hashText(text)
-    // Typing does not stop for a network round trip. If the file changed
-    // locally while this request was in flight, installing the remote text
-    // would erase an edit the server has never seen — merge it instead.
-    const raced = racedLocalEdit(path, hash)
-    if (raced) return resolve(path, raced, R, conflicts, text)
-    await installFromRemote([
-      {
-        path,
-        kind: 'note',
-        text,
-        mime: mimeForPath(path),
-        size: text.length,
-        hash,
-        mtime: mtime ?? now,
-        ctime: existing?.ctime ?? mtime ?? now,
-        dirty: false,
-        deleted: false,
-        sync: {
-          baseHash: hash,
-          baseText: text,
-          remoteRev: rev ?? R.rev,
-          remoteMtime: mtime ?? R.mtime,
-          lastSyncedAt: now,
-        },
-      },
-    ])
-    return
-  }
-
-  const { blob, rev, mtime } = await remote().getBlob(R)
-  const hash = await hashBlob(blob)
-  const raced = racedLocalEdit(path, hash)
-  if (raced) return resolve(path, raced, R, conflicts)
-  await installFromRemote([
-    {
-      path,
-      kind: 'attachment',
-      blob,
-      mime: blob.type || mimeForPath(path),
-      size: blob.size,
-      hash,
-      mtime: mtime ?? now,
-      ctime: existing?.ctime ?? mtime ?? now,
-      dirty: false,
-      deleted: false,
-      sync: {
-        baseHash: hash,
-        remoteRev: rev ?? R.rev,
-        remoteMtime: mtime ?? R.mtime,
-        lastSyncedAt: now,
-      },
-    },
-  ])
-}
-
-/**
- * Does the local file hold unpushed content that differs from what we just
- * downloaded? If so the pull would erase an edit the server has never seen, and
- * the two sides have to be merged instead.
- *
- * A tombstone is not an edit: writing the remote copy over a local tombstone is
- * the resurrection the caller is deliberately performing.
- */
-function racedLocalEdit(path: string, remoteHash: string): VaultFile | undefined {
-  const cur = getRaw(path)
-  if (!cur || cur.deleted || !cur.dirty) return undefined
-  return cur.hash === remoteHash ? undefined : cur
-}
-
-/* -------------------------------------------------------------------- push */
-
-async function push(path: string, L: VaultFile, ifMatch: string | undefined): Promise<void> {
-  const body = L.kind === 'note' ? (L.text ?? '') : L.blob
-  if (body === undefined) return
-  const mime = L.mime || mimeForPath(path)
-
-  try {
-    const res = await remote().put(path, body, mime, ifMatch)
-    recordWrite(path)
-    await markSynced(path, {
-      baseHash: L.hash,
-      baseText: L.kind === 'note' ? (L.text ?? '') : undefined,
-      remoteRev: res.rev,
-      remoteMtime: res.mtime,
-    })
-  } catch (e) {
-    if (isPreconditionFailed(e)) {
-      // The remote changed between our listing and our write. Re-list just this
-      // file and fall through to a proper merge instead of forcing.
-      const fresh = (await remote().list()).find((x) => x.path === path && !x.isDir)
-      if (fresh) {
-        const conflicts: string[] = []
-        await resolve(path, L, fresh, conflicts)
-        if (conflicts.length) recentConflicts.value = [...recentConflicts.value, ...conflicts]
-        return
-      }
-    }
-    throw e
-  }
-}
-
-/* ---------------------------------------------------------------- conflict */
-
-/**
- * Both sides changed since the last sync.
- *
- * For notes: attempt a three-way merge against the stored base. A clean merge
- * keeps every edit from both devices. A dirty one keeps the local version at
- * the real path (so the editor buffer the user is looking at is never yanked
- * away) and writes the remote version beside it as a clearly-named conflict
- * copy, which then syncs everywhere so the divergence is visible on every
- * device rather than silently resolved on one.
- *
- * For attachments: no merge is possible, so both are kept.
- */
-async function resolve(
-  path: string,
-  L: VaultFile,
-  R: RemoteEntry,
-  conflicts: string[],
-  knownRemoteText?: string,
-): Promise<void> {
-  if (L.kind === 'attachment') {
-    const { blob } = await remote().getBlob(R)
-    const remoteHash = await hashBlob(blob)
-    if (remoteHash === L.hash) {
-      // Same bytes on both sides — not a conflict at all, just re-stamp.
-      await markSynced(path, { baseHash: L.hash, remoteRev: R.rev, remoteMtime: R.mtime })
-      return
-    }
-    const copy = conflictPath(path)
-    await addAttachment(blob, copy)
-    conflicts.push(copy)
-    await push(path, L, R.rev)
-    return
-  }
-
-  const remoteText = knownRemoteText ?? (await remote().getText(R)).text
-  const localText = L.text ?? ''
-
-  if (remoteText === localText) {
-    await markSynced(path, {
-      baseHash: L.hash,
-      baseText: localText,
-      remoteRev: R.rev,
-      remoteMtime: R.mtime,
-    })
-    return
-  }
-
-  const base = L.sync.baseText
-  if (base !== undefined) {
-    const m = merge3(base, localText, remoteText)
-    if (!m.conflict) {
-      // Clean merge: both sets of edits survive.
-      const hash = await hashText(m.merged)
-      const now = Date.now()
-      await pushVersion({
-        path,
-        at: now,
-        text: localText,
-        hash: L.hash,
-        reason: 'conflict-merge',
-        device: localDeviceName(),
-      })
-      await installFromRemote([
-        {
-          ...L,
-          text: m.merged,
-          hash,
-          size: m.merged.length,
-          mtime: now,
-          dirty: true,
-          sync: { ...L.sync, remoteRev: R.rev, remoteMtime: R.mtime },
-        },
-      ])
-      const merged = getRaw(path)
-      if (merged) await push(path, merged, R.rev)
-      return
-    }
-  }
-
-  // Overlapping edits, or no common ancestor to merge against. Keep both.
-  const copy = conflictPath(path)
-  const now = Date.now()
-  const header =
-    `---\nconflict-of: "${path}"\nconflict-at: ${new Date(now).toISOString()}\n---\n\n` +
-    `> This is the version that was on the server when a conflicting edit was\n` +
-    `> found. Your version is still in **${path}**. Merge whatever you need from\n` +
-    `> here, then delete this file.\n\n`
-  const copyText = header + remoteText
-  const copyHash = await hashText(copyText)
-  await installFromRemote([
-    {
-      path: copy,
-      kind: 'note',
-      text: copyText,
-      mime: 'text/markdown',
-      size: copyText.length,
-      hash: copyHash,
-      mtime: now,
-      ctime: now,
-      dirty: true,
-      sync: {},
-    },
-  ])
-  conflicts.push(copy)
-
-  // Now the local version can safely take the canonical path.
-  await push(path, L, R.rev)
-}
-
-/**
- * Where a conflict copy goes.
- *
- * The name has to be unique or it is not a copy at all — writing one conflict
- * copy over another is precisely the content loss the copy exists to prevent,
- * and two conflicts on one note within the same minute is not exotic: a note
- * open on two machines produces exactly that. Seconds narrow the window and the
- * counter closes it, including against a copy still sitting in the vault from a
- * previous run.
- */
-function conflictPath(path: string): string {
-  const dot = path.lastIndexOf('.')
-  const stem = dot > 0 ? path.slice(0, dot) : path
-  const ext = dot > 0 ? path.slice(dot) : ''
-  const now = new Date()
-  const stamp = `${ymd(now.getTime())} ${now.toTimeString().slice(0, 8).replace(/:/g, '')}`
-  const base = `${stem} (conflict — ${deviceLabel} ${stamp})`
-  let out = `${base}${ext}`
-  for (let n = 2; getRaw(out); n++) out = `${base} ${n}${ext}`
-  return out
-}
-
-/* -------------------------------------------------------------- scheduling */
+/* ---------------------------------------------------------------- scheduling */
 
 let timer: ReturnType<typeof setInterval> | undefined
 let listenersInstalled = false
@@ -670,11 +88,11 @@ function installListeners() {
   listenersInstalled = true
 
   addEventListener('online', () => {
-    setStatus({ phase: 'idle', detail: 'Back online' })
+    cloud.setStatus({ phase: 'idle', detail: 'Back online' })
     void sync()
   })
   addEventListener('offline', () => {
-    setStatus({ phase: 'offline', detail: 'Offline — changes are saved locally' })
+    cloud.setStatus({ phase: 'offline', detail: 'Offline — changes are saved locally' })
   })
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && timer) void sync()
@@ -686,12 +104,27 @@ function installListeners() {
   })
 }
 
-/** Fired by the editor once edits settle, when auto-sync is on. */
-export const syncSoon = (() => {
+/**
+ * Push a short while after the edits stop, when auto-sync is on.
+ *
+ * Four seconds, so a paragraph goes up as one request rather than four. A
+ * connected folder is nudged by the same announcement but does not wait as
+ * long; see core/foldersync.ts.
+ */
+onEditsSettled((() => {
   let t: ReturnType<typeof setTimeout> | undefined
   return () => {
     if (!timer) return
     if (t) clearTimeout(t)
     t = setTimeout(() => void sync(), 4000)
   }
-})()
+})())
+
+/**
+ * Fired by the editor once edits settle.
+ *
+ * Every engine hears it — the cloud backend above and a connected folder — so
+ * the editor announces the moment once rather than keeping a list of the places
+ * that care about it.
+ */
+export const syncSoon = editsSettled

@@ -10,6 +10,13 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { getEntry, notes, search } from '../core/vault'
 import { dailyNoteFor } from '../core/daily'
 import { sync } from '../core/sync'
+import {
+  folderConnected,
+  folderName,
+  folderNeedsPermission,
+  folderSync,
+  reconnectFolder,
+} from '../core/foldersync'
 import { settings, update } from '../core/settings'
 import { layoutMode } from './layout'
 import { canPopOut, openPopout } from './popout'
@@ -158,6 +165,32 @@ export function CommandPalette() {
           ]
         : []),
       { id: 'sync', label: 'Sync now', hint: '⌘S', run: () => void sync().then(() => notify('Sync finished')) },
+      /*
+       * A folder can end a session needing its permission handed back, and the
+       * only way out of that is a click. The palette is a click, so it is one
+       * of the ways out — the status bar being the one you cannot miss.
+       */
+      ...(folderNeedsPermission.value
+        ? [
+            {
+              id: 'folder-reconnect',
+              label: `Reconnect the folder “${folderName.value}”`,
+              run: async () => {
+                if (await reconnectFolder()) notify(`Reconnected to “${folderName.value}”.`)
+                else notify('Permission was not granted, so the folder is still disconnected.', 'error')
+              },
+            },
+          ]
+        : []),
+      ...(folderConnected.value
+        ? [
+            {
+              id: 'folder-sync',
+              label: `Check the folder “${folderName.value}” now`,
+              run: () => void folderSync().then(() => notify('Folder checked')),
+            },
+          ]
+        : []),
       { id: 'settings', label: 'Open settings', hint: '⌘,', run: () => (settingsOpen.value = true) },
       {
         id: 'mode',
@@ -230,6 +263,9 @@ export function CommandPalette() {
       activePath.value,
       editorMaximized.value,
       layoutMode.value,
+      folderConnected.value,
+      folderNeedsPermission.value,
+      folderName.value,
     ],
   )
 

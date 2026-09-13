@@ -1,10 +1,18 @@
-/** Wires the settings choice to a concrete adapter and starts the sync loop. */
+/**
+ * Wires the settings choices to concrete adapters and starts the loops.
+ *
+ * Two of them, independently: the cloud backend chosen in Settings, and the
+ * connected folder if there is one. They are not alternatives — a vault can
+ * have both, and normally wants both, because a folder is on this machine and a
+ * backend is what reaches a phone.
+ */
 
 import type { AppSettings, RemoteAdapter } from '../core/types'
 import { WebdavAdapter } from '../adapters/webdav'
 import { GdriveAdapter } from '../adapters/gdrive'
 import { settings, updateGdrive } from '../core/settings'
 import { setAdapter, setDeviceLabel, startAutoSync, stopAutoSync, sync } from '../core/sync'
+import { restoreFolder, setFolderPollSec } from '../core/foldersync'
 import { setLocalDevice } from '../core/devices'
 
 export function buildAdapter(s: AppSettings): RemoteAdapter | undefined {
@@ -49,9 +57,22 @@ export async function connectBackend(): Promise<void> {
     s.gdrive.folderName,
     s.autoSync,
     s.syncIntervalSec,
+    s.folder.enabled,
+    s.folder.pollSec,
   ])
   if (sig === lastSignature) return
   lastSignature = sig
+
+  /*
+   * The folder first, and never conditional on the backend above.
+   *
+   * A vault whose backend is "Local only" can still be a folder-backed vault —
+   * that is the whole desktop story, notes as files on a disk with no server
+   * anywhere — so this runs before the early return below and does not care
+   * what `backend` says.
+   */
+  setFolderPollSec(s.folder.pollSec)
+  await restoreFolder(s.folder.enabled)
 
   stopAutoSync()
   const adapter = buildAdapter(s)
