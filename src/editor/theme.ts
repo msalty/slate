@@ -346,6 +346,16 @@ export const editorTheme = EditorView.theme({
     transform: 'translate(-50%, -50%)',
     zIndex: '2',
   },
+  /*
+   * `hidden` has to be said twice.
+   *
+   * The attribute's own `display: none` comes from the browser's stylesheet and
+   * loses to any rule with a class in it — including the one above. Without
+   * this a handle is drawn whether or not anything asked for it, which is how
+   * one outlived the cell it belonged to: still on screen, still looking like
+   * the row was picked out, and inert, because the cell it spoke for was gone.
+   */
+  '.cm-table-handle[hidden], .cm-table-band[hidden]': { display: 'none' },
   '.cm-table-handle[data-axis="col"]': { flexDirection: 'row', width: '34px', height: '15px' },
   '.cm-table-handle[data-axis="row"]': { flexDirection: 'column', width: '15px', height: '34px' },
   '.cm-table-handle i': {

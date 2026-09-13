@@ -3340,6 +3340,29 @@ try {
     reordered[3],
   )
 
+  /*
+   * A handle belongs to the cell being worked in, so it goes when the note
+   * takes the caret back. Checked in a browser because this is where it
+   * failed: `hidden` is styled by the browser's own stylesheet, which loses to
+   * any rule with a class in it, so a handle asked to hide stayed on screen —
+   * still looking like a row was picked out, and inert, because the cell it
+   * spoke for was gone.
+   */
+  await page.locator('.cm-line').first().click()
+  await page.waitForTimeout(400)
+  check(
+    'the handles go when the note takes the caret back',
+    (await page.locator('.cm-table-handle:visible').count()) === 0 &&
+      (await page.locator('.cm-table-band:visible').count()) === 0,
+    `${await page.locator('.cm-table-handle:visible').count()} handles, ${await page.locator('.cm-table-band:visible').count()} outlines`,
+  )
+  await page.locator('.cm-table-cell[data-row="1"][data-col="0"]').click()
+  await page.waitForTimeout(400)
+  check(
+    'and come straight back with the next cell',
+    (await page.locator('.cm-table-handle:visible').count()) === 2,
+  )
+
   // A wikilink in a cell must navigate, not just look like a link.
   await page.locator('.cm-table-render [data-wikilink]').click()
   await page.waitForTimeout(500)

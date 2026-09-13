@@ -154,6 +154,22 @@ describe('the handles beside the cell being worked in', () => {
     view.destroy()
   })
 
+  it('goes away when the note takes the caret back', async () => {
+    const view = await editor()
+    await enter(view, 1, 0)
+    tap(handle(view, 'row'))
+    expect(handle(view, 'row').hidden).toBe(false)
+
+    // What the editor publishes when the note itself is typed in again.
+    focusedCell.value = null
+    tableBand.value = null
+    await new Promise((r) => setTimeout(r, 0))
+    expect(handle(view, 'row').hidden).toBe(true)
+    expect(handle(view, 'col').hidden).toBe(true)
+    expect(view.contentDOM.querySelectorAll('[data-band]')).toHaveLength(0)
+    view.destroy()
+  })
+
   it('lets go of the band as soon as a cell is typed in again', async () => {
     const view = await editor()
     await enter(view, 1, 0)
