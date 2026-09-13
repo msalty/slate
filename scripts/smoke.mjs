@@ -3269,6 +3269,77 @@ try {
   check('a typed pipe is escaped', (await tableSource()).includes('x \\| y'))
   check('the table survives it', (await page.locator('.cm-table-render').count()) === 1)
 
+  /* ---- the handles on the table itself ----------------------------------
+   *
+   * Press once to pick a band out, press again for its menu, drag to move it.
+   * Only checkable in a real browser: the whole thing is pointer capture and
+   * layout, and the drag rearranges the table before anything is written.
+   */
+  await page.locator('.cm-table-cell[data-row="2"][data-col="0"]').click()
+  await page.waitForTimeout(300)
+  check(
+    'a cell being worked in grows a handle on its row and on its column',
+    (await page.locator('.cm-table-handle:visible').count()) === 2,
+    `${await page.locator('.cm-table-handle:visible').count()} handles`,
+  )
+  const rowHandle = page.locator('.cm-table-handle[data-axis="row"]')
+  await rowHandle.click()
+  await page.waitForTimeout(300)
+  check(
+    'one press outlines that row and nothing else',
+    (await page.locator('.cm-table-band:visible').count()) === 1 &&
+      (await page.locator('.cm-table-cell[data-band]').count()) === 2,
+    `${await page.locator('.cm-table-cell[data-band]').count()} cells marked`,
+  )
+  check('and no menu yet', (await page.locator('.menu').count()) === 0)
+  await page.screenshot({ path: join(SHOTS, '16b-table-handles.png') })
+
+  await rowHandle.click()
+  await page.waitForTimeout(350)
+  check(
+    'a second press opens the menu for that row, named after it',
+    (await page.locator('.menu-title').innerText()).includes('Row 3 of 5'),
+    await page.locator('.menu-title').innerText(),
+  )
+  await page.locator('.menu-item', { hasText: 'Insert row below' }).click()
+  await page.waitForTimeout(450)
+  check(
+    'and its operations act on that row',
+    (await page.locator('.cm-table-render tr').count()) === 6,
+    `${await page.locator('.cm-table-render tr').count()} rows`,
+  )
+  await clickFormat('Table rows and columns')
+  await page.waitForTimeout(300)
+  await page.locator('.menu-item', { hasText: 'Delete row' }).first().click()
+  await page.waitForTimeout(450)
+
+  /*
+   * And the drag. The row is dropped one row further down, which is the
+   * gesture that used to mean retyping both rows.
+   */
+  await page.locator('.cm-table-cell[data-row="2"][data-col="0"]').click()
+  await page.waitForTimeout(300)
+  const grip = await rowHandle.boundingBox()
+  const rowBox = await page.locator('.cm-table-cell[data-row="2"][data-col="0"]').boundingBox()
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2 + rowBox.height, {
+    steps: 10,
+  })
+  await page.mouse.up()
+  await page.waitForTimeout(500)
+  const reordered = (await tableSource()).split('\n')
+  check(
+    'dragging a row by its handle moves it in the markdown',
+    reordered[5].includes('Lisbon Trip') && reordered[6].includes('code'),
+    reordered.slice(4, 8).join(' / '),
+  )
+  check(
+    'and it is still an ordinary GFM table',
+    /^\| -+ \| -+ \|$/m.test(reordered.join('\n')),
+    reordered[3],
+  )
+
   // A wikilink in a cell must navigate, not just look like a link.
   await page.locator('.cm-table-render [data-wikilink]').click()
   await page.waitForTimeout(500)

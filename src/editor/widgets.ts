@@ -28,9 +28,11 @@ import {
   parseTable,
   renderTable,
   requestCellFocus,
+  tableBand,
   takeCellFocus,
   type TableModel,
 } from './table'
+import { wireTableChrome } from './tableChrome'
 
 export { isDelimiterRow }
 
@@ -545,6 +547,9 @@ const PLAINTEXT_ONLY = (() => {
  * mode is for.
  */
 export class TableWidget extends WidgetType {
+  /** Takes the handles down with the DOM they were drawn into. */
+  private unchrome: (() => void) | null = null
+
   constructor(
     readonly source: string,
     readonly from: number,
@@ -622,7 +627,15 @@ export class TableWidget extends WidgetType {
     table.appendChild(tbody)
     wrap.appendChild(table)
 
-    if (!this.typeable) wrap.addEventListener('mousedown', (e) => this.caretIntoSource(view, wrap, e, rows, delimIndex))
+    if (this.typeable) {
+      wrap.classList.add('cm-table-editable')
+      // Belt and braces: a widget asked for its DOM twice would otherwise leave
+      // the first lot of handles subscribed to signals nothing can reach.
+      this.unchrome?.()
+      this.unchrome = wireTableChrome(view, wrap, this.from)
+    } else {
+      wrap.addEventListener('mousedown', (e) => this.caretIntoSource(view, wrap, e, rows, delimIndex))
+    }
 
     // Carry on where the last edit left off, once this DOM is on screen.
     const pending = takeCellFocus(this.from)
@@ -648,6 +661,11 @@ export class TableWidget extends WidgetType {
     }
 
     return wrap
+  }
+
+  destroy() {
+    this.unchrome?.()
+    this.unchrome = null
   }
 
   /**
@@ -691,7 +709,10 @@ export class TableWidget extends WidgetType {
     cell.addEventListener('focus', () => {
       focusedCell.value = { from: this.from, source: this.source, row, col }
       // Typing here again: the mark that said "the toolbar is aimed at this
-      // cell" has done its job, wherever in the table it was.
+      // cell" has done its job, wherever in the table it was. A band picked out
+      // by a handle goes the same way — typing in a cell is not working on a
+      // row, and leaving the outline up would say it was.
+      if (tableBand.value?.from === this.from) tableBand.value = null
       clearArmed(cell.closest('.cm-table-wrap'))
       if (cell.textContent !== raw) {
         cell.textContent = raw
@@ -866,7 +887,9 @@ export class TableWidget extends WidgetType {
   ignoreEvent(event: Event) {
     if (!this.typeable) return false
     const target = event.target as HTMLElement | null
-    return !!target?.closest?.('.cm-table-cell')
+    // The handles answer for themselves too: a press on one is a gesture on the
+    // table, not a click in the note behind it.
+    return !!target?.closest?.('.cm-table-cell, .cm-table-handle')
   }
 }
 

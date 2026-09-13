@@ -8,12 +8,15 @@
 import { describe, expect, it } from 'vitest'
 import { EditorState } from '@codemirror/state'
 import {
+  afterMove,
   blankTable,
   deleteColumn,
   deleteRow,
   insertColumn,
   insertRow,
   isDelimiterRow,
+  moveColumn,
+  moveRow,
   parseTable,
   renderTable,
   setAlign,
@@ -126,6 +129,52 @@ describe('editing', () => {
     expect(renderTable(setAlign(t, 1, 'center')).split('\n')[0]).toBe('| Day | Plan   |')
     expect(setAlign(t, 5, 'right')).toBe(t)
     expect(setAlign(t, -1, 'right')).toBe(t)
+  })
+
+  /*
+   * Reordering, which is what the handles on a rendered table drag. `to` is
+   * where the band ends up in the finished grid — drop a row on the row it
+   * should take the place of — so a move down and the same move back up are
+   * the same two indices swapped.
+   */
+  it('moves a body row to where it was dropped', () => {
+    expect(parseTable(renderTable(moveRow(t, 1, 2)))!.rows).toEqual([
+      ['Day', 'Plan'],
+      ['Sat', 'Belém'],
+      ['Fri', 'Arrive'],
+    ])
+    expect(renderTable(moveRow(moveRow(t, 1, 2), 2, 1))).toBe(renderTable(t))
+  })
+
+  it('keeps the header out of it, whichever end the drag came from', () => {
+    expect(moveRow(t, 0, 2)).toBe(t)
+    // Dropped above the header, a row lands in the first body position.
+    expect(parseTable(renderTable(moveRow(t, 2, 0)))!.rows[1]).toEqual(['Sat', 'Belém'])
+    expect(moveRow(t, 1, 1)).toBe(t)
+    expect(moveRow(t, 9, 1)).toBe(t)
+  })
+
+  it('moves a column with its alignment', () => {
+    const a = parseTable('| A | B | C |\n| :-- | --: | :-: |\n| 1 | 2 | 3 |')!
+    const moved = moveColumn(a, 0, 2)
+    expect(moved.rows).toEqual([
+      ['B', 'C', 'A'],
+      ['2', '3', '1'],
+    ])
+    expect(moved.align).toEqual(['right', 'center', 'left'])
+    expect(renderTable(moved).split('\n')[1]).toBe('| --: | :-: | :-- |')
+    expect(moveColumn(a, 1, 1)).toBe(a)
+    expect(moveColumn(a, 3, 0)).toBe(a)
+  })
+
+  it('follows an index through a move, so the cell in hand stays in hand', () => {
+    // The thing moved, the ones it passed, and the ones it never reached.
+    expect(afterMove(1, 1, 3)).toBe(3)
+    expect(afterMove(2, 1, 3)).toBe(1)
+    expect(afterMove(3, 1, 3)).toBe(2)
+    expect(afterMove(4, 1, 3)).toBe(4)
+    expect(afterMove(1, 3, 1)).toBe(2)
+    expect(afterMove(0, 3, 1)).toBe(0)
   })
 
   it('renders a blank table that parses back', () => {

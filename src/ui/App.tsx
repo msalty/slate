@@ -21,6 +21,7 @@ import { AskDialog } from './AskDialog'
 import { PaneResizer } from './PaneResizer'
 import { editLinkAtCaret, handleUriClick } from './linkActions'
 import { openDueMenu } from './DueMenu'
+import { onTableBandRequest } from './tableMenu'
 import { applyDue } from '../editor/due'
 import { MobileCalendar, MobileMore, MobileNav, MobileTasks } from './Mobile'
 import { QuickAdd, closeQuickAdd, openQuickAdd, quickAddOpen } from './QuickAdd'
@@ -195,6 +196,7 @@ export function App() {
     addEventListener('slate:uri', onUri)
     addEventListener('slate:link-dialog', onLinkDialog)
     addEventListener('slate:due', onDue)
+    addEventListener('slate:table-band', onTableBandRequest)
     return () => {
       removeEventListener('slate:properties', onProperties)
       removeEventListener('slate:open-link', onLink)
@@ -203,6 +205,7 @@ export function App() {
       removeEventListener('slate:uri', onUri)
       removeEventListener('slate:link-dialog', onLinkDialog)
       removeEventListener('slate:due', onDue)
+      removeEventListener('slate:table-band', onTableBandRequest)
     }
   }, [])
 

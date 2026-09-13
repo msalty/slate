@@ -318,6 +318,72 @@ export const editorTheme = EditorView.theme({
     padding: '10px 0',
     maxWidth: '100%',
   },
+  /*
+   * Room for the handles, and something for them to be positioned against.
+   *
+   * Only where cells are typed into: in live preview and reading mode a table
+   * has no handles, and a gutter held open for controls that never appear would
+   * push every table off the left margin the rest of the note keeps to.
+   */
+  '.cm-table-editable': { position: 'relative', paddingTop: '20px', paddingLeft: '17px' },
+  '.cm-table-handle': {
+    position: 'absolute',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '2px',
+    margin: '0',
+    padding: '0',
+    border: 'none',
+    borderRadius: '6px',
+    background: 'transparent',
+    color: 'var(--text-faint)',
+    cursor: 'grab',
+    // The handles are dragged, so the browser must not read a drag on one as a
+    // scroll — on a phone that is the difference between moving a row and
+    // moving the page.
+    touchAction: 'none',
+    transform: 'translate(-50%, -50%)',
+    zIndex: '2',
+  },
+  '.cm-table-handle[data-axis="col"]': { flexDirection: 'row', width: '34px', height: '15px' },
+  '.cm-table-handle[data-axis="row"]': { flexDirection: 'column', width: '15px', height: '34px' },
+  '.cm-table-handle i': {
+    display: 'block',
+    width: '3px',
+    height: '3px',
+    borderRadius: '50%',
+    backgroundColor: 'currentColor',
+  },
+  /*
+   * A finger's worth of target around a thumbnail-sized control — grown
+   * outwards and along the band only, so it never reaches over the first cell
+   * and swallows a tap meant for the text.
+   */
+  '.cm-table-handle::before': { content: '""', position: 'absolute' },
+  '.cm-table-handle[data-axis="col"]::before': { inset: '-7px -7px 0 -7px' },
+  '.cm-table-handle[data-axis="row"]::before': { inset: '-7px 0 -7px -7px' },
+  '.cm-table-handle:hover': { color: 'var(--text-muted)' },
+  '.cm-table-handle[data-on="1"]': {
+    backgroundColor: 'var(--accent)',
+    color: 'var(--text-on-accent)',
+  },
+  '.cm-table-wrap[data-dragging] .cm-table-handle': { cursor: 'grabbing' },
+  /*
+   * The outline round a picked-out row or column.
+   *
+   * One box over the band rather than a border on each of its cells: a row is
+   * selected as one thing, and drawing it cell by cell would put internal lines
+   * through it and say the opposite.
+   */
+  '.cm-table-band': {
+    position: 'absolute',
+    pointerEvents: 'none',
+    border: '2px solid var(--accent)',
+    borderRadius: '5px',
+    zIndex: '1',
+  },
+  '&.cm-rich .cm-table-cell[data-band]': { backgroundColor: 'var(--accent-soft)' },
   '.cm-table-render': {
     borderCollapse: 'collapse',
     fontSize: '0.94em',

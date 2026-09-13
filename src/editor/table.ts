@@ -176,6 +176,46 @@ export function setAlign(t: TableModel, at: number, align: Align): TableModel {
   return { ...t, align: next }
 }
 
+/**
+ * Move a body row to another position.
+ *
+ * The header is not in the game: it cannot be dragged, and nothing can be
+ * dropped above it, because a GFM table without a header is not a table. `to`
+ * is where the row ends up in the finished grid, which is what a drag means —
+ * you drop a row *on* the row it should take the place of.
+ */
+export function moveRow(t: TableModel, at: number, to: number): TableModel {
+  if (at < 1 || at >= t.rows.length) return t
+  const target = Math.min(Math.max(to, 1), t.rows.length - 1)
+  if (target === at) return t
+  const rows = [...t.rows]
+  const [moved] = rows.splice(at, 1)
+  rows.splice(target, 0, moved)
+  return { ...t, rows }
+}
+
+/** Move a column, alignment and all — a column's alignment is part of it. */
+export function moveColumn(t: TableModel, at: number, to: number): TableModel {
+  if (at < 0 || at >= t.align.length) return t
+  const target = Math.min(Math.max(to, 0), t.align.length - 1)
+  if (target === at) return t
+  const shift = <T,>(xs: T[]): T[] => {
+    const next = [...xs]
+    const [moved] = next.splice(at, 1)
+    next.splice(target, 0, moved)
+    return next
+  }
+  return { align: shift(t.align), rows: t.rows.map(shift) }
+}
+
+/** Where an index ends up once the thing at `at` has been moved to `to`. */
+export function afterMove(index: number, at: number, to: number): number {
+  if (index === at) return to
+  if (at < index && index <= to) return index - 1
+  if (to <= index && index < at) return index + 1
+  return index
+}
+
 export function deleteColumn(t: TableModel, at: number): TableModel {
   if (t.align.length <= 1 || at < 0 || at >= t.align.length) return t
   const align = [...t.align]
@@ -229,6 +269,34 @@ export const focusedCell = signal<{
   row: number
   col: number
 } | null>(null)
+
+/** Which way a band runs: a row across, or a column down. */
+export type TableAxis = 'row' | 'col'
+
+/**
+ * The row or column picked out by its handle, when one is.
+ *
+ * A band is the middle step of the handle gesture: the first press on a "⋯"
+ * marks the row or column it belongs to, the second opens that band's menu. It
+ * is kept here rather than in the widget because every edit throws the widget's
+ * DOM away and builds a new one, and a selection that survived only as long as
+ * the DOM would vanish the moment you used it.
+ *
+ * `from` is the table block's offset, the same key `focusedCell` uses, so a
+ * band belonging to another table — or to a table that has since moved — is
+ * simply not drawn.
+ */
+export const tableBand = signal<{ from: number; kind: TableAxis; index: number } | null>(null)
+
+export function selectBand(from: number, kind: TableAxis, index: number): void {
+  tableBand.value = { from, kind, index }
+}
+
+/** Whether the band on screen is this one. A second press on a handle asks. */
+export function bandIs(from: number, kind: TableAxis, index: number): boolean {
+  const b = tableBand.value
+  return !!b && b.from === from && b.kind === kind && b.index === index
+}
 
 /**
  * Which cell the next render of a table should carry on in.
@@ -431,9 +499,13 @@ export type TableOp =
   | 'row-above'
   | 'row-below'
   | 'row-delete'
+  | 'row-move-up'
+  | 'row-move-down'
   | 'col-left'
   | 'col-right'
   | 'col-delete'
+  | 'col-move-left'
+  | 'col-move-right'
   | 'align-default'
   | 'align-left'
   | 'align-center'
@@ -446,6 +518,34 @@ const ALIGNMENTS: Partial<Record<TableOp, Align>> = {
   'align-left': 'left',
   'align-center': 'center',
   'align-right': 'right',
+}
+
+/** The grid as an op leaves it. Alignment is handled by the caller. */
+function applied(t: TableModel, op: TableOp, row: number, col: number): TableModel {
+  switch (op) {
+    case 'row-above':
+      return insertRow(t, row)
+    case 'row-below':
+      return insertRow(t, row + 1)
+    case 'row-delete':
+      return deleteRow(t, row)
+    case 'row-move-up':
+      return moveRow(t, row, row - 1)
+    case 'row-move-down':
+      return moveRow(t, row, row + 1)
+    case 'col-left':
+      return insertColumn(t, col)
+    case 'col-right':
+      return insertColumn(t, col + 1)
+    case 'col-delete':
+      return deleteColumn(t, col)
+    case 'col-move-left':
+      return moveColumn(t, col, col - 1)
+    case 'col-move-right':
+      return moveColumn(t, col, col + 1)
+    default:
+      return t
+  }
 }
 
 export interface TableEditOptions {
@@ -514,25 +614,14 @@ export function applyTableOp(
       userEvent: 'delete',
     })
     focusedCell.value = null
+    tableBand.value = null
     if (refocus) view.focus()
     return true
   }
 
   const align = ALIGNMENTS[op]
   const next =
-    align !== undefined
-      ? setAlign(cur.model, cur.col, align)
-      : op === 'row-above'
-        ? insertRow(cur.model, cur.row)
-        : op === 'row-below'
-          ? insertRow(cur.model, cur.row + 1)
-          : op === 'row-delete'
-            ? deleteRow(cur.model, cur.row)
-            : op === 'col-left'
-              ? insertColumn(cur.model, cur.col)
-              : op === 'col-right'
-                ? insertColumn(cur.model, cur.col + 1)
-                : deleteColumn(cur.model, cur.col)
+    align !== undefined ? setAlign(cur.model, cur.col, align) : applied(cur.model, op, cur.row, cur.col)
 
   const insert = renderTable(next)
 
@@ -544,9 +633,15 @@ export function applyTableOp(
       'row-above': [Math.max(cur.row, 1), cur.col],
       'row-below': [cur.row + 1, cur.col],
       'row-delete': [Math.min(cur.row, rows - 1), cur.col],
+      // A move takes the cell with it — the point of moving a row is to keep
+      // working in it somewhere else.
+      'row-move-up': [Math.max(cur.row - 1, 1), cur.col],
+      'row-move-down': [cur.row + 1, cur.col],
       'col-left': [cur.row, cur.col],
       'col-right': [cur.row, cur.col + 1],
       'col-delete': [cur.row, Math.min(cur.col, cols - 1)],
+      'col-move-left': [cur.row, Math.max(cur.col - 1, 0)],
+      'col-move-right': [cur.row, cur.col + 1],
       // Aligning moves nothing: you carry on typing in the cell you were in.
       'align-default': [cur.row, cur.col],
       'align-left': [cur.row, cur.col],
@@ -564,11 +659,55 @@ export function applyTableOp(
      * source that still matches the note or it would refuse to act at all.
      */
     focusedCell.value = { from: cur.from, source: insert, row, col }
+    // A band drawn round the row or column being worked on follows it: the
+    // operation came from that band's own menu, so letting the outline stay
+    // behind on the row a delete just removed would be a lie.
+    keepBand(cur.from, row, col)
     return true
   }
 
   view.dispatch(rewrite(insert, cur))
   if (refocus) view.focus()
+  return true
+}
+
+/** Move the band outline, if there is one, onto the cell now being worked in. */
+function keepBand(from: number, row: number, col: number): void {
+  const band = tableBand.value
+  if (!band || band.from !== from) return
+  tableBand.value = { ...band, index: band.kind === 'row' ? row : col }
+}
+
+/**
+ * Drag a row or column to a new position, as one undoable edit.
+ *
+ * `at` and `to` are model indices; the widget works out `to` from where the
+ * pointer is and has already shown the result, so all that is left here is to
+ * write the same move into the note.
+ */
+export function applyTableMove(
+  view: EditorView,
+  kind: TableAxis,
+  at: number,
+  to: number,
+  { refocus = false }: TableEditOptions = {},
+): boolean {
+  const cur = currentTable(view)
+  if (!cur) return false
+  // Clamped here as well as in the grid op, so the cell that follows the move
+  // is worked out from where the row really lands.
+  const last = (kind === 'row' ? cur.model.rows.length : cur.model.align.length) - 1
+  const dest = Math.min(Math.max(to, kind === 'row' ? 1 : 0), last)
+  const next = kind === 'row' ? moveRow(cur.model, at, dest) : moveColumn(cur.model, at, dest)
+  const insert = renderTable(next)
+  if (insert === view.state.sliceDoc(cur.from, cur.to)) return false
+
+  const row = kind === 'row' ? afterMove(cur.row, at, dest) : cur.row
+  const col = kind === 'col' ? afterMove(cur.col, at, dest) : cur.col
+  requestCellFocus(cur.from, row, col, refocus)
+  view.dispatch(rewrite(insert, cur))
+  focusedCell.value = { from: cur.from, source: insert, row, col }
+  selectBand(cur.from, kind, kind === 'row' ? row : col)
   return true
 }
 

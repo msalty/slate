@@ -73,3 +73,19 @@ export function requestLinkDialog() {
 export function requestDueMenu(at: { x: number; y: number }, pos: number, current?: number) {
   dispatchEvent(new CustomEvent('slate:due', { detail: { ...at, pos, current } }))
 }
+
+/**
+ * Ask the shell for the menu belonging to a table's row or column.
+ *
+ * Asked for by the "⋯" handle beside a selected band, which is inside the
+ * editor and therefore cannot open a menu itself — the menu is a Preact
+ * component, and nothing here imports UI. The band the menu acts on is
+ * published in `table.ts`, so only its shape travels with the event.
+ */
+export function requestTableBandMenu(
+  at: { x: number; y: number },
+  kind: 'row' | 'col',
+  index: number,
+) {
+  dispatchEvent(new CustomEvent('slate:table-band', { detail: { ...at, kind, index } }))
+}
