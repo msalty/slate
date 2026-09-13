@@ -71,6 +71,8 @@ import {
   toggleRail,
   toggleSidebar,
 } from './layout'
+import { VaultSwitcher } from './VaultSwitcher'
+import { activeVault, hasMultipleVaults } from '../core/vaults'
 import { relativeTime, startOfDay } from '../core/util'
 import { IconFolder, IconSettings, IconSync, IconWarn } from './Icons'
 
@@ -142,6 +144,18 @@ export function App() {
     mq.addEventListener('change', apply)
     return () => mq.removeEventListener('change', apply)
   }, [s.theme])
+
+  /*
+   * The window says which vault it is showing, once there is a choice.
+   *
+   * Two vaults open side by side is the arrangement this feature is for on a
+   * desktop, and two windows called "Slate" in the switcher, the taskbar and
+   * the tab strip is how you end up writing the wrong thing in the wrong one.
+   */
+  useEffect(() => {
+    const v = activeVault()
+    document.title = hasMultipleVaults() && v ? `${v.name} — Slate` : 'Slate'
+  }, [activeVault()?.name, hasMultipleVaults()])
 
   /* ---- backend ----------------------------------------------------- */
   useEffect(() => {
@@ -362,16 +376,26 @@ export function App() {
         data-list={listInline.value ? '1' : '0'}
         data-zen={zen ? '1' : '0'}
         /*
+         * Only once there is more than one vault. A colour that identifies a
+         * set of one identifies nothing, and a stripe down the sidebar of an
+         * app nobody has asked to keep two things apart is decoration.
+         */
+        data-vaults={hasMultipleVaults() ? 'multi' : 'one'}
+        /*
          * The grid reads these; the resizers write them straight to the DOM
          * while dragging, so a resize costs one custom property, not a render.
          */
-        style={{ '--sidebar-w': `${s.sidebarWidth}px`, '--list-w': `${s.listWidth}px` }}
+        style={{
+          '--sidebar-w': `${s.sidebarWidth}px`,
+          '--list-w': `${s.listWidth}px`,
+          '--vault-colour': activeVault()?.colour ?? 'transparent',
+        }}
       >
         {/* --- sidebar: inline on wide, a drawer otherwise --- */}
         {sidebarState.value !== 'hidden' && (
           <div class="pane sidebar" data-floating={sidebarState.value === 'floating' ? '1' : '0'}>
             <div class="pane-head">
-              <span class="pane-title">Slate</span>
+              <VaultSwitcher />
               <span class="spacer" />
               <button
                 class="icon-btn"

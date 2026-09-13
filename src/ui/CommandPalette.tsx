@@ -17,6 +17,7 @@ import {
   folderSync,
   reconnectFolder,
 } from '../core/foldersync'
+import { activeVaultId, switchToVault, vaults } from '../core/vaults'
 import { settings, update } from '../core/settings'
 import { layoutMode } from './layout'
 import { canPopOut, openPopout } from './popout'
@@ -191,6 +192,18 @@ export function CommandPalette() {
             },
           ]
         : []),
+      /*
+       * One row per other vault rather than a "switch vault" that opens a menu:
+       * the palette is a place people type a name into, and "Work" is the name
+       * they would type. Absent entirely with one vault, which is most of them.
+       */
+      ...vaults.value
+        .filter((v) => v.id !== activeVaultId.value)
+        .map((v) => ({
+          id: `vault-${v.id}`,
+          label: `Switch to ${v.name}`,
+          run: () => void switchToVault(v.id),
+        })),
       { id: 'settings', label: 'Open settings', hint: '⌘,', run: () => (settingsOpen.value = true) },
       {
         id: 'mode',
@@ -266,6 +279,8 @@ export function CommandPalette() {
       folderConnected.value,
       folderNeedsPermission.value,
       folderName.value,
+      vaults.value,
+      activeVaultId.value,
     ],
   )
 

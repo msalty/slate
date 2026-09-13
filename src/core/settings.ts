@@ -18,6 +18,7 @@
 
 import { signal, effect } from '@preact/signals'
 import { getMeta, setMeta } from './db'
+import { claimDeviceIdentity, setDeviceName } from './vaults'
 import { readBackstage, writeBackstage } from './vault'
 import type { AppSettings } from './types'
 import { debounce, uid } from './util'
@@ -141,11 +142,22 @@ function withDefaults(local: Partial<AppSettings> | undefined): AppSettings {
 export async function loadSettings(): Promise<void> {
   const local = await getMeta<Partial<AppSettings>>('settings')
   const merged = withDefaults(local)
-  // Device identity is generated once and then never changes.
-  if (!local?.deviceId) {
-    merged.deviceId = defaults().deviceId
-    await setMeta('settings', merged)
-  }
+  /*
+   * Device identity belongs to the machine, not to this vault.
+   *
+   * It used to be generated per settings blob, which was the same thing while
+   * there was one vault per browser and quietly wrong the moment there were
+   * two: one laptop would appear in version history as one device per vault,
+   * each crediting only the notes it happened to be looking at. So the registry
+   * holds it, and this vault's own copy — which is what a device that predates
+   * the registry has — is what seeds it, so nobody's existing attribution is
+   * orphaned by the upgrade.
+   */
+  const identity = await claimDeviceIdentity({ id: merged.deviceId, name: merged.deviceName })
+  const adopted = identity.id !== local?.deviceId || identity.name !== local?.deviceName
+  merged.deviceId = identity.id
+  merged.deviceName = identity.name
+  if (!local?.deviceId || adopted) await setMeta('settings', merged)
   /*
    * Keys this device changed but never got into the file — from a tab that was
    * killed, or a write that did not land. They outlive the session precisely
@@ -243,6 +255,9 @@ effect(() => {
   const s = settings.value
   if (!loaded || suppressWrite) return
   for (const k of SHARED_KEYS) if (!agreed || s[k] !== agreed[k]) unwritten.add(k)
+  // Renaming the device renames it for every vault on this machine, because it
+  // is the machine that got renamed.
+  void setDeviceName(s.deviceName)
   persistLocal(s)
   persistShared(s)
 })

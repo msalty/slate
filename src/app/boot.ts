@@ -8,8 +8,12 @@ import { loadDisclosure } from '../core/disclosure'
 import { requestPersistence } from '../core/db'
 import { setDeviceLabel, status } from '../core/sync'
 import { setLocalDevice } from '../core/devices'
+import { openVaults } from '../core/vaults'
 
 export async function initVault(): Promise<void> {
+  // First, and before anything can touch storage: which vault is this window
+  // showing, and therefore which database is everything below about.
+  await openVaults()
   await loadSettings()
   // Which folders the sidebar had unfolded, so the tree comes back the shape
   // it was left in rather than folding itself up on every reload.

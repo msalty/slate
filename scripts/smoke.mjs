@@ -4106,6 +4106,161 @@ try {
   await page.click('.editor-head [title="Delete note"]')
   await page.waitForTimeout(500)
 
+  /* ---- Multiple vaults ----------------------------------------------------
+   * The whole point of the feature is a boundary, and a boundary is only worth
+   * anything if it holds in a real browser: separate databases, a switch that
+   * really reloads onto the other one, and a search in one that cannot see the
+   * other. All of it is driven through the UI, because the parts most likely to
+   * be wrong are the ones the unit tests cannot reach — that the switcher is
+   * where somebody would look for it, and that a reload lands where it said.
+   */
+  const vaultName = () => page.locator('.vault-switch .vault-name').innerText()
+  const noteTitles = () =>
+    page.locator('.note-row .note-row-title').allInnerTexts().catch(() => [])
+
+  check('the sidebar head names the vault rather than the app', (await vaultName()) === 'Slate')
+  check(
+    'and with one vault it wears no colour, because there is nothing to tell apart',
+    (await page.locator('.shell').getAttribute('data-vaults')) === 'one',
+  )
+
+  const beforeSwitch = (await noteTitles()).length
+  check('the vault it opened has the notes this run has been making', beforeSwitch > 0)
+
+  // Make a second vault, through the switcher, the way anybody would.
+  await page.click('.vault-switch')
+  await page.waitForSelector('.menu-item:has-text("New vault")')
+  check(
+    'the switcher offers a new vault',
+    (await page.locator('.menu-item:has-text("New vault")').count()) === 1,
+  )
+  await page.click('.menu-item:has-text("New vault")')
+  await page.waitForSelector('.dialog input')
+  await page.fill('.dialog input', 'Work')
+  await page.click('.dialog .btn-primary')
+
+  // Creating one opens it, which is a reload onto a different database.
+  await page.waitForFunction(
+    () => document.querySelector('.vault-switch .vault-name')?.textContent === 'Work',
+    undefined,
+    { timeout: 15_000 },
+  )
+  check('creating a vault opens it', (await vaultName()) === 'Work')
+  check(
+    'and the switch is a real navigation, so the URL says which vault this window is',
+    /[?&]vault=/.test(page.url()),
+    page.url().split('/').pop(),
+  )
+  check(
+    'the new vault is empty — not filtered, empty',
+    (await noteTitles()).length === 0,
+    `${(await noteTitles()).length} notes`,
+  )
+  check(
+    'with two vaults the app starts telling them apart',
+    (await page.locator('.shell').getAttribute('data-vaults')) === 'multi',
+  )
+  check(
+    'and says which one this window is, so two windows are not both "Slate"',
+    (await page.title()).startsWith('Work'),
+    await page.title(),
+  )
+
+  // A note here must not be reachable from the other side, and vice versa.
+  await page.click('[title^="New note"]')
+  await page.waitForTimeout(600)
+  await page.locator('.editor-pane .cm-content').click()
+  await page.keyboard.type('# Quarterly numbers\n\nconfidential-to-work')
+
+  /*
+   * Switched straight away, without pausing for the autosave.
+   *
+   * This asserts the outcome — that leaving immediately after typing keeps what
+   * was typed — rather than the mechanism. Driving a browser is slow enough
+   * that the 400ms autosave has usually fired by the time the menu has been
+   * opened and clicked, so it does *not* reliably exercise the flush that
+   * `switchToVault` waits on; that is a guarantee about a race this cannot
+   * dependably create. Both are worth having: the flush makes the outcome
+   * certain, and this makes sure the ordinary path produces it.
+   */
+  const switchTo = async (name) => {
+    await page.click('.vault-switch')
+    await page.waitForSelector(`.menu-item:has-text("${name}")`)
+    await page.click(`.menu-item:has-text("${name}")`)
+    await page.waitForFunction(
+      (n) => document.querySelector('.vault-switch .vault-name')?.textContent === n,
+      name,
+      { timeout: 15_000 },
+    )
+  }
+  await switchTo('Slate')
+
+  check('switching back returns the vault that was there', (await vaultName()) === 'Slate')
+  check(
+    'with every note it had',
+    (await noteTitles()).length === beforeSwitch,
+    `${(await noteTitles()).length} of ${beforeSwitch}`,
+  )
+  // The assertion the whole feature exists for.
+  await page.keyboard.press('Control+k')
+  await page.waitForSelector('.palette input')
+  await page.fill('.palette input', 'confidential-to-work')
+  await page.waitForTimeout(500)
+  const leaked = await page.locator('.palette-row:has-text("Quarterly")').count()
+  check('and no sight of the other vault’s notes, in search or anywhere else', leaked === 0)
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(200)
+
+  // Back to Work, to see whether the note typed a moment before leaving is
+  // there — the half-second of text a switch is most likely to lose.
+  await switchTo('Work')
+  check('the vault that was left has its note', (await noteTitles()).length === 1)
+  /*
+   * Asked for by content rather than by name: the note may still be called
+   * Untitled, because renaming it after its heading is something the settled
+   * autosave offers and this text may not have got that far. What is being
+   * asserted is that the words survived, not what the file ended up called.
+   */
+  await page.keyboard.press('Control+k')
+  await page.waitForSelector('.palette input')
+  await page.fill('.palette input', 'confidential-to-work')
+  await page.waitForTimeout(500)
+  check(
+    'and the words typed just before switching away are in it',
+    (await page.locator('.palette-row').count()) >= 1,
+    `${await page.locator('.palette-row').count()} hits`,
+  )
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(200)
+  await switchTo('Slate')
+
+  // Settings → Vaults: the list, and getting rid of one.
+  await page.click('.pane-head .icon-btn[title^="Settings"]')
+  await page.waitForSelector('.dialog')
+  await page.click('.tab:has-text("Vaults")')
+  await page.waitForSelector('.vault-row')
+  check('Settings lists both vaults', (await page.locator('.vault-row').count()) === 2)
+  check(
+    'and marks the one that is open',
+    (await page.locator('.vault-row[data-current="1"]:has-text("Slate")').count()) === 1,
+  )
+
+  await page.click('.vault-row:has-text("Work") .btn-danger')
+  await page.waitForTimeout(1200)
+  check('removing a vault takes it off the list', (await page.locator('.vault-row').count()) === 1)
+  await page.click('.dialog-foot .btn-primary')
+  await page.waitForTimeout(400)
+  check(
+    'and the app is back to not mentioning vaults at all',
+    (await page.locator('.shell').getAttribute('data-vaults')) === 'one' &&
+      (await vaultName()) === 'Slate',
+  )
+  check(
+    'with the remaining vault’s notes untouched',
+    (await noteTitles()).length === beforeSwitch,
+    `${(await noteTitles()).length} of ${beforeSwitch}`,
+  )
+
   /* ---- Settings › Sync: a connected folder, end to end -------------------- */
   /*
    * The whole Connected Folder path, run against the real File System Access

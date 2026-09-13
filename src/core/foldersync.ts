@@ -36,6 +36,7 @@ import { FolderAdapter, folderModeSupported } from '../adapters/folder'
 import { SyncEngine, onEditsSettled, type EngineConfig } from './engine'
 import { getMeta, setMeta } from './db'
 import { clearFolderMeta, listAll } from './vault'
+import { activeVaultId } from './vaults'
 import type { RemoteEntry } from './types'
 
 export { folderModeSupported }
@@ -57,7 +58,7 @@ const HANDLE_KEY = 'folder.handle'
  */
 export const FOLDER_ENGINE: EngineConfig = {
   slot: 'folder',
-  lock: 'slate:sync:folder',
+  lock: () => `slate:sync:folder:${activeVaultId.value}`,
   needsNetwork: false,
   publishDevices: false,
   describeIdle: (a) => `In sync with ${a.describe()}`,

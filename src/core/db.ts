@@ -42,19 +42,45 @@ interface SlateDB extends DBSchema {
 }
 
 /**
- * The database name is overridable so more than one vault can live in one
- * browser profile — and so the test suite can run two independent "devices"
- * against one another in a single process.
+ * Which database this window's vault lives in.
+ *
+ * One vault, one database — that is the whole of how work and personal stay
+ * apart, and it is why nothing else in the app has to remember to scope itself:
+ * the notes, the version history, the credentials, the connected folder's
+ * handle and the model connection are all in here, so pointing this at a
+ * different name changes every one of them at once.
+ *
+ * Resolved lazily rather than at module load, because the answer comes out of
+ * the vault registry and boot has to be able to ask for it before anything
+ * touches storage. `__SLATE_DB__` still overrides everything, which is how the
+ * test suite runs two independent "devices" in a single process.
  */
-const DB_NAME =
-  (globalThis as { __SLATE_DB__?: string }).__SLATE_DB__ ?? 'slate'
 const DB_VERSION = 1
+
+let chosenName: string | undefined
+
+/**
+ * Name the database to open. Called once, by `openVaults`, before boot reads
+ * anything. Changing vaults mid-session is not supported and is not meant to
+ * be — see `switchToVault`, which reloads the page instead.
+ */
+export function useDatabase(name: string): void {
+  if (dbPromise && chosenName !== name) {
+    console.warn('[slate] the vault database changed after it was opened; reload instead')
+    return
+  }
+  chosenName = name
+}
+
+function databaseName(): string {
+  return (globalThis as { __SLATE_DB__?: string }).__SLATE_DB__ ?? chosenName ?? 'slate'
+}
 
 let dbPromise: Promise<IDBPDatabase<SlateDB>> | undefined
 
 export function db(): Promise<IDBPDatabase<SlateDB>> {
   if (!dbPromise) {
-    dbPromise = openDB<SlateDB>(DB_NAME, DB_VERSION, {
+    dbPromise = openDB<SlateDB>(databaseName(), DB_VERSION, {
       upgrade(d, oldVersion) {
         if (oldVersion < 1) {
           const files = d.createObjectStore('files', { keyPath: 'path' })

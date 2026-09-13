@@ -12,6 +12,7 @@
  */
 
 import { SyncEngine, editsSettled, onEditsSettled, setDeviceLabel } from './engine'
+import { activeVaultId } from './vaults'
 import type { RemoteAdapter } from './types'
 
 export { setDeviceLabel }
@@ -26,7 +27,7 @@ export { setDeviceLabel }
  */
 const cloud = new SyncEngine({
   slot: 'cloud',
-  lock: 'slate:sync',
+  lock: () => `slate:sync:${activeVaultId.value}`,
   needsNetwork: true,
   publishDevices: true,
   describeIdle: (a: RemoteAdapter) => `Synced with ${a.describe()}`,

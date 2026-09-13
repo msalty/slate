@@ -88,8 +88,16 @@ export function editsSettled(): void {
 export interface EngineConfig {
   /** Which half of each file's bookkeeping this engine owns. */
   slot: SyncSlot
-  /** Web Lock name, so two windows of one vault don't reconcile it at once. */
-  lock: string
+  /**
+   * Web Lock name, so two windows of one vault don't reconcile it at once.
+   *
+   * A function, because it has to name the *vault* as well as the target and
+   * the vault is not known when this module is loaded. A lock shared across
+   * vaults would be worse than no lock: the personal vault's run would take it
+   * and the work vault would sit there reporting that another window was
+   * syncing, forever and wrongly.
+   */
+  lock: () => string
   /** Skip runs entirely while the browser reports being offline. */
   needsNetwork: boolean
   /**
@@ -261,7 +269,7 @@ export class SyncEngine {
     const locks = typeof navigator === 'undefined' ? undefined : navigator.locks
     if (!locks) return body()
     let ran = false
-    await locks.request(this.cfg.lock, { ifAvailable: true }, async (lock) => {
+    await locks.request(this.cfg.lock(), { ifAvailable: true }, async (lock) => {
       if (!lock) return
       ran = true
       await body()
@@ -291,49 +299,58 @@ export class SyncEngine {
       for (const e of remoteList) if (!e.isDir) remoteFiles.set(e.path, e)
 
       const paths = new Set<string>([...listAll().map((f) => f.path), ...remoteFiles.keys()])
-      // Device records go first. They are tiny, and a note pulled after the file
-      // that says who wrote it can be attributed in this run instead of the next.
-      const ordered = [...paths].sort((a, b) => Number(isDevicePath(b)) - Number(isDevicePath(a)))
-      const plan: Array<() => Promise<void>> = []
+      /*
+       * Device records are a phase of their own, finished before anything else
+       * starts.
+       *
+       * They say who wrote which note, and a note installed before the record
+       * naming its author is a note credited to nobody — permanently, because
+       * the version snapshot is written once, at the moment of the pull. They
+       * used to be merely sorted to the front of one list, which is not the same
+       * thing at all: five workers draw from that list at once, so the very
+       * first note begins downloading beside the record and the two race. They
+       * are a handful of tiny JSON files, so waiting for them costs one round
+       * trip and buys attribution that is right rather than usually right.
+       */
+      const devicePaths = [...paths].filter(isDevicePath)
+      const rest = [...paths].filter((p) => !isDevicePath(p))
+      const total = devicePaths.length + rest.length
 
-      for (const path of ordered) {
-        const R = remoteFiles.get(path)
-        // The local side is read when the item actually runs, not now: a run can
-        // take seconds, and an edit made in the meantime must not be reconciled
-        // away on the strength of a stale snapshot.
-        plan.push(() => this.reconcile(path, R, conflicts))
+      this.setStatus({ phase: 'pulling', detail: `Syncing ${total} files…` })
+
+      let done = 0
+      const phase = async (batch: string[]) => {
+        // Bounded concurrency: enough to keep the pipe busy, low enough that a
+        // rate-limited backend does not start returning 403s.
+        const CONCURRENCY = 5
+        let cursor = 0
+        const workers = Array.from({ length: Math.min(CONCURRENCY, batch.length) }, async () => {
+          // A target swapped out from under the run makes the rest of the plan
+          // meaningless, so the workers stop rather than failing every file in turn.
+          while (cursor < batch.length && this.runGeneration === this.generation) {
+            const path = batch[cursor++]
+            try {
+              // The local side is read when the item actually runs, not before: a
+              // run can take seconds, and an edit made in the meantime must not be
+              // reconciled away on the strength of a stale snapshot.
+              await this.reconcile(path, remoteFiles.get(path), conflicts)
+            } catch (e) {
+              // One bad file must not abort the whole run; the rest still sync and
+              // the failure is retried next time. It is recorded, though — a run
+              // that could not write half the vault must not report "Synced".
+              failures.push({ path, error: (e as Error).message ?? String(e) })
+              console.warn('[slate] sync item failed', path, e)
+            }
+            done++
+            if (done % 5 === 0 || done === total)
+              this.setStatus({ progress: done / total, detail: `Syncing ${done}/${total}…` })
+          }
+        })
+        await Promise.all(workers)
       }
 
-      this.setStatus({ phase: 'pulling', detail: `Syncing ${plan.length} files…` })
-
-      // Bounded concurrency: enough to keep the pipe busy, low enough that a
-      // rate-limited backend does not start returning 403s.
-      const CONCURRENCY = 5
-      let done = 0
-      let cursor = 0
-      const workers = Array.from({ length: Math.min(CONCURRENCY, plan.length) }, async () => {
-        // A target swapped out from under the run makes the rest of the plan
-        // meaningless, so the workers stop rather than failing every file in turn.
-        while (cursor < plan.length && this.runGeneration === this.generation) {
-          const i = cursor++
-          try {
-            await plan[i]()
-          } catch (e) {
-            // One bad file must not abort the whole run; the rest still sync and
-            // the failure is retried next time. It is recorded, though — a run
-            // that could not write half the vault must not report "Synced".
-            failures.push({ path: ordered[i], error: (e as Error).message ?? String(e) })
-            console.warn('[slate] sync item failed', ordered[i], e)
-          }
-          done++
-          if (done % 5 === 0 || done === plan.length)
-            this.setStatus({
-              progress: done / plan.length,
-              detail: `Syncing ${done}/${plan.length}…`,
-            })
-        }
-      })
-      await Promise.all(workers)
+      await phase(devicePaths)
+      await phase(rest)
       if (this.cfg.publishDevices) await this.pushDeviceRegistry()
 
       this.recentConflicts.value = conflicts
@@ -350,7 +367,7 @@ export class SyncEngine {
           progress: undefined,
           conflictCount: conflicts.length,
           lastError: summary,
-          detail: `Synced ${done - n} of ${plan.length} — ${n} failed`,
+          detail: `Synced ${done - n} of ${total} — ${n} failed`,
         })
         return
       }

@@ -17,10 +17,12 @@ import { currentAdapter, status, sync } from '../core/sync'
 import { requestPersistence, storageEstimate } from '../core/db'
 import { listAll } from '../core/vault'
 import { formatBytes } from '../core/util'
-import { notify, settingsOpen } from './state'
+import { notify, settingsOpen, settingsTab } from './state'
 import { apply, BUILD_ID, check, reinstall, updateReady } from '../app/update'
 import { IconClose, IconWarn } from './Icons'
 import { FolderCard } from './FolderCard'
+import { VaultsCard } from './VaultsCard'
+import { vaults } from '../core/vaults'
 import { createFolder } from '../core/folders'
 import { createNote } from '../core/vault'
 import {
@@ -34,7 +36,7 @@ import { STARTER_TEMPLATES } from '../core/starters'
 import { hasSnippets, snippets, SNIPPETS_NOTE } from '../core/snippets'
 import { openNote } from './state'
 
-type Tab = 'sync' | 'editor' | 'files' | 'ai' | 'about'
+type Tab = 'vaults' | 'sync' | 'editor' | 'files' | 'ai' | 'about'
 
 /**
  * The four features, and what each of them needs to be switched on.
@@ -52,6 +54,7 @@ const AI_FEATURES: Array<{ label: string; capability: Capability; missing: strin
 ]
 
 const TAB_LABEL: Record<Tab, string> = {
+  vaults: 'Vaults',
   sync: 'Sync',
   editor: 'Editor',
   files: 'Images',
@@ -138,6 +141,18 @@ export function Settings() {
     if (settingsOpen.value) void storageEstimate().then(setUsage)
   }, [settingsOpen.value, tab])
 
+  /*
+   * Somewhere asked for a particular tab — "Manage vaults…", say. Honoured once
+   * and then cleared, so reopening Settings afterwards lands where it was left
+   * rather than always on whichever tab last made a request.
+   */
+  useEffect(() => {
+    const want = settingsTab.value
+    if (!settingsOpen.value || !want) return
+    if ((want as Tab) in TAB_LABEL) setTab(want as Tab)
+    settingsTab.value = undefined
+  }, [settingsOpen.value, settingsTab.value])
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') settingsOpen.value = false
@@ -220,7 +235,7 @@ export function Settings() {
         </div>
 
         <div class="tabs" role="tablist">
-          {(['sync', 'editor', 'files', 'ai', 'about'] as Tab[]).map((t) => (
+          {(['vaults', 'sync', 'editor', 'files', 'ai', 'about'] as Tab[]).map((t) => (
             <button
               key={t}
               class="tab"
@@ -234,6 +249,8 @@ export function Settings() {
         </div>
 
         <div class="dialog-body">
+          {tab === 'vaults' && <VaultsCard />}
+
           {tab === 'sync' && (
             <>
               <FolderCard />
@@ -997,6 +1014,20 @@ export function Settings() {
                   <>
                     On-device storage: {formatBytes(usage.usage)}
                     {usage.quota ? ` of ${formatBytes(usage.quota)} available` : ''}
+                    {/*
+                      * The browser reports this per origin, not per vault, so
+                      * with more than one it is the total — and saying "vault"
+                      * about a figure that covers all of them would be a
+                      * measurement of the wrong thing, quietly.
+                      */}
+                    {vaults.value.length > 1 && (
+                      <>
+                        <br />
+                        <span style={{ color: 'var(--text-faint)' }}>
+                          Shared by all {vaults.value.length} vaults on this device.
+                        </span>
+                      </>
+                    )}
                   </>
                 )}
               </div>

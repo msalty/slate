@@ -12,7 +12,8 @@ import { WebdavAdapter } from '../adapters/webdav'
 import { GdriveAdapter } from '../adapters/gdrive'
 import { settings, updateGdrive } from '../core/settings'
 import { setAdapter, setDeviceLabel, startAutoSync, stopAutoSync, sync } from '../core/sync'
-import { restoreFolder, setFolderPollSec } from '../core/foldersync'
+import { folderName, restoreFolder, setFolderPollSec } from '../core/foldersync'
+import { setVaultTarget } from '../core/vaults'
 import { setLocalDevice } from '../core/devices'
 
 export function buildAdapter(s: AppSettings): RemoteAdapter | undefined {
@@ -73,6 +74,7 @@ export async function connectBackend(): Promise<void> {
    */
   setFolderPollSec(s.folder.pollSec)
   await restoreFolder(s.folder.enabled)
+  void setVaultTarget(targetOf(s))
 
   stopAutoSync()
   const adapter = buildAdapter(s)
@@ -81,4 +83,28 @@ export async function connectBackend(): Promise<void> {
   if (!adapter) return
   if (s.autoSync) startAutoSync(s.syncIntervalSec)
   else void sync() // one catch-up pass even in manual mode
+}
+
+/**
+ * Where this vault's content is kept, as one comparable string.
+ *
+ * Recorded on the vault's registry entry so that two vaults pointed at the same
+ * place can be noticed and said out loud. That is not a tidiness complaint: two
+ * separate sets of notes reconciling against one server do not stay separate —
+ * each run reads the other's files as notes some device created and pulls them
+ * in, and within a few minutes both vaults hold everything, with no way back
+ * except by hand.
+ *
+ * The folder is identified by its name, which is all a directory handle will
+ * tell us without being asked to compare itself against another live handle we
+ * do not have. Two folders called `Notes` may well be different folders, so the
+ * warning that reads this is phrased as a question rather than a verdict.
+ */
+function targetOf(s: AppSettings): string | undefined {
+  const parts: string[] = []
+  if (s.backend === 'webdav' && s.webdav.url)
+    parts.push(`webdav:${s.webdav.url.replace(/\/+$/, '')}/${s.webdav.root}`)
+  if (s.backend === 'gdrive' && s.gdrive.clientId) parts.push(`gdrive:${s.gdrive.folderName}`)
+  if (s.folder.enabled && folderName.value) parts.push(`folder:${folderName.value}`)
+  return parts.length ? parts.join(' + ') : undefined
 }

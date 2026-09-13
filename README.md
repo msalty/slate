@@ -19,8 +19,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 970 unit, two-device sync and folder round-trip tests
-node scripts/smoke.mjs # 685-check browser smoke test against dist/
+npm test               # 988 unit, two-device sync and folder round-trip tests
+node scripts/smoke.mjs # 704-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -937,6 +937,14 @@ appears in the other's list, search and calendar as you type it, and the window
 you started from is the one that syncs. Nothing about either feature exists on a
 phone, where the editor is already the whole screen.
 
+**Vaults.** Work and personal in one browser, properly apart. A vault is a
+whole separate set of notes with its own sync, its own connected folder and its
+own model connection — not a filter over one store, which matters because
+nothing crosses between them: not search, not tags, not `[[links]]`, and not
+what gets sent to a model. The sidebar's head is the switcher; switching
+reloads, which is what makes that true rather than merely intended. One vault
+looks exactly like the app always did.
+
 **A folder on your disk, if you want one.** On a Chromium desktop browser you
 can point Slate at an ordinary directory and keep the vault there as real
 Markdown files — the same files Obsidian opens, `git diff` reads, ripgrep
@@ -1425,7 +1433,80 @@ bar above the list carries an **Edit** next to the **Close**.
 
 ---
 
+## Vaults
+
+One browser, several completely separate sets of notes. Work and personal is the
+case it was built for.
+
+A vault is not a filter or a top-level folder — it is its own database, with its
+own backend, its own connected folder, its own model connection and its own
+`backstage/`. That distinction is the feature: a filter has to be applied
+correctly in every place that reads notes, and the first place it is forgotten
+is a work note surfacing in a personal search. Nothing here crosses, because
+there is nothing to cross — search, tags, `[[links]]`, backlinks, the calendar,
+Tag Folders and everything sent to a model are all reading one database, and it
+is the one you are in.
+
+**Where it is.** The head of the sidebar, which used to read "Slate", is the
+vault's name and the switcher. Click it for the list, *New vault…* and *Manage
+vaults…*; on a phone the same menu is a row at the top of More. Settings →
+Vaults is where they are renamed, recoloured and removed.
+
+**With one vault you would not know.** No colour, no stripe, no second name —
+just the word the sidebar always said and a chevron beside it. The colours turn
+on when there are two, which is when there is something to tell apart: a dot in
+the switcher, a stripe down the sidebar, and the vault's name in the window
+title so two windows are not both called Slate.
+
+**Switching reloads the page.** Deliberately, and it is the load-bearing
+decision in the whole feature. Every module that holds vault state holds it at
+module scope — the file map, the search index, the folder and template
+definitions, both reconcile engines, the connected folder's handle and its
+observer, the cross-window channel. Swapping all of that out in place would work
+most of the time, and the times it did not would be a personal note in a work
+search: exactly the failure a vault exists to prevent, arriving silently. A
+reload has none of that surface and costs a couple of hundred milliseconds,
+because opening a vault has always been "read IndexedDB and paint" with nothing
+on the network in front of it. Obsidian reloads its window to change vaults and
+VS Code reloads to change workspace.
+
+**Two at once.** The vault is in the URL (`?vault=…`), so two windows can show
+two different vaults — Settings → Vaults → *New window* opens one. They stay
+out of each other's way: the cross-window channel and the sync locks are named
+per vault, so windows only mirror writes to windows looking at the same notes.
+A plain launch with no parameter opens whichever vault was last used.
+
+**What is shared, and it is almost nothing.** The device's name — the one
+version history credits an edit to — belongs to the machine, so renaming it
+under About renames it in every vault. Everything else is per vault, including
+the API key: a new vault starts with no model configured rather than inheriting
+one, because "which of my notes may leave this device" is exactly the line a
+vault is drawn along.
+
+**Removing one** deletes this device's copy and nothing else. Files on a WebDAV
+server, in a Drive folder or in a connected folder are untouched, so a vault
+with a backend can be got back by making a new one and pointing it at the same
+place; a local-only vault cannot, and the confirmation says which of the two you
+are looking at.
+
+**Upgrading does nothing.** A device that has been using Slate has one database
+and gains one vault record describing exactly it — same notes, same name,
+nothing moved, nothing to confirm. Multiple vaults arrive as a menu that was not
+there before.
+
+**Do not point two vaults at the same server or folder.** Two sets of notes
+reconciling against one target do not stay two sets: each run reads the other's
+files as notes some device created, and within a few minutes both hold
+everything, with no way back except by hand. Slate notices when two vaults have
+been given the same backend and says so in Settings → Vaults, but the check is
+after the fact — it cannot stop you.
+
+---
+
 ## Setting up sync
+
+All of this is per **vault**, and a device can have several — see
+[Vaults](#vaults). What follows is how you set up whichever one you are in.
 
 Two independent things, and most desktops want both:
 
@@ -1709,6 +1790,12 @@ On the server this is what is there; with a
 [connected folder](#a-folder-on-this-machine--desktop-only) it is also what is
 on your own disk, at a path you chose, being written to as you type.
 
+On the device, one vault is one IndexedDB. That is the whole of how
+[several vaults](#vaults) stay apart, and it is why nothing else in the app has
+to remember to scope itself: the notes, the version history, the credentials,
+the folder handle and the model connection are all inside it, so opening a
+different database changes every one of them at once.
+
 ```
 Vault/
 ├─ Start.md
@@ -1849,7 +1936,16 @@ response says who wrote a file, so every device keeps one file of its own —
 `backstage/devices/<id>.json`, listing its name and the paths it recently
 pushed. Only its owner ever writes it, so the registry cannot conflict; a pull
 credits whichever device last pushed that path, and says nothing at all when it
-has not heard of one.
+has not heard of one. Those records are reconciled as a phase of their own,
+finished before any note is touched: a version snapshot is written once, at the
+moment of the pull, so a note that arrives ahead of the record naming its author
+is credited to nobody *permanently*. They used to be merely sorted to the front
+of one list, which is not the same thing — five workers draw from that list at
+once, and the first note began downloading beside the record and raced it.
+
+The device a snapshot names is the machine, not the vault: it lives in the vault
+registry rather than in any one vault's settings, so a laptop with two vaults is
+one device in both of their histories.
 
 `src/core/sync.test.ts` runs two independent "devices" — separate module
 instances with separate databases — against one in-memory server and asserts
@@ -1870,6 +1966,8 @@ src/
 │  ├─ types.ts        data model + the RemoteAdapter contract
 │  ├─ vault.ts        in-memory source of truth, derived indexes
 │  ├─ db.ts           IndexedDB: cache, journal, version history
+│  ├─ vaults.ts       the registry of vaults, which one this window is showing,
+│  │                  and the device identity they share
 │  ├─ engine.ts       the reconcile engine, pointed at one target
 │  ├─ sync.ts         that engine pointed at the backend, and its scheduling
 │  ├─ foldersync.ts   that engine pointed at a folder on this machine: the
@@ -1947,6 +2045,9 @@ src/
    ├─ pickNote.ts    what it was opened for, and what to leave out of it
    ├─ QuickAdd.tsx   the capture sheet, kept mounted so the keyboard can be
    │                 raised inside the tap that asked for it
+   ├─ VaultSwitcher.tsx  the sidebar head: which vault this is, and the menu
+   │                 that changes it
+   ├─ VaultsCard.tsx Settings › Vaults — rename, recolour, remove
    └─ Mobile.tsx     phone tab bar and full-screen tab views
 ```
 
@@ -1985,6 +2086,23 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 - **Dragging a note only works with a pointer.** A folder row takes a dropped
   note, but a drag with a finger is a scroll, so touch keeps long-press →
   *Move to…* — which is also still what a keyboard reaches.
+- **Nothing crosses between vaults, including the things you might want to.**
+  There is no search across vaults, no command palette that reaches into
+  another one, and no way to move a note from one to another. All three are
+  buildable and all three dissolve the boundary the feature is for, so the
+  honest version is that they are absent rather than half-present: to move a
+  note, open it, copy it, switch, paste — or use Export, which is two clicks
+  and keeps the file.
+- **Vaults share one browser storage allowance.** The figure under About is the
+  origin's total, not the vault's, and a browser low on space evicts by origin —
+  so a large vault is a risk to a small one beside it. Settings › Vaults says
+  so, and setting up a backend is what turns that from a loss into a
+  re-download.
+- **Switching vaults reloads.** A couple of hundred milliseconds, and the
+  reasoning is in [Vaults](#vaults) — but it does mean an in-flight sync is
+  abandoned mid-run rather than finished. Nothing is lost by that (the files it
+  had not reached are still pending and go on the next run), but a switch during
+  a large first sync makes that sync start again.
 - **A connected folder is Chromium-desktop only, and it has to be handed back
   every session.** The File System Access API is not in Firefox or Safari and
   not on any phone, so the feature is offered where it exists and absent where
@@ -2114,8 +2232,6 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
   exists.
 - **Publish a note** as a read-only shared link, straight from the adapter.
 - **Encrypted vaults**, as above — a clean fit behind `RemoteAdapter`.
-- **Multiple vaults**, which is nearly free: `db.ts` already reads its database
-  name from a global so more than one can coexist in a profile.
 - **Tag Folder rules over dates** — `created:<2026-01-01`, `due:overdue` — which
   the parser is already shaped to accept.
 
@@ -2124,8 +2240,8 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 970 unit + two-device sync + folder round-trip tests
-node scripts/smoke.mjs  # 685 checks in headless Chromium against dist/
+npm test                # 988 unit + two-device sync + folder round-trip tests
+node scripts/smoke.mjs  # 704 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 
@@ -2164,6 +2280,16 @@ in the middle of a word, which is what an index over words rather than runs
 would quietly stop finding. A browser dialog is now a *failure* in the folder
 section: naming a folder is the app's own dialog, and `prompt()` is what that
 used to be.
+
+The vaults section is driven entirely through the UI, because what is most
+likely to be wrong is not the registry — the unit tests cover that — but whether
+the switcher is where somebody would look and whether a switch really lands
+where it said. It makes a second vault from the sidebar's menu, checks the
+reload put `?vault=` in the URL and the new vault's name in the window title,
+checks the new vault is empty rather than filtered, writes a note in it,
+switches back, and searches the first vault for a word that only exists in the
+second. Then it removes one from Settings › Vaults and checks the app goes back
+to not mentioning vaults at all, with the remaining notes untouched.
 
 The Connected Folder section runs the whole feature against the *real* File
 System Access API rather than a stand-in. Only the file-chooser dialog is

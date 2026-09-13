@@ -33,11 +33,22 @@
 
 import { signal } from '@preact/signals'
 import { adoptFromStorage, onVaultWrite } from '../core/vault'
+import { activeVaultId } from '../core/vaults'
 
 /** The URL a popout window opens with: `#note=<path>&w=<window id>`. */
 const HASH = /^#note=([^&]*)(?:&w=([\w-]+))?$/
 
-const CHANNEL = 'slate:windows'
+/**
+ * Named for the vault, not the app.
+ *
+ * Two windows showing two different vaults are two copies of the app over two
+ * databases, and they have nothing to say to each other. On one shared channel
+ * they would say it anyway — each mirroring its writes into the other's
+ * `adoptFromStorage`, which reads rows that are not in its database as files
+ * that have been deleted. One name per vault is what keeps the conversation
+ * between windows that are actually looking at the same notes.
+ */
+const channelName = () => `slate:windows:${activeVaultId.value}`
 
 /** Big enough for a comfortable measure, small enough to sit beside something. */
 const FEATURES = 'popup=yes,width=900,height=940'
@@ -148,7 +159,7 @@ let holding: string | undefined
  */
 export function installMirror(): void {
   if (channel || !canPopOut()) return
-  channel = new BroadcastChannel(CHANNEL)
+  channel = new BroadcastChannel(channelName())
   channel.onmessage = (e: MessageEvent<Message>) => {
     const msg = e.data
     if (!msg) return

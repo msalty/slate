@@ -17,6 +17,8 @@ import {
 } from '../core/folders'
 import { settings } from '../core/settings'
 import { status, sync } from '../core/sync'
+import { activeVault, hasMultipleVaults } from '../core/vaults'
+import { openVaultMenu } from './VaultSwitcher'
 import {
   activePath,
   mobileEditorOpen,
@@ -260,6 +262,27 @@ export function MobileMore() {
           <IconSettings size={19} />
         </button>
       </div>
+
+      {/*
+        * The vault, at the top, because it is the outermost thing this screen
+        * navigates — everything below it is inside whichever one is open. Only
+        * once there is more than one: a row that reads "Slate ›" and switches
+        * to Slate is a row that does nothing.
+        */}
+      {hasMultipleVaults() && (
+        <div class="more-group">
+          <div class="more-group-label">Vault</div>
+          <button class="more-row" onClick={(e) => openVaultMenu(e as unknown as MouseEvent)}>
+            <span class="more-icon">
+              <span class="vault-dot" style={{ background: activeVault()?.colour }} />
+            </span>
+            <span class="more-label">
+              {activeVault()?.name ?? 'Slate'}
+              <small>Switch vault</small>
+            </span>
+          </button>
+        </div>
+      )}
 
       <div class="more-scroll">
         <div class="more-group">
