@@ -59,10 +59,22 @@ async function enter(view: EditorView, row: number, col: number) {
 }
 
 let pointer = 0
-function press(el: HTMLElement, type: string, x: number, y: number) {
-  const e = new MouseEvent(type, { bubbles: true, clientX: x, clientY: y })
+function press(el: HTMLElement, type: string, x: number, y: number, kind = 'mouse') {
+  const e = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y })
   Object.defineProperty(e, 'pointerId', { value: ++pointer })
+  Object.defineProperty(e, 'pointerType', { value: kind })
   el.dispatchEvent(e)
+  return e
+}
+
+/** A finger, as the browser describes one: the touch list, not a coordinate. */
+function finger(el: HTMLElement, type: string, x: number, y: number) {
+  const e = new Event(type, { bubbles: true, cancelable: true })
+  const list = [{ identifier: 7, clientX: x, clientY: y }]
+  Object.defineProperty(e, 'touches', { value: type === 'touchstart' || type === 'touchmove' ? list : [] })
+  Object.defineProperty(e, 'changedTouches', { value: list })
+  el.dispatchEvent(e)
+  return e
 }
 
 /** A press and release on the same spot: no movement, so not a drag. */
@@ -259,6 +271,51 @@ describe('dragging a handle', () => {
     expect(view.state.doc.toString()).toBe(SRC)
     expect(grid(view)[1]).toEqual(['Fri', 'Arrive'])
     expect(coords(view)[1][0]).toBe('1,0')
+    view.destroy()
+  })
+
+  /*
+   * Touch is handled as touch. A finger put down in an editing host is an
+   * iPhone's caret, selection or magnifier before it is anything this page
+   * asked for, and the gesture is gone before a pointermove ever arrives —
+   * which is why the same code worked on every desktop browser and on Android
+   * and not there. Cancelling the touch is what says otherwise, and it can only
+   * be said on a touch event.
+   */
+  it('answers a finger, and tells the browser to keep out of it', async () => {
+    const view = await editor()
+    await enter(view, 1, 0)
+    const el = handle(view, 'row')
+
+    const start = finger(el, 'touchstart', 0, 30)
+    expect(start.defaultPrevented).toBe(true)
+    finger(el, 'touchend', 0, 30)
+    expect(tableBand.value).toEqual({ from: 0, kind: 'row', index: 1 })
+    view.destroy()
+  })
+
+  it('moves the row for a finger too', async () => {
+    const view = await editor()
+    await enter(view, 1, 0)
+    const el = handle(view, 'row')
+    finger(el, 'touchstart', 0, 30)
+    const moved = finger(el, 'touchmove', 0, 70)
+    // Said again on every move, or the page behind the table scrolls instead.
+    expect(moved.defaultPrevented).toBe(true)
+    finger(el, 'touchend', 0, 70)
+    expect(view.state.doc.toString().split('\n')[4]).toBe('| Fri | Arrive |')
+    view.destroy()
+  })
+
+  it('leaves a touch pointer for the touch handlers, so one tap is one gesture', async () => {
+    const view = await editor()
+    await enter(view, 1, 0)
+    const el = handle(view, 'row')
+    // What a phone sends before touchstart. Acting on it as well would run the
+    // whole gesture twice: select the band, then open its menu, from one tap.
+    const down = press(el, 'pointerdown', 0, 30, 'touch')
+    expect(down.defaultPrevented).toBe(false)
+    expect(tableBand.value).toBeNull()
     view.destroy()
   })
 

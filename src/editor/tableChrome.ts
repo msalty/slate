@@ -30,9 +30,6 @@ import type { EditorView } from '@codemirror/view'
 import { requestTableBandMenu } from './context'
 import { applyTableMove, bandIs, focusedCell, selectBand, tableBand, type TableAxis } from './table'
 
-/** How far outside the table the handles sit, in pixels. Matches the theme. */
-const GAP = 9
-
 /** Movement that counts as a drag rather than a press. */
 const SLOP = 5
 
@@ -109,10 +106,16 @@ export function wireTableChrome(view: EditorView, wrap: HTMLElement, from: numbe
       return
     }
 
+    /*
+     * Centred in the gutter the theme holds open, rather than set a fixed
+     * distance out from the table. The gutter is wider on a touch screen — a
+     * handle there has to be big enough for a thumb — and half of whatever it
+     * is keeps the dots in the middle of their own target on both.
+     */
     const cellBox = at(target)
     const tableBox = at(table)
-    place(handles.col, cellBox.x + cellBox.w / 2, tableBox.y - GAP)
-    place(handles.row, tableBox.x - GAP, cellBox.y + cellBox.h / 2)
+    place(handles.col, cellBox.x + cellBox.w / 2, tableBox.y / 2)
+    place(handles.row, tableBox.x / 2, cellBox.y + cellBox.h / 2)
     handles.col.hidden = false
     handles.row.hidden = false
     // Row 0 is the header, which is a row you can pick but not move.
@@ -169,14 +172,14 @@ export function wireTableChrome(view: EditorView, wrap: HTMLElement, from: numbe
   }
 
   /** Which row or column the pointer is over, read from the DOM as it stands. */
-  const indexAt = (kind: TableAxis, e: PointerEvent): number => {
+  const indexAt = (kind: TableAxis, x: number, y: number): number => {
     const bands =
       kind === 'row'
         ? [...wrap.querySelectorAll<HTMLElement>('tbody tr')]
         : [...wrap.querySelectorAll<HTMLElement>('thead th')]
     for (const el of bands) {
       const r = el.getBoundingClientRect()
-      if (kind === 'row' ? e.clientY < r.bottom : e.clientX < r.right) {
+      if (kind === 'row' ? y < r.bottom : x < r.right) {
         const cell = kind === 'row' ? (el as HTMLTableRowElement).cells[0] : el
         return Number(kind === 'row' ? cell?.dataset.row : cell?.dataset.col)
       }
@@ -215,97 +218,173 @@ export function wireTableChrome(view: EditorView, wrap: HTMLElement, from: numbe
     }
   }
 
-  const grab = (kind: TableAxis) => (e: PointerEvent) => {
+  /**
+   * One gesture on a handle, from the press to whatever it turns out to be.
+   *
+   * Written once and driven by either kind of input, because the gesture is the
+   * same either way — only the events that describe it differ. Returns null
+   * when there is nothing to act on, in which case the input handler has
+   * nothing left to wire up.
+   */
+  const begin = (kind: TableAxis, x0: number, y0: number) => {
     const cell = focusedCell.value
-    if (!cell || cell.from !== from || e.button > 0) return
-    /*
-     * The press must not move focus: a handle is a button, and letting it take
-     * focus would blur the cell on the way in — committing, rewriting the table
-     * and pulling this very DOM out from under the gesture. The cell is blurred
-     * deliberately instead, below, where there is somewhere to put the result.
-     */
-    e.preventDefault()
-    e.stopPropagation()
+    if (!cell || cell.from !== from) return null
 
     settle()
     if (!wrap.isConnected) {
       // Typing was committed, which rebuilt the table. The band is state rather
       // than DOM, so the new one picks it up; the drag is not worth chasing.
       selectBand(from, kind, kind === 'row' ? cell.row : cell.col)
-      return
+      return null
     }
 
-    const el = handles[kind]
     const start = kind === 'row' ? cell.row : cell.col
     const [min, max] = limits(kind)
     let index = start
     let moved = false
-    el.setPointerCapture(e.pointerId)
 
-    const move = (ev: PointerEvent) => {
-      if (!moved) {
-        if (Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) < SLOP) return
-        // The header is not draggable, and neither is the only row there is.
-        if (start < min || max <= min) return
-        moved = true
-        dragging = true
-        wrap.dataset.dragging = kind
-        selectBand(from, kind, start)
-      }
-      const under = indexAt(kind, ev)
-      const to = Number.isFinite(under) ? Math.min(Math.max(under, min), max) : index
-      if (to !== index) {
-        shift(kind, index, to)
-        index = to
-      }
-      layout(
-        kind === 'row' ? { row: index, col: cell.col } : { row: cell.row, col: index },
-        { kind, index },
-      )
+    return {
+      move(x: number, y: number) {
+        if (!moved) {
+          if (Math.hypot(x - x0, y - y0) < SLOP) return
+          // The header is not draggable, and neither is the only row there is.
+          if (start < min || max <= min) return
+          moved = true
+          dragging = true
+          wrap.dataset.dragging = kind
+          selectBand(from, kind, start)
+        }
+        const under = indexAt(kind, x, y)
+        const to = Number.isFinite(under) ? Math.min(Math.max(under, min), max) : index
+        if (to !== index) {
+          shift(kind, index, to)
+          index = to
+        }
+        layout(
+          kind === 'row' ? { row: index, col: cell.col } : { row: cell.row, col: index },
+          { kind, index },
+        )
+      },
+
+      end(x: number, y: number, cancelled: boolean) {
+        const dragged = moved
+        dragging = false
+        delete wrap.dataset.dragging
+        if (dragged) {
+          const keep = !cancelled && index !== start && applyTableMove(view, kind, start, index)
+          if (!keep) {
+            /*
+             * Cancelled, dropped where it started, or refused because the note
+             * moved under it. Nothing was written, so the table on screen has to
+             * be put back — the same move in reverse, which is exact however
+             * many bands the drag crossed on the way.
+             */
+            shift(kind, index, start)
+            redraw()
+          }
+          return
+        }
+        if (cancelled) return
+        /*
+         * A press, then. The first one picks the band out — that is worth
+         * having on its own, since it is also how you see which row a menu
+         * would act on once the keyboard is down over half the table. The
+         * second opens it.
+         */
+        if (bandIs(from, kind, start)) requestTableBandMenu({ x, y }, kind, start)
+        else selectBand(from, kind, start)
+      },
     }
+  }
 
+  /**
+   * A mouse or a pen, which is the straightforward half.
+   *
+   * Touch is deliberately not handled here — see below — so anything arriving
+   * with a touch pointer is left for the touch listeners rather than served
+   * twice.
+   */
+  const onPointerDown = (kind: TableAxis) => (e: PointerEvent) => {
+    if (e.pointerType === 'touch' || e.button > 0) return
+    /*
+     * The press must not move focus: a handle is a button, and letting it take
+     * focus would blur the cell on the way in — committing, rewriting the table
+     * and pulling this very DOM out from under the gesture. The cell is blurred
+     * deliberately instead, inside `begin`, where there is somewhere to put the
+     * result.
+     */
+    e.preventDefault()
+    e.stopPropagation()
+    const gesture = begin(kind, e.clientX, e.clientY)
+    if (!gesture) return
+
+    const el = handles[kind]
+    el.setPointerCapture(e.pointerId)
+    const move = (ev: PointerEvent) => gesture.move(ev.clientX, ev.clientY)
     const done = (ev: PointerEvent) => {
       el.removeEventListener('pointermove', move)
       el.removeEventListener('pointerup', done)
       el.removeEventListener('pointercancel', done)
       if (el.hasPointerCapture(ev.pointerId)) el.releasePointerCapture(ev.pointerId)
-      const dragged = moved
-      dragging = false
-      delete wrap.dataset.dragging
-      if (dragged) {
-        const keep =
-          ev.type !== 'pointercancel' &&
-          index !== start &&
-          applyTableMove(view, kind, start, index)
-        if (!keep) {
-          /*
-           * Cancelled, dropped where it started, or refused because the note
-           * moved under it. Nothing was written, so the table on screen has to
-           * be put back — the same move in reverse, which is exact however many
-           * bands the drag crossed on the way.
-           */
-          shift(kind, index, start)
-          redraw()
-        }
-        return
-      }
-      if (ev.type === 'pointercancel') return
-      /*
-       * A press, then. The first one picks the band out — that is worth having
-       * on its own, since it is also how you see which row a menu would act on
-       * once the keyboard is down over half the table. The second opens it.
-       */
-      if (bandIs(from, kind, start)) requestTableBandMenu({ x: ev.clientX, y: ev.clientY }, kind, start)
-      else selectBand(from, kind, start)
+      gesture.end(ev.clientX, ev.clientY, ev.type === 'pointercancel')
     }
-
     el.addEventListener('pointermove', move)
     el.addEventListener('pointerup', done)
     el.addEventListener('pointercancel', done)
   }
 
-  handles.row.addEventListener('pointerdown', grab('row'))
-  handles.col.addEventListener('pointerdown', grab('col'))
+  /**
+   * Touch, handled as touch.
+   *
+   * A pointer gesture is not enough here, and iPhones are where that shows. A
+   * handle sits inside an editing host, and on iOS a finger put down in one is
+   * first of all a request for a caret, a selection or the magnifying glass —
+   * so the gesture is taken over before `pointermove` ever arrives, and the
+   * handle looks broken while behaving perfectly on every desktop browser.
+   * Cancelling `touchstart` is what says otherwise, and it can only be said on
+   * a touch event.
+   *
+   * It buys the other half too: a touch is implicitly captured by the element
+   * it started on, so the moves keep coming without asking, and the click iOS
+   * would synthesise afterwards never happens — which is what would otherwise
+   * run this whole gesture a second time.
+   */
+  const onTouchStart = (kind: TableAxis) => (e: TouchEvent) => {
+    const touch = e.touches[0]
+    if (!touch || e.touches.length > 1) return
+    e.preventDefault()
+    e.stopPropagation()
+    const gesture = begin(kind, touch.clientX, touch.clientY)
+    if (!gesture) return
+
+    const el = handles[kind]
+    const id = touch.identifier
+    const mine = (ev: TouchEvent) => [...ev.changedTouches].find((t) => t.identifier === id)
+    const move = (ev: TouchEvent) => {
+      const t = mine(ev)
+      if (!t) return
+      // Said again on every move: iOS re-reads the gesture as it goes, and a
+      // move left to the browser is a scroll of whatever is behind the table.
+      ev.preventDefault()
+      gesture.move(t.clientX, t.clientY)
+    }
+    const done = (ev: TouchEvent) => {
+      const t = mine(ev)
+      if (!t) return
+      el.removeEventListener('touchmove', move)
+      el.removeEventListener('touchend', done)
+      el.removeEventListener('touchcancel', done)
+      gesture.end(t.clientX, t.clientY, ev.type === 'touchcancel')
+    }
+    el.addEventListener('touchmove', move, { passive: false })
+    el.addEventListener('touchend', done)
+    el.addEventListener('touchcancel', done)
+  }
+
+  for (const kind of ['row', 'col'] as TableAxis[]) {
+    handles[kind].addEventListener('pointerdown', onPointerDown(kind))
+    handles[kind].addEventListener('touchstart', onTouchStart(kind), { passive: false })
+  }
 
   return () => {
     watching()

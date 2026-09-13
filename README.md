@@ -362,6 +362,16 @@ without a header is not a table. Reordering is on the keyboard too — *Move row
 up* and *Move column left* are in both menus — since a drag is a gesture nothing
 else in the note requires.
 
+On a touch screen the dots stay the size they are — they sit beside a table and
+have to look it — and the gutter they live in grows instead, taking the area
+that answers to them with it: 30×70 to the eye's 15×34. And the gesture is read
+from the touch events rather than from pointer events, which is what makes it
+work on an iPhone: a finger put down inside an editing host is iOS's caret,
+selection or magnifier before it is anything the page asked for, and the only
+way to say otherwise is to cancel the touch — which can only be done on a touch
+event. It buys the rest for free, too, since a touch is captured by the element
+it started on and the click iOS would synthesise afterwards never happens.
+
 **Columns align from the same menu** that adds and removes them: *Align
 column…* names what the one you are in does now and offers default, left,
 centre and right. It writes GFM's own `:--`, `:--:` and `--:` into the

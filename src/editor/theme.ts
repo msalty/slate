@@ -325,7 +325,7 @@ export const editorTheme = EditorView.theme({
    * has no handles, and a gutter held open for controls that never appear would
    * push every table off the left margin the rest of the note keeps to.
    */
-  '.cm-table-editable': { position: 'relative', paddingTop: '20px', paddingLeft: '17px' },
+  '.cm-table-editable': { position: 'relative', paddingTop: '24px', paddingLeft: '24px' },
   '.cm-table-handle': {
     position: 'absolute',
     display: 'flex',
@@ -343,6 +343,16 @@ export const editorTheme = EditorView.theme({
     // scroll — on a phone that is the difference between moving a row and
     // moving the page.
     touchAction: 'none',
+    /*
+     * And a handle is a control, not text. Left as text it is something an
+     * iPhone offers to select, magnify and drag a caret through, which is a
+     * gesture that takes precedence over anything the page wanted to do with
+     * the same finger.
+     */
+    userSelect: 'none',
+    WebkitUserSelect: 'none',
+    WebkitTouchCallout: 'none',
+    WebkitTapHighlightColor: 'transparent',
     transform: 'translate(-50%, -50%)',
     zIndex: '2',
   },
@@ -366,13 +376,20 @@ export const editorTheme = EditorView.theme({
     backgroundColor: 'currentColor',
   },
   /*
-   * A finger's worth of target around a thumbnail-sized control — grown
-   * outwards and along the band only, so it never reaches over the first cell
-   * and swallows a tap meant for the text.
+   * A finger's worth of target around a thumbnail-sized control.
+   *
+   * The dots are 15px across because that is what reads well beside a table;
+   * what you actually hit is this, and it fills the gutter the wrap holds open
+   * — exactly, not over: the handle is centred in that gutter, so the reach
+   * sideways is half of it, and a pixel more would be clipped by the wrap's own
+   * scrolling box at one end and stealing taps from the first cell at the
+   * other. Lengthways there is nothing in the way, so it runs long.
    */
   '.cm-table-handle::before': { content: '""', position: 'absolute' },
-  '.cm-table-handle[data-axis="col"]::before': { inset: '-7px -7px 0 -7px' },
-  '.cm-table-handle[data-axis="row"]::before': { inset: '-7px 0 -7px -7px' },
+  '.cm-table-handle[data-axis="col"]::before': { inset: '-4.5px -12px' },
+  '.cm-table-handle[data-axis="row"]::before': { inset: '-12px -4.5px' },
+  // A thumb needs more of one than a mouse does; see the touch block at the
+  // foot of this file, where everything sized for a finger lives.
   '.cm-table-handle:hover': { color: 'var(--text-muted)' },
   '.cm-table-handle[data-on="1"]': {
     backgroundColor: 'var(--accent)',
@@ -801,6 +818,18 @@ export const editorTheme = EditorView.theme({
       display: 'flex',
       alignItems: 'center',
     },
+    /*
+     * A table's handles, for the same reason and by the same measure.
+     *
+     * The dots stay the size they are — they sit beside a table and have to
+     * look it — and the gutter they live in grows instead, taking the area
+     * that answers to them with it. The gutter is also what the handles
+     * position themselves against, so they stay centred in it here without
+     * being told this number twice.
+     */
+    '.cm-table-editable': { paddingTop: '30px', paddingLeft: '30px' },
+    '.cm-table-handle[data-axis="col"]::before': { inset: '-7.5px -18px' },
+    '.cm-table-handle[data-axis="row"]::before': { inset: '-18px -7.5px' },
   },
 
   /* --- find in note -------------------------------------------------- */

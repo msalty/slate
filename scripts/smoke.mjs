@@ -4811,6 +4811,93 @@ try {
     'and hands the cell back for typing',
     (await page.evaluate(() => document.activeElement?.className)) === 'cm-table-cell',
   )
+
+  /* ---- the handles, with a thumb -----------------------------------------
+   *
+   * The dots are small because a table is small; what has to be thumb-sized is
+   * the area that answers to them, and the only way to know it is to ask the
+   * page what is at a point. Then the gesture itself, driven as real touch
+   * input rather than as a mouse — which is the whole point of it: a finger put
+   * down inside an editing host is an iPhone's caret, selection or magnifier
+   * before it is anything the page asked for, and only a cancelled touchstart
+   * says otherwise.
+   */
+  const thumbGrip = await page.locator('.cm-table-handle[data-axis="row"]').boundingBox()
+  // Measured by asking the page what is at a point, walking out from the middle
+  // until the answer stops being the handle. What a finger hits is the area, not
+  // the dots, and the area is a pseudo-element with no box of its own to read.
+  const target = await page.evaluate(
+    ([cx, cy]) => {
+      const on = (x, y) => !!document.elementFromPoint(x, y)?.closest('.cm-table-handle')
+      const reach = (dx, dy) => {
+        let n = 0
+        while (n < 60 && on(cx + dx * (n + 1), cy + dy * (n + 1))) n++
+        return n
+      }
+      return on(cx, cy)
+        ? { w: reach(-1, 0) + reach(1, 0) + 1, h: reach(0, -1) + reach(0, 1) + 1 }
+        : { w: 0, h: 0 }
+    },
+    [thumbGrip.x + thumbGrip.width / 2, thumbGrip.y + thumbGrip.height / 2],
+  )
+  check(
+    'the row handle answers to a thumb, not just to its own dots',
+    target.h >= 44 && target.w >= 28,
+    `${target.w}×${target.h}px, dots ${Math.round(thumbGrip.width)}×${Math.round(thumbGrip.height)}px`,
+  )
+
+  const cdp = await page.context().newCDPSession(page)
+  const finger = (type, x, y) =>
+    cdp.send('Input.dispatchTouchEvent', {
+      type,
+      touchPoints: type === 'touchEnd' ? [] : [{ x: Math.round(x), y: Math.round(y) }],
+    })
+  const gx = thumbGrip.x + thumbGrip.width / 2
+  const gy = thumbGrip.y + thumbGrip.height / 2
+
+  await finger('touchStart', gx, gy)
+  await finger('touchEnd', gx, gy)
+  await page.waitForTimeout(350)
+  check(
+    'a tap on the handle picks the row out',
+    (await page.locator('.cm-table-band:visible').count()) === 1 &&
+      (await page.locator('.cm-table-cell[data-band]').count()) === 3,
+    `${await page.locator('.cm-table-cell[data-band]').count()} cells marked`,
+  )
+  check(
+    'and lets the keyboard go rather than typing in the cell',
+    !(await page.evaluate(() => document.activeElement?.className ?? '')).includes('cm-table-cell'),
+  )
+
+  const rowText = () =>
+    page.evaluate(() =>
+      [...document.querySelectorAll('.cm-table-render tr')].map((tr) =>
+        [...tr.cells].map((c) => c.textContent.trim()).join('|'),
+      ),
+    )
+  const beforeFinger = await rowText()
+  const rowHeight = (await page.locator('.cm-table-cell[data-row="2"][data-col="0"]').boundingBox()).height
+  await finger('touchStart', gx, gy)
+  for (let i = 1; i <= 6; i++) {
+    await finger('touchMove', gx, gy + (rowHeight * i) / 6)
+    await page.waitForTimeout(25)
+  }
+  await finger('touchEnd', gx, gy + rowHeight)
+  await page.waitForTimeout(600)
+  const afterFinger = await rowText()
+  check(
+    'and a finger dragging it moves the row',
+    afterFinger[3] === beforeFinger[2] && afterFinger[2] === beforeFinger[3],
+    `${beforeFinger.join(' / ')} → ${afterFinger.join(' / ')}`,
+  )
+  check(
+    // Colons allowed: a column was aligned a few checks ago, and that lives in
+    // this very row.
+    'which the note holds as an ordinary table',
+    /^\|( :?-+:? \|){3}$/m.test(await noteContaining('# Heading one')),
+    (await noteContaining('# Heading one')).split('\n').find((l) => /^\| *:?-/.test(l)),
+  )
+
   const outOfTheTable = await noteTextPoint('.editor-overlay')
   await page.touchscreen.tap(outOfTheTable.x, outOfTheTable.y)
   await page.waitForTimeout(300)
