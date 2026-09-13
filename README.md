@@ -73,7 +73,9 @@ so nothing is ever silently rewritten:
   is typed into directly, and on a phone it stays outlined while the Format
   sheet is up — the sheet only opens once the keyboard is down, so the cell has
   necessarily lost its focus, and "add a row below" has to be beside a row you
-  can still see.
+  can still see. The table has handles of its own besides: a "⋯" over the column
+  and beside the row you are in, which pick that band out, open its own menu on
+  a second press, and drag to reorder.
 
   **The bar never runs off the edge of the pane.** The editor is the panel that
   never yields width, so with the calendar inline and both left panels open
@@ -341,6 +343,34 @@ ordinary GFM table, printed with its columns lined up so it still reads as text.
 Live preview keeps its own contract: clicking a table there puts the caret in
 the pipe source, the same way the caret reveals every other construct it sits
 in.
+
+**A cell being worked in grows handles**, a "⋯" over its column and one beside
+its row, and they are how a table is rearranged without going to a menu at all:
+
+- **press one once** and that row or column is outlined — which is also the only
+  way to be sure, on a phone with the keyboard up over half the table, which row
+  the next thing you press will act on;
+- **press it again** for that band's menu: insert either side of it, move it,
+  align it if it is a column, delete it. Narrower than the toolbar's, and aimed
+  at the row you can see picked out rather than at wherever the caret is;
+- **drag it** to reorder. The table rearranges as you go, so you are looking at
+  the result rather than at a line between two rows, and only the drop is
+  written — a reorder is one undoable edit, not one per row crossed.
+
+The header stays put: nothing can be dragged above it, because a GFM table
+without a header is not a table. Reordering is on the keyboard too — *Move row
+up* and *Move column left* are in both menus — since a drag is a gesture nothing
+else in the note requires.
+
+On a touch screen the dots stay the size they are — they sit beside a table and
+have to look it — and the gutter they live in grows instead, taking the area
+that answers to them with it: 30×70 to the eye's 15×34. And the gesture is read
+from the touch events rather than from pointer events, which is what makes it
+work on an iPhone: a finger put down inside an editing host is iOS's caret,
+selection or magnifier before it is anything the page asked for, and the only
+way to say otherwise is to cancel the touch — which can only be done on a touch
+event. It buys the rest for free, too, since a touch is captured by the element
+it started on and the click iOS would synthesise afterwards never happens.
 
 **Columns align from the same menu** that adds and removes them: *Align
 column…* names what the one you are in does now and offers default, left,
@@ -1746,6 +1776,8 @@ src/
 │  ├─ links.ts      external URI recognition, opening and editing
 │  ├─ linkClicks.ts following a link from the text — clicks and taps alike
 │  ├─ table.ts      the pipe-table grid: parse, edit rows/columns, print
+│  ├─ tableChrome.ts the handles on a rendered table: press to pick a row or
+│  │                 column out, press again for its menu, drag to reorder
 │  ├─ tsv.ts       a spreadsheet range off the clipboard, as a table
 │  ├─ callout.ts   the callout vocabulary: five colours, and what aliases to them
 │  ├─ codeblock.ts reading a fenced block back out, for the copy button
@@ -1765,6 +1797,8 @@ src/
    ├─ PopoutWindow.tsx  the one-note shell that window boots into
    ├─ Properties.tsx the frontmatter form the note's date opens
    ├─ Menu.tsx       popover on a pointer, bottom sheet on a phone
+   ├─ tableMenu.ts   what a table offers, shared by the toolbar's ⊞ and by
+   │                 the handles on the table itself
    ├─ dragNote.ts    dragging a note onto a folder, with a pointer
    ├─ DueMenu.tsx    the due-date picker that rides on it
    ├─ DueChip.tsx    a task's date, as a control rather than a caption

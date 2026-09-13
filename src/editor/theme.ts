@@ -318,6 +318,99 @@ export const editorTheme = EditorView.theme({
     padding: '10px 0',
     maxWidth: '100%',
   },
+  /*
+   * Room for the handles, and something for them to be positioned against.
+   *
+   * Only where cells are typed into: in live preview and reading mode a table
+   * has no handles, and a gutter held open for controls that never appear would
+   * push every table off the left margin the rest of the note keeps to.
+   */
+  '.cm-table-editable': { position: 'relative', paddingTop: '24px', paddingLeft: '24px' },
+  '.cm-table-handle': {
+    position: 'absolute',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '2px',
+    margin: '0',
+    padding: '0',
+    border: 'none',
+    borderRadius: '6px',
+    background: 'transparent',
+    color: 'var(--text-faint)',
+    cursor: 'grab',
+    // The handles are dragged, so the browser must not read a drag on one as a
+    // scroll — on a phone that is the difference between moving a row and
+    // moving the page.
+    touchAction: 'none',
+    /*
+     * And a handle is a control, not text. Left as text it is something an
+     * iPhone offers to select, magnify and drag a caret through, which is a
+     * gesture that takes precedence over anything the page wanted to do with
+     * the same finger.
+     */
+    userSelect: 'none',
+    WebkitUserSelect: 'none',
+    WebkitTouchCallout: 'none',
+    WebkitTapHighlightColor: 'transparent',
+    transform: 'translate(-50%, -50%)',
+    zIndex: '2',
+  },
+  /*
+   * `hidden` has to be said twice.
+   *
+   * The attribute's own `display: none` comes from the browser's stylesheet and
+   * loses to any rule with a class in it — including the one above. Without
+   * this a handle is drawn whether or not anything asked for it, which is how
+   * one outlived the cell it belonged to: still on screen, still looking like
+   * the row was picked out, and inert, because the cell it spoke for was gone.
+   */
+  '.cm-table-handle[hidden], .cm-table-band[hidden]': { display: 'none' },
+  '.cm-table-handle[data-axis="col"]': { flexDirection: 'row', width: '34px', height: '15px' },
+  '.cm-table-handle[data-axis="row"]': { flexDirection: 'column', width: '15px', height: '34px' },
+  '.cm-table-handle i': {
+    display: 'block',
+    width: '3px',
+    height: '3px',
+    borderRadius: '50%',
+    backgroundColor: 'currentColor',
+  },
+  /*
+   * A finger's worth of target around a thumbnail-sized control.
+   *
+   * The dots are 15px across because that is what reads well beside a table;
+   * what you actually hit is this, and it fills the gutter the wrap holds open
+   * — exactly, not over: the handle is centred in that gutter, so the reach
+   * sideways is half of it, and a pixel more would be clipped by the wrap's own
+   * scrolling box at one end and stealing taps from the first cell at the
+   * other. Lengthways there is nothing in the way, so it runs long.
+   */
+  '.cm-table-handle::before': { content: '""', position: 'absolute' },
+  '.cm-table-handle[data-axis="col"]::before': { inset: '-4.5px -12px' },
+  '.cm-table-handle[data-axis="row"]::before': { inset: '-12px -4.5px' },
+  // A thumb needs more of one than a mouse does; see the touch block at the
+  // foot of this file, where everything sized for a finger lives.
+  '.cm-table-handle:hover': { color: 'var(--text-muted)' },
+  '.cm-table-handle[data-on="1"]': {
+    backgroundColor: 'var(--accent)',
+    color: 'var(--text-on-accent)',
+  },
+  '.cm-table-wrap[data-dragging] .cm-table-handle': { cursor: 'grabbing' },
+  /*
+   * The outline round a picked-out row or column.
+   *
+   * One box over the band rather than a border on each of its cells: a row is
+   * selected as one thing, and drawing it cell by cell would put internal lines
+   * through it and say the opposite.
+   */
+  '.cm-table-band': {
+    position: 'absolute',
+    pointerEvents: 'none',
+    border: '2px solid var(--accent)',
+    borderRadius: '5px',
+    zIndex: '1',
+  },
+  '&.cm-rich .cm-table-cell[data-band]': { backgroundColor: 'var(--accent-soft)' },
   '.cm-table-render': {
     borderCollapse: 'collapse',
     fontSize: '0.94em',
@@ -725,6 +818,18 @@ export const editorTheme = EditorView.theme({
       display: 'flex',
       alignItems: 'center',
     },
+    /*
+     * A table's handles, for the same reason and by the same measure.
+     *
+     * The dots stay the size they are — they sit beside a table and have to
+     * look it — and the gutter they live in grows instead, taking the area
+     * that answers to them with it. The gutter is also what the handles
+     * position themselves against, so they stay centred in it here without
+     * being told this number twice.
+     */
+    '.cm-table-editable': { paddingTop: '30px', paddingLeft: '30px' },
+    '.cm-table-handle[data-axis="col"]::before': { inset: '-7.5px -18px' },
+    '.cm-table-handle[data-axis="row"]::before': { inset: '-18px -7.5px' },
   },
 
   /* --- find in note -------------------------------------------------- */

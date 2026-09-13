@@ -25,6 +25,7 @@ import { VersionHistory } from './VersionHistory'
 import { Toaster } from './Toast'
 import { editLinkAtCaret, handleUriClick } from './linkActions'
 import { openDueMenu } from './DueMenu'
+import { onTableBandRequest } from './tableMenu'
 import { applyDue } from '../editor/due'
 import { adoptFromStorage, getEntry, ready, resolveLink, revision } from '../core/vault'
 import { settings } from '../core/settings'
@@ -153,6 +154,7 @@ export function PopoutWindow() {
     addEventListener('slate:uri', onUri)
     addEventListener('slate:link-dialog', onLinkDialog)
     addEventListener('slate:due', onDue)
+    addEventListener('slate:table-band', onTableBandRequest)
     return () => {
       removeEventListener('slate:properties', onProperties)
       removeEventListener('slate:open-link', onLink)
@@ -161,6 +163,7 @@ export function PopoutWindow() {
       removeEventListener('slate:uri', onUri)
       removeEventListener('slate:link-dialog', onLinkDialog)
       removeEventListener('slate:due', onDue)
+      removeEventListener('slate:table-band', onTableBandRequest)
     }
   }, [])
 

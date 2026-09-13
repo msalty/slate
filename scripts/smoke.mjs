@@ -3269,6 +3269,100 @@ try {
   check('a typed pipe is escaped', (await tableSource()).includes('x \\| y'))
   check('the table survives it', (await page.locator('.cm-table-render').count()) === 1)
 
+  /* ---- the handles on the table itself ----------------------------------
+   *
+   * Press once to pick a band out, press again for its menu, drag to move it.
+   * Only checkable in a real browser: the whole thing is pointer capture and
+   * layout, and the drag rearranges the table before anything is written.
+   */
+  await page.locator('.cm-table-cell[data-row="2"][data-col="0"]').click()
+  await page.waitForTimeout(300)
+  check(
+    'a cell being worked in grows a handle on its row and on its column',
+    (await page.locator('.cm-table-handle:visible').count()) === 2,
+    `${await page.locator('.cm-table-handle:visible').count()} handles`,
+  )
+  const rowHandle = page.locator('.cm-table-handle[data-axis="row"]')
+  await rowHandle.click()
+  await page.waitForTimeout(300)
+  check(
+    'one press outlines that row and nothing else',
+    (await page.locator('.cm-table-band:visible').count()) === 1 &&
+      (await page.locator('.cm-table-cell[data-band]').count()) === 2,
+    `${await page.locator('.cm-table-cell[data-band]').count()} cells marked`,
+  )
+  check('and no menu yet', (await page.locator('.menu').count()) === 0)
+  await page.screenshot({ path: join(SHOTS, '16b-table-handles.png') })
+
+  await rowHandle.click()
+  await page.waitForTimeout(350)
+  check(
+    'a second press opens the menu for that row, named after it',
+    (await page.locator('.menu-title').innerText()).includes('Row 3 of 5'),
+    await page.locator('.menu-title').innerText(),
+  )
+  await page.locator('.menu-item', { hasText: 'Insert row below' }).click()
+  await page.waitForTimeout(450)
+  check(
+    'and its operations act on that row',
+    (await page.locator('.cm-table-render tr').count()) === 6,
+    `${await page.locator('.cm-table-render tr').count()} rows`,
+  )
+  await clickFormat('Table rows and columns')
+  await page.waitForTimeout(300)
+  await page.locator('.menu-item', { hasText: 'Delete row' }).first().click()
+  await page.waitForTimeout(450)
+
+  /*
+   * And the drag. The row is dropped one row further down, which is the
+   * gesture that used to mean retyping both rows.
+   */
+  await page.locator('.cm-table-cell[data-row="2"][data-col="0"]').click()
+  await page.waitForTimeout(300)
+  const grip = await rowHandle.boundingBox()
+  const rowBox = await page.locator('.cm-table-cell[data-row="2"][data-col="0"]').boundingBox()
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2 + rowBox.height, {
+    steps: 10,
+  })
+  await page.mouse.up()
+  await page.waitForTimeout(500)
+  const reordered = (await tableSource()).split('\n')
+  check(
+    'dragging a row by its handle moves it in the markdown',
+    reordered[5].includes('Lisbon Trip') && reordered[6].includes('code'),
+    reordered.slice(4, 8).join(' / '),
+  )
+  check(
+    'and it is still an ordinary GFM table',
+    /^\| -+ \| -+ \|$/m.test(reordered.join('\n')),
+    reordered[3],
+  )
+
+  /*
+   * A handle belongs to the cell being worked in, so it goes when the note
+   * takes the caret back. Checked in a browser because this is where it
+   * failed: `hidden` is styled by the browser's own stylesheet, which loses to
+   * any rule with a class in it, so a handle asked to hide stayed on screen —
+   * still looking like a row was picked out, and inert, because the cell it
+   * spoke for was gone.
+   */
+  await page.locator('.cm-line').first().click()
+  await page.waitForTimeout(400)
+  check(
+    'the handles go when the note takes the caret back',
+    (await page.locator('.cm-table-handle:visible').count()) === 0 &&
+      (await page.locator('.cm-table-band:visible').count()) === 0,
+    `${await page.locator('.cm-table-handle:visible').count()} handles, ${await page.locator('.cm-table-band:visible').count()} outlines`,
+  )
+  await page.locator('.cm-table-cell[data-row="1"][data-col="0"]').click()
+  await page.waitForTimeout(400)
+  check(
+    'and come straight back with the next cell',
+    (await page.locator('.cm-table-handle:visible').count()) === 2,
+  )
+
   // A wikilink in a cell must navigate, not just look like a link.
   await page.locator('.cm-table-render [data-wikilink]').click()
   await page.waitForTimeout(500)
@@ -4717,6 +4811,93 @@ try {
     'and hands the cell back for typing',
     (await page.evaluate(() => document.activeElement?.className)) === 'cm-table-cell',
   )
+
+  /* ---- the handles, with a thumb -----------------------------------------
+   *
+   * The dots are small because a table is small; what has to be thumb-sized is
+   * the area that answers to them, and the only way to know it is to ask the
+   * page what is at a point. Then the gesture itself, driven as real touch
+   * input rather than as a mouse — which is the whole point of it: a finger put
+   * down inside an editing host is an iPhone's caret, selection or magnifier
+   * before it is anything the page asked for, and only a cancelled touchstart
+   * says otherwise.
+   */
+  const thumbGrip = await page.locator('.cm-table-handle[data-axis="row"]').boundingBox()
+  // Measured by asking the page what is at a point, walking out from the middle
+  // until the answer stops being the handle. What a finger hits is the area, not
+  // the dots, and the area is a pseudo-element with no box of its own to read.
+  const target = await page.evaluate(
+    ([cx, cy]) => {
+      const on = (x, y) => !!document.elementFromPoint(x, y)?.closest('.cm-table-handle')
+      const reach = (dx, dy) => {
+        let n = 0
+        while (n < 60 && on(cx + dx * (n + 1), cy + dy * (n + 1))) n++
+        return n
+      }
+      return on(cx, cy)
+        ? { w: reach(-1, 0) + reach(1, 0) + 1, h: reach(0, -1) + reach(0, 1) + 1 }
+        : { w: 0, h: 0 }
+    },
+    [thumbGrip.x + thumbGrip.width / 2, thumbGrip.y + thumbGrip.height / 2],
+  )
+  check(
+    'the row handle answers to a thumb, not just to its own dots',
+    target.h >= 44 && target.w >= 28,
+    `${target.w}×${target.h}px, dots ${Math.round(thumbGrip.width)}×${Math.round(thumbGrip.height)}px`,
+  )
+
+  const cdp = await page.context().newCDPSession(page)
+  const finger = (type, x, y) =>
+    cdp.send('Input.dispatchTouchEvent', {
+      type,
+      touchPoints: type === 'touchEnd' ? [] : [{ x: Math.round(x), y: Math.round(y) }],
+    })
+  const gx = thumbGrip.x + thumbGrip.width / 2
+  const gy = thumbGrip.y + thumbGrip.height / 2
+
+  await finger('touchStart', gx, gy)
+  await finger('touchEnd', gx, gy)
+  await page.waitForTimeout(350)
+  check(
+    'a tap on the handle picks the row out',
+    (await page.locator('.cm-table-band:visible').count()) === 1 &&
+      (await page.locator('.cm-table-cell[data-band]').count()) === 3,
+    `${await page.locator('.cm-table-cell[data-band]').count()} cells marked`,
+  )
+  check(
+    'and lets the keyboard go rather than typing in the cell',
+    !(await page.evaluate(() => document.activeElement?.className ?? '')).includes('cm-table-cell'),
+  )
+
+  const rowText = () =>
+    page.evaluate(() =>
+      [...document.querySelectorAll('.cm-table-render tr')].map((tr) =>
+        [...tr.cells].map((c) => c.textContent.trim()).join('|'),
+      ),
+    )
+  const beforeFinger = await rowText()
+  const rowHeight = (await page.locator('.cm-table-cell[data-row="2"][data-col="0"]').boundingBox()).height
+  await finger('touchStart', gx, gy)
+  for (let i = 1; i <= 6; i++) {
+    await finger('touchMove', gx, gy + (rowHeight * i) / 6)
+    await page.waitForTimeout(25)
+  }
+  await finger('touchEnd', gx, gy + rowHeight)
+  await page.waitForTimeout(600)
+  const afterFinger = await rowText()
+  check(
+    'and a finger dragging it moves the row',
+    afterFinger[3] === beforeFinger[2] && afterFinger[2] === beforeFinger[3],
+    `${beforeFinger.join(' / ')} → ${afterFinger.join(' / ')}`,
+  )
+  check(
+    // Colons allowed: a column was aligned a few checks ago, and that lives in
+    // this very row.
+    'which the note holds as an ordinary table',
+    /^\|( :?-+:? \|){3}$/m.test(await noteContaining('# Heading one')),
+    (await noteContaining('# Heading one')).split('\n').find((l) => /^\| *:?-/.test(l)),
+  )
+
   const outOfTheTable = await noteTextPoint('.editor-overlay')
   await page.touchscreen.tap(outOfTheTable.x, outOfTheTable.y)
   await page.waitForTimeout(300)

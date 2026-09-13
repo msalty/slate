@@ -78,7 +78,7 @@ import { editableCompartment, editableFacet } from './reading'
 import { WikiLink } from './wikilink-syntax'
 import { noteContext, requestLinkDialog } from './context'
 import { setDueAtCaret } from './due'
-import { focusedCell } from './table'
+import { focusedCell, tableBand } from './table'
 import { minimalEdit } from '../core/rebase'
 import {
   calloutCompletion,
@@ -264,6 +264,7 @@ const cellTargetWatcher = ViewPlugin.fromClass(
     destroy() {
       this.dispose()
       focusedCell.value = null
+      tableBand.value = null
     }
   },
 )
@@ -322,7 +323,12 @@ export function previewExtensions(mode: EditorMode): Extension {
          * only reliable signal that the toolbar should stop aiming at it.
          */
         EditorView.focusChangeEffect.of((_state, focusing) => {
-          if (focusing) focusedCell.value = null
+          if (!focusing) return null
+          focusedCell.value = null
+          // ...and a row picked out by its handle is no longer picked out: the
+          // handles belong to the cell being worked in, and there is no longer
+          // one.
+          tableBand.value = null
           return null
         }),
         EditorView.editorAttributes.of({ class: 'cm-rich' }),
