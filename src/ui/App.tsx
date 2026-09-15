@@ -30,7 +30,9 @@ import { settings, update } from '../core/settings'
 import { connectBackend } from '../app/backend'
 import { recentConflicts, recentFailures, status, sync } from '../core/sync'
 import {
+  folderConflicts,
   folderConnected,
+  folderFailures,
   folderName,
   folderNeedsPermission,
   folderStatus,
@@ -86,6 +88,27 @@ export function App() {
    * with it set restores the panels rather than losing the mode.
    */
   const zen = mode !== 'compact' && editorMaximized.value
+
+  /*
+   * Both engines' news, in one banner each.
+   *
+   * A conflict copy made by the folder sweep is exactly as worth knowing about
+   * as one made by the server — more so, arguably, since the other editor
+   * involved is open on the same desk. Reading only the cloud engine's signals
+   * meant a note edited in Obsidian and in Slate at once was resolved correctly
+   * and then said nothing about it, leaving a `(conflict — …)` file to be found
+   * by accident.
+   */
+  const conflicts = [...recentConflicts.value, ...folderConflicts.value]
+  const failures = [...recentFailures.value, ...folderFailures.value]
+  const clearConflicts = () => {
+    recentConflicts.value = []
+    folderConflicts.value = []
+  }
+  const clearFailures = () => {
+    recentFailures.value = []
+    folderFailures.value = []
+  }
 
   /* ---- layout ------------------------------------------------------ */
   useEffect(() => installLayoutWatcher(), [])
@@ -462,24 +485,24 @@ export function App() {
         )}
       </div>
 
-      {recentConflicts.value.length > 0 && (
+      {conflicts.length > 0 && (
         <div class="conflict-banner">
           <IconWarn size={14} />
           <span style={{ flex: 1 }}>
-            {recentConflicts.value.length} note
-            {recentConflicts.value.length === 1 ? ' was' : 's were'} edited in two places. Both
-            versions were kept.
+            {conflicts.length} note
+            {conflicts.length === 1 ? ' was' : 's were'} edited in two places. Both versions were
+            kept.
           </span>
           <button
             class="status-btn"
             onClick={() => {
-              openNote(recentConflicts.value[0])
-              recentConflicts.value = []
+              openNote(conflicts[0])
+              clearConflicts()
             }}
           >
             Review
           </button>
-          <button class="status-btn" onClick={() => (recentConflicts.value = [])}>
+          <button class="status-btn" onClick={clearConflicts}>
             Dismiss
           </button>
         </div>
@@ -492,20 +515,25 @@ export function App() {
        * still pending and the next run retries them; this is so the retry is
        * not the only thing that knows.
        */}
-      {recentFailures.value.length > 0 && (
+      {failures.length > 0 && (
         <div class="conflict-banner">
           <IconWarn size={14} />
           <span style={{ flex: 1 }}>
-            {recentFailures.value.length} file
-            {recentFailures.value.length === 1 ? '' : 's'} could not sync (
-            {recentFailures.value[0].path}
-            {recentFailures.value.length > 1 ? ' and others' : ''}). They are still saved here and
-            will be tried again.
+            {failures.length} file
+            {failures.length === 1 ? '' : 's'} could not sync ({failures[0].path}
+            {failures.length > 1 ? ' and others' : ''}). They are still saved here and will be
+            tried again.
           </span>
-          <button class="status-btn" onClick={() => void sync()}>
+          <button
+            class="status-btn"
+            onClick={() => {
+              void sync()
+              if (folderConnected.value) void folderSync()
+            }}
+          >
             Retry now
           </button>
-          <button class="status-btn" onClick={() => (recentFailures.value = [])}>
+          <button class="status-btn" onClick={clearFailures}>
             Dismiss
           </button>
         </div>

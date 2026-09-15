@@ -119,11 +119,6 @@ export function activeVault(): VaultRecord | undefined {
   return vaults.value.find((v) => v.id === activeVaultId.value)
 }
 
-/** The name to show when there is nothing better — and before boot finishes. */
-export function activeVaultName(): string {
-  return activeVault()?.name ?? 'Slate'
-}
-
 /** More than one vault is what turns the colours and the switcher on. */
 export function hasMultipleVaults(): boolean {
   return vaults.value.length > 1
@@ -145,10 +140,6 @@ export interface DeviceIdentity {
 }
 
 let device: DeviceIdentity | undefined
-
-export function deviceIdentity(): DeviceIdentity | undefined {
-  return device
-}
 
 /**
  * Adopt an identity into the registry if it has not got one yet.
@@ -228,7 +219,40 @@ export async function openVaults(): Promise<VaultRecord> {
   await d.put('vaults', touched)
   await d.put('meta', chosen.id, 'lastOpened')
   publish(list.map((v) => (v.id === touched.id ? touched : v)))
+  pinToUrl(chosen.id, list.length > 1)
   return touched
+}
+
+/**
+ * Write the vault this window settled on into its own URL.
+ *
+ * Without it a window only knows which vault it is showing for as long as it is
+ * not reloaded: `lastOpened` is shared by every window on the device, so the
+ * moment a second window switches, reloading the first would quietly move it
+ * too. The same gap catches popouts, which open a copy of this window's URL —
+ * a note popped out of the personal vault would land in whichever vault was
+ * switched to most recently, and start talking on that vault's channel.
+ *
+ * Only while there is more than one vault, so the ordinary single-vault URL
+ * stays the clean one people bookmark and share — and the parameter is taken
+ * back off again if the other vaults are later removed.
+ */
+function pinToUrl(id: string, pin: boolean): void {
+  if (typeof location === 'undefined' || typeof history === 'undefined') return
+  const url = new URL(location.href)
+  if (pin) {
+    if (url.searchParams.get('vault') === id) return
+    url.searchParams.set('vault', id)
+  } else {
+    if (!url.searchParams.has('vault')) return
+    url.searchParams.delete('vault')
+  }
+  try {
+    history.replaceState(history.state, '', url.toString())
+  } catch {
+    // A sandboxed or `file://` document refuses this. Nothing depends on it
+    // beyond the convenience above, so the app carries on without it.
+  }
 }
 
 function publish(list: VaultRecord[]): void {

@@ -35,7 +35,7 @@ import {
  * it wraps, because eight vaults is well past the point where the colour was
  * doing the work and the name is.
  */
-export function nextColour(): string {
+function nextColour(): string {
   const taken = new Set(vaults.value.map((v) => v.colour))
   return VAULT_COLOURS.find((c) => !taken.has(c)) ?? VAULT_COLOURS[vaults.value.length % VAULT_COLOURS.length]
 }

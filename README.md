@@ -20,7 +20,7 @@ npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
 npm test               # 988 unit, two-device sync and folder round-trip tests
-node scripts/smoke.mjs # 704-check browser smoke test against dist/
+node scripts/smoke.mjs # 708-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -1474,7 +1474,15 @@ VS Code reloads to change workspace.
 two different vaults — Settings → Vaults → *New window* opens one. They stay
 out of each other's way: the cross-window channel and the sync locks are named
 per vault, so windows only mirror writes to windows looking at the same notes.
-A plain launch with no parameter opens whichever vault was last used.
+
+A plain launch with no parameter opens whichever vault was used last, and then
+writes that vault into its own URL. That second half matters more than it
+sounds: "last used" is shared by every window on the device, so without it,
+reloading one window would silently follow whichever vault another window had
+switched to — and a popped-out note, which opens a copy of its opener's URL,
+would land in the wrong vault entirely and start talking on that vault's
+channel. The parameter only appears once there is more than one vault, so the
+ordinary single-vault URL stays the clean one you bookmark.
 
 **What is shared, and it is almost nothing.** The device's name — the one
 version history credits an edit to — belongs to the machine, so renaming it
@@ -2241,7 +2249,7 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 
 ```bash
 npm test                # 988 unit + two-device sync + folder round-trip tests
-node scripts/smoke.mjs  # 704 checks in headless Chromium against dist/
+node scripts/smoke.mjs  # 708 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

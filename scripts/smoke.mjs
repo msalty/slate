@@ -4160,6 +4160,57 @@ try {
     'with two vaults the app starts telling them apart',
     (await page.locator('.shell').getAttribute('data-vaults')) === 'multi',
   )
+
+  /*
+   * A window that arrived at its vault without switching still knows which one
+   * it is.
+   *
+   * "Last opened" is shared by every window on the device, so a launch with no
+   * parameter — which is every ordinary launch, and every popout, since a
+   * popout opens a copy of its opener's URL — would otherwise silently follow
+   * whichever vault some other window switched to most recently. Landing here
+   * from the bare URL and then moving `lastOpened` underneath it is that
+   * situation with fewer moving parts than a second browser window, and it is
+   * the only part this window could observe anyway.
+   */
+  await page.goto(`http://localhost:${PORT}${BASE}`, { waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('.vault-switch')
+  check('a launch with no parameter opens the vault last used', (await vaultName()) === 'Work')
+  check(
+    'and the window writes that vault into its own URL',
+    /[?&]vault=/.test(page.url()),
+    page.url().split(BASE).pop(),
+  )
+
+  const movedTo = await page.evaluate(async () => {
+    const reg = await new Promise((res, rej) => {
+      const r = indexedDB.open('slate-vaults')
+      r.onsuccess = () => res(r.result)
+      r.onerror = () => rej(r.error)
+    })
+    const all = await new Promise((res) => {
+      const r = reg.transaction('vaults').objectStore('vaults').getAll()
+      r.onsuccess = () => res(r.result)
+    })
+    const other = all.find((v) => v.name === 'Slate')
+    if (!other) return null
+    await new Promise((res) => {
+      const tx = reg.transaction('meta', 'readwrite')
+      tx.objectStore('meta').put(other.id, 'lastOpened')
+      tx.oncomplete = () => res()
+    })
+    reg.close()
+    return other.id
+  })
+  check('another window switching moves what a plain launch would open', !!movedTo)
+
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('.vault-switch')
+  check(
+    'but reloading this window keeps it in the vault it was showing',
+    (await vaultName()) === 'Work',
+    await vaultName(),
+  )
   check(
     'and says which one this window is, so two windows are not both "Slate"',
     (await page.title()).startsWith('Work'),
