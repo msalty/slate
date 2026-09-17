@@ -318,6 +318,24 @@ function stopWatching(): void {
 }
 
 /**
+ * Set once the browser has shown it will not watch this folder, and never
+ * unset for the rest of the session.
+ *
+ * Without it the fallback is a freeze rather than a fallback. A rejected
+ * `observe()` used to re-enter `startWatching`, which immediately builds
+ * another observer and calls `observe()` again — and a rejection that is about
+ * the browser or the folder rather than the moment rejects every time, so the
+ * two bounce off each other through microtasks, starve the event loop and hang
+ * the tab. Remembering the refusal is what makes the retry terminate.
+ *
+ * Session-wide, because the realistic reasons — recursive watching unsupported,
+ * a filesystem the implementation will not watch, permission withdrawn — do not
+ * change between one folder and the next, and sweeping on a timer is a complete
+ * substitute rather than a degraded one.
+ */
+let observerRefused = false
+
+/**
  * Watch the folder properly, where the browser can.
  *
  * `FileSystemObserver` is new and not everywhere, so everything about it is
@@ -327,19 +345,25 @@ function stopWatching(): void {
  * rather than at the top of the next sweep.
  */
 function startObserver(): void {
-  if (typeof FileSystemObserver !== 'function' || !handle) return
+  if (observerRefused || typeof FileSystemObserver !== 'function' || !handle) return
   try {
     const obs = new FileSystemObserver(() => void folderSync())
     void obs.observe(handle, { recursive: true }).catch(() => {
-      // Rejected — no watch. Fall back to sweeping at the full rate.
+      // Rejected — no watch, and no more asking. Recorded before restarting,
+      // so the restart below finds the guard above and settles on the timer
+      // instead of building another observer to be refused in turn.
+      observerRefused = true
       obs.disconnect()
       if (observer === obs) {
         observer = undefined
+        // The timer is running at the observed rate, which is far too slow to
+        // be the only thing watching. Put it back to a full-rate sweep.
         startWatching()
       }
     })
     observer = obs
   } catch {
+    observerRefused = true
     observer = undefined
   }
 }

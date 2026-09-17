@@ -37,7 +37,8 @@ async function freshBoot() {
   const mods = await fresh()
   const boot = await import('../app/boot')
   const sync = await import('./sync')
-  return { ...mods, boot, sync }
+  const folder = await import('./foldersync')
+  return { ...mods, boot, sync, folder }
 }
 
 const sharedFile = (v: Vault) => v.readBackstage<Record<string, unknown>>('config.json')
@@ -190,12 +191,34 @@ describe('a shared file that has not arrived yet', () => {
     expect(s.settings.value.editorMode).toBe('source')
   })
 
-  it('waits for nothing on a vault with no backend', async () => {
+  it('is read again after a folder-only vault finishes its first sweep', async () => {
+    const { s, v, boot, folder } = await freshBoot()
+    /*
+     * No backend at all — just a folder on this machine, which is an ordinary
+     * desktop setup rather than an edge case, and half the point of connected
+     * folders. `config.json`, the folder definitions and the templates arrive
+     * in that first sweep exactly as they would from a server, so waiting only
+     * on the cloud left such a vault reading the files and then ignoring them
+     * until the next reload.
+     */
+    s.updateFolder({ enabled: true })
+    await boot.applySharedSettingsSafe()
+    expect(s.settings.value.editorMode).toBe('live')
+
+    await v.writeBackstage('config.json', { editorMode: 'rich' })
+    folder.folderStatus.value = { ...folder.folderStatus.value, lastSyncAt: Date.now() }
+
+    await vi.waitFor(() => expect(s.settings.value.editorMode).toBe('rich'))
+  })
+
+  it('waits for nothing on a vault with no backend and no folder', async () => {
     const { s, v, boot, sync } = await freshBoot()
     await boot.applySharedSettingsSafe()
 
-    // Local-only: no sync will ever run, so nothing should be listening — a
-    // file appearing by other means is not a reason to re-read.
+    // Local-only, in both senses: no sync of any kind will ever run, so nothing
+    // should be listening — a file appearing by other means is not a reason to
+    // re-read, and a subscription waiting on a run that cannot happen is one
+    // that never ends.
     await v.writeBackstage('config.json', { editorMode: 'rich' })
     sync.status.value = { ...sync.status.value, lastSyncAt: Date.now() }
     await new Promise((r) => setTimeout(r, 30))

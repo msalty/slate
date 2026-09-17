@@ -52,8 +52,8 @@ export function VaultsCard() {
    * accident is exactly what belongs in front of it.
    */
   const remove = async (v: VaultRecord) => {
-    const where = v.target
-      ? `Its notes are also on ${v.target}, so a new vault pointed at the same place would get them back.`
+    const where = v.targets?.length
+      ? `Its notes are also on ${v.targets.join(' and ')}, so a new vault pointed at the same place would get them back.`
       : `This vault has no backend and no connected folder, so this device is the only place its notes exist. They cannot be got back.`
     if (
       !confirm(
@@ -72,16 +72,18 @@ export function VaultsCard() {
 
   return (
     <>
-      {clashes.map((group) => (
-        <div class="callout callout-danger" key={group[0].target}>
+      {clashes.map((clash) => (
+        <div class="callout callout-danger" key={clash.target}>
           <IconWarn size={13} style={{ verticalAlign: '-2px', marginRight: 4 }} />
           <strong>
-            {group.map((v) => `“${v.name}”`).join(' and ')} are pointed at the same place
-          </strong>{' '}
-          (<code>{group[0].target}</code>). Two vaults reconciling against one target do not stay
-          two vaults: each run reads the other's files as notes some device created, and within a
-          few minutes both hold everything. Give one of them a different backend or folder. If
-          these are in fact different folders that happen to share a name, nothing is wrong.
+            {clash.vaults.map((v) => `“${v.name}”`).join(' and ')} are both pointed at{' '}
+            <code>{clash.target}</code>
+          </strong>
+          . Two vaults reconciling against one target do not stay two vaults: each run reads the
+          other's files as notes some device created, and within a few minutes both hold
+          everything. That holds even where the rest of their setup differs — sharing this one
+          place is enough. Give one of them a different one. If these are in fact different folders
+          that happen to share a name, nothing is wrong.
         </div>
       ))}
 
@@ -94,7 +96,7 @@ export function VaultsCard() {
                 {v.name}
                 {v.id === activeVaultId.value && <span class="vault-badge">open</span>}
               </div>
-              <small>{v.target ?? 'On this device only'}</small>
+              <small>{v.targets?.join(' + ') || 'On this device only'}</small>
             </div>
             <div class="vault-swatches" role="group" aria-label={`Colour for ${v.name}`}>
               {VAULT_COLOURS.map((c) => (

@@ -19,7 +19,7 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 988 unit, two-device sync and folder round-trip tests
+npm test               # 993 unit, two-device sync and folder round-trip tests
 node scripts/smoke.mjs # 708-check browser smoke test against dist/
 ```
 
@@ -1505,9 +1505,13 @@ there before.
 **Do not point two vaults at the same server or folder.** Two sets of notes
 reconciling against one target do not stay two sets: each run reads the other's
 files as notes some device created, and within a few minutes both hold
-everything, with no way back except by hand. Slate notices when two vaults have
-been given the same backend and says so in Settings → Vaults, but the check is
-after the fact — it cannot stop you.
+everything, with no way back except by hand. Slate notices and says so in
+Settings → Vaults, but the check is after the fact — it cannot stop you.
+
+Sharing *one* target is enough, which is the version of this mistake that is
+easy to make: a second vault set up against the same server as the first and
+given its own folder feels separate and is not. Each place a vault is kept is
+compared on its own for exactly that reason.
 
 ---
 
@@ -1562,7 +1566,9 @@ those files were notes somebody deleted elsewhere.
 disk, so Slate sweeps the folder on a timer while the window is visible — 5
 seconds by default, settable — and again whenever you switch back to it. Where
 the browser supports `FileSystemObserver` the sweep drops back to a safety net
-and a file saved in Obsidian shows up immediately.
+and a file saved in Obsidian shows up immediately. Where it is present but
+refuses to watch a particular folder, it is asked once and then not again for
+the session; sweeping is a complete substitute rather than a degraded one.
 
 **Permission has to be re-granted.** The browser remembers the folder across
 reloads but usually not the right to use it: a permission prompt is only allowed
@@ -2137,7 +2143,12 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
   the usual offenders, and some sandboxed or network-mounted filesystems are
   stricter still. Such a file is named in the folder's error line with the
   suggestion to rename the note; the rest of the vault syncs regardless, and the
-  file is retried on every sweep until it can be written.
+  file is retried on every sweep until it can be written. The same goes for a
+  file that cannot be read at the moment — one another program is holding open,
+  or one whose permission was withdrawn mid-session. That is deliberately *not*
+  treated as the file being absent: reading it that way would let a delete
+  report success while the file sat there, and the next sweep would pull the
+  supposedly deleted note back and push it to every other device.
 - **A folded callout is folded everywhere.** The fold is a `-` in the marker
   rather than a per-window state, which is what makes it survive a reload and a
   sync — and also means folding one on the laptop folds it on the phone. That
@@ -2248,7 +2259,7 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 988 unit + two-device sync + folder round-trip tests
+npm test                # 993 unit + two-device sync + folder round-trip tests
 node scripts/smoke.mjs  # 708 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```

@@ -48,16 +48,18 @@ export interface VaultRecord {
   createdAt: number
   lastOpenedAt: number
   /**
-   * Where this vault's content is kept, as a comparable string.
+   * Every place this vault's content is kept, one entry per target.
    *
-   * Only ever used to notice that two vaults have been pointed at the same
-   * place, which is silently destructive: two separate sets of notes
-   * reconciling against one server means each one reads the other's files as
-   * notes a device created, and they merge into a single vault nobody asked
-   * for. Kept here rather than read out of each vault's settings so that
+   * A list rather than one string, and that is the whole of why it works. Two
+   * vaults pointed at one server merge into each other — each run reads the
+   * other's files as notes some device created — and a vault can have two
+   * targets, so the collision that matters is between *components*: a vault on
+   * `webdav:X + folder:A` and one on `webdav:X + folder:B` share the server and
+   * will merge through it, while a single joined string says they have nothing
+   * in common. Kept here rather than read out of each vault's settings so that
    * noticing costs a scan of this list rather than opening every database.
    */
-  target?: string
+  targets?: string[]
 }
 
 /**
@@ -293,12 +295,18 @@ export async function recolourVault(id: string, colour: string): Promise<void> {
 /**
  * Record where this vault's content is kept, so a second vault pointed at the
  * same place can be noticed. Written by `app/backend.ts` whenever the answer
- * changes; `undefined` means local-only.
+ * changes; an empty list means local-only.
  */
-export async function setVaultTarget(target: string | undefined): Promise<void> {
+export async function setVaultTargets(targets: string[]): Promise<void> {
   const cur = activeVault()
-  if (!cur || cur.target === target) return
-  await patch(cur.id, { target })
+  const next = targets.length ? [...targets].sort() : undefined
+  if (!cur || sameTargets(cur.targets, next)) return
+  await patch(cur.id, { targets: next })
+}
+
+function sameTargets(a: string[] | undefined, b: string[] | undefined): boolean {
+  if (!a || !b) return !a && !b
+  return a.length === b.length && a.every((t, i) => t === b[i])
 }
 
 async function patch(id: string, fields: Partial<VaultRecord>): Promise<void> {
@@ -310,24 +318,38 @@ async function patch(id: string, fields: Partial<VaultRecord>): Promise<void> {
   publish(await d.getAll('vaults'))
 }
 
+/** One place two or more vaults are both pointed at. */
+export interface TargetClash {
+  target: string
+  vaults: VaultRecord[]
+}
+
 /**
- * Vaults that have been pointed at the same place as another one.
+ * Places more than one vault is pointed at.
  *
  * Two sets of notes reconciling against one server or one folder do not stay
  * two sets of notes: each run reads the other's files as something a device
  * created and pulls them in, and within a few minutes both vaults hold
  * everything. It is not recoverable by switching one of them back, so it is
  * worth saying out loud the moment it is set up rather than afterwards.
+ *
+ * Counted per target rather than per vault, because sharing *one* of two
+ * targets is enough to merge them and is the easier mistake to make: a second
+ * vault set up against the same server as the first, given its own folder so it
+ * feels separate, is already the same vault.
  */
-export function vaultsSharingTargets(): VaultRecord[][] {
+export function vaultsSharingTargets(): TargetClash[] {
   const byTarget = new Map<string, VaultRecord[]>()
   for (const v of vaults.value) {
-    if (!v.target) continue
-    const same = byTarget.get(v.target)
-    if (same) same.push(v)
-    else byTarget.set(v.target, [v])
+    for (const t of v.targets ?? []) {
+      const same = byTarget.get(t)
+      if (same) same.push(v)
+      else byTarget.set(t, [v])
+    }
   }
-  return [...byTarget.values()].filter((g) => g.length > 1)
+  return [...byTarget]
+    .filter(([, group]) => group.length > 1)
+    .map(([target, group]) => ({ target, vaults: group }))
 }
 
 /**

@@ -374,3 +374,54 @@ describe('disconnecting a folder', () => {
     expect(A.vault.getRaw(path)).toBeUndefined()
   })
 })
+
+describe('watching a folder the browser will not watch', () => {
+  it('asks once and then falls back to sweeping', async () => {
+    /*
+     * A rejected `observe()` used to re-enter the watcher setup, which built
+     * another observer and asked again — and a refusal that is about the
+     * browser or the filesystem rather than the moment is refused every time.
+     * The two bounced off each other through microtasks, starved the event loop
+     * and hung the tab.
+     *
+     * The stub gives up refusing after a handful of tries on purpose: a
+     * regression should fail this assertion, not wedge the worker in a loop no
+     * timeout can interrupt.
+     */
+    let constructed = 0
+    class RefusingObserver {
+      constructor(_cb: unknown) {
+        constructed++
+      }
+      observe(): Promise<void> {
+        return constructed > 4
+          ? Promise.resolve()
+          : Promise.reject(new Error('recursive watching is not supported here'))
+      }
+      disconnect(): void {}
+    }
+    const g = globalThis as { FileSystemObserver?: unknown }
+    const had = g.FileSystemObserver
+    g.FileSystemObserver = RefusingObserver
+
+    try {
+      vi.resetModules()
+      ;(globalThis as { __SLATE_DB__?: string }).__SLATE_DB__ = `slate-observer-${seq++}`
+      const vault = await import('./vault')
+      await vault.initVault()
+      const fs = await import('./foldersync')
+
+      await fs.connectFolder(fakeRoot('Watched'))
+      // Long enough for a loop to have run away, short enough to stay quick.
+      await new Promise((r) => setTimeout(r, 50))
+
+      expect(constructed).toBe(1)
+      expect(fs.folderConnected.value).toBe(true)
+
+      await fs.restoreFolder(false) // stop the sweep timer this test started
+    } finally {
+      if (had === undefined) delete g.FileSystemObserver
+      else g.FileSystemObserver = had
+    }
+  })
+})

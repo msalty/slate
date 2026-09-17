@@ -13,7 +13,7 @@ import { GdriveAdapter } from '../adapters/gdrive'
 import { settings, updateGdrive } from '../core/settings'
 import { setAdapter, setDeviceLabel, startAutoSync, stopAutoSync, sync } from '../core/sync'
 import { folderName, restoreFolder, setFolderPollSec } from '../core/foldersync'
-import { setVaultTarget } from '../core/vaults'
+import { setVaultTargets } from '../core/vaults'
 import { setLocalDevice } from '../core/devices'
 
 export function buildAdapter(s: AppSettings): RemoteAdapter | undefined {
@@ -74,7 +74,7 @@ export async function connectBackend(): Promise<void> {
    */
   setFolderPollSec(s.folder.pollSec)
   await restoreFolder(s.folder.enabled)
-  void setVaultTarget(targetOf(s))
+  void setVaultTargets(targetsOf(s))
 
   stopAutoSync()
   const adapter = buildAdapter(s)
@@ -86,7 +86,7 @@ export async function connectBackend(): Promise<void> {
 }
 
 /**
- * Where this vault's content is kept, as one comparable string.
+ * Every place this vault's content is kept, one entry each.
  *
  * Recorded on the vault's registry entry so that two vaults pointed at the same
  * place can be noticed and said out loud. That is not a tidiness complaint: two
@@ -95,16 +95,23 @@ export async function connectBackend(): Promise<void> {
  * in, and within a few minutes both vaults hold everything, with no way back
  * except by hand.
  *
+ * Separate entries rather than one joined string, because a vault can have two
+ * targets and sharing either one is enough to merge them. A second vault set up
+ * against the same server as the first and given its own folder — which is the
+ * arrangement somebody reaches for precisely *because* it feels separate — is
+ * already the same vault, and a joined string would have called the two
+ * completely different.
+ *
  * The folder is identified by its name, which is all a directory handle will
  * tell us without being asked to compare itself against another live handle we
  * do not have. Two folders called `Notes` may well be different folders, so the
  * warning that reads this is phrased as a question rather than a verdict.
  */
-function targetOf(s: AppSettings): string | undefined {
-  const parts: string[] = []
+function targetsOf(s: AppSettings): string[] {
+  const out: string[] = []
   if (s.backend === 'webdav' && s.webdav.url)
-    parts.push(`webdav:${s.webdav.url.replace(/\/+$/, '')}/${s.webdav.root}`)
-  if (s.backend === 'gdrive' && s.gdrive.clientId) parts.push(`gdrive:${s.gdrive.folderName}`)
-  if (s.folder.enabled && folderName.value) parts.push(`folder:${folderName.value}`)
-  return parts.length ? parts.join(' + ') : undefined
+    out.push(`webdav:${s.webdav.url.replace(/\/+$/, '')}/${s.webdav.root}`)
+  if (s.backend === 'gdrive' && s.gdrive.clientId) out.push(`gdrive:${s.gdrive.folderName}`)
+  if (s.folder.enabled && folderName.value) out.push(`folder:${folderName.value}`)
+  return out
 }

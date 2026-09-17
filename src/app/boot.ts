@@ -7,6 +7,7 @@ import { applySharedSettings, loadSettings, settings } from '../core/settings'
 import { loadDisclosure } from '../core/disclosure'
 import { requestPersistence } from '../core/db'
 import { setDeviceLabel, status } from '../core/sync'
+import { folderStatus } from '../core/foldersync'
 import { setLocalDevice } from '../core/devices'
 import { openVaults } from '../core/vaults'
 
@@ -77,28 +78,47 @@ async function readVaultPrefs(): Promise<boolean> {
 }
 
 /**
- * Read them again after the first sync run that finishes.
+ * Read them again after the first run that finishes — from either target.
  *
- * Once, and only where a file could still arrive: a local-only vault is never
- * sent one, and a subscription waiting for a sync that cannot happen is a
- * subscription that never ends. Nothing here can undo a preference changed in
- * between — `applySharedSettings` skips the keys this device has changed and
- * not yet written, the same guard that protects a change made just before a
- * reload.
+ * Once, and only where a file could still arrive: a vault with no backend and
+ * no folder is never sent one, and a subscription waiting for a sync that
+ * cannot happen is a subscription that never ends. Nothing here can undo a
+ * preference changed in between — `applySharedSettings` skips the keys this
+ * device has changed and not yet written, the same guard that protects a change
+ * made just before a reload.
+ *
+ * The folder counts, and used to not. A vault whose backend is "Local only" but
+ * which has a folder attached is an entirely ordinary desktop setup — it is
+ * half the point of connected folders — and `backstage/config.json`, the folder
+ * definitions and the templates all arrive in its first sweep exactly as they
+ * would from a server. Watching only the cloud meant such a vault read the
+ * files, ignored them, and ran on defaults until the next reload.
  */
 function retryAfterFirstSync(): void {
-  if (settings.value.backend === 'none') return
-  const before = status.peek().lastSyncAt
-  let stop: (() => void) | undefined
+  const s = settings.value
+  const watched = [
+    ...(s.backend !== 'none' ? [status] : []),
+    ...(s.folder.enabled ? [folderStatus] : []),
+  ]
+  if (!watched.length) return
+
   let done = false
-  stop = status.subscribe((st) => {
-    // `lastSyncAt` moves only when a run completes with nothing left failing,
-    // which is the only kind of run that can be trusted to have brought the
-    // file down.
-    if (done || st.lastSyncAt === undefined || st.lastSyncAt === before) return
-    done = true
-    // Out of the notification before unsubscribing from it.
-    queueMicrotask(() => stop?.())
-    void readVaultPrefs()
-  })
+  const stops: Array<() => void> = []
+  for (const sig of watched) {
+    const before = sig.peek().lastSyncAt
+    stops.push(
+      sig.subscribe((st) => {
+        // `lastSyncAt` moves only when a run completes with nothing left
+        // failing, which is the only kind of run that can be trusted to have
+        // brought the file down. Whichever target gets there first will do.
+        if (done || st.lastSyncAt === undefined || st.lastSyncAt === before) return
+        done = true
+        // Out of the notification before unsubscribing from it.
+        queueMicrotask(() => {
+          for (const stop of stops) stop()
+        })
+        void readVaultPrefs()
+      }),
+    )
+  }
 }

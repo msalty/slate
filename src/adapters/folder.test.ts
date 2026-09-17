@@ -164,6 +164,42 @@ describe('the folder adapter', () => {
     expect(isIgnoredPath('Work/Real.md')).toBe(false)
   })
 
+  it('treats an unreadable file as a failure, never as an absent one', async () => {
+    const root = fakeRoot()
+    root.writeText('Locked.md', 'v1')
+    const a = new FolderAdapter(root)
+    await a.connect()
+    const entry = entryFor(await a.list(), 'Locked.md')
+
+    // Permission withdrawn mid-session, or another program holding the file.
+    // Not the same thing as the file being gone, and the difference is the
+    // whole point: every caller reads "no revision" as "no file".
+    const real = root.getFileHandle.bind(root)
+    ;(root as { getFileHandle: unknown }).getFileHandle = async (name: string, opts?: object) => {
+      if (name === 'Locked.md') {
+        const e = new Error('permission withdrawn')
+        e.name = 'NotAllowedError'
+        throw e
+      }
+      return real(name, opts)
+    }
+
+    /*
+     * A delete that reports success here is how a deleted note comes back: the
+     * file is still on disk, but the engine takes the success and drops the
+     * tombstone, so the next sweep reads the file as a note some device created
+     * and pulls it in — then pushes the resurrection to every other device.
+     */
+    await expect(a.remove(entry, entry.rev)).rejects.toThrow(/Locked\.md/)
+    expect(root.readText('Locked.md')).toBe('v1')
+
+    // And a create-only write must not read it as permission to overwrite.
+    await expect(a.put('Locked.md', 'mine', 'text/markdown', undefined)).rejects.toThrow(
+      /Locked\.md/,
+    )
+    expect(root.readText('Locked.md')).toBe('v1')
+  })
+
   it('reports a missing file as not found rather than throwing something opaque', async () => {
     const root = fakeRoot()
     const a = new FolderAdapter(root)

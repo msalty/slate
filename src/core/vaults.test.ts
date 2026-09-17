@@ -323,20 +323,64 @@ describe('two vaults pointed at the same place', () => {
     const first = await vaults.openVaults()
     const work = await vaults.createVault('Work', vaults.VAULT_COLOURS[1])
 
-    await vaults.setVaultTarget('webdav:https://dav.example.com/Notes')
+    await vaults.setVaultTargets(['webdav:https://dav.example.com/Notes'])
     expect(vaults.vaultsSharingTargets()).toHaveLength(0)
 
-    // The second vault set up against the same server and folder — which merges
-    // them within a few sync runs and cannot be undone by switching back. Set
-    // up the way it really would be: by opening that vault and configuring it.
+    // The second vault set up against the same server — which merges them
+    // within a few sync runs and cannot be undone by switching back. Set up the
+    // way it really would be: by opening that vault and configuring it.
     requestVault(work.id)
     const inWork = await reboot(registry)
     await inWork.openVaults()
-    await inWork.setVaultTarget('webdav:https://dav.example.com/Notes')
+    await inWork.setVaultTargets(['webdav:https://dav.example.com/Notes'])
 
     const clash = inWork.vaultsSharingTargets()
     expect(clash).toHaveLength(1)
-    expect(clash[0].map((v) => v.id).sort()).toEqual([first.id, work.id].sort())
+    expect(clash[0].target).toBe('webdav:https://dav.example.com/Notes')
+    expect(clash[0].vaults.map((v) => v.id).sort()).toEqual([first.id, work.id].sort())
+  })
+
+  it('are noticed when they share only one of two targets', async () => {
+    /*
+     * The mistake this is actually for.
+     *
+     * Somebody makes a second vault against the same server and gives it its
+     * own folder — which feels like separating them, and is not: the server
+     * alone merges the two. Held as one joined string, `webdav:X + folder:A`
+     * and `webdav:X + folder:B` compare as entirely different setups and
+     * nothing is said.
+     */
+    const { vaults, registry } = await freshDevice()
+    const first = await vaults.openVaults()
+    const work = await vaults.createVault('Work', vaults.VAULT_COLOURS[1])
+
+    await vaults.setVaultTargets(['webdav:https://dav.example.com/Notes', 'folder:Personal'])
+
+    requestVault(work.id)
+    const inWork = await reboot(registry)
+    await inWork.openVaults()
+    await inWork.setVaultTargets(['webdav:https://dav.example.com/Notes', 'folder:Work'])
+
+    const clash = inWork.vaultsSharingTargets()
+    expect(clash).toHaveLength(1)
+    expect(clash[0].target).toBe('webdav:https://dav.example.com/Notes')
+    expect(clash[0].vaults.map((v) => v.id).sort()).toEqual([first.id, work.id].sort())
+  })
+
+  it('are left alone when only the shapes rhyme', async () => {
+    const { vaults, registry } = await freshDevice()
+    await vaults.openVaults()
+    const work = await vaults.createVault('Work', vaults.VAULT_COLOURS[1])
+
+    await vaults.setVaultTargets(['webdav:https://dav.example.com/Personal', 'folder:Notes'])
+    requestVault(work.id)
+    const inWork = await reboot(registry)
+    await inWork.openVaults()
+    // A different folder on the server and a differently-named folder on disk:
+    // two targets each, nothing in common.
+    await inWork.setVaultTargets(['webdav:https://dav.example.com/Work', 'folder:Client notes'])
+
+    expect(inWork.vaultsSharingTargets()).toHaveLength(0)
   })
 
   it('are not confused with two vaults that simply have no backend', async () => {
