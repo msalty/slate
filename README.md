@@ -19,8 +19,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 1000 unit, two-device sync and folder round-trip tests
-node scripts/smoke.mjs # 708-check browser smoke test against dist/
+npm test               # 1018 unit, two-device sync and folder round-trip tests
+node scripts/smoke.mjs # 718-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -1337,6 +1337,25 @@ fold away from their header, and a folded one carries the count of what is
 inside it. Which are folded is a preference like any other, so it survives a
 reload and follows the vault to your other devices.
 
+**You do not have to find a collection in the sidebar to open it.** ⌘K reaches
+folders, Tag Folders and tags as well as notes and commands, so the sidebar is
+somewhere to keep what you use rather than an index of everything you own:
+
+| Type | You get |
+|---|---|
+| `work` | the **Work** folder, the **Work** Tag Folder, `#work`, and the notes that say "work" underneath |
+| `#work` | tags only |
+| `/Work` | folders only |
+| `#` or `/` alone | every tag, or every folder, busiest first |
+
+A collection sits above the note hits, because with a folder called Work and
+thirty notes that mention work, the folder is nearly always what was meant —
+and there are never enough collections to push the notes off the screen. Ties
+break on how much is inside, which is deliberately *not* the sidebar's
+alphabetical tag cloud: A to Z is the right order to read a list of tags in and
+the wrong order to guess one in. A Tag Folder is also found by the rule it
+gathers on, since that rule is written down nowhere else.
+
 Folders inside those sections keep their own shape. A folder is unfolded
 because you unfolded it, so unfolding a section — or a folder — never unfolds
 everything beneath it, and folding one and opening it again brings back exactly
@@ -1410,7 +1429,7 @@ bar above the list carries an **Edit** next to the **Close**.
 
 | | |
 |---|---|
-| ⌘K | Command palette / jump to note — from anywhere, the editor included |
+| ⌘K | Command palette — a note, a folder, a tag, or a command; from anywhere, the editor included |
 | ⌘N | New note |
 | ⌘S | Sync now |
 | ⌘F | Find in note |
@@ -2262,7 +2281,7 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 1000 unit + two-device sync + folder round-trip tests
+npm test                # 1018 unit + two-device sync + folder round-trip tests
 node scripts/smoke.mjs  # 708 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```

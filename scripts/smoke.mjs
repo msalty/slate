@@ -3047,6 +3047,110 @@ try {
   check('folders persist across a reload', (await page.locator('.side-row:has-text("Clients")').count()) > 0)
   await page.screenshot({ path: join(SHOTS, '08-tag-folders.png') })
 
+  /* ---- ⌘K reaches the collections, not just the notes --------------------
+   *
+   * Checked here because this is the first point in the run where all three
+   * kinds exist at once: a folder, a folder nested inside it, a Tag Folder,
+   * and the tags the notes were written with. Until the palette could reach
+   * them, the sidebar was the only door to any collection — which is what
+   * obliged it to list every folder and every tag at all times.
+   */
+  {
+    /** Open the palette on a fresh query and hand back what it is offering. */
+    const paletteRows = async (text) => {
+      await page.keyboard.press('Escape')
+      await page.waitForTimeout(150)
+      await page.keyboard.press('Control+k')
+      await page.waitForSelector('.palette input', { timeout: 3000 })
+      // Same race as the folder prompt above: the palette clears its own box in
+      // an effect, so a fill landing in that tick is silently thrown away.
+      await page.waitForTimeout(350)
+      await page.locator('.palette input').fill(text)
+      await page
+        .waitForFunction(
+          (t) => document.querySelector('.palette input')?.value === t,
+          text,
+          { timeout: 3000 },
+        )
+        .catch(() => {})
+      await page.waitForTimeout(350)
+      return page.$$eval('.palette-row', (els) =>
+        els.map((e) => ({
+          glyph: e.children[0]?.textContent ?? '',
+          label: e.children[1]?.textContent ?? '',
+          sub: e.children[2]?.textContent ?? '',
+        })),
+      )
+    }
+    const listTitle = () => page.locator('.list-pane .pane-title').innerText()
+
+    // --- a nested folder, by name, with the path it sits in on the row ---
+    const acme = await paletteRows('Acme')
+    const acmeRow = acme.find((r) => r.glyph === '/' && r.label === 'Acme')
+    check('the palette finds a folder by name', !!acmeRow, acme.map((r) => r.label).join(' / '))
+    check(
+      'and the row says which folder it is nested in',
+      /^Folder in Clients · /.test(acmeRow?.sub ?? ''),
+      acmeRow?.sub ?? 'no row',
+    )
+    await page.locator('.palette-row').nth(acme.indexOf(acmeRow)).click()
+    await page.waitForTimeout(500)
+    check('choosing a folder scopes the note list to it', (await listTitle()) === 'Acme', await listTitle())
+
+    // --- a Tag Folder, which is a saved rule rather than a place ---
+    const rules = await paletteRows('Active work')
+    const ruleRow = rules.find((r) => r.sub.startsWith('Tag Folder'))
+    check('the palette finds a Tag Folder', !!ruleRow, rules.map((r) => `${r.label} (${r.sub})`).join(', '))
+    await page.locator('.palette-row').nth(rules.indexOf(ruleRow)).click()
+    await page.waitForTimeout(500)
+    check(
+      'choosing a Tag Folder scopes the list to what it gathers',
+      (await listTitle()) === 'Active work' && (await page.locator('.note-row').count()) === 2,
+      `${await listTitle()}, ${await page.locator('.note-row').count()} notes`,
+    )
+
+    // --- the two prefixes, which are the whole answer to "work" being a
+    //     folder and a tag and a word inside a dozen notes at once ---
+    const tags = await paletteRows('#work')
+    check(
+      '# narrows the palette to tags alone',
+      tags.length > 0 && tags.every((r) => r.glyph === '#'),
+      tags.map((r) => `${r.label} (${r.sub})`).join(', '),
+    )
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(500)
+    check('choosing a tag scopes the list to it', (await listTitle()) === '#work', await listTitle())
+
+    const folders = await paletteRows('/')
+    check(
+      'a bare / lists the folders and nothing else',
+      folders.length > 0 && folders.every((r) => r.glyph === '/'),
+      folders.map((r) => r.label).join(', '),
+    )
+
+    // --- a miss answers the question that was actually asked ---
+    await page.locator('.palette input').fill('#zzzznope')
+    await page.waitForTimeout(350)
+    const missText = (await page.locator('.palette-list').innerText()).trim()
+    check('a prefixed miss names the kind it was looking for', /No tags match/.test(missText), missText)
+
+    // --- and a plain word still offers all of it, notes included ---
+    const plain = await paletteRows('work')
+    check(
+      'a plain word offers collections above the notes that mention it',
+      plain.some((r) => r.glyph === '#' || r.glyph === '/') &&
+        plain.some((r) => r.glyph === '›') &&
+        plain.findIndex((r) => r.glyph === '›') >
+          plain.findIndex((r) => r.glyph === '#' || r.glyph === '/'),
+      plain.map((r) => `${r.glyph}${r.label}`).join(' '),
+    )
+    await page.screenshot({ path: join(SHOTS, '33-palette-places.png') })
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(250)
+    await page.locator('.side-row:has-text("All Notes")').first().click()
+    await page.waitForTimeout(300)
+  }
+
   /* ---- the folder tree remembers its shape ------------------------------
    *
    * Which rows are unfolded is per folder and kept in this device's own store,

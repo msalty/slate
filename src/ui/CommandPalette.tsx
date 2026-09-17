@@ -1,13 +1,17 @@
 /**
- * ⌘K — jump to a note or run a command.
+ * ⌘K — jump to a note, go to a collection, or run a command.
  *
- * One box for both, because in practice "open the note about X" and "sync now"
- * are the same reflex, and a second shortcut to remember is a shortcut nobody
- * uses.
+ * One box for all three, because in practice "open the note about X", "show me
+ * the Work folder" and "sync now" are the same reflex, and a second shortcut to
+ * remember is a shortcut nobody uses.
+ *
+ * Collections came last and matter most: until they were here, a folder or a
+ * tag could only be reached by finding it in the sidebar, which is what obliged
+ * the sidebar to list every one of them at all times. See ./places.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
-import { getEntry, notes, search } from '../core/vault'
+import { allTags, getEntry, notes, search, type SearchHit } from '../core/vault'
 import { dailyNoteFor } from '../core/daily'
 import { sync } from '../core/sync'
 import {
@@ -25,6 +29,7 @@ import {
   activePath,
   editorMaximized,
   editorModeLabel,
+  goToScope,
   nextEditorMode,
   notify,
   openDailyNote,
@@ -32,9 +37,10 @@ import {
   paletteOpen,
   scope,
   scopeLabel,
-  setScope,
   settingsOpen,
 } from './state'
+import { matchPlaces, parsePlaceQuery, type Place } from './places'
+import { folderTree, smartFolders } from '../core/folders'
 import { relativeTime, startOfDay } from '../core/util'
 import { newNoteInFolder } from './EditorPane'
 import { canShareFiles, shareNote } from './shareNote'
@@ -49,6 +55,43 @@ interface Cmd {
   label: string
   hint?: string
   run: () => void | Promise<void>
+}
+
+/** One line of the palette, whichever of the three kinds it came from. */
+type Row =
+  | { kind: 'cmd'; cmd: Cmd }
+  | { kind: 'place'; place: Place }
+  | { kind: 'note'; path: string; title: string; sub: string }
+
+function rowKey(row: Row): string {
+  if (row.kind === 'cmd') return `cmd:${row.cmd.id}`
+  if (row.kind === 'place') return row.place.id
+  return `note:${row.path}`
+}
+
+/**
+ * The glyph in front of a row, saying what kind of thing it is before the
+ * label is read. A Tag Folder shows the emoji its owner gave it — the same one
+ * the sidebar shows, so the row is recognised rather than parsed.
+ */
+function rowGlyph(row: Row): string {
+  if (row.kind === 'cmd') return '⌘'
+  if (row.kind === 'note') return '›'
+  if (row.place.kind === 'tag') return '#'
+  if (row.place.kind === 'folder') return '/'
+  return row.place.emoji ?? '🏷️'
+}
+
+function rowLabel(row: Row): string {
+  if (row.kind === 'cmd') return row.cmd.label
+  if (row.kind === 'place') return row.place.label
+  return row.title
+}
+
+function rowSub(row: Row): string {
+  if (row.kind === 'cmd') return row.cmd.hint ?? ''
+  if (row.kind === 'place') return row.place.sub
+  return row.sub
 }
 
 export function CommandPalette() {
@@ -263,8 +306,16 @@ export function CommandPalette() {
                   : 'system',
           }),
       },
-      { id: 'trash', label: 'Show Deleted', run: () => setScope({ kind: 'trash' }) },
-      { id: 'files', label: 'Show all files', run: () => setScope({ kind: 'files' }) },
+      /*
+       * These two go through `goToScope` rather than `setScope` for the same
+       * reason every collection row below does: on a phone the palette is over
+       * the editor, and a scope change behind it is a command that appears to
+       * have done nothing.
+       */
+      { id: 'all', label: 'Show All Notes', run: () => goToScope({ kind: 'all' }) },
+      { id: 'tasks', label: 'Show Tasks', run: () => goToScope({ kind: 'tasks' }) },
+      { id: 'trash', label: 'Show Deleted', run: () => goToScope({ kind: 'trash' }) },
+      { id: 'files', label: 'Show all files', run: () => goToScope({ kind: 'files' }) },
     ],
     [
       settings.value,
@@ -284,27 +335,41 @@ export function CommandPalette() {
     ],
   )
 
-  const results = useMemo(() => {
+  const results = useMemo((): { matchedCommands: Cmd[]; places: Place[]; noteHits: SearchHit[] } => {
     const term = q.trim()
-    const matchedCommands = commands.filter((c) =>
-      c.label.toLowerCase().includes(term.toLowerCase()),
-    )
+    const places = matchPlaces(q)
+    /*
+     * `#` and `/` are a statement that a collection is what's wanted, so notes
+     * and commands stand aside for them — otherwise typing `/Work` would search
+     * every note for the literal string and bury the folder it named.
+     */
+    if (parsePlaceQuery(q).only) return { matchedCommands: [], places, noteHits: [] }
+
+    const matchedCommands = term
+      ? commands.filter((c) => c.label.toLowerCase().includes(term.toLowerCase()))
+      : commands.slice(0, 4)
     const noteHits = term
       ? search(term, 30)
       : notes.value.slice(0, 12).map((entry) => ({ entry, score: 0, snippet: '' }))
-    return { matchedCommands: term ? matchedCommands : commands.slice(0, 4), noteHits }
-  }, [q, commands, notes.value])
+    return { matchedCommands, places, noteHits }
+  }, [q, commands, notes.value, folderTree.value, smartFolders.value, allTags.value])
 
-  const flat: Array<{ kind: 'cmd'; cmd: Cmd } | { kind: 'note'; path: string; title: string; sub: string }> =
-    [
-      ...results.matchedCommands.map((cmd) => ({ kind: 'cmd' as const, cmd })),
-      ...results.noteHits.map((h) => ({
-        kind: 'note' as const,
-        path: h.entry.path,
-        title: h.entry.title,
-        sub: h.snippet || h.entry.folder || relativeTime(h.entry.mtime),
-      })),
-    ]
+  const flat: Row[] = [
+    ...results.matchedCommands.map((cmd) => ({ kind: 'cmd' as const, cmd })),
+    /*
+     * Above the notes, because a collection is the more precise answer to the
+     * same word: with a folder called Work and thirty notes that say "work",
+     * the folder is nearly always what was meant, and there are never enough
+     * collections to push the notes off the screen.
+     */
+    ...results.places.map((place) => ({ kind: 'place' as const, place })),
+    ...results.noteHits.map((h) => ({
+      kind: 'note' as const,
+      path: h.entry.path,
+      title: h.entry.title,
+      sub: h.snippet || h.entry.folder || relativeTime(h.entry.mtime),
+    })),
+  ]
 
   if (!open) return null
 
@@ -313,9 +378,8 @@ export function CommandPalette() {
     if (!item) return
     paletteOpen.value = false
     if (item.kind === 'cmd') await item.cmd.run()
-    else {
-      openNote(item.path)
-    }
+    else if (item.kind === 'place') goToScope(item.place.target)
+    else openNote(item.path)
   }
 
   return (
@@ -324,8 +388,12 @@ export function CommandPalette() {
         <input
           ref={inputRef}
           value={q}
-          placeholder="Search notes or run a command…"
-          aria-label="Search notes or run a command"
+          /*
+           * The placeholder is where the two prefixes are taught, since there
+           * is nowhere else they could be and they are no use unguessed.
+           */
+          placeholder="Search notes, #tags, /folders — or run a command…"
+          aria-label="Search notes, tags and folders, or run a command"
           onInput={(e) => {
             setQ((e.target as HTMLInputElement).value)
             setSel(0)
@@ -348,19 +416,35 @@ export function CommandPalette() {
         <div class="palette-list">
           {flat.length === 0 && (
             <div class="empty" style={{ padding: '24px' }}>
-              Nothing matches. Press Enter on “New note” to start one.
+              {/*
+               * A `#` or `/` query has asked for one kind of thing, and telling
+               * somebody who typed `#budge` to press Enter on "New note" would
+               * be answering a question they did not ask — the row is not even
+               * in the list to press Enter on.
+               */}
+              {parsePlaceQuery(q).only
+                ? `No ${parsePlaceQuery(q).kinds[0] === 'tag' ? 'tags' : 'folders'} match.`
+                : 'Nothing matches. Press Enter on “New note” to start one.'}
             </div>
           )}
           {flat.map((item, i) => (
             <button
-              key={item.kind === 'cmd' ? item.cmd.id : item.path}
+              key={rowKey(item)}
               class="palette-row"
               data-sel={i === sel ? '1' : '0'}
               onMouseEnter={() => setSel(i)}
               onClick={() => void choose(i)}
             >
-              <span style={{ opacity: 0.55, width: 16, flex: '0 0 auto' }}>
-                {item.kind === 'cmd' ? '⌘' : '›'}
+              <span
+                style={{
+                  // An emoji dimmed to 55% reads as a rendering fault rather
+                  // than as a quieter glyph, so only the typographic ones dim.
+                  opacity: item.kind === 'place' && item.place.kind === 'smart' ? 1 : 0.55,
+                  width: 16,
+                  flex: '0 0 auto',
+                }}
+              >
+                {rowGlyph(item)}
               </span>
               <span
                 style={{
@@ -370,9 +454,9 @@ export function CommandPalette() {
                   minWidth: 0,
                 }}
               >
-                {item.kind === 'cmd' ? item.cmd.label : item.title}
+                {rowLabel(item)}
               </span>
-              <small>{item.kind === 'cmd' ? (item.cmd.hint ?? '') : item.sub}</small>
+              <small>{rowSub(item)}</small>
             </button>
           ))}
         </div>
