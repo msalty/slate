@@ -92,7 +92,28 @@ let timer: ReturnType<typeof setInterval> | undefined
 let observer: FileSystemObserver | undefined
 let listenersInstalled = false
 
-export function folderSync(): Promise<void> {
+/**
+ * Sweep the folder, first making sure we are still allowed to.
+ *
+ * Permission can be taken away while the app is open — from the omnibox, or by
+ * the browser deciding a session has gone on long enough — and nothing tells
+ * the page when it happens. The adapter checks on `connect`, but the engine
+ * only connects once, so without this the first sweep after a revocation
+ * failed, and so did every sweep after that, while the UI went on offering
+ * "Check the folder now": the one button that cannot help, next to a folder
+ * quietly no longer keeping up. The button that *can* help needs a click, so it
+ * has to be on screen.
+ *
+ * A `queryPermission` is a local call against a sweep that is about to walk a
+ * whole directory, so paying it every time costs nothing worth measuring.
+ */
+export async function folderSync(): Promise<void> {
+  if (adapter && handle && (await permissionState(handle)) !== 'granted') {
+    detach()
+    folderNeedsPermission.value = true
+    folder.setStatus({ phase: 'idle', detail: `“${handle.name}” needs permission again` })
+    return
+  }
   return folder.run()
 }
 

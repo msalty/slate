@@ -107,10 +107,32 @@ export class FakeFileHandle {
 export class FakeDirectoryHandle {
   readonly kind = 'directory' as const
 
+  /**
+   * What `queryPermission` answers. Plain data, and mutable, so a test can take
+   * permission away mid-session the way the omnibox does.
+   *
+   * A field rather than a stubbed method for one specific reason: the handle is
+   * stored in IndexedDB, and a function hung off the instance is not
+   * structured-cloneable. A real handle carries these on its prototype, which is
+   * not cloned either — so this is the shape that behaves like the real thing
+   * rather than the shape that merely looks like it.
+   */
+  permission: PermissionState = 'granted'
+
   constructor(
     readonly name: string,
     readonly dir: FakeDir = new Map(),
   ) {}
+
+  async queryPermission(): Promise<PermissionState> {
+    return this.permission
+  }
+
+  async requestPermission(): Promise<PermissionState> {
+    // The picker always says yes here; a test that wants a refusal overrides it.
+    this.permission = 'granted'
+    return this.permission
+  }
 
   async *entries(): AsyncGenerator<[string, FakeFileHandle | FakeDirectoryHandle]> {
     // A copy, because a sweep that walks the live map while something writes

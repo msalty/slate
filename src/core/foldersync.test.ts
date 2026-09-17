@@ -425,3 +425,38 @@ describe('watching a folder the browser will not watch', () => {
     }
   })
 })
+
+describe('permission taken away while the app is open', () => {
+  it('stops sweeping and asks for it back', async () => {
+    vi.resetModules()
+    ;(globalThis as { __SLATE_DB__?: string }).__SLATE_DB__ = `slate-perm-${seq++}`
+    const vault = await import('./vault')
+    await vault.initVault()
+    const fs = await import('./foldersync')
+
+    const root = fakeRoot('Revoked')
+    await fs.connectFolder(root)
+    expect(fs.folderConnected.value).toBe(true)
+    expect(fs.folderNeedsPermission.value).toBe(false)
+
+    /*
+     * Revoked from the omnibox, with the app still open. Nothing tells the page
+     * — and the engine only ever calls `connect` once, so the adapter's own
+     * check never runs again. Every sweep from here fails, and the only control
+     * that can put it right needs a click, so it has to appear.
+     */
+    root.permission = 'prompt'
+    await fs.folderSync()
+
+    expect(fs.folderNeedsPermission.value).toBe(true)
+    expect(fs.folderConnected.value).toBe(false)
+    expect(fs.folderStatus.value.detail).toContain('needs permission again')
+
+    // And the button works: granting it back picks up where it left off.
+    expect(await fs.reconnectFolder()).toBe(true)
+    expect(fs.folderConnected.value).toBe(true)
+    expect(fs.folderNeedsPermission.value).toBe(false)
+
+    await fs.restoreFolder(false)
+  })
+})

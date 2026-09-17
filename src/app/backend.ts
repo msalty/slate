@@ -15,6 +15,7 @@ import { setAdapter, setDeviceLabel, startAutoSync, stopAutoSync, sync } from '.
 import { folderName, restoreFolder, setFolderPollSec } from '../core/foldersync'
 import { setVaultTargets } from '../core/vaults'
 import { setLocalDevice } from '../core/devices'
+import { normPath } from '../core/util'
 
 export function buildAdapter(s: AppSettings): RemoteAdapter | undefined {
   if (s.backend === 'webdav') {
@@ -107,10 +108,23 @@ export async function connectBackend(): Promise<void> {
  * do not have. Two folders called `Notes` may well be different folders, so the
  * warning that reads this is phrased as a question rather than a verdict.
  */
-function targetsOf(s: AppSettings): string[] {
+export function targetsOf(s: AppSettings): string[] {
   const out: string[] = []
-  if (s.backend === 'webdav' && s.webdav.url)
-    out.push(`webdav:${s.webdav.url.replace(/\/+$/, '')}/${s.webdav.root}`)
+  if (s.backend === 'webdav' && s.webdav.url) {
+    /*
+     * Built exactly the way `WebdavAdapter` builds the address it talks to.
+     *
+     * Two vaults are pointed at the same place when the *server* thinks so, and
+     * the server never sees what was typed: `Notes`, `/Notes` and `/Notes/` are
+     * one folder, because the adapter runs the root through `normPath` before
+     * joining it. Comparing the raw spelling instead let the two vaults most
+     * likely to collide — the same server, set up twice, by hand — slip past
+     * the warning on nothing more than a leading slash.
+     */
+    const url = s.webdav.url.replace(/\/+$/, '')
+    const root = normPath(s.webdav.root)
+    out.push(`webdav:${root ? `${url}/${root}` : url}`)
+  }
   if (s.backend === 'gdrive' && s.gdrive.clientId) out.push(`gdrive:${s.gdrive.folderName}`)
   if (s.folder.enabled && folderName.value) out.push(`folder:${folderName.value}`)
   return out

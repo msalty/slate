@@ -200,6 +200,47 @@ describe('the folder adapter', () => {
     expect(root.readText('Locked.md')).toBe('v1')
   })
 
+  it('treats an unreadable *folder* as a failure too, not as a missing one', async () => {
+    const root = fakeRoot()
+    root.writeText('Work/Note.md', 'v1')
+    const a = new FolderAdapter(root)
+    await a.connect()
+    const entry = entryFor(await a.list(), 'Work/Note.md')
+
+    // The same mistake one frame further up. Reaching `Work/Note.md` walks
+    // through `Work/` first, and a walk that reports "no such folder" for what
+    // is really a withdrawn permission makes the delete below answer that the
+    // note is already gone — with the file still sitting on disk, ready to be
+    // pulled back in as something new.
+    const real = root.getDirectoryHandle.bind(root)
+    ;(root as { getDirectoryHandle: unknown }).getDirectoryHandle = async (
+      name: string,
+      opts?: object,
+    ) => {
+      if (name === 'Work') {
+        const e = new Error('permission withdrawn')
+        e.name = 'NotAllowedError'
+        throw e
+      }
+      return real(name, opts)
+    }
+
+    await expect(a.remove(entry, entry.rev)).rejects.toThrow(/Work/)
+    await expect(a.remove(entry, entry.rev)).rejects.not.toSatisfy(isNotFound)
+    expect(root.readText('Work/Note.md')).toBe('v1')
+  })
+
+  it('still reads a genuinely missing folder as the file being gone', async () => {
+    const root = fakeRoot()
+    const a = new FolderAdapter(root)
+    await a.connect()
+    // Nothing here at all — deleting from a folder that is not there is the
+    // job already being done, and must stay that way.
+    await expect(
+      a.remove({ path: 'Gone/Note.md', isDir: false, rev: '1:1' }),
+    ).resolves.toBeUndefined()
+  })
+
   it('reports a missing file as not found rather than throwing something opaque', async () => {
     const root = fakeRoot()
     const a = new FolderAdapter(root)

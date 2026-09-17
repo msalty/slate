@@ -19,7 +19,7 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 993 unit, two-device sync and folder round-trip tests
+npm test               # 1000 unit, two-device sync and folder round-trip tests
 node scripts/smoke.mjs # 708-check browser smoke test against dist/
 ```
 
@@ -1573,7 +1573,10 @@ the session; sweeping is a complete substitute rather than a degraded one.
 **Permission has to be re-granted.** The browser remembers the folder across
 reloads but usually not the right to use it: a permission prompt is only allowed
 inside a click, so on a new session the status bar shows **Reconnect “Notes”**
-and one click restores it. Installing Slate as a PWA makes Chromium far more
+and one click restores it. The same appears if permission is withdrawn while the
+app is open — it is re-checked at the top of every sweep, because nothing tells
+a page when that happens and the only control that can put it right needs to be
+on screen to be clicked. Installing Slate as a PWA makes Chromium far more
 likely to keep the grant. Until it is granted nothing is lost or changed on
 either side — the folder simply is not being kept in step.
 
@@ -2259,7 +2262,7 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 993 unit + two-device sync + folder round-trip tests
+npm test                # 1000 unit + two-device sync + folder round-trip tests
 node scripts/smoke.mjs  # 708 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
