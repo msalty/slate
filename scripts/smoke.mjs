@@ -2534,6 +2534,78 @@ try {
     !/\[!WARNING\][-+]/.test(await noteAfterEdit('# Heading one', '[!WARNING] ')),
   )
 
+  /* ---- folding from inside the callout ----------------------------------
+   *
+   * The case the checks above cannot reach, because they click the chevron
+   * with the caret somewhere else entirely. Two safeguards used to cancel out
+   * here: the chevron preserved the selection, since a caret on the header
+   * line hands back the raw marker and takes the chevron with it, and the
+   * renderer refuses to hide a range holding the selection, since a fold that
+   * swallowed the caret would be text you could type into and not see. With
+   * the caret in the body the `-` went in, the arrow turned, and the body
+   * stayed exactly where it was.
+   *
+   * It needs a real browser: the caret only counts once the editor is focused
+   * and the user has actually done something, and neither is true of a test
+   * that sets a selection programmatically.
+   */
+  const bodyLine = page.locator('.cm-line.cm-callout-warning').nth(1)
+  await bodyLine.click()
+  await page.waitForTimeout(300)
+  const caretInBody = await page.evaluate(() => {
+    const sel = document.getSelection()
+    const node = sel?.anchorNode
+    const el = node?.nodeType === 3 ? node.parentElement : node
+    return !!el?.closest?.('.cm-line.cm-callout-warning')
+  })
+  check('clicking a callout body puts the caret in it', caretInBody)
+
+  const beforeInsideFold = await page.locator('.cm-line.cm-callout').count()
+  await page.locator('.cm-callout-fold').first().click()
+  await page.waitForTimeout(400)
+  check(
+    'folding from inside the body actually collapses it',
+    (await page.locator('.cm-callout-folded').count()) === 1 &&
+      (await page.locator('.cm-line.cm-callout').count()) < beforeInsideFold,
+    `${beforeInsideFold} → ${await page.locator('.cm-line.cm-callout').count()} lines, ${await page.locator('.cm-callout-folded').count()} placeholder`,
+  )
+  check(
+    'and the caret came out with it, rather than being folded away',
+    await page.evaluate(() => {
+      const sel = document.getSelection()
+      const node = sel?.anchorNode
+      const el = node?.nodeType === 3 ? node.parentElement : node
+      return !el?.closest?.('.cm-line.cm-callout')
+    }),
+  )
+  check(
+    'the chevron survived, so the callout can be opened again',
+    (await page.locator('.cm-callout-fold[data-folded="1"]').count()) === 1,
+  )
+
+  await page.locator('.cm-callout-fold[data-folded="1"]').first().click()
+  await page.waitForTimeout(400)
+  check(
+    'and it opens again from there',
+    (await page.locator('.cm-callout-folded').count()) === 0 &&
+      (await page.locator('.cm-line.cm-callout').count()) === calloutLinesBefore,
+  )
+
+  /*
+   * Hand the note back. Clicking into the body above is what put this note into
+   * editing, and everything below here reads the same note expecting to find it
+   * as a page — which is the gesture Escape exists for: read, click to fix a
+   * line, Escape, keep reading.
+   */
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(350)
+  const handedBack = await readingState()
+  check(
+    'and Escape hands the note back afterwards',
+    handedBack.flag === '1' && !handedBack.focused.includes('cm-content'),
+    `reading=${handedBack.flag}, focused ${handedBack.focused || 'nothing'}`,
+  )
+
   await page.screenshot({ path: join(SHOTS, '07-kitchen-sink.png') })
 
   /* ---- the copy button on a code block ---------------------------------
@@ -3046,6 +3118,176 @@ try {
   check('Tag Folders persist across a reload', (await page.locator('.side-row:has-text("Active work")').count()) > 0)
   check('folders persist across a reload', (await page.locator('.side-row:has-text("Clients")').count()) > 0)
   await page.screenshot({ path: join(SHOTS, '08-tag-folders.png') })
+
+  /* ---- ⌘K reaches the collections, not just the notes --------------------
+   *
+   * Checked here because this is the first point in the run where all three
+   * kinds exist at once: a folder, a folder nested inside it, a Tag Folder,
+   * and the tags the notes were written with. Until the palette could reach
+   * them, the sidebar was the only door to any collection — which is what
+   * obliged it to list every folder and every tag at all times.
+   */
+  {
+    /** Open the palette on a fresh query and hand back what it is offering. */
+    const paletteRows = async (text) => {
+      await page.keyboard.press('Escape')
+      await page.waitForTimeout(150)
+      await page.keyboard.press('Control+k')
+      await page.waitForSelector('.palette input', { timeout: 3000 })
+      // Same race as the folder prompt above: the palette clears its own box in
+      // an effect, so a fill landing in that tick is silently thrown away.
+      await page.waitForTimeout(350)
+      await page.locator('.palette input').fill(text)
+      await page
+        .waitForFunction(
+          (t) => document.querySelector('.palette input')?.value === t,
+          text,
+          { timeout: 3000 },
+        )
+        .catch(() => {})
+      await page.waitForTimeout(350)
+      return page.$$eval('.palette-row', (els) =>
+        els.map((e) => ({
+          glyph: e.children[0]?.textContent ?? '',
+          label: e.children[1]?.textContent ?? '',
+          sub: e.children[2]?.textContent ?? '',
+        })),
+      )
+    }
+    const listTitle = () => page.locator('.list-pane .pane-title').innerText()
+
+    // --- a nested folder, by name, with the path it sits in on the row ---
+    const acme = await paletteRows('Acme')
+    const acmeRow = acme.find((r) => r.glyph === '/' && r.label === 'Acme')
+    check('the palette finds a folder by name', !!acmeRow, acme.map((r) => r.label).join(' / '))
+    check(
+      'and the row says which folder it is nested in',
+      /^Folder in Clients · /.test(acmeRow?.sub ?? ''),
+      acmeRow?.sub ?? 'no row',
+    )
+    await page.locator('.palette-row').nth(acme.indexOf(acmeRow)).click()
+    await page.waitForTimeout(500)
+    check('choosing a folder scopes the note list to it', (await listTitle()) === 'Acme', await listTitle())
+
+    // --- a Tag Folder, which is a saved rule rather than a place ---
+    const rules = await paletteRows('Active work')
+    const ruleRow = rules.find((r) => r.sub.startsWith('Tag Folder'))
+    check('the palette finds a Tag Folder', !!ruleRow, rules.map((r) => `${r.label} (${r.sub})`).join(', '))
+    await page.locator('.palette-row').nth(rules.indexOf(ruleRow)).click()
+    await page.waitForTimeout(500)
+    check(
+      'choosing a Tag Folder scopes the list to what it gathers',
+      (await listTitle()) === 'Active work' && (await page.locator('.note-row').count()) === 2,
+      `${await listTitle()}, ${await page.locator('.note-row').count()} notes`,
+    )
+
+    // --- the two prefixes, which are the whole answer to "work" being a
+    //     folder and a tag and a word inside a dozen notes at once ---
+    const tags = await paletteRows('#work')
+    check(
+      '# narrows the palette to tags alone',
+      tags.length > 0 && tags.every((r) => r.glyph === '#'),
+      tags.map((r) => `${r.label} (${r.sub})`).join(', '),
+    )
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(500)
+    check('choosing a tag scopes the list to it', (await listTitle()) === '#work', await listTitle())
+
+    const folders = await paletteRows('/')
+    check(
+      'a bare / lists the folders and nothing else',
+      folders.length > 0 && folders.every((r) => r.glyph === '/'),
+      folders.map((r) => r.label).join(', '),
+    )
+
+    // --- a miss answers the question that was actually asked ---
+    await page.locator('.palette input').fill('#zzzznope')
+    await page.waitForTimeout(350)
+    const missText = (await page.locator('.palette-list').innerText()).trim()
+    check('a prefixed miss names the kind it was looking for', /No tags match/.test(missText), missText)
+
+    // --- and a plain word still offers all of it, notes included ---
+    const plain = await paletteRows('work')
+    check(
+      'a plain word offers collections above the notes that mention it',
+      plain.some((r) => r.glyph === '#' || r.glyph === '/') &&
+        plain.some((r) => r.glyph === '›') &&
+        plain.findIndex((r) => r.glyph === '›') >
+          plain.findIndex((r) => r.glyph === '#' || r.glyph === '/'),
+      plain.map((r) => `${r.glyph}${r.label}`).join(' '),
+    )
+    await page.screenshot({ path: join(SHOTS, '33-palette-places.png') })
+
+    /* ---- and > is how you read the command list at all -------------------
+     *
+     * Unprefixed, the palette leads with four commands, which is right for a
+     * box you came to to find a note and useless for finding out what the app
+     * can do. `>` is the whole list — the one place the commands and the keys
+     * they answer to are written down together.
+     */
+    const all = await paletteRows('>')
+    check(
+      '> lists every command and nothing else',
+      all.length > 12 && all.every((r) => r.glyph === '⌘'),
+      `${all.length} rows, kinds: ${[...new Set(all.map((r) => r.glyph))].join('')}`,
+    )
+    check(
+      'and the list carries the shortcuts, so it is where they are learned',
+      all.filter((r) => /⌘/.test(r.sub)).length >= 6,
+      all.filter((r) => r.sub).map((r) => `${r.label} ${r.sub}`).join(' · '),
+    )
+    check(
+      'both panel toggles are in it, the sidebar included',
+      all.some((r) => /sidebar/i.test(r.label)) && all.some((r) => /calendar/i.test(r.label)),
+      all.filter((r) => /sidebar|calendar/i.test(r.label)).map((r) => `${r.label} (${r.sub})`).join(', '),
+    )
+    await page.screenshot({ path: join(SHOTS, '34-palette-commands.png') })
+
+    const narrowed = await paletteRows('>sync')
+    check(
+      '> narrows to the commands that match, keeping their keys',
+      narrowed.length > 0 && narrowed.every((r) => r.glyph === '⌘' && /sync/i.test(r.label)),
+      narrowed.map((r) => `${r.label} ${r.sub}`).join(', '),
+    )
+    await page.locator('.palette input').fill('>zzzznope')
+    await page.waitForTimeout(350)
+    check(
+      'and a command miss says so in its own terms',
+      /No commands match/.test((await page.locator('.palette-list').innerText()).trim()),
+      (await page.locator('.palette-list').innerText()).trim(),
+    )
+
+    // --- the ⋯ menu's "All commands…" has to actually mean all of them ---
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(250)
+    await page.click('.list-pane .pane-head [aria-label="List actions"]')
+    await page.waitForTimeout(300)
+    await page.locator('.menu-item:has-text("All commands")').click()
+    await page.waitForSelector('.palette input', { timeout: 3000 })
+    await page.waitForTimeout(400)
+    check(
+      '“All commands…” opens the palette already showing all of them',
+      (await page.locator('.palette input').inputValue()) === '>' &&
+        (await page.locator('.palette-row').count()) > 12,
+      `box "${await page.locator('.palette input').inputValue()}", ${await page.locator('.palette-row').count()} rows`,
+    )
+    // The seed is consumed, not remembered: the next ⌘K is a blank box again.
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(250)
+    await page.keyboard.press('Control+k')
+    await page.waitForSelector('.palette input', { timeout: 3000 })
+    await page.waitForTimeout(400)
+    check(
+      'and the next ⌘K is a blank box, not the one it just seeded',
+      (await page.locator('.palette input').inputValue()) === '',
+      `box "${await page.locator('.palette input').inputValue()}"`,
+    )
+
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(250)
+    await page.locator('.side-row:has-text("All Notes")').first().click()
+    await page.waitForTimeout(300)
+  }
 
   /* ---- the folder tree remembers its shape ------------------------------
    *
@@ -7194,6 +7436,231 @@ try {
   await page.waitForTimeout(400)
   await page.screenshot({ path: join(SHOTS, '05-light.png') })
 
+  /* ---- a list taller than the palette ----------------------------------
+   *
+   * Both of these are about a result list that does not fit. A palette is a
+   * keyboard instrument, and until now ↓ walked the selection off the bottom
+   * of the box — you could not see what was selected, and Enter opened
+   * whatever it had landed on. A short window makes the overflow certain
+   * rather than marginal.
+   */
+  {
+    await page.setViewportSize({ width: 1440, height: 620 })
+    await page.waitForTimeout(300)
+
+    const openWith = async (text) => {
+      await page.keyboard.press('Escape')
+      await page.waitForTimeout(150)
+      await page.keyboard.press('Control+k')
+      await page.waitForSelector('.palette input', { timeout: 3000 })
+      await page.waitForTimeout(350)
+      await page.locator('.palette input').fill(text)
+      await page.waitForTimeout(400)
+    }
+    /** Is the selected row inside the part of the list you can actually see? */
+    const selectionVisible = () =>
+      page.evaluate(() => {
+        const list = document.querySelector('.palette-list')
+        const row = list?.querySelector('[data-sel="1"]')
+        if (!list || !row) return null
+        const l = list.getBoundingClientRect()
+        const r = row.getBoundingClientRect()
+        return r.top >= l.top - 1 && r.bottom <= l.bottom + 1
+      })
+
+    await openWith('>')
+    const rowCount = await page.locator('.palette-row').count()
+    const overflows = await page.evaluate(() => {
+      const l = document.querySelector('.palette-list')
+      return l.scrollHeight > l.clientHeight + 4
+    })
+    check('the command list is taller than the box it is in', overflows, `${rowCount} rows`)
+    check('the selection starts visible', (await selectionVisible()) === true)
+
+    for (let i = 0; i < rowCount - 1; i++) await page.keyboard.press('ArrowDown')
+    await page.waitForTimeout(300)
+    check(
+      '↓ to the last row scrolls it into view instead of off the bottom',
+      (await selectionVisible()) === true,
+      `row ${rowCount} of ${rowCount}`,
+    )
+    for (let i = 0; i < rowCount - 1; i++) await page.keyboard.press('ArrowUp')
+    await page.waitForTimeout(300)
+    check('and ↑ back to the top follows it home', (await selectionVisible()) === true)
+
+    /* ---- a still pointer does not get a vote --------------------------
+     *
+     * The arrow keys scroll, and scrolling slides a different row under a
+     * mouse that never moved. The browser announces that as `mouseenter`,
+     * indistinguishable from a deliberate hover — so a palette that trusts
+     * hover has its selection dragged to wherever the mouse was left lying,
+     * and Enter opens something the user never arrowed to. The pointer is
+     * parked on purpose here and never moves again.
+     */
+    const selectedIndex = () =>
+      page.$eval('.palette-row[data-sel="1"]', (el) => Number(el.dataset.i)).catch(() => -1)
+
+    const third = await page.locator('.palette-row').nth(3).boundingBox()
+    await page.mouse.move(third.x + third.width / 2, third.y + third.height / 2)
+    await page.waitForTimeout(250)
+    check('moving the mouse onto a row still selects it', (await selectedIndex()) === 3, `row ${await selectedIndex()}`)
+
+    for (let i = 0; i < 10; i++) await page.keyboard.press('ArrowDown')
+    await page.waitForTimeout(300)
+    check(
+      'and the arrows then keep the selection, whatever slides under the still mouse',
+      (await selectedIndex()) === 13,
+      `expected row 13, selection is on row ${await selectedIndex()}`,
+    )
+    check('which is also the row you can see', (await selectionVisible()) === true)
+
+    /* ---- a capped list says that it is capped -------------------------- */
+    // Forty-five new tags on one note, which is far cheaper than forty-five
+    // notes and enough to push a bare `#` past the forty it will show.
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(200)
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.waitForTimeout(300)
+    await page.click('[title^="New note"]')
+    await page.waitForSelector('.cm-editor')
+    await page.waitForTimeout(400)
+    const manyTags = Array.from({ length: 45 }, (_, i) => `#z${String(i).padStart(3, '0')}`).join(' ')
+    await page.locator('.cm-content').click()
+    await page.locator('.cm-content').pressSequentially(`${manyTags}\n`, { delay: 1 })
+    await page.waitForTimeout(900)
+
+    await openWith('#')
+    const shown = await page.locator('.palette-row').count()
+    const capNote = await page
+      .locator('.palette-note')
+      .innerText()
+      .catch(() => '')
+    check('a capped collection list hands back exactly its cap', shown === 40, `${shown} rows`)
+    check(
+      'and says how many of how many, rather than quietly dropping the rest',
+      /^Showing 40 of \d+ tags — type to narrow\.$/.test(capNote.trim()),
+      capNote.trim() || 'nothing said',
+    )
+    check(
+      'the line is not a row, so the arrows and Enter step past it',
+      (await page.locator('.palette-note.palette-row').count()) === 0,
+    )
+    // Narrowing is exactly what the line asked for, so it stops asking.
+    await page.locator('.palette input').fill('#z01')
+    await page.waitForTimeout(400)
+    check(
+      'and it goes quiet once the list is the whole answer',
+      (await page.locator('.palette-note').count()) === 0 &&
+        (await page.locator('.palette-row').count()) === 10,
+      `${await page.locator('.palette-row').count()} rows, ${await page.locator('.palette-note').count()} notes`,
+    )
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(200)
+  }
+
+  /* ---- a note that is nothing but a callout -----------------------------
+   *
+   * The edge of the rule above. Moving the caret out of the body works because
+   * there is an "out" to move it to; here every line is either the body being
+   * hidden or the header, where a caret hands back the raw marker and takes
+   * the chevron with it. So the note stops being edited instead — an unfocused
+   * editor reveals nothing, which is the same reason a note you are not typing
+   * in renders whole.
+   */
+  {
+    const CALLOUT_ONLY =
+      '> [!NOTE] My whole note\n> This is my entire note.\n> There is nothing outside this callout.'
+    await page.click('[title^="New note"]')
+    await page.waitForSelector('.cm-editor')
+    await page.waitForTimeout(400)
+    const title = page.locator('.editor-title-input')
+    await title.fill('Only a callout')
+    await title.press('Enter')
+    await page.waitForTimeout(250)
+    const ed = page.locator('.cm-content')
+    await ed.click()
+    /*
+     * Cleared first, not assumed empty. By this point in the run the vault has
+     * templates in it, and a new note may arrive with one already applied —
+     * which would leave a second callout in the note and quietly test the
+     * ordinary case again, from a chevron that does have somewhere to put the
+     * caret. The whole point here is a note with nothing else in it.
+     */
+    await ed.press('Control+a')
+    /*
+     * Pasted, not typed. Rich text applies markdown as you write it, so typing
+     * "> " at the head of a line makes the line a quote and takes the marker
+     * out of the document — which left a note whose first line was
+     * " [!NOTE] ..." and no callout anywhere in it. A paste goes in as the
+     * characters it is, in every mode.
+     */
+    await page.evaluate((text) => navigator.clipboard.writeText(text), CALLOUT_ONLY)
+    await ed.press('Control+v')
+    await page.waitForTimeout(700)
+
+    /*
+     * Whatever mode the run has drifted into by now, this needs one that
+     * decorates: source mode draws no callout at all, and a callout that is
+     * not drawn has no chevron to click. The three cycle, so two presses is
+     * the worst case — the same move the properties section makes.
+     */
+    for (let i = 0; i < 3 && (await page.locator('.cm-callout-mark').count()) === 0; i++) {
+      await page.keyboard.press('Control+Shift+m')
+      await page.waitForTimeout(400)
+    }
+
+    check(
+      'the note really is nothing but the callout',
+      (await page.locator('.cm-line').count()) === 3 &&
+        (await page.locator('.cm-line.cm-callout').count()) === 3,
+      `${await page.locator('.cm-line').count()} lines, ${await page.locator('.cm-line.cm-callout').count()} of them callout`,
+    )
+
+    // Caret into the body, which is the whole point of the case.
+    await page.locator('.cm-line.cm-callout').nth(1).click()
+    await page.waitForTimeout(300)
+    const linesBefore = await page.locator('.cm-line.cm-callout').count()
+    check(
+      'a note made only of a callout is set up to fold',
+      linesBefore === 3 && (await page.locator('.cm-callout-fold').count()) === 1,
+      `${linesBefore} callout lines, ${await page.locator('.cm-callout-fold').count()} chevron`,
+    )
+
+    await page.locator('.cm-callout-fold').first().click()
+    await page.waitForTimeout(450)
+    check(
+      'it collapses even with nowhere outside to put the caret',
+      (await page.locator('.cm-callout-folded').count()) === 1 &&
+        (await page.locator('.cm-line.cm-callout').count()) < linesBefore,
+      `${linesBefore} → ${await page.locator('.cm-line.cm-callout').count()} lines, ${await page.locator('.cm-callout-folded').count()} placeholder`,
+    )
+    check(
+      'by letting go of the note rather than putting the caret on the header',
+      !(await page.evaluate(() => document.activeElement?.className ?? '')).includes('cm-content'),
+      await page.evaluate(() => document.activeElement?.className ?? 'nothing focused'),
+    )
+    check(
+      'so the marker is still an icon and the chevron is still there',
+      (await page.locator('.cm-callout-mark > svg').count()) === 1 &&
+        (await page.locator('.cm-callout-fold[data-folded="1"]').count()) === 1 &&
+        !(await page.locator('.cm-content').innerText()).includes('[!NOTE]'),
+    )
+
+    // …and open again from that same chevron, which is the other half of it.
+    await page.locator('.cm-callout-fold[data-folded="1"]').first().click()
+    await page.waitForTimeout(450)
+    check(
+      'and the same chevron opens it again',
+      (await page.locator('.cm-callout-folded').count()) === 0 &&
+        (await page.locator('.cm-line.cm-callout').count()) === linesBefore,
+      `${await page.locator('.cm-line.cm-callout').count()} lines back`,
+    )
+    check(
+      'with the fold character taken back out of the note',
+      /\[!NOTE\] /.test(await noteAfterEdit('There is nothing outside this callout', '[!NOTE] ')),
+    )
+  }
+
   /* ---- responsive ------------------------------------------------------ */
   await page.setViewportSize({ width: 420, height: 860 })
   await page.evaluate(() => document.documentElement.removeAttribute('data-theme'))
@@ -7203,6 +7670,37 @@ try {
   )
   check('no horizontal overflow on a phone viewport', !horizontalOverflow)
   await page.screenshot({ path: join(SHOTS, '06-mobile.png') })
+
+  /*
+   * Neither panel command exists where neither panel does.
+   *
+   * The compact layout renders no calendar rail at all, and no scrim to
+   * dismiss a drawer with — so "Show calendar" did nothing whatsoever, and a
+   * sidebar opened from here would have covered the screen with no way to tap
+   * it away. Absent rather than disabled, the rule the AI commands already
+   * follow: a palette that lists what you cannot do is one people scroll past.
+   */
+  await page.keyboard.press('Control+k')
+  await page.waitForSelector('.palette input', { timeout: 3000 })
+  await page.waitForTimeout(350)
+  await page.locator('.palette input').fill('>')
+  await page.waitForTimeout(400)
+  const compactCommands = await page.locator('.palette-row').allInnerTexts()
+  check(
+    'a compact layout is offered no sidebar, calendar or focus-mode command',
+    compactCommands.length > 6 &&
+      !compactCommands.some((t) => /sidebar|calendar|focus mode|new window/i.test(t)),
+    `${compactCommands.length} commands: ${
+      compactCommands.filter((t) => /sidebar|calendar|focus|window/i.test(t)).join(', ') ||
+      'none of the four, as it should be'
+    }`,
+  )
+  check(
+    'but the ones that do work there are still offered',
+    compactCommands.some((t) => /New note/i.test(t)) && compactCommands.some((t) => /Sync now/i.test(t)),
+  )
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(250)
 
   /* ---- console -------------------------------------------------------- */
   const realErrors = consoleErrors.filter(

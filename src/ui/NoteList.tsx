@@ -31,8 +31,8 @@ import {
   notify,
   openDailyNote,
   openNote,
+  openPalette,
   orphansOnly,
-  paletteOpen,
   query,
   scope,
   queryTerms,
@@ -213,9 +213,12 @@ function listMenu(compact: boolean): MenuItem[] {
   items.push({
     label: 'All commands… (⌘K)',
     separated: items.length > 0,
-    onSelect: () => {
-      paletteOpen.value = true
-    },
+    /*
+     * Seeded with `>`, because this row says *all* of them. Opening the plain
+     * palette showed the four commands it leads with and a dozen recent notes,
+     * which is a promise of the whole list answered with a sample of it.
+     */
+    onSelect: () => openPalette('>'),
   })
 
   if (compact) {

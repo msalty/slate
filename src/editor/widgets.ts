@@ -7,6 +7,7 @@
  */
 
 import { EditorView, WidgetType } from '@codemirror/view'
+import { ChangeSet, EditorSelection, type EditorState, type Line } from '@codemirror/state'
 import { attachmentUrl, getRaw } from '../core/vault'
 import { fencedBody } from './codeblock'
 import { ICONS, withCalloutFold } from './callout'
@@ -73,6 +74,56 @@ export class BulletWidget extends WidgetType {
 }
 
 /* ---------------------------------------------------------------- callout */
+
+/**
+ * The body a callout's fold hides: every line under the header that is still
+ * part of the blockquote. `undefined` when there is nothing underneath, since
+ * a one-line callout has nothing to fold.
+ *
+ * Shared with the folding renderer in livePreview rather than worked out twice.
+ * The chevron decides whether the caret is in the way and the renderer decides
+ * whether to hide the range, and if those two ever disagreed about where a
+ * callout ends, one of them would be wrong about the other's answer.
+ *
+ * `from` is the header's line break — where the replaced range starts, so the
+ * header keeps its own line. The body's first *character* is one past it, and
+ * that is what any question about the selection has to be asked against.
+ */
+export function calloutBody(
+  state: EditorState,
+  headerAt: number,
+): { from: number; to: number; lines: number } | undefined {
+  const header = state.doc.lineAt(headerAt)
+  const total = state.doc.lines
+  let end = header.number
+  while (end + 1 <= total && /^[ \t]*>/.test(state.doc.line(end + 1).text)) end++
+  if (end === header.number) return undefined
+  return { from: header.to, to: state.doc.line(end).to, lines: end - header.number }
+}
+
+/**
+ * Where the caret goes when it is sitting in a body about to be folded away.
+ *
+ * After the callout by preference — you folded it, so the next thing you want
+ * is what comes next. Before it when the callout ends the note, which is a
+ * common enough place for one to sit.
+ *
+ * `undefined` when the note is nothing *but* the callout, because then there
+ * is no such position: every line is either the body, which is what is being
+ * hidden, or the header, where a caret hands back the raw `[!warning]` and
+ * takes the chevron with it — folding would dissolve the control that asked
+ * for it. The caller stops editing the note instead. See the chevron.
+ */
+export function caretOutsideCallout(
+  state: EditorState,
+  header: Line,
+  bodyTo: number,
+): number | undefined {
+  const last = state.doc.lineAt(bodyTo)
+  if (last.number < state.doc.lines) return state.doc.line(last.number + 1).from
+  if (header.number > 1) return state.doc.line(header.number - 1).to
+  return undefined
+}
 
 /**
  * The `[!WARNING]` marker at the head of a callout, as an icon.
@@ -178,14 +229,68 @@ export class CalloutWidget extends WidgetType {
       const line = view.state.doc.lineAt(view.posAtDOM(btn))
       const next = withCalloutFold(line.text, this.folded ? '' : '-')
       if (next === line.text) return
-      view.dispatch({
-        changes: { from: line.from, to: line.to, insert: next },
-        // Keep the caret where it was, exactly as the checkbox does: folding
-        // is not editing the line, and a caret landing on it would reveal the
-        // marker the chevron is attached to — taking the chevron with it.
-        selection: view.state.selection,
-        scrollIntoView: false,
-      })
+      const edit = ChangeSet.of(
+        { from: line.from, to: line.to, insert: next },
+        view.state.doc.length,
+      )
+
+      /*
+       * Keep the caret where it was, exactly as the checkbox does: folding is
+       * not editing the line, and a caret landing on it would reveal the
+       * marker the chevron is attached to — taking the chevron with it.
+       *
+       * Unless the caret is in the body about to be folded away, which is the
+       * one case where standing still is worse. The renderer refuses to hide a
+       * range holding the selection — a fold that swallowed the caret would be
+       * text you could type into and not see — so writing the `-` and leaving
+       * the caret where it was made the chevron look broken: the marker went
+       * in, the arrow turned, and the body stayed exactly where it was. The
+       * two guards were each right and cancelled each other out. This one
+       * gives way, because it is the one with somewhere else to put the caret.
+       */
+      let selection = view.state.selection
+      const body = this.folded ? undefined : calloutBody(view.state, line.to)
+      if (body) {
+        const caught = selection.ranges.filter((r) => r.from <= body.to && r.to >= body.from + 1)
+        /*
+         * A selection with something in it is text somebody is holding on to,
+         * and moving it is not this button's business. Hiding it would be
+         * worse still, so the click stands down entirely rather than writing a
+         * marker whose fold cannot render — which is the same no-op it is here
+         * to fix.
+         */
+        if (caught.some((r) => !r.empty)) return
+        if (caught.length) {
+          /*
+           * Mapped through the edit rather than offset by hand. A dispatch's
+           * selection is read against the document the change produces, and
+           * the `-` goes in *above* the landing when that is the line after
+           * the callout and *below* it when the callout ends the note — so
+           * there is no single delta to add, and guessing one put the caret
+           * back inside the fold by a single character.
+           */
+          const at = caretOutsideCallout(view.state, line, body.to)
+          if (at === undefined) {
+            /*
+             * A note that is nothing but this callout has nowhere outside it
+             * to stand. Rather than put the caret on the header — the one
+             * place it must not go — the note stops being edited: an unfocused
+             * editor reveals nothing, so the body folds and the header keeps
+             * its icon and its chevron, which is the whole of what the click
+             * asked for.
+             *
+             * Before the dispatch, so the change arrives at a state that has
+             * already let go, rather than rendering once with the fold refused
+             * and again without it.
+             */
+            view.contentDOM.blur()
+          } else {
+            selection = EditorSelection.single(edit.mapPos(at, 1))
+          }
+        }
+      }
+
+      view.dispatch({ changes: edit, selection, scrollIntoView: false })
     })
     return btn
   }

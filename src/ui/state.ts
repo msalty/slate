@@ -48,6 +48,25 @@ export function setScope(s: Scope) {
   query.value = ''
   scope.value = s
 }
+
+/**
+ * Go to a collection from somewhere that isn't the note list.
+ *
+ * `setScope` on its own is all the sidebar needs, because the sidebar is only
+ * ever on screen beside the list it is changing — you see the result of the
+ * click you just made. Nothing else has that luxury: the palette and a tag
+ * tapped in the body of a note both sit *over* the editor on a phone, where
+ * changing the list underneath and leaving the editor up looks exactly like
+ * the command did nothing at all. So anything navigating from over the top of
+ * the app comes through here, and lands you on the list it just chose.
+ */
+export function goToScope(s: Scope) {
+  setScope(s)
+  if (layoutMode.value !== 'compact') return
+  mobileTab.value = 'notes'
+  closeMobileEditor()
+}
+
 export const activePath = signal<string | undefined>(undefined)
 export const selectedDay = signal<number>(startOfDay(Date.now()))
 export const calendarMonth = signal<number>(startOfDay(Date.now()))
@@ -115,6 +134,23 @@ export function nextEditorMode(id: EditorModeId): EditorModeId {
 export const orphansOnly = signal(false)
 
 export const paletteOpen = signal(false)
+
+/**
+ * What the palette should already have in its box when it opens.
+ *
+ * Read once as it opens and cleared there, so it is a request rather than a
+ * second copy of the query: ⌘K opens on an empty box as it always has, and
+ * only the callers that mean something specific — *All commands…*, which opens
+ * it on `>` — say so.
+ */
+export const paletteSeed = signal('')
+
+/** Open the palette, optionally with a prefix already typed into it. */
+export function openPalette(seed = '') {
+  paletteSeed.value = seed
+  paletteOpen.value = true
+}
+
 export const settingsOpen = signal(false)
 /**
  * Which tab Settings should open on, for the places that are asking about one

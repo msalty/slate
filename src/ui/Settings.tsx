@@ -1050,11 +1050,25 @@ export function Settings() {
 
               <UpdatePanel />
 
+              {/*
+               * This list said "⌘K on a selection makes a wikilink" long after
+               * the wikilink moved to ⌘⇧K so that ⌘K could open the palette
+               * from inside the editor too. A shortcut list that is wrong is
+               * worse than no list, since the whole point of it is to be
+               * believed — so it now also says where the live one is, which is
+               * generated from the commands themselves and cannot drift.
+               */}
               <div class="callout" style={{ marginTop: 18 }}>
                 <strong>Keyboard</strong>
                 <br />
-                ⌘K palette · ⌘N new note · ⌘S sync · ⌘F find in note · ⌘⇧M source mode · ⌘⇧R calendar
-                · ⌘\ sidebar · ⌘B bold · ⌘I italic · ⌘K on a selection makes a wikilink
+                ⌘K palette · ⌘N new note · ⌘S sync · ⌘, settings · ⌘\ sidebar · ⌘⇧R calendar ·
+                ⌘⇧F focus mode · ⌘⇧M source mode · ⌘F find in note · ⌘B bold · ⌘I italic ·
+                ⌘⇧K wikilink from the selection
+                <br />
+                <small>
+                  Every command, with the shortcut it answers to, is in the palette: press ⌘K and
+                  type <code>&gt;</code>.
+                </small>
               </div>
             </>
           )}

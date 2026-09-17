@@ -1,13 +1,17 @@
 /**
- * ⌘K — jump to a note or run a command.
+ * ⌘K — jump to a note, go to a collection, or run a command.
  *
- * One box for both, because in practice "open the note about X" and "sync now"
- * are the same reflex, and a second shortcut to remember is a shortcut nobody
- * uses.
+ * One box for all three, because in practice "open the note about X", "show me
+ * the Work folder" and "sync now" are the same reflex, and a second shortcut to
+ * remember is a shortcut nobody uses.
+ *
+ * Collections came last and matter most: until they were here, a folder or a
+ * tag could only be reached by finding it in the sidebar, which is what obliged
+ * the sidebar to list every one of them at all times. See ./places.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
-import { getEntry, notes, search } from '../core/vault'
+import { allTags, getEntry, notes, search, type SearchHit } from '../core/vault'
 import { dailyNoteFor } from '../core/daily'
 import { sync } from '../core/sync'
 import {
@@ -19,22 +23,31 @@ import {
 } from '../core/foldersync'
 import { activeVaultId, switchToVault, vaults } from '../core/vaults'
 import { settings, update } from '../core/settings'
-import { layoutMode } from './layout'
+import { layoutMode, railState, sidebarState, toggleRail, toggleSidebar } from './layout'
 import { canPopOut, openPopout } from './popout'
 import {
   activePath,
   editorMaximized,
   editorModeLabel,
+  goToScope,
   nextEditorMode,
   notify,
   openDailyNote,
   openNote,
   paletteOpen,
+  paletteSeed,
   scope,
   scopeLabel,
-  setScope,
   settingsOpen,
 } from './state'
+import {
+  cappedPaletteNote,
+  emptyPaletteMessage,
+  matchPlaces,
+  parsePaletteQuery,
+  type Place,
+} from './places'
+import { folderTree, smartFolders } from '../core/folders'
 import { relativeTime, startOfDay } from '../core/util'
 import { newNoteInFolder } from './EditorPane'
 import { canShareFiles, shareNote } from './shareNote'
@@ -51,19 +64,99 @@ interface Cmd {
   run: () => void | Promise<void>
 }
 
+/** One line of the palette, whichever of the three kinds it came from. */
+type Row =
+  | { kind: 'cmd'; cmd: Cmd }
+  | { kind: 'place'; place: Place }
+  | { kind: 'note'; path: string; title: string; sub: string }
+
+function rowKey(row: Row): string {
+  if (row.kind === 'cmd') return `cmd:${row.cmd.id}`
+  if (row.kind === 'place') return row.place.id
+  return `note:${row.path}`
+}
+
+/**
+ * The glyph in front of a row, saying what kind of thing it is before the
+ * label is read. A Tag Folder shows the emoji its owner gave it — the same one
+ * the sidebar shows, so the row is recognised rather than parsed.
+ */
+function rowGlyph(row: Row): string {
+  if (row.kind === 'cmd') return '⌘'
+  if (row.kind === 'note') return '›'
+  if (row.place.kind === 'tag') return '#'
+  if (row.place.kind === 'folder') return '/'
+  return row.place.emoji ?? '🏷️'
+}
+
+function rowLabel(row: Row): string {
+  if (row.kind === 'cmd') return row.cmd.label
+  if (row.kind === 'place') return row.place.label
+  return row.title
+}
+
+function rowSub(row: Row): string {
+  if (row.kind === 'cmd') return row.cmd.hint ?? ''
+  if (row.kind === 'place') return row.place.sub
+  return row.sub
+}
+
 export function CommandPalette() {
   const [q, setQ] = useState('')
   const [sel, setSel] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+  /*
+   * Whether the keyboard is currently driving the selection.
+   *
+   * While it is, the pointer is ignored entirely — and it has to be, because
+   * an arrow key scrolls the list and scrolling slides a different row under a
+   * pointer that never moved. The browser calls that `mouseenter` and reports
+   * it exactly like a deliberate hover, so a palette that trusts hover has its
+   * selection yanked to wherever the mouse happened to be left sitting: you
+   * press ↓ three times, and Enter opens something else entirely.
+   *
+   * Only a real `mousemove` hands control back. A pointer that has not moved
+   * has not expressed an opinion, whatever the event says.
+   */
+  const byKey = useRef(false)
   const open = paletteOpen.value
 
   useEffect(() => {
-    if (open) {
-      setQ('')
-      setSel(0)
-      requestAnimationFrame(() => inputRef.current?.focus())
+    // Also cleared on the way out, so a seed set while the palette happened to
+    // be open cannot survive to prefill the *next* ⌘K with somebody else's `>`.
+    if (!open) {
+      paletteSeed.value = ''
+      return
     }
+    // Peeked rather than read, so consuming the seed here cannot re-run this.
+    setQ(paletteSeed.peek())
+    paletteSeed.value = ''
+    setSel(0)
+    requestAnimationFrame(() => inputRef.current?.focus())
   }, [open])
+
+  /*
+   * Follow the selection with the scroll.
+   *
+   * A palette is a keyboard instrument — ⌘K, type, arrow down, Enter — and a
+   * bare `#` in a vault of sixty tags is far longer than the eight or so rows
+   * that fit. Without this, ↓ walks the selection off the bottom of the box:
+   * you cannot see what is selected, and Enter opens whatever it landed on.
+   * `nearest` scrolls the least it can, so a row already on screen never
+   * moves the list under you.
+   */
+  useEffect(() => {
+    if (!byKey.current) return
+    listRef.current
+      ?.querySelector('[data-sel="1"]')
+      ?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [sel])
+
+  /* A new query is a new list, and it is read from the top. */
+  useEffect(() => {
+    if (listRef.current) listRef.current.scrollTop = 0
+  }, [q])
 
   // The day the calendar is filtered to, if it is filtered to one at all.
   const day = scope.value.kind === 'day' ? startOfDay(scope.value.date) : undefined
@@ -213,19 +306,37 @@ export function CommandPalette() {
         hint: '⌘⇧M',
         run: () => update({ editorMode: nextEditorMode(settings.value.editorMode) }),
       },
-      {
-        id: 'rail',
-        label: settings.value.showRightRail ? 'Hide calendar' : 'Show calendar',
-        hint: '⌘⇧R',
-        run: () => update({ showRightRail: !settings.value.showRightRail }),
-      },
       /*
-       * Both of these are desktop ideas: a phone's editor is already the whole
-       * screen, and it has no second window to put a note in.
+       * All four of these are desktop ideas, and absent rather than disabled
+       * below the breakpoint — the rule the AI commands and the Transcribe
+       * button already follow. A phone's editor is the whole screen, it has no
+       * second window to put a note in, and neither side panel exists there at
+       * all: the compact layout does not render the rail, and the scrim that
+       * dismisses a drawer is not rendered either, so a sidebar opened from
+       * here would have covered the screen with no way to tap it away.
+       *
+       * Both panels go through the same toggle their shortcut uses and take
+       * their label from what is on screen rather than from the setting.
+       * Between 1180 and 1400 the rail is a drawer and `showRightRail` is not
+       * what decides whether you can see it, so "Hide calendar" used to flip a
+       * preference that changed nothing while ⌘⇧R — claimed by that very row
+       * as its shortcut — opened the drawer properly.
        */
       ...(layoutMode.value === 'compact'
         ? []
         : [
+            {
+              id: 'sidebar',
+              label: sidebarState.value === 'hidden' ? 'Show sidebar' : 'Hide sidebar',
+              hint: '⌘\\',
+              run: () => toggleSidebar(),
+            },
+            {
+              id: 'rail',
+              label: railState.value === 'hidden' ? 'Show calendar' : 'Hide calendar',
+              hint: '⌘⇧R',
+              run: () => toggleRail(),
+            },
             {
               id: 'focus',
               label: editorMaximized.value ? 'Leave focus mode' : 'Focus mode',
@@ -263,8 +374,16 @@ export function CommandPalette() {
                   : 'system',
           }),
       },
-      { id: 'trash', label: 'Show Deleted', run: () => setScope({ kind: 'trash' }) },
-      { id: 'files', label: 'Show all files', run: () => setScope({ kind: 'files' }) },
+      /*
+       * These two go through `goToScope` rather than `setScope` for the same
+       * reason every collection row below does: on a phone the palette is over
+       * the editor, and a scope change behind it is a command that appears to
+       * have done nothing.
+       */
+      { id: 'all', label: 'Show All Notes', run: () => goToScope({ kind: 'all' }) },
+      { id: 'tasks', label: 'Show Tasks', run: () => goToScope({ kind: 'tasks' }) },
+      { id: 'trash', label: 'Show Deleted', run: () => goToScope({ kind: 'trash' }) },
+      { id: 'files', label: 'Show all files', run: () => goToScope({ kind: 'files' }) },
     ],
     [
       settings.value,
@@ -276,6 +395,10 @@ export function CommandPalette() {
       activePath.value,
       editorMaximized.value,
       layoutMode.value,
+      // Both panel rows are labelled from what is on screen, so they have to
+      // be rebuilt when that changes and not only when the settings do.
+      sidebarState.value,
+      railState.value,
       folderConnected.value,
       folderNeedsPermission.value,
       folderName.value,
@@ -284,27 +407,64 @@ export function CommandPalette() {
     ],
   )
 
-  const results = useMemo(() => {
-    const term = q.trim()
-    const matchedCommands = commands.filter((c) =>
-      c.label.toLowerCase().includes(term.toLowerCase()),
-    )
+  const results = useMemo((): {
+    matchedCommands: Cmd[]
+    places: Place[]
+    noteHits: SearchHit[]
+    /** Set when the collection list is a sample rather than the whole answer. */
+    capped?: string
+  } => {
+    const { mode, term } = parsePaletteQuery(q)
+    const matching = (list: Cmd[]) =>
+      term ? list.filter((c) => c.label.toLowerCase().includes(term.toLowerCase())) : list
+
+    /*
+     * `>` is the whole list, which is the only way to read it: a palette that
+     * shows four of twenty commands until you already know the name of the one
+     * you want is a palette you cannot learn anything from. Nothing is capped
+     * and nothing else shares the list.
+     */
+    if (mode === 'commands') return { matchedCommands: matching(commands), places: [], noteHits: [] }
+
+    /*
+     * `#` and `/` likewise say a collection is what's wanted, so notes and
+     * commands stand aside — otherwise typing `/Work` would search every note
+     * for the literal string and bury the folder it named.
+     */
+    const found = matchPlaces(q)
+    const places = found.places
+    if (mode === 'places') {
+      return { matchedCommands: [], places, noteHits: [], capped: cappedPaletteNote(q, found) }
+    }
+
+    /*
+     * Unprefixed, the commands stay a handful: this is the "find me a note"
+     * box, and twenty commands above the notes would be the browsing list
+     * turning up where nobody asked for it.
+     */
+    const matchedCommands = term ? matching(commands) : commands.slice(0, 4)
     const noteHits = term
       ? search(term, 30)
       : notes.value.slice(0, 12).map((entry) => ({ entry, score: 0, snippet: '' }))
-    return { matchedCommands: term ? matchedCommands : commands.slice(0, 4), noteHits }
-  }, [q, commands, notes.value])
+    return { matchedCommands, places, noteHits }
+  }, [q, commands, notes.value, folderTree.value, smartFolders.value, allTags.value])
 
-  const flat: Array<{ kind: 'cmd'; cmd: Cmd } | { kind: 'note'; path: string; title: string; sub: string }> =
-    [
-      ...results.matchedCommands.map((cmd) => ({ kind: 'cmd' as const, cmd })),
-      ...results.noteHits.map((h) => ({
-        kind: 'note' as const,
-        path: h.entry.path,
-        title: h.entry.title,
-        sub: h.snippet || h.entry.folder || relativeTime(h.entry.mtime),
-      })),
-    ]
+  const flat: Row[] = [
+    ...results.matchedCommands.map((cmd) => ({ kind: 'cmd' as const, cmd })),
+    /*
+     * Above the notes, because a collection is the more precise answer to the
+     * same word: with a folder called Work and thirty notes that say "work",
+     * the folder is nearly always what was meant, and there are never enough
+     * collections to push the notes off the screen.
+     */
+    ...results.places.map((place) => ({ kind: 'place' as const, place })),
+    ...results.noteHits.map((h) => ({
+      kind: 'note' as const,
+      path: h.entry.path,
+      title: h.entry.title,
+      sub: h.snippet || h.entry.folder || relativeTime(h.entry.mtime),
+    })),
+  ]
 
   if (!open) return null
 
@@ -313,9 +473,8 @@ export function CommandPalette() {
     if (!item) return
     paletteOpen.value = false
     if (item.kind === 'cmd') await item.cmd.run()
-    else {
-      openNote(item.path)
-    }
+    else if (item.kind === 'place') goToScope(item.place.target)
+    else openNote(item.path)
   }
 
   return (
@@ -324,18 +483,25 @@ export function CommandPalette() {
         <input
           ref={inputRef}
           value={q}
-          placeholder="Search notes or run a command…"
-          aria-label="Search notes or run a command"
+          /*
+           * The placeholder is where the prefixes are taught, since there is
+           * nowhere else they could be and they are no use unguessed.
+           */
+          placeholder="Search notes, #tags, /folders — or > for every command"
+          aria-label="Search notes, tags and folders, or type a chevron for every command"
           onInput={(e) => {
+            byKey.current = false
             setQ((e.target as HTMLInputElement).value)
             setSel(0)
           }}
           onKeyDown={(e) => {
             if (e.key === 'ArrowDown') {
               e.preventDefault()
+              byKey.current = true
               setSel((s) => Math.min(flat.length - 1, s + 1))
             } else if (e.key === 'ArrowUp') {
               e.preventDefault()
+              byKey.current = true
               setSel((s) => Math.max(0, s - 1))
             } else if (e.key === 'Enter') {
               e.preventDefault()
@@ -345,22 +511,47 @@ export function CommandPalette() {
             }
           }}
         />
-        <div class="palette-list">
+        <div
+          class="palette-list"
+          ref={listRef}
+          /*
+           * One listener for the whole list rather than a hover on every row:
+           * movement is the thing that selects, so the event that reports
+           * movement is the one to read. `mouseenter` fires when the list
+           * moves under a still pointer as readily as when the pointer moves
+           * over the list, and cannot tell you which happened.
+           */
+          onMouseMove={(e) => {
+            byKey.current = false
+            const row = (e.target as HTMLElement).closest?.('.palette-row')
+            const i = row ? Number((row as HTMLElement).dataset.i) : -1
+            if (i >= 0 && i !== sel) setSel(i)
+          }}
+        >
           {flat.length === 0 && (
             <div class="empty" style={{ padding: '24px' }}>
-              Nothing matches. Press Enter on “New note” to start one.
+              {emptyPaletteMessage(q)}
             </div>
           )}
           {flat.map((item, i) => (
             <button
-              key={item.kind === 'cmd' ? item.cmd.id : item.path}
+              key={rowKey(item)}
               class="palette-row"
               data-sel={i === sel ? '1' : '0'}
-              onMouseEnter={() => setSel(i)}
+              data-i={i}
+              /* Takes its own index, so a click is never about what is selected. */
               onClick={() => void choose(i)}
             >
-              <span style={{ opacity: 0.55, width: 16, flex: '0 0 auto' }}>
-                {item.kind === 'cmd' ? '⌘' : '›'}
+              <span
+                style={{
+                  // An emoji dimmed to 55% reads as a rendering fault rather
+                  // than as a quieter glyph, so only the typographic ones dim.
+                  opacity: item.kind === 'place' && item.place.kind === 'smart' ? 1 : 0.55,
+                  width: 16,
+                  flex: '0 0 auto',
+                }}
+              >
+                {rowGlyph(item)}
               </span>
               <span
                 style={{
@@ -370,11 +561,17 @@ export function CommandPalette() {
                   minWidth: 0,
                 }}
               >
-                {item.kind === 'cmd' ? item.cmd.label : item.title}
+                {rowLabel(item)}
               </span>
-              <small>{item.kind === 'cmd' ? (item.cmd.hint ?? '') : item.sub}</small>
+              <small>{rowSub(item)}</small>
             </button>
           ))}
+          {/*
+           * Below the rows and outside `flat`, so the arrows step past it and
+           * Enter can never land on it: it is something the list is saying
+           * about itself, not another thing to open.
+           */}
+          {results.capped && <div class="palette-note">{results.capped}</div>}
         </div>
       </div>
     </div>

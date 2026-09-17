@@ -41,6 +41,7 @@ import {
   BulletWidget,
   CalloutFoldWidget,
   CalloutWidget,
+  calloutBody,
   CheckboxWidget,
   CopyCodeWidget,
   DueChipWidget,
@@ -970,21 +971,22 @@ function foldedCallouts(state: EditorState): Array<{ from: number; to: number; l
     const line = state.doc.line(n)
     if (!line.text.includes('[!')) continue
     if (parseCallout(line.text)?.fold !== '-') continue
-    let end = n
-    while (end + 1 <= total && /^[ \t]*>/.test(state.doc.line(end + 1).text)) end++
     // Nothing underneath is nothing to fold: a one-line callout keeps its
     // chevron off and its `-` does nothing until it has a body.
-    if (end === n) continue
-    n = end
-    const to = state.doc.line(end).to
+    const body = calloutBody(state, line.to)
+    if (!body) continue
+    n = state.doc.lineAt(body.to).number
     /*
-     * Never fold a selection out of sight. The caret cannot normally get in
-     * here — the range is atomic — but Select All reaches everywhere, and a
-     * fold that swallowed the caret would be text you could type into and not
-     * see.
+     * Never fold a selection out of sight. A fold that swallowed the caret
+     * would be text you could type into and not see, and Select All reaches
+     * in here even though the range is otherwise atomic.
+     *
+     * The chevron keeps its side of this bargain by moving a caret out of the
+     * body before it writes the marker, so clicking it from inside a callout
+     * folds rather than silently doing nothing. See `calloutBody` in widgets.
      */
-    if (touched(state, line.to + 1, to)) continue
-    out.push({ from: line.to, to, lines: end - line.number })
+    if (touched(state, body.from + 1, body.to)) continue
+    out.push(body)
   }
   return out
 }

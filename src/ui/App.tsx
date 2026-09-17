@@ -44,6 +44,7 @@ import {
   activePath,
   closeMobileEditor,
   editorMaximized,
+  goToScope,
   historyOpen,
   lightboxPath,
   mobileEditorOpen,
@@ -55,7 +56,6 @@ import {
   paletteOpen,
   propertiesOpen,
   scope,
-  setScope,
   settingsOpen,
   visibleNotes,
 } from './state'
@@ -227,11 +227,7 @@ export function App() {
       openDueMenu({ clientX: x, clientY: y }, current, (date) => applyDue(pos, date))
     }
     const onTag = (e: Event) => {
-      setScope({ kind: 'tag', tag: (e as CustomEvent<{ tag: string }>).detail.tag })
-      if (layoutMode.value === 'compact') {
-        mobileTab.value = 'notes'
-        closeMobileEditor()
-      }
+      goToScope({ kind: 'tag', tag: (e as CustomEvent<{ tag: string }>).detail.tag })
     }
     // Clicking a `$(property)` in the body: the same form the note's date
     // opens, asked for from the value that needs changing.
