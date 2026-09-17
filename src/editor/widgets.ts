@@ -106,16 +106,23 @@ export function calloutBody(
  *
  * After the callout by preference — you folded it, so the next thing you want
  * is what comes next. Before it when the callout ends the note, which is a
- * common enough place for one to sit. The header line is the last resort and
- * not a good one: a caret there hands back the raw `[!warning]` and takes the
- * chevron with it, so the fold would dissolve the control that asked for it.
- * That only happens in a document that is nothing but the callout.
+ * common enough place for one to sit.
+ *
+ * `undefined` when the note is nothing *but* the callout, because then there
+ * is no such position: every line is either the body, which is what is being
+ * hidden, or the header, where a caret hands back the raw `[!warning]` and
+ * takes the chevron with it — folding would dissolve the control that asked
+ * for it. The caller stops editing the note instead. See the chevron.
  */
-export function caretOutsideCallout(state: EditorState, header: Line, bodyTo: number): number {
+export function caretOutsideCallout(
+  state: EditorState,
+  header: Line,
+  bodyTo: number,
+): number | undefined {
   const last = state.doc.lineAt(bodyTo)
   if (last.number < state.doc.lines) return state.doc.line(last.number + 1).from
   if (header.number > 1) return state.doc.line(header.number - 1).to
-  return header.to
+  return undefined
 }
 
 /**
@@ -263,7 +270,23 @@ export class CalloutWidget extends WidgetType {
            * back inside the fold by a single character.
            */
           const at = caretOutsideCallout(view.state, line, body.to)
-          selection = EditorSelection.single(edit.mapPos(at, 1))
+          if (at === undefined) {
+            /*
+             * A note that is nothing but this callout has nowhere outside it
+             * to stand. Rather than put the caret on the header — the one
+             * place it must not go — the note stops being edited: an unfocused
+             * editor reveals nothing, so the body folds and the header keeps
+             * its icon and its chevron, which is the whole of what the click
+             * asked for.
+             *
+             * Before the dispatch, so the change arrives at a state that has
+             * already let go, rather than rendering once with the fold refused
+             * and again without it.
+             */
+            view.contentDOM.blur()
+          } else {
+            selection = EditorSelection.single(edit.mapPos(at, 1))
+          }
         }
       }
 

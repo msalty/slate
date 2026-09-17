@@ -7558,6 +7558,109 @@ try {
     await page.waitForTimeout(200)
   }
 
+  /* ---- a note that is nothing but a callout -----------------------------
+   *
+   * The edge of the rule above. Moving the caret out of the body works because
+   * there is an "out" to move it to; here every line is either the body being
+   * hidden or the header, where a caret hands back the raw marker and takes
+   * the chevron with it. So the note stops being edited instead — an unfocused
+   * editor reveals nothing, which is the same reason a note you are not typing
+   * in renders whole.
+   */
+  {
+    const CALLOUT_ONLY =
+      '> [!NOTE] My whole note\n> This is my entire note.\n> There is nothing outside this callout.'
+    await page.click('[title^="New note"]')
+    await page.waitForSelector('.cm-editor')
+    await page.waitForTimeout(400)
+    const title = page.locator('.editor-title-input')
+    await title.fill('Only a callout')
+    await title.press('Enter')
+    await page.waitForTimeout(250)
+    const ed = page.locator('.cm-content')
+    await ed.click()
+    /*
+     * Cleared first, not assumed empty. By this point in the run the vault has
+     * templates in it, and a new note may arrive with one already applied —
+     * which would leave a second callout in the note and quietly test the
+     * ordinary case again, from a chevron that does have somewhere to put the
+     * caret. The whole point here is a note with nothing else in it.
+     */
+    await ed.press('Control+a')
+    /*
+     * Pasted, not typed. Rich text applies markdown as you write it, so typing
+     * "> " at the head of a line makes the line a quote and takes the marker
+     * out of the document — which left a note whose first line was
+     * " [!NOTE] ..." and no callout anywhere in it. A paste goes in as the
+     * characters it is, in every mode.
+     */
+    await page.evaluate((text) => navigator.clipboard.writeText(text), CALLOUT_ONLY)
+    await ed.press('Control+v')
+    await page.waitForTimeout(700)
+
+    /*
+     * Whatever mode the run has drifted into by now, this needs one that
+     * decorates: source mode draws no callout at all, and a callout that is
+     * not drawn has no chevron to click. The three cycle, so two presses is
+     * the worst case — the same move the properties section makes.
+     */
+    for (let i = 0; i < 3 && (await page.locator('.cm-callout-mark').count()) === 0; i++) {
+      await page.keyboard.press('Control+Shift+m')
+      await page.waitForTimeout(400)
+    }
+
+    check(
+      'the note really is nothing but the callout',
+      (await page.locator('.cm-line').count()) === 3 &&
+        (await page.locator('.cm-line.cm-callout').count()) === 3,
+      `${await page.locator('.cm-line').count()} lines, ${await page.locator('.cm-line.cm-callout').count()} of them callout`,
+    )
+
+    // Caret into the body, which is the whole point of the case.
+    await page.locator('.cm-line.cm-callout').nth(1).click()
+    await page.waitForTimeout(300)
+    const linesBefore = await page.locator('.cm-line.cm-callout').count()
+    check(
+      'a note made only of a callout is set up to fold',
+      linesBefore === 3 && (await page.locator('.cm-callout-fold').count()) === 1,
+      `${linesBefore} callout lines, ${await page.locator('.cm-callout-fold').count()} chevron`,
+    )
+
+    await page.locator('.cm-callout-fold').first().click()
+    await page.waitForTimeout(450)
+    check(
+      'it collapses even with nowhere outside to put the caret',
+      (await page.locator('.cm-callout-folded').count()) === 1 &&
+        (await page.locator('.cm-line.cm-callout').count()) < linesBefore,
+      `${linesBefore} → ${await page.locator('.cm-line.cm-callout').count()} lines, ${await page.locator('.cm-callout-folded').count()} placeholder`,
+    )
+    check(
+      'by letting go of the note rather than putting the caret on the header',
+      !(await page.evaluate(() => document.activeElement?.className ?? '')).includes('cm-content'),
+      await page.evaluate(() => document.activeElement?.className ?? 'nothing focused'),
+    )
+    check(
+      'so the marker is still an icon and the chevron is still there',
+      (await page.locator('.cm-callout-mark > svg').count()) === 1 &&
+        (await page.locator('.cm-callout-fold[data-folded="1"]').count()) === 1 &&
+        !(await page.locator('.cm-content').innerText()).includes('[!NOTE]'),
+    )
+
+    // …and open again from that same chevron, which is the other half of it.
+    await page.locator('.cm-callout-fold[data-folded="1"]').first().click()
+    await page.waitForTimeout(450)
+    check(
+      'and the same chevron opens it again',
+      (await page.locator('.cm-callout-folded').count()) === 0 &&
+        (await page.locator('.cm-line.cm-callout').count()) === linesBefore,
+      `${await page.locator('.cm-line.cm-callout').count()} lines back`,
+    )
+    check(
+      'with the fold character taken back out of the note',
+      /\[!NOTE\] /.test(await noteAfterEdit('There is nothing outside this callout', '[!NOTE] ')),
+    )
+  }
+
   /* ---- responsive ------------------------------------------------------ */
   await page.setViewportSize({ width: 420, height: 860 })
   await page.evaluate(() => document.documentElement.removeAttribute('data-theme'))

@@ -95,7 +95,8 @@ describe('where the caret is put when the fold would swallow it', () => {
     const v = open(NOTE, 0)
     const header = headerLine(v)
     const body = calloutBody(v.state, header.to)!
-    const at = caretOutsideCallout(v.state, header, body.to)
+    const at = caretOutsideCallout(v.state, header, body.to)!
+    expect(at).toBeDefined()
     expect(v.state.doc.lineAt(at).number).toBe(header.number + 3)
     expect(at).toBe(v.state.doc.lineAt(at).from)
   })
@@ -105,20 +106,26 @@ describe('where the caret is put when the fold would swallow it', () => {
     const v = open(doc, 0)
     const header = headerLine(v)
     const body = calloutBody(v.state, header.to)!
-    const at = caretOutsideCallout(v.state, header, body.to)
+    const at = caretOutsideCallout(v.state, header, body.to)!
     /*
      * Not the header line, which would hand back the raw marker and take the
      * chevron with it — folding would dissolve the control that did it.
      */
+    expect(at).toBeDefined()
     expect(v.state.doc.lineAt(at).number).toBe(header.number - 1)
   })
 
-  it('has nowhere but the header in a note that is only a callout', () => {
+  it('has nowhere at all in a note that is only a callout', () => {
     const doc = '> [!WARNING] Only this\n> And its body.'
     const v = open(doc, 0)
     const header = headerLine(v)
     const body = calloutBody(v.state, header.to)!
-    expect(caretOutsideCallout(v.state, header, body.to)).toBe(header.to)
+    /*
+     * Not the header, which is the one place it must not go. There is no
+     * answer to the question, and saying so is what lets the chevron stop
+     * editing the note instead of inventing one.
+     */
+    expect(caretOutsideCallout(v.state, header, body.to)).toBeUndefined()
   })
 })
 
@@ -180,6 +187,25 @@ describe('clicking the chevron', () => {
     expect(headerLine(v).text).not.toContain('[!WARNING]-')
     expect(v.state.selection.main.from).toBe(body.from + 3)
     expect(v.state.selection.main.to).toBe(body.to - 3)
+  })
+
+  it('lets go of a note that is nothing but the callout', () => {
+    const doc = '> [!NOTE] My whole note\n> There is nothing outside this callout.'
+    const probe = v0(doc)
+    const body = calloutBody(probe.state, headerLine(probe).to)!
+    const v = open(doc, body.from + 5)
+
+    expect(v.hasFocus).toBe(true)
+    chevron(v)!.click()
+
+    expect(headerLine(v).text).toContain('[!NOTE]-')
+    /*
+     * The caret is left where it was, because there is nowhere to put it —
+     * what changes is that the editor is no longer the thing being typed into,
+     * and an unfocused editor reveals nothing.
+     */
+    expect(v.hasFocus).toBe(false)
+    expect(v.dom.querySelector('.cm-callout-fold')).not.toBeNull()
   })
 
   it('unfolds from anywhere, since nothing is being hidden', () => {
