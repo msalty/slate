@@ -168,11 +168,34 @@ describe('the prefixes', () => {
     expect(labels(m.places.matchPlaces('/')).sort()).toEqual(['Homework', 'Q3', 'Work'])
   })
 
-  it('says a prefixed query wants places and nothing else', async () => {
+  it('says what shape of answer each prefix is asking for', async () => {
     const m = await fresh()
-    expect(m.places.parsePlaceQuery('#work').only).toBe(true)
-    expect(m.places.parsePlaceQuery('/Work').only).toBe(true)
-    expect(m.places.parsePlaceQuery('work').only).toBe(false)
+    const mode = (q: string) => m.places.parsePaletteQuery(q).mode
+    expect(mode('#work')).toBe('places')
+    expect(mode('/Work')).toBe('places')
+    expect(mode('>sync')).toBe('commands')
+    expect(mode('work')).toBe('everything')
+    // The prefix comes off, so the rest is matched on its own.
+    expect(m.places.parsePaletteQuery('  > sync  ').term).toBe('sync')
+  })
+
+  it('offers no collection at all for a command query', async () => {
+    const m = await fresh()
+    await seed(m)
+    // Not even the Work folder, which "work" on its own would certainly find.
+    expect(m.places.matchPlaces('>work')).toEqual([])
+    expect(m.places.matchPlaces('>')).toEqual([])
+  })
+})
+
+describe('what it says when nothing matched', () => {
+  it('answers in the terms the query was asked in', async () => {
+    const m = await fresh()
+    expect(m.places.emptyPaletteMessage('#nope')).toBe('No tags match.')
+    expect(m.places.emptyPaletteMessage('/nope')).toBe('No folders match.')
+    expect(m.places.emptyPaletteMessage('>nope')).toBe('No commands match.')
+    // Unprefixed, a new note really is the useful next move.
+    expect(m.places.emptyPaletteMessage('nope')).toMatch(/New note/)
   })
 })
 

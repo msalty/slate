@@ -1,21 +1,27 @@
 /**
- * The collections ⌘K can jump to: folders, Tag Folders and tags.
+ * What ⌘K is being asked for, and the collections it can jump to.
  *
- * The sidebar used to be the only door to any of them, which is what forced it
- * to be a complete index of the vault — every folder and every tag on screen at
- * all times, in case one of them was the one you wanted. A palette that reaches
- * them is what lets the sidebar go back to being a shortlist of the places you
- * actually use.
+ * The sidebar used to be the only door to a folder, a Tag Folder or a tag,
+ * which is what forced it to be a complete index of the vault — every folder
+ * and every tag on screen at all times, in case one of them was the one you
+ * wanted. A palette that reaches them is what lets the sidebar go back to
+ * being a shortlist of the places you actually use.
  *
- * Two prefixes narrow the search, because "work" is usually a folder *and* a
- * tag *and* a word inside thirty notes:
+ * A leading character says which kind of thing is wanted, because "work" is
+ * usually a folder *and* a tag *and* a word inside thirty notes:
  *
+ *   work    all of it — collections first, then the notes that mention it
  *   #work   tags only
  *   /Work   folders only
- *   work    all three, with notes underneath
+ *   >sync   commands only
  *
- * A bare `#` or `/` lists everything of that kind, busiest first — the closest
- * thing the app has to a tag browser, and it falls out of the same code.
+ * A bare `#`, `/` or `>` lists everything of that kind: tags and folders
+ * busiest first — the closest thing the app has to a tag browser — and the
+ * commands in the order they are declared, which is the only way to read the
+ * whole list. All three fall out of the same code.
+ *
+ * `>` for commands is the convention every other palette uses, so it is the
+ * one people arrive already knowing.
  */
 
 import { allTags } from '../core/vault'
@@ -54,19 +60,44 @@ const PLAIN_LIMIT = 6
  */
 const PREFIXED_LIMIT = 40
 
-export interface PlaceQuery {
+/**
+ * What the box is asking for: everything at once, one kind of collection, or
+ * the commands.
+ */
+export type PaletteMode = 'everything' | 'places' | 'commands'
+
+export interface PaletteQuery {
+  mode: PaletteMode
+  /** Which kinds of collection to look through; empty in command mode. */
   kinds: PlaceKind[]
-  /** What was typed, with any kind prefix taken off. */
+  /** What was typed, with any prefix taken off. */
   term: string
-  /** True when a prefix said "places only", so notes step aside for it. */
-  only: boolean
 }
 
-export function parsePlaceQuery(raw: string): PlaceQuery {
+/**
+ * One parser for every prefix, so nothing can disagree about what a leading
+ * character means. Anything reading the box — the results, the row list, the
+ * message shown when nothing matches — comes through here.
+ */
+export function parsePaletteQuery(raw: string): PaletteQuery {
   const q = raw.trim()
-  if (q.startsWith('#')) return { kinds: ['tag'], term: q.slice(1).trim(), only: true }
-  if (q.startsWith('/')) return { kinds: ['folder'], term: q.slice(1).trim(), only: true }
-  return { kinds: ['folder', 'smart', 'tag'], term: q, only: false }
+  if (q.startsWith('#')) return { mode: 'places', kinds: ['tag'], term: q.slice(1).trim() }
+  if (q.startsWith('/')) return { mode: 'places', kinds: ['folder'], term: q.slice(1).trim() }
+  if (q.startsWith('>')) return { mode: 'commands', kinds: [], term: q.slice(1).trim() }
+  return { mode: 'everything', kinds: ['folder', 'smart', 'tag'], term: q }
+}
+
+/** What to say when a query of this shape matched nothing at all. */
+export function emptyPaletteMessage(raw: string): string {
+  const { mode, kinds } = parsePaletteQuery(raw)
+  /*
+   * A prefixed query asked for one kind of thing, and telling somebody who
+   * typed `#budge` to press Enter on "New note" answers a question they did
+   * not ask — that row is not even in the list to press Enter on.
+   */
+  if (mode === 'commands') return 'No commands match.'
+  if (mode === 'places') return kinds[0] === 'tag' ? 'No tags match.' : 'No folders match.'
+  return 'Nothing matches. Press Enter on “New note” to start one.'
 }
 
 /**
@@ -114,13 +145,15 @@ function countOf(n: number, noun: 'note' | 'task'): string {
  * the wrong order to *guess* one in.
  */
 export function matchPlaces(raw: string): Place[] {
-  const { kinds, term, only } = parsePlaceQuery(raw)
+  const { mode, kinds, term } = parsePaletteQuery(raw)
+  // `>` is asking for the commands; no collection is an answer to it.
+  if (mode === 'commands') return []
   /*
-   * Nothing typed and no prefix: the palette opens on four commands and a dozen
-   * recent notes, and dropping the whole vault's folders in underneath them
-   * would be the sidebar's own problem moved into a dialog.
+   * Nothing typed and no prefix: the palette opens on a few commands and a
+   * dozen recent notes, and dropping the whole vault's folders in underneath
+   * them would be the sidebar's own problem moved into a dialog.
    */
-  if (!term && !only) return []
+  if (!term && mode === 'everything') return []
 
   const terms = searchTerms(term)
   const scored: Array<{ place: Place; rank: number; size: number }> = []
@@ -198,5 +231,5 @@ export function matchPlaces(raw: string): Place[] {
       b.size - a.size ||
       a.place.label.localeCompare(b.place.label, undefined, { numeric: true }),
   )
-  return scored.slice(0, only ? PREFIXED_LIMIT : PLAIN_LIMIT).map((s) => s.place)
+  return scored.slice(0, mode === 'places' ? PREFIXED_LIMIT : PLAIN_LIMIT).map((s) => s.place)
 }

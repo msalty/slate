@@ -3145,6 +3145,72 @@ try {
       plain.map((r) => `${r.glyph}${r.label}`).join(' '),
     )
     await page.screenshot({ path: join(SHOTS, '33-palette-places.png') })
+
+    /* ---- and > is how you read the command list at all -------------------
+     *
+     * Unprefixed, the palette leads with four commands, which is right for a
+     * box you came to to find a note and useless for finding out what the app
+     * can do. `>` is the whole list — the one place the commands and the keys
+     * they answer to are written down together.
+     */
+    const all = await paletteRows('>')
+    check(
+      '> lists every command and nothing else',
+      all.length > 12 && all.every((r) => r.glyph === '⌘'),
+      `${all.length} rows, kinds: ${[...new Set(all.map((r) => r.glyph))].join('')}`,
+    )
+    check(
+      'and the list carries the shortcuts, so it is where they are learned',
+      all.filter((r) => /⌘/.test(r.sub)).length >= 6,
+      all.filter((r) => r.sub).map((r) => `${r.label} ${r.sub}`).join(' · '),
+    )
+    check(
+      'both panel toggles are in it, the sidebar included',
+      all.some((r) => /sidebar/i.test(r.label)) && all.some((r) => /calendar/i.test(r.label)),
+      all.filter((r) => /sidebar|calendar/i.test(r.label)).map((r) => `${r.label} (${r.sub})`).join(', '),
+    )
+    await page.screenshot({ path: join(SHOTS, '34-palette-commands.png') })
+
+    const narrowed = await paletteRows('>sync')
+    check(
+      '> narrows to the commands that match, keeping their keys',
+      narrowed.length > 0 && narrowed.every((r) => r.glyph === '⌘' && /sync/i.test(r.label)),
+      narrowed.map((r) => `${r.label} ${r.sub}`).join(', '),
+    )
+    await page.locator('.palette input').fill('>zzzznope')
+    await page.waitForTimeout(350)
+    check(
+      'and a command miss says so in its own terms',
+      /No commands match/.test((await page.locator('.palette-list').innerText()).trim()),
+      (await page.locator('.palette-list').innerText()).trim(),
+    )
+
+    // --- the ⋯ menu's "All commands…" has to actually mean all of them ---
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(250)
+    await page.click('.list-pane .pane-head [aria-label="List actions"]')
+    await page.waitForTimeout(300)
+    await page.locator('.menu-item:has-text("All commands")').click()
+    await page.waitForSelector('.palette input', { timeout: 3000 })
+    await page.waitForTimeout(400)
+    check(
+      '“All commands…” opens the palette already showing all of them',
+      (await page.locator('.palette input').inputValue()) === '>' &&
+        (await page.locator('.palette-row').count()) > 12,
+      `box "${await page.locator('.palette input').inputValue()}", ${await page.locator('.palette-row').count()} rows`,
+    )
+    // The seed is consumed, not remembered: the next ⌘K is a blank box again.
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(250)
+    await page.keyboard.press('Control+k')
+    await page.waitForSelector('.palette input', { timeout: 3000 })
+    await page.waitForTimeout(400)
+    check(
+      'and the next ⌘K is a blank box, not the one it just seeded',
+      (await page.locator('.palette input').inputValue()) === '',
+      `box "${await page.locator('.palette input').inputValue()}"`,
+    )
+
     await page.keyboard.press('Escape')
     await page.waitForTimeout(250)
     await page.locator('.side-row:has-text("All Notes")').first().click()

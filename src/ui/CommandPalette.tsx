@@ -23,7 +23,7 @@ import {
 } from '../core/foldersync'
 import { activeVaultId, switchToVault, vaults } from '../core/vaults'
 import { settings, update } from '../core/settings'
-import { layoutMode } from './layout'
+import { layoutMode, railState, sidebarState, toggleRail, toggleSidebar } from './layout'
 import { canPopOut, openPopout } from './popout'
 import {
   activePath,
@@ -35,11 +35,12 @@ import {
   openDailyNote,
   openNote,
   paletteOpen,
+  paletteSeed,
   scope,
   scopeLabel,
   settingsOpen,
 } from './state'
-import { matchPlaces, parsePlaceQuery, type Place } from './places'
+import { emptyPaletteMessage, matchPlaces, parsePaletteQuery, type Place } from './places'
 import { folderTree, smartFolders } from '../core/folders'
 import { relativeTime, startOfDay } from '../core/util'
 import { newNoteInFolder } from './EditorPane'
@@ -101,11 +102,17 @@ export function CommandPalette() {
   const open = paletteOpen.value
 
   useEffect(() => {
-    if (open) {
-      setQ('')
-      setSel(0)
-      requestAnimationFrame(() => inputRef.current?.focus())
+    // Also cleared on the way out, so a seed set while the palette happened to
+    // be open cannot survive to prefill the *next* ⌘K with somebody else's `>`.
+    if (!open) {
+      paletteSeed.value = ''
+      return
     }
+    // Peeked rather than read, so consuming the seed here cannot re-run this.
+    setQ(paletteSeed.peek())
+    paletteSeed.value = ''
+    setSel(0)
+    requestAnimationFrame(() => inputRef.current?.focus())
   }, [open])
 
   // The day the calendar is filtered to, if it is filtered to one at all.
@@ -256,11 +263,26 @@ export function CommandPalette() {
         hint: '⌘⇧M',
         run: () => update({ editorMode: nextEditorMode(settings.value.editorMode) }),
       },
+      /*
+       * Both panels go through the same toggles their shortcuts use, and both
+       * labels are read off what is actually on screen rather than off the
+       * setting. Below the width where a panel can sit inline it is a drawer,
+       * and the setting behind it is not what decides whether you can see it —
+       * so "Hide calendar" used to flip a preference that changed nothing on a
+       * 1200px window, while ⌘⇧R, claimed by this very row as its shortcut,
+       * opened the drawer properly.
+       */
+      {
+        id: 'sidebar',
+        label: sidebarState.value === 'hidden' ? 'Show sidebar' : 'Hide sidebar',
+        hint: '⌘\\',
+        run: () => toggleSidebar(),
+      },
       {
         id: 'rail',
-        label: settings.value.showRightRail ? 'Hide calendar' : 'Show calendar',
+        label: railState.value === 'hidden' ? 'Show calendar' : 'Hide calendar',
         hint: '⌘⇧R',
-        run: () => update({ showRightRail: !settings.value.showRightRail }),
+        run: () => toggleRail(),
       },
       /*
        * Both of these are desktop ideas: a phone's editor is already the whole
@@ -327,6 +349,10 @@ export function CommandPalette() {
       activePath.value,
       editorMaximized.value,
       layoutMode.value,
+      // Both panel rows are labelled from what is on screen, so they have to
+      // be rebuilt when that changes and not only when the settings do.
+      sidebarState.value,
+      railState.value,
       folderConnected.value,
       folderNeedsPermission.value,
       folderName.value,
@@ -336,18 +362,32 @@ export function CommandPalette() {
   )
 
   const results = useMemo((): { matchedCommands: Cmd[]; places: Place[]; noteHits: SearchHit[] } => {
-    const term = q.trim()
-    const places = matchPlaces(q)
-    /*
-     * `#` and `/` are a statement that a collection is what's wanted, so notes
-     * and commands stand aside for them — otherwise typing `/Work` would search
-     * every note for the literal string and bury the folder it named.
-     */
-    if (parsePlaceQuery(q).only) return { matchedCommands: [], places, noteHits: [] }
+    const { mode, term } = parsePaletteQuery(q)
+    const matching = (list: Cmd[]) =>
+      term ? list.filter((c) => c.label.toLowerCase().includes(term.toLowerCase())) : list
 
-    const matchedCommands = term
-      ? commands.filter((c) => c.label.toLowerCase().includes(term.toLowerCase()))
-      : commands.slice(0, 4)
+    /*
+     * `>` is the whole list, which is the only way to read it: a palette that
+     * shows four of twenty commands until you already know the name of the one
+     * you want is a palette you cannot learn anything from. Nothing is capped
+     * and nothing else shares the list.
+     */
+    if (mode === 'commands') return { matchedCommands: matching(commands), places: [], noteHits: [] }
+
+    /*
+     * `#` and `/` likewise say a collection is what's wanted, so notes and
+     * commands stand aside — otherwise typing `/Work` would search every note
+     * for the literal string and bury the folder it named.
+     */
+    const places = matchPlaces(q)
+    if (mode === 'places') return { matchedCommands: [], places, noteHits: [] }
+
+    /*
+     * Unprefixed, the commands stay a handful: this is the "find me a note"
+     * box, and twenty commands above the notes would be the browsing list
+     * turning up where nobody asked for it.
+     */
+    const matchedCommands = term ? matching(commands) : commands.slice(0, 4)
     const noteHits = term
       ? search(term, 30)
       : notes.value.slice(0, 12).map((entry) => ({ entry, score: 0, snippet: '' }))
@@ -389,11 +429,11 @@ export function CommandPalette() {
           ref={inputRef}
           value={q}
           /*
-           * The placeholder is where the two prefixes are taught, since there
-           * is nowhere else they could be and they are no use unguessed.
+           * The placeholder is where the prefixes are taught, since there is
+           * nowhere else they could be and they are no use unguessed.
            */
-          placeholder="Search notes, #tags, /folders — or run a command…"
-          aria-label="Search notes, tags and folders, or run a command"
+          placeholder="Search notes, #tags, /folders — or > for every command"
+          aria-label="Search notes, tags and folders, or type a chevron for every command"
           onInput={(e) => {
             setQ((e.target as HTMLInputElement).value)
             setSel(0)
@@ -416,15 +456,7 @@ export function CommandPalette() {
         <div class="palette-list">
           {flat.length === 0 && (
             <div class="empty" style={{ padding: '24px' }}>
-              {/*
-               * A `#` or `/` query has asked for one kind of thing, and telling
-               * somebody who typed `#budge` to press Enter on "New note" would
-               * be answering a question they did not ask — the row is not even
-               * in the list to press Enter on.
-               */}
-              {parsePlaceQuery(q).only
-                ? `No ${parsePlaceQuery(q).kinds[0] === 'tag' ? 'tags' : 'folders'} match.`
-                : 'Nothing matches. Press Enter on “New note” to start one.'}
+              {emptyPaletteMessage(q)}
             </div>
           )}
           {flat.map((item, i) => (

@@ -134,6 +134,23 @@ export function nextEditorMode(id: EditorModeId): EditorModeId {
 export const orphansOnly = signal(false)
 
 export const paletteOpen = signal(false)
+
+/**
+ * What the palette should already have in its box when it opens.
+ *
+ * Read once as it opens and cleared there, so it is a request rather than a
+ * second copy of the query: ⌘K opens on an empty box as it always has, and
+ * only the callers that mean something specific — *All commands…*, which opens
+ * it on `>` — say so.
+ */
+export const paletteSeed = signal('')
+
+/** Open the palette, optionally with a prefix already typed into it. */
+export function openPalette(seed = '') {
+  paletteSeed.value = seed
+  paletteOpen.value = true
+}
+
 export const settingsOpen = signal(false)
 /**
  * Which tab Settings should open on, for the places that are asking about one
