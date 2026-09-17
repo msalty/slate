@@ -107,12 +107,17 @@ export function CommandPalette() {
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   /*
-   * Whether the selection last moved by key rather than by pointer.
+   * Whether the keyboard is currently driving the selection.
    *
-   * Only the keyboard scrolls the list. Hovering a row that is half off the
-   * bottom would otherwise scroll it into view, which moves the rows under the
-   * cursor, which fires another hover — the list twitching away from the mouse
-   * that is trying to reach it.
+   * While it is, the pointer is ignored entirely — and it has to be, because
+   * an arrow key scrolls the list and scrolling slides a different row under a
+   * pointer that never moved. The browser calls that `mouseenter` and reports
+   * it exactly like a deliberate hover, so a palette that trusts hover has its
+   * selection yanked to wherever the mouse happened to be left sitting: you
+   * press ↓ three times, and Enter opens something else entirely.
+   *
+   * Only a real `mousemove` hands control back. A pointer that has not moved
+   * has not expressed an opinion, whatever the event says.
    */
   const byKey = useRef(false)
   const open = paletteOpen.value
@@ -506,7 +511,23 @@ export function CommandPalette() {
             }
           }}
         />
-        <div class="palette-list" ref={listRef}>
+        <div
+          class="palette-list"
+          ref={listRef}
+          /*
+           * One listener for the whole list rather than a hover on every row:
+           * movement is the thing that selects, so the event that reports
+           * movement is the one to read. `mouseenter` fires when the list
+           * moves under a still pointer as readily as when the pointer moves
+           * over the list, and cannot tell you which happened.
+           */
+          onMouseMove={(e) => {
+            byKey.current = false
+            const row = (e.target as HTMLElement).closest?.('.palette-row')
+            const i = row ? Number((row as HTMLElement).dataset.i) : -1
+            if (i >= 0 && i !== sel) setSel(i)
+          }}
+        >
           {flat.length === 0 && (
             <div class="empty" style={{ padding: '24px' }}>
               {emptyPaletteMessage(q)}
@@ -517,10 +538,8 @@ export function CommandPalette() {
               key={rowKey(item)}
               class="palette-row"
               data-sel={i === sel ? '1' : '0'}
-              onMouseEnter={() => {
-                byKey.current = false
-                setSel(i)
-              }}
+              data-i={i}
+              /* Takes its own index, so a click is never about what is selected. */
               onClick={() => void choose(i)}
             >
               <span

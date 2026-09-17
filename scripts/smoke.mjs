@@ -7416,6 +7416,32 @@ try {
     await page.waitForTimeout(300)
     check('and ↑ back to the top follows it home', (await selectionVisible()) === true)
 
+    /* ---- a still pointer does not get a vote --------------------------
+     *
+     * The arrow keys scroll, and scrolling slides a different row under a
+     * mouse that never moved. The browser announces that as `mouseenter`,
+     * indistinguishable from a deliberate hover — so a palette that trusts
+     * hover has its selection dragged to wherever the mouse was left lying,
+     * and Enter opens something the user never arrowed to. The pointer is
+     * parked on purpose here and never moves again.
+     */
+    const selectedIndex = () =>
+      page.$eval('.palette-row[data-sel="1"]', (el) => Number(el.dataset.i)).catch(() => -1)
+
+    const third = await page.locator('.palette-row').nth(3).boundingBox()
+    await page.mouse.move(third.x + third.width / 2, third.y + third.height / 2)
+    await page.waitForTimeout(250)
+    check('moving the mouse onto a row still selects it', (await selectedIndex()) === 3, `row ${await selectedIndex()}`)
+
+    for (let i = 0; i < 10; i++) await page.keyboard.press('ArrowDown')
+    await page.waitForTimeout(300)
+    check(
+      'and the arrows then keep the selection, whatever slides under the still mouse',
+      (await selectedIndex()) === 13,
+      `expected row 13, selection is on row ${await selectedIndex()}`,
+    )
+    check('which is also the row you can see', (await selectionVisible()) === true)
+
     /* ---- a capped list says that it is capped -------------------------- */
     // Forty-five new tags on one note, which is far cheaper than forty-five
     // notes and enough to push a bare `#` past the forty it will show.
