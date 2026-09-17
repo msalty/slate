@@ -116,6 +116,17 @@ export const orphansOnly = signal(false)
 
 export const paletteOpen = signal(false)
 export const settingsOpen = signal(false)
+/**
+ * Which tab Settings should open on, for the places that are asking about one
+ * thing in particular — "Manage vaults…" wants the Vaults tab, not whichever
+ * tab was last looked at. Cleared once the dialog has honoured it.
+ */
+export const settingsTab = signal<string | undefined>(undefined)
+
+export function openSettings(tab?: string): void {
+  settingsTab.value = tab
+  settingsOpen.value = true
+}
 export const historyOpen = signal(false)
 export const lightboxPath = signal<string | undefined>(undefined)
 export interface Toast {

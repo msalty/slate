@@ -36,6 +36,7 @@ import { focusedCell } from '../editor/table'
 import { rebaseBuffer } from '../core/rebase'
 import { settings, update } from '../core/settings'
 import { syncSoon } from '../core/sync'
+import { onBeforeVaultSwitch } from '../core/vaults'
 import {
   EDITOR_MODES,
   activePath,
@@ -167,14 +168,19 @@ export function EditorPane() {
     }, 400),
   )
 
-  const flush = () => {
+  /**
+   * Write the buffer down now. Returns the write, for the one caller that has
+   * to know it landed rather than merely started — see `onBeforeVaultSwitch`
+   * below; everywhere else this is fired at an unload and nothing can wait.
+   */
+  const flush = (): Promise<void> => {
     const view = viewRef.current
     const p = pathRef.current
-    if (!view || !p || isTrashed(p)) return
+    if (!view || !p || isTrashed(p)) return Promise.resolve()
     saveRef.current.flush()
     const text = view.state.doc.toString()
     baseRef.current = text
-    void saveNote(p, text).catch(reportSaveFailure)
+    return saveNote(p, text).catch(reportSaveFailure)
   }
 
   // Rebuild the editor when the open note changes. A fresh state per note means
@@ -399,16 +405,24 @@ export function EditorPane() {
 
   // Never leave an unsaved buffer behind.
   useEffect(() => {
-    const onHide = () => flush()
+    const onHide = () => void flush()
     addEventListener('pagehide', onHide)
     addEventListener('beforeunload', onHide)
+    /*
+     * Switching vaults navigates, which fires both of the above — but they can
+     * only *start* a save, and the page may be gone before an async hash has
+     * even reached IndexedDB. A switch is deliberate and frequent enough to be
+     * worth waiting on properly, so it asks and waits instead.
+     */
+    const unhook = onBeforeVaultSwitch(() => flush())
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') flush()
     })
     return () => {
+      unhook()
       removeEventListener('pagehide', onHide)
       removeEventListener('beforeunload', onHide)
-      flush()
+      void flush()
       viewRef.current?.destroy()
       viewRef.current = null
       activeEditor.value = null

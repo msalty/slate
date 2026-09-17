@@ -21,6 +21,8 @@ import {
   BACKSTAGE,
   TRASH,
   type NoteIndexEntry,
+  type SyncMeta,
+  type SyncSlot,
   type TaskItem,
   type VaultFile,
 } from './types'
@@ -111,21 +113,93 @@ function bump() {
  * quietly wrong, and a wrong count is a "0 pending" beside unsaved work.
  */
 let dirtyFiles = 0
+/** The same running total for the connected folder. See `pendingFor`. */
+let folderPendingFiles = 0
 
 function setFile(path: string, f: VaultFile): void {
-  if (files.get(path)?.dirty) dirtyFiles--
+  const prev = files.get(path)
+  if (prev?.dirty) dirtyFiles--
+  if (prev && pendingFor(prev, 'folder')) folderPendingFiles--
   if (f.dirty) dirtyFiles++
+  if (pendingFor(f, 'folder')) folderPendingFiles++
   files.set(path, f)
 }
 
 function dropFile(path: string): void {
-  if (files.get(path)?.dirty) dirtyFiles--
+  const prev = files.get(path)
+  if (prev?.dirty) dirtyFiles--
+  if (prev && pendingFor(prev, 'folder')) folderPendingFiles--
   files.delete(path)
 }
 
 /** Files with local content the remote has not confirmed. Drives the status pill. */
 export function dirtyCount(): number {
   return dirtyFiles
+}
+
+/* --------------------------------------------------------- sync bookkeeping */
+
+/** What the given target last agreed with about this file. */
+export function metaFor(f: VaultFile, slot: SyncSlot): SyncMeta {
+  return (slot === 'folder' ? f.folder : f.sync) ?? {}
+}
+
+/**
+ * Is there anything for this target to do about this file?
+ *
+ * The cloud slot keeps the answer as a stored flag, because it has always had
+ * one and because IndexedDB indexes it. The folder slot derives it, which is
+ * both cheaper — no second boolean to keep honest through every write in this
+ * file — and, more to the point, correct by construction: "pending" means the
+ * bytes here are not the bytes that target last confirmed, and comparing the
+ * two hashes *is* that sentence.
+ *
+ * A tombstone is the one case where content cannot answer, since a deleted file
+ * has no bytes to compare. There, what is owed is the deletion itself, and it is
+ * owed to any target that has ever seen the file: an empty record means the
+ * folder never held it, so there is nothing there to remove.
+ */
+export function pendingFor(f: VaultFile, slot: SyncSlot): boolean {
+  if (slot === 'cloud') return f.dirty
+  const m = f.folder
+  if (f.deleted) return !!m && (m.baseHash !== undefined || m.remoteRev !== undefined)
+  return f.hash !== m?.baseHash
+}
+
+/** Files the connected folder has not confirmed. The folder's own status pill. */
+export function folderPendingCount(): number {
+  return folderPendingFiles
+}
+
+/**
+ * Forget everything a folder ever told us, without touching the files.
+ *
+ * Run on disconnect. What is dropped is only this device's memory of what the
+ * folder held — the folder itself is left exactly as it is, which is the whole
+ * promise of disconnecting, and the vault keeps every note. Reconnecting then
+ * starts from nothing rather than from a record of a directory that may since
+ * have been moved, restored from a backup, or replaced by a different one.
+ *
+ * A tombstone whose only remaining business was with the folder has none left,
+ * so it goes too — otherwise a note deleted while a folder was attached would
+ * sit in the database forever waiting for a folder that is never coming back.
+ */
+export async function clearFolderMeta(): Promise<void> {
+  const touched: VaultFile[] = []
+  const doomed: string[] = []
+  for (const f of files.values()) {
+    if (f.folder === undefined) continue
+    if (f.deleted && !f.dirty) doomed.push(f.path)
+    else touched.push({ ...f, folder: undefined })
+  }
+  // Durable before adopted, for the reason spelled out over `writeFile`: a
+  // forgetting that only happened in memory is a folder this device still
+  // believes it agreed with after the next reload — and if the next folder
+  // connected is a different one, believing that is how it would skip files.
+  if (touched.length) await putFiles(touched)
+  for (const f of touched) setFile(f.path, f)
+  for (const p of doomed) await forget(p, 'folder')
+  if (touched.length || doomed.length) bump()
 }
 
 /* ------------------------------------------------------------ other windows */
@@ -692,6 +766,7 @@ export async function initVault(): Promise<void> {
   const rows = await allFiles()
   files.clear()
   dirtyFiles = 0
+  folderPendingFiles = 0
   for (const f of rows) setFile(f.path, f)
   loadDeviceRecords(rows)
   reindexAll()
@@ -700,8 +775,16 @@ export async function initVault(): Promise<void> {
 }
 
 /**
- * Install files that came from the remote. Used by the sync engine only —
- * these are not marked dirty because the remote already has them.
+ * Install files that came from a sync target. Used by the sync engine only.
+ *
+ * The caller has already decided what each row's bookkeeping should say —
+ * which is the whole of the difference between the two targets, and is why
+ * this takes finished rows rather than content. Content pulled off the cloud
+ * arrives clean for the cloud and unseen by the folder, so the next folder run
+ * writes it to disk; content read out of the folder arrives clean for the
+ * folder and dirty for the cloud, so the next cloud run sends it to your other
+ * devices. That is the whole mechanism by which an edit made in Obsidian
+ * reaches a phone.
  */
 export async function installFromRemote(list: VaultFile[]): Promise<void> {
   // Device files first: a note pulled in the same batch can then be credited to
@@ -740,7 +823,13 @@ export async function persistDeviceRegistry(): Promise<string | undefined> {
   return joinPath(BACKSTAGE, name)
 }
 
-/** Sync-engine hook: record that a file is now in agreement with the remote. */
+/**
+ * Sync-engine hook: record that a file is now in agreement with one target.
+ *
+ * Only that one. The other target's record is left exactly as it was, so a note
+ * that has just gone up to WebDAV is still owed to the folder, and a note just
+ * written to the folder is still owed to WebDAV.
+ */
 export async function markSynced(
   path: string,
   patch: {
@@ -749,23 +838,24 @@ export async function markSynced(
     remoteRev?: string
     remoteMtime?: number
   },
+  slot: SyncSlot = 'cloud',
 ): Promise<void> {
   const f = files.get(path)
   if (!f) return
   // Only clear `dirty` when the content that was pushed is still the current
   // content. Otherwise the user typed during the upload and we'd drop the edit.
   const stillCurrent = f.hash === patch.baseHash
-  const next: VaultFile = {
-    ...f,
-    dirty: stillCurrent ? false : f.dirty,
-    sync: {
-      baseHash: patch.baseHash,
-      baseText: f.kind === 'note' ? patch.baseText : undefined,
-      remoteRev: patch.remoteRev,
-      remoteMtime: patch.remoteMtime,
-      lastSyncedAt: Date.now(),
-    },
+  const meta: SyncMeta = {
+    baseHash: patch.baseHash,
+    baseText: f.kind === 'note' ? patch.baseText : undefined,
+    remoteRev: patch.remoteRev,
+    remoteMtime: patch.remoteMtime,
+    lastSyncedAt: Date.now(),
   }
+  const next: VaultFile =
+    slot === 'folder'
+      ? { ...f, folder: meta }
+      : { ...f, dirty: stillCurrent ? false : f.dirty, sync: meta }
   // Durable before adopted, for the reason spelled out over `writeFile`.
   await putFile(next)
   setFile(path, next)
@@ -908,10 +998,17 @@ export function onPathMoved(fn: (from: string, to: string) => void | Promise<voi
 export async function movePath(from: string, to: string): Promise<void> {
   const f = files.get(from)
   if (!f || from === to) return
-  // A move is a delete + create as far as any remote is concerned, so the old
-  // path gets a tombstone and the new one starts fresh and dirty.
+  // A move is a delete + create as far as any target is concerned, so the old
+  // path gets a tombstone and the new one starts fresh and owed to both.
   const now = Date.now()
-  const moved: VaultFile = { ...f, path: to, mtime: now, dirty: true, sync: {} }
+  const moved: VaultFile = {
+    ...f,
+    path: to,
+    mtime: now,
+    dirty: true,
+    sync: {},
+    folder: undefined,
+  }
   setFile(to, moved)
   await putFile(moved)
   await renameVersions(from, to)
@@ -1212,12 +1309,80 @@ export async function tombstone(path: string): Promise<void> {
   bump()
 }
 
-/** Sync-engine hook: the tombstone has been honoured remotely, drop the row. */
-export async function forget(path: string): Promise<void> {
+/**
+ * Sync-engine hook: one target has honoured the tombstone.
+ *
+ * The row only goes when *nothing* still owes the deletion. With a folder
+ * attached, a note deleted here has to disappear from two places, and they
+ * finish at different times — dropping the row on the first would leave the
+ * second with no record that the file was ever deleted, so the next run there
+ * would read the file still sitting on disk as something a device had created
+ * and pull it straight back into the vault.
+ */
+export async function forget(path: string, slot: SyncSlot = 'cloud'): Promise<void> {
+  const f = files.get(path)
+  const cleared: VaultFile | undefined = f
+    ? slot === 'folder'
+      ? { ...f, folder: undefined }
+      : { ...f, dirty: false, sync: {} }
+    : undefined
+
+  if (cleared?.deleted && pendingFor(cleared, slot === 'folder' ? 'cloud' : 'folder')) {
+    // Still owed elsewhere. Keep the tombstone; this target is simply done.
+    await putFile(cleared)
+    setFile(path, cleared)
+    return
+  }
+
   dropFile(path)
   indexMap.delete(path)
   dropFromSearchIndex(path)
   await deleteFileRow(path)
+  releaseUrl(path)
+  bump()
+}
+
+/**
+ * Sync-engine hook: one target says this file was deleted somewhere else, and
+ * we have nothing newer to argue with.
+ *
+ * With a single target that is simply `forget`. With two it is the moment a
+ * deletion has to be *replicated*, and forgetting instead is how a delete comes
+ * undone: delete a note on your phone, and the cloud run here accepts it while
+ * the same note is still sitting in the connected folder on disk. Drop the row
+ * and the next folder sweep reads that file as something new, pulls it back in,
+ * and the next cloud run pushes it to the phone again — the note reappears
+ * everywhere, and it keeps reappearing.
+ *
+ * So the deletion becomes a tombstone owed to the other target, which removes
+ * its copy and finishes the job. Only when the other target never held the file
+ * is there nothing left to say.
+ */
+export async function acceptDeletion(path: string, slot: SyncSlot): Promise<void> {
+  const f = files.get(path)
+  if (!f) return
+  const other: SyncSlot = slot === 'folder' ? 'cloud' : 'folder'
+  if (metaFor(f, other).baseHash === undefined) return forget(path, slot)
+
+  const now = Date.now()
+  const next: VaultFile = {
+    ...f,
+    text: undefined,
+    blob: undefined,
+    size: 0,
+    deleted: true,
+    deletedAt: now,
+    mtime: now,
+    // Owed to `other`, and settled with `slot` — which has, after all, just
+    // told us the file is already gone there.
+    dirty: other === 'cloud',
+    sync: other === 'cloud' ? f.sync : {},
+    folder: other === 'folder' ? f.folder : undefined,
+  }
+  await putFile(next)
+  setFile(path, next)
+  indexMap.delete(path)
+  dropFromSearchIndex(path)
   releaseUrl(path)
   bump()
 }
@@ -1312,6 +1477,7 @@ export async function writeBackstage(name: string, value: unknown): Promise<void
     ctime: existing?.ctime ?? now,
     dirty: true,
     sync: existing?.sync ?? {},
+    folder: existing?.folder,
   }
   await writeFile(f)
 }

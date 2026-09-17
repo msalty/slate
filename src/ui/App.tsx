@@ -29,6 +29,16 @@ import { clearedSearch, parseLaunchIntent } from '../core/capture'
 import { settings, update } from '../core/settings'
 import { connectBackend } from '../app/backend'
 import { recentConflicts, recentFailures, status, sync } from '../core/sync'
+import {
+  folderConflicts,
+  folderConnected,
+  folderFailures,
+  folderName,
+  folderNeedsPermission,
+  folderStatus,
+  folderSync,
+  reconnectFolder,
+} from '../core/foldersync'
 import { ready, resolveLink } from '../core/vault'
 import {
   activePath,
@@ -63,8 +73,10 @@ import {
   toggleRail,
   toggleSidebar,
 } from './layout'
+import { VaultSwitcher } from './VaultSwitcher'
+import { activeVault, hasMultipleVaults } from '../core/vaults'
 import { relativeTime, startOfDay } from '../core/util'
-import { IconSettings, IconSync, IconWarn } from './Icons'
+import { IconFolder, IconSettings, IconSync, IconWarn } from './Icons'
 
 export function App() {
   const s = settings.value
@@ -76,6 +88,27 @@ export function App() {
    * with it set restores the panels rather than losing the mode.
    */
   const zen = mode !== 'compact' && editorMaximized.value
+
+  /*
+   * Both engines' news, in one banner each.
+   *
+   * A conflict copy made by the folder sweep is exactly as worth knowing about
+   * as one made by the server — more so, arguably, since the other editor
+   * involved is open on the same desk. Reading only the cloud engine's signals
+   * meant a note edited in Obsidian and in Slate at once was resolved correctly
+   * and then said nothing about it, leaving a `(conflict — …)` file to be found
+   * by accident.
+   */
+  const conflicts = [...recentConflicts.value, ...folderConflicts.value]
+  const failures = [...recentFailures.value, ...folderFailures.value]
+  const clearConflicts = () => {
+    recentConflicts.value = []
+    folderConflicts.value = []
+  }
+  const clearFailures = () => {
+    recentFailures.value = []
+    folderFailures.value = []
+  }
 
   /* ---- layout ------------------------------------------------------ */
   useEffect(() => installLayoutWatcher(), [])
@@ -135,6 +168,18 @@ export function App() {
     return () => mq.removeEventListener('change', apply)
   }, [s.theme])
 
+  /*
+   * The window says which vault it is showing, once there is a choice.
+   *
+   * Two vaults open side by side is the arrangement this feature is for on a
+   * desktop, and two windows called "Slate" in the switcher, the taskbar and
+   * the tab strip is how you end up writing the wrong thing in the wrong one.
+   */
+  useEffect(() => {
+    const v = activeVault()
+    document.title = hasMultipleVaults() && v ? `${v.name} — Slate` : 'Slate'
+  }, [activeVault()?.name, hasMultipleVaults()])
+
   /* ---- backend ----------------------------------------------------- */
   useEffect(() => {
     void connectBackend()
@@ -148,6 +193,8 @@ export function App() {
     s.gdrive.folderName,
     s.autoSync,
     s.syncIntervalSec,
+    s.folder.enabled,
+    s.folder.pollSec,
   ])
 
   /* ---- links, tags and embeds coming out of the editor -------------- */
@@ -352,16 +399,26 @@ export function App() {
         data-list={listInline.value ? '1' : '0'}
         data-zen={zen ? '1' : '0'}
         /*
+         * Only once there is more than one vault. A colour that identifies a
+         * set of one identifies nothing, and a stripe down the sidebar of an
+         * app nobody has asked to keep two things apart is decoration.
+         */
+        data-vaults={hasMultipleVaults() ? 'multi' : 'one'}
+        /*
          * The grid reads these; the resizers write them straight to the DOM
          * while dragging, so a resize costs one custom property, not a render.
          */
-        style={{ '--sidebar-w': `${s.sidebarWidth}px`, '--list-w': `${s.listWidth}px` }}
+        style={{
+          '--sidebar-w': `${s.sidebarWidth}px`,
+          '--list-w': `${s.listWidth}px`,
+          '--vault-colour': activeVault()?.colour ?? 'transparent',
+        }}
       >
         {/* --- sidebar: inline on wide, a drawer otherwise --- */}
         {sidebarState.value !== 'hidden' && (
           <div class="pane sidebar" data-floating={sidebarState.value === 'floating' ? '1' : '0'}>
             <div class="pane-head">
-              <span class="pane-title">Slate</span>
+              <VaultSwitcher />
               <span class="spacer" />
               <button
                 class="icon-btn"
@@ -428,24 +485,24 @@ export function App() {
         )}
       </div>
 
-      {recentConflicts.value.length > 0 && (
+      {conflicts.length > 0 && (
         <div class="conflict-banner">
           <IconWarn size={14} />
           <span style={{ flex: 1 }}>
-            {recentConflicts.value.length} note
-            {recentConflicts.value.length === 1 ? ' was' : 's were'} edited in two places. Both
-            versions were kept.
+            {conflicts.length} note
+            {conflicts.length === 1 ? ' was' : 's were'} edited in two places. Both versions were
+            kept.
           </span>
           <button
             class="status-btn"
             onClick={() => {
-              openNote(recentConflicts.value[0])
-              recentConflicts.value = []
+              openNote(conflicts[0])
+              clearConflicts()
             }}
           >
             Review
           </button>
-          <button class="status-btn" onClick={() => (recentConflicts.value = [])}>
+          <button class="status-btn" onClick={clearConflicts}>
             Dismiss
           </button>
         </div>
@@ -458,20 +515,25 @@ export function App() {
        * still pending and the next run retries them; this is so the retry is
        * not the only thing that knows.
        */}
-      {recentFailures.value.length > 0 && (
+      {failures.length > 0 && (
         <div class="conflict-banner">
           <IconWarn size={14} />
           <span style={{ flex: 1 }}>
-            {recentFailures.value.length} file
-            {recentFailures.value.length === 1 ? '' : 's'} could not sync (
-            {recentFailures.value[0].path}
-            {recentFailures.value.length > 1 ? ' and others' : ''}). They are still saved here and
-            will be tried again.
+            {failures.length} file
+            {failures.length === 1 ? '' : 's'} could not sync ({failures[0].path}
+            {failures.length > 1 ? ' and others' : ''}). They are still saved here and will be
+            tried again.
           </span>
-          <button class="status-btn" onClick={() => void sync()}>
+          <button
+            class="status-btn"
+            onClick={() => {
+              void sync()
+              if (folderConnected.value) void folderSync()
+            }}
+          >
             Retry now
           </button>
-          <button class="status-btn" onClick={() => (recentFailures.value = [])}>
+          <button class="status-btn" onClick={clearFailures}>
             Dismiss
           </button>
         </div>
@@ -499,6 +561,43 @@ export function App() {
   )
 }
 
+/**
+ * The connected folder's corner of the status bar.
+ *
+ * Only ever one of three things: nothing at all, the folder's name, or a button
+ * — because the one state a folder can get into that the app cannot fix for
+ * itself is a lost permission, and the only way out of it is a click. Leaving
+ * that to be discovered in Settings would mean a folder that has quietly
+ * stopped keeping up with the vault and says so nowhere anybody is looking.
+ */
+function FolderStatus() {
+  if (folderNeedsPermission.value) {
+    return (
+      <button
+        class="status-btn"
+        onClick={() => void reconnectFolder()}
+        title={`Slate needs permission to use “${folderName.value}” again`}
+      >
+        <IconWarn size={11} style={{ verticalAlign: '-1px', marginRight: 4 }} />
+        Reconnect “{folderName.value}”
+      </button>
+    )
+  }
+  if (!folderConnected.value) return null
+  const fs = folderStatus.value
+  return (
+    <button
+      class="status-btn"
+      onClick={() => void folderSync()}
+      title={fs.detail ?? `Connected to ${folderName.value}`}
+    >
+      <IconFolder size={11} style={{ verticalAlign: '-1px', marginRight: 4 }} />
+      {folderName.value}
+      {fs.pendingCount > 0 ? ` · ${fs.pendingCount}` : ''}
+    </button>
+  )
+}
+
 function StatusBar() {
   const st = status.value
   const s = settings.value
@@ -511,6 +610,7 @@ function StatusBar() {
       </span>
       {st.pendingCount > 0 && <span style={{ color: 'var(--accent)' }}>{st.pendingCount} pending</span>}
       <span style={{ flex: 1 }} />
+      <FolderStatus />
       {s.backend === 'none' ? (
         <button class="status-btn" onClick={() => (settingsOpen.value = true)}>
           Set up sync

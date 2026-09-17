@@ -4106,6 +4106,424 @@ try {
   await page.click('.editor-head [title="Delete note"]')
   await page.waitForTimeout(500)
 
+  /* ---- Multiple vaults ----------------------------------------------------
+   * The whole point of the feature is a boundary, and a boundary is only worth
+   * anything if it holds in a real browser: separate databases, a switch that
+   * really reloads onto the other one, and a search in one that cannot see the
+   * other. All of it is driven through the UI, because the parts most likely to
+   * be wrong are the ones the unit tests cannot reach — that the switcher is
+   * where somebody would look for it, and that a reload lands where it said.
+   */
+  const vaultName = () => page.locator('.vault-switch .vault-name').innerText()
+  const noteTitles = () =>
+    page.locator('.note-row .note-row-title').allInnerTexts().catch(() => [])
+
+  check('the sidebar head names the vault rather than the app', (await vaultName()) === 'Slate')
+  check(
+    'and with one vault it wears no colour, because there is nothing to tell apart',
+    (await page.locator('.shell').getAttribute('data-vaults')) === 'one',
+  )
+
+  const beforeSwitch = (await noteTitles()).length
+  check('the vault it opened has the notes this run has been making', beforeSwitch > 0)
+
+  // Make a second vault, through the switcher, the way anybody would.
+  await page.click('.vault-switch')
+  await page.waitForSelector('.menu-item:has-text("New vault")')
+  check(
+    'the switcher offers a new vault',
+    (await page.locator('.menu-item:has-text("New vault")').count()) === 1,
+  )
+  await page.click('.menu-item:has-text("New vault")')
+  await page.waitForSelector('.dialog input')
+  await page.fill('.dialog input', 'Work')
+  await page.click('.dialog .btn-primary')
+
+  // Creating one opens it, which is a reload onto a different database.
+  await page.waitForFunction(
+    () => document.querySelector('.vault-switch .vault-name')?.textContent === 'Work',
+    undefined,
+    { timeout: 15_000 },
+  )
+  check('creating a vault opens it', (await vaultName()) === 'Work')
+  check(
+    'and the switch is a real navigation, so the URL says which vault this window is',
+    /[?&]vault=/.test(page.url()),
+    page.url().split('/').pop(),
+  )
+  check(
+    'the new vault is empty — not filtered, empty',
+    (await noteTitles()).length === 0,
+    `${(await noteTitles()).length} notes`,
+  )
+  check(
+    'with two vaults the app starts telling them apart',
+    (await page.locator('.shell').getAttribute('data-vaults')) === 'multi',
+  )
+
+  /*
+   * A window that arrived at its vault without switching still knows which one
+   * it is.
+   *
+   * "Last opened" is shared by every window on the device, so a launch with no
+   * parameter — which is every ordinary launch, and every popout, since a
+   * popout opens a copy of its opener's URL — would otherwise silently follow
+   * whichever vault some other window switched to most recently. Landing here
+   * from the bare URL and then moving `lastOpened` underneath it is that
+   * situation with fewer moving parts than a second browser window, and it is
+   * the only part this window could observe anyway.
+   */
+  await page.goto(`http://localhost:${PORT}${BASE}`, { waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('.vault-switch')
+  check('a launch with no parameter opens the vault last used', (await vaultName()) === 'Work')
+  check(
+    'and the window writes that vault into its own URL',
+    /[?&]vault=/.test(page.url()),
+    page.url().split(BASE).pop(),
+  )
+
+  const movedTo = await page.evaluate(async () => {
+    const reg = await new Promise((res, rej) => {
+      const r = indexedDB.open('slate-vaults')
+      r.onsuccess = () => res(r.result)
+      r.onerror = () => rej(r.error)
+    })
+    const all = await new Promise((res) => {
+      const r = reg.transaction('vaults').objectStore('vaults').getAll()
+      r.onsuccess = () => res(r.result)
+    })
+    const other = all.find((v) => v.name === 'Slate')
+    if (!other) return null
+    await new Promise((res) => {
+      const tx = reg.transaction('meta', 'readwrite')
+      tx.objectStore('meta').put(other.id, 'lastOpened')
+      tx.oncomplete = () => res()
+    })
+    reg.close()
+    return other.id
+  })
+  check('another window switching moves what a plain launch would open', !!movedTo)
+
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('.vault-switch')
+  check(
+    'but reloading this window keeps it in the vault it was showing',
+    (await vaultName()) === 'Work',
+    await vaultName(),
+  )
+  check(
+    'and says which one this window is, so two windows are not both "Slate"',
+    (await page.title()).startsWith('Work'),
+    await page.title(),
+  )
+
+  // A note here must not be reachable from the other side, and vice versa.
+  await page.click('[title^="New note"]')
+  await page.waitForTimeout(600)
+  await page.locator('.editor-pane .cm-content').click()
+  await page.keyboard.type('# Quarterly numbers\n\nconfidential-to-work')
+
+  /*
+   * Switched straight away, without pausing for the autosave.
+   *
+   * This asserts the outcome — that leaving immediately after typing keeps what
+   * was typed — rather than the mechanism. Driving a browser is slow enough
+   * that the 400ms autosave has usually fired by the time the menu has been
+   * opened and clicked, so it does *not* reliably exercise the flush that
+   * `switchToVault` waits on; that is a guarantee about a race this cannot
+   * dependably create. Both are worth having: the flush makes the outcome
+   * certain, and this makes sure the ordinary path produces it.
+   */
+  const switchTo = async (name) => {
+    await page.click('.vault-switch')
+    await page.waitForSelector(`.menu-item:has-text("${name}")`)
+    await page.click(`.menu-item:has-text("${name}")`)
+    await page.waitForFunction(
+      (n) => document.querySelector('.vault-switch .vault-name')?.textContent === n,
+      name,
+      { timeout: 15_000 },
+    )
+  }
+  await switchTo('Slate')
+
+  check('switching back returns the vault that was there', (await vaultName()) === 'Slate')
+  check(
+    'with every note it had',
+    (await noteTitles()).length === beforeSwitch,
+    `${(await noteTitles()).length} of ${beforeSwitch}`,
+  )
+  // The assertion the whole feature exists for.
+  await page.keyboard.press('Control+k')
+  await page.waitForSelector('.palette input')
+  await page.fill('.palette input', 'confidential-to-work')
+  await page.waitForTimeout(500)
+  const leaked = await page.locator('.palette-row:has-text("Quarterly")').count()
+  check('and no sight of the other vault’s notes, in search or anywhere else', leaked === 0)
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(200)
+
+  // Back to Work, to see whether the note typed a moment before leaving is
+  // there — the half-second of text a switch is most likely to lose.
+  await switchTo('Work')
+  check('the vault that was left has its note', (await noteTitles()).length === 1)
+  /*
+   * Asked for by content rather than by name: the note may still be called
+   * Untitled, because renaming it after its heading is something the settled
+   * autosave offers and this text may not have got that far. What is being
+   * asserted is that the words survived, not what the file ended up called.
+   */
+  await page.keyboard.press('Control+k')
+  await page.waitForSelector('.palette input')
+  await page.fill('.palette input', 'confidential-to-work')
+  await page.waitForTimeout(500)
+  check(
+    'and the words typed just before switching away are in it',
+    (await page.locator('.palette-row').count()) >= 1,
+    `${await page.locator('.palette-row').count()} hits`,
+  )
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(200)
+  await switchTo('Slate')
+
+  // Settings → Vaults: the list, and getting rid of one.
+  await page.click('.pane-head .icon-btn[title^="Settings"]')
+  await page.waitForSelector('.dialog')
+  await page.click('.tab:has-text("Vaults")')
+  await page.waitForSelector('.vault-row')
+  check('Settings lists both vaults', (await page.locator('.vault-row').count()) === 2)
+  check(
+    'and marks the one that is open',
+    (await page.locator('.vault-row[data-current="1"]:has-text("Slate")').count()) === 1,
+  )
+
+  await page.click('.vault-row:has-text("Work") .btn-danger')
+  await page.waitForTimeout(1200)
+  check('removing a vault takes it off the list', (await page.locator('.vault-row').count()) === 1)
+  await page.click('.dialog-foot .btn-primary')
+  await page.waitForTimeout(400)
+  check(
+    'and the app is back to not mentioning vaults at all',
+    (await page.locator('.shell').getAttribute('data-vaults')) === 'one' &&
+      (await vaultName()) === 'Slate',
+  )
+  check(
+    'with the remaining vault’s notes untouched',
+    (await noteTitles()).length === beforeSwitch,
+    `${(await noteTitles()).length} of ${beforeSwitch}`,
+  )
+
+  /* ---- Settings › Sync: a connected folder, end to end -------------------- */
+  /*
+   * The whole Connected Folder path, run against the real File System Access
+   * API rather than a stand-in: the picker is stubbed to hand back an
+   * origin-private directory, and everything after that — the preview, the
+   * adapter, the reconcile engine, the writes — is the shipping code working on
+   * real handles. Only the file-chooser dialog is replaced, because that is the
+   * one part of this a headless browser genuinely cannot do.
+   *
+   * The unit tests cover what the engine decides; this covers that the browser
+   * primitives underneath it behave the way the adapter assumes they do.
+   */
+  const opfsReady = await page.evaluate(async () => {
+    if (!navigator.storage?.getDirectory) return false
+    const root = await navigator.storage.getDirectory()
+    // A fresh directory each run, so a previous run's files are not mistaken
+    // for the vault having been written out.
+    await root.removeEntry('smoke-vault', { recursive: true }).catch(() => {})
+    const vault = await root.getDirectoryHandle('smoke-vault', { create: true })
+    window.__smokeVault = vault
+    window.showDirectoryPicker = async () => vault
+    return true
+  })
+  check('the browser has somewhere real to put a connected folder', opfsReady)
+
+  if (opfsReady) {
+    /** Every file path inside the stand-in folder, read straight off the API. */
+    const opfsPaths = () =>
+      page.evaluate(async () => {
+        const out = []
+        const walk = async (dir, prefix) => {
+          for await (const [name, h] of dir.entries()) {
+            const p = prefix ? `${prefix}/${name}` : name
+            if (h.kind === 'directory') await walk(h, p)
+            else out.push(p)
+          }
+        }
+        await walk(window.__smokeVault, '')
+        return out.sort()
+      })
+
+    await page.click('.pane-head .icon-btn[title^="Settings"]')
+    await page.waitForSelector('.dialog')
+    await page.click('.tab:has-text("Sync")')
+    await page.waitForTimeout(200)
+    check(
+      'Sync offers a connected folder',
+      (await page.locator('.field:has-text("Connected folder")').count()) === 1,
+    )
+    check(
+      'and still offers a backend, because a folder is not one of them',
+      (await page.locator('.dialog .field > span:text-is("Backend")').count()) === 1,
+    )
+
+    /*
+     * What the stand-in will and will not take as a filename.
+     *
+     * A folder somebody picks is on a real filesystem and holds whatever UTF-8
+     * a note is called; the origin-private one this runs against is a sandbox
+     * with its own rules, and in some builds refuses anything outside ASCII.
+     * Rather than pretend otherwise, the run asks first and then asserts the
+     * right thing either way — including, where names *are* refused, that the
+     * refusal is reported per file and does not stop the rest of the vault.
+     */
+    const takesUnicodeNames = await page.evaluate(async () => {
+      try {
+        const d = await window.__smokeVault.getDirectoryHandle('.probe', { create: true })
+        await d.getFileHandle('caf\u00e9 \u2014 x.md', { create: true })
+        await window.__smokeVault.removeEntry('.probe', { recursive: true })
+        return true
+      } catch {
+        await window.__smokeVault.removeEntry('.probe', { recursive: true }).catch(() => {})
+        return false
+      }
+    })
+
+    await page.click('.dialog .btn:has-text("Choose a folder")')
+    await page.waitForSelector('.callout:has-text("what connecting would do")', { timeout: 8000 })
+    const previewText = await page.locator('.callout:has-text("what connecting would do")').innerText()
+    check(
+      'picking a folder says what connecting it would do before anything is written',
+      /will be written into the folder/.test(previewText),
+      previewText.replace(/\s+/g, ' ').slice(0, 96),
+    )
+    check('and nothing has been written yet', (await opfsPaths()).length === 0)
+
+    await page.click('.dialog .btn-primary:has-text("Connect this folder")')
+    // Wait for the first sweep to finish rather than for a fixed moment: how
+    // long it takes to write the vault out depends on how big the vault is.
+    await page.waitForSelector('.folder-row:has-text("In sync with"), .folder-row:has-text("failed")', {
+      timeout: 20000,
+    })
+    const written = await opfsPaths()
+    // Named fixtures rather than a count, so what the check means does not
+    // depend on how many notes the rest of the run happens to have left behind.
+    const expected = ['Budget.md', 'Groceries.md', 'Daily/2026-09-01.md', 'backstage/config.json']
+    const missing = expected.filter((p) => !written.includes(p))
+    check(
+      'connecting writes the vault out as ordinary files, in its own folders',
+      missing.length === 0,
+      `${written.length} files${missing.length ? `, missing ${missing.join(', ')}` : ''}`,
+    )
+    check(
+      'including the attachments, as bytes rather than as text',
+      written.some((p) => /\.(png|jpe?g|webp)$/i.test(p)),
+      written.filter((p) => /\.(png|jpe?g|webp)$/i.test(p))[0] ?? 'none',
+    )
+    const folderRow = await page.locator('.folder-row').innerText()
+    if (takesUnicodeNames) {
+      check('with nothing left over', /In sync with/.test(folderRow), folderRow.replace(/\n/g, ' '))
+    } else {
+      /*
+       * The stand-in refuses the notes with an em dash in the title. That is a
+       * property of this sandbox and not of a folder anybody would pick — but
+       * it exercises the path that matters when a filesystem does refuse a
+       * name: the file is named, the run says it is degraded rather than done,
+       * and every other note is written out regardless.
+       */
+      check(
+        'a name the filesystem refuses is reported rather than swallowed',
+        /failed/.test(folderRow),
+        folderRow.replace(/\n/g, ' '),
+      )
+      const said = await page.locator('.callout-danger').innerText()
+      check(
+        'and the message names the file and says renaming it is the fix',
+        /would not accept that filename/.test(said) && /Renaming the note/.test(said),
+        said.replace(/\s+/g, ' ').slice(0, 110),
+      )
+      check(
+        'while the rest of the vault went out anyway',
+        written.filter((p) => p.endsWith('.md')).length >= 15,
+        `${written.filter((p) => p.endsWith('.md')).length} notes written`,
+      )
+    }
+    check(
+      'and the status bar says which folder it is keeping up with',
+      (await page.locator('.statusbar .status-btn:has-text("smoke-vault")').count()) === 1,
+    )
+
+    // Now the other direction: something else writes a file into the folder.
+    await page.evaluate(async () => {
+      const fh = await window.__smokeVault.getFileHandle('From Obsidian.md', { create: true })
+      const w = await fh.createWritable()
+      await w.write(new Blob(['# From Obsidian\n\nwritten by another program\n']))
+      await w.close()
+    })
+    await page.click('.dialog .btn:has-text("Check the folder now")')
+    await page.waitForTimeout(2500)
+    await page.click('.dialog-foot .btn-primary')
+    await page.waitForTimeout(400)
+    check(
+      'a file written by another program becomes a note',
+      (await page.locator('.note-row:has-text("From Obsidian")').count()) === 1,
+    )
+    await page.click('.note-row:has-text("From Obsidian")')
+    await page.waitForTimeout(500)
+    const outsideText = await page.locator('.editor-pane .cm-content').innerText()
+    check(
+      'with the text that program wrote',
+      outsideText.includes('written by another program'),
+      JSON.stringify(outsideText.slice(0, 48)),
+    )
+
+    // And a note typed here lands on disk under the name it is filed under.
+    await page.locator('.editor-pane .cm-content').click()
+    await page.keyboard.press('Control+End')
+    await page.keyboard.type('\n\nand answered from Slate')
+    await page.waitForTimeout(3500)
+    const roundTripped = await page.evaluate(async () => {
+      const fh = await window.__smokeVault.getFileHandle('From Obsidian.md')
+      return (await fh.getFile()).text()
+    })
+    check(
+      'and an edit made in Slate is in that same file moments later',
+      roundTripped.includes('and answered from Slate'),
+      JSON.stringify(roundTripped.slice(-40)),
+    )
+
+    // Disconnecting must be a safe thing to try: nothing on either side moves.
+    await page.click('.pane-head .icon-btn[title^="Settings"]')
+    await page.waitForSelector('.dialog')
+    await page.click('.tab:has-text("Sync")')
+    await page.waitForTimeout(200)
+    const filesBeforeDisconnect = await opfsPaths()
+    const notesBeforeDisconnect = await page.locator('.note-row').count()
+    await page.click('.dialog .btn-danger:has-text("Disconnect")')
+    await page.waitForTimeout(1200)
+    await page.click('.dialog-foot .btn-primary')
+    await page.waitForTimeout(400)
+    check(
+      'disconnecting leaves every file in the folder exactly where it was',
+      JSON.stringify(await opfsPaths()) === JSON.stringify(filesBeforeDisconnect),
+      `${filesBeforeDisconnect.length} files`,
+    )
+    check(
+      'and leaves every note in the vault',
+      (await page.locator('.note-row').count()) === notesBeforeDisconnect,
+    )
+    check(
+      'and stops claiming a folder in the status bar',
+      (await page.locator('.statusbar .status-btn:has-text("smoke-vault")').count()) === 0,
+    )
+
+    // Put the vault back: the note that came in from the folder is not part of
+    // what the rest of the run expects to find.
+    await page.click('.note-row:has-text("From Obsidian")')
+    await page.waitForTimeout(300)
+    await page.click('.editor-head [title="Delete note"]')
+    await page.waitForTimeout(600)
+  }
+
   /* ---- Settings › About: the update controls ------------------------------ */
   // The full stale-build scenario needs two builds and a swappable server, so it
   // is not reproduced here. This just holds the panel itself honest: the buttons

@@ -2217,6 +2217,173 @@ button.property-kind:hover {
   border-left-color: var(--danger);
 }
 
+/* ---- vaults ------------------------------------------------------------- */
+
+/*
+ * The sidebar head's title, which is the vault's name and a way to change it.
+ * Sized and weighted exactly like the `.pane-title` it replaced, so a vault
+ * that has never been renamed looks like the app always did.
+ */
+.vault-switch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 7px;
+  margin-left: -7px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  max-width: 82%;
+}
+.vault-switch:hover {
+  background: var(--row-hover);
+}
+.vault-switch .vault-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vault-switch svg {
+  color: var(--text-faint);
+  flex: 0 0 auto;
+}
+
+.vault-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  display: inline-block;
+}
+.vault-dot-lg {
+  width: 11px;
+  height: 11px;
+}
+
+/*
+ * A stripe down the sidebar in the vault's colour, and only where there is
+ * more than one vault to tell apart. Inset rather than a border so it does not
+ * move the pane's contents when it appears.
+ */
+.shell[data-vaults='multi'] .sidebar {
+  box-shadow: inset 3px 0 0 var(--vault-colour);
+}
+
+.vault-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+.vault-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-2);
+}
+.vault-row[data-current='1'] {
+  border-color: var(--vault-colour);
+}
+.vault-row-main {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+.vault-row-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.vault-row-main small {
+  display: block;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vault-badge {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0 4px;
+}
+.vault-swatches {
+  display: flex;
+  gap: 3px;
+}
+.vault-swatch {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  padding: 0;
+}
+.vault-swatch[aria-pressed='true'] {
+  border-color: var(--text);
+}
+
+/*
+ * Six tabs is one more than the row was built for, and a phone is narrow.
+ * Wrapping is better than a row that scrolls sideways with no sign that it does.
+ */
+.tabs {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+
+/* ---- connected folder --------------------------------------------------- */
+
+.settings-rule {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 20px 0 4px;
+}
+
+/*
+ * The connected folder's own line, which reads like the status bar's rather
+ * than like a form field: a dot for the phase, the folder's name, and what it
+ * is doing. It is a report, not something to fill in.
+ */
+.folder-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  font-size: 13px;
+}
+.folder-detail {
+  color: var(--text-faint);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.folder-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.folder-preview {
+  margin: 8px 0 10px;
+  padding-left: 18px;
+}
+.folder-preview li {
+  margin: 3px 0;
+}
+
 /* ---- transcription review --------------------------------------------- */
 
 /*

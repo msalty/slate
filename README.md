@@ -4,8 +4,9 @@ A local-first markdown notes PWA. Apple Notes' layout, Obsidian's linking, plain
 `.md` files in a folder you own, and sync that is built to never lose a note.
 
 Runs installed on Windows, macOS, Linux, Android and iOS from one codebase. No
-server to run — the app is static files; your notes live on your WebDAV server or
-in your Google Drive.
+server to run — the app is static files; your notes live on your WebDAV server,
+in your Google Drive, or in a folder on your own disk that Obsidian, git and
+your editor can open at the same time.
 
 ![Slate in dark mode](screenshots/app-dark.png)
 
@@ -18,8 +19,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 918 unit and two-device sync tests
-node scripts/smoke.mjs # 612-check browser smoke test against dist/
+npm test               # 1000 unit, two-device sync and folder round-trip tests
+node scripts/smoke.mjs # 708-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -936,6 +937,24 @@ appears in the other's list, search and calendar as you type it, and the window
 you started from is the one that syncs. Nothing about either feature exists on a
 phone, where the editor is already the whole screen.
 
+**Vaults.** Work and personal in one browser, properly apart. A vault is a
+whole separate set of notes with its own sync, its own connected folder and its
+own model connection — not a filter over one store, which matters because
+nothing crosses between them: not search, not tags, not `[[links]]`, and not
+what gets sent to a model. The sidebar's head is the switcher; switching
+reloads, which is what makes that true rather than merely intended. One vault
+looks exactly like the app always did.
+
+**A folder on your disk, if you want one.** On a Chromium desktop browser you
+can point Slate at an ordinary directory and keep the vault there as real
+Markdown files — the same files Obsidian opens, `git diff` reads, ripgrep
+searches and Time Machine backs up. Slate becomes one of the editors of your
+notes rather than the only one, and an edit made in either shows up in the other
+within seconds. It sits *beside* the backend rather than replacing it, which is
+the point: a folder is on one machine, and WebDAV or Drive is what carries the
+same notes to your phone. Disconnecting leaves every file exactly where it is.
+See [A folder on this machine](#a-folder-on-this-machine--desktop-only).
+
 **Offline.** The whole app is precached. It opens, reads and writes with no
 network at all, and syncs when connectivity returns.
 
@@ -1414,7 +1433,164 @@ bar above the list carries an **Edit** next to the **Close**.
 
 ---
 
+## Vaults
+
+One browser, several completely separate sets of notes. Work and personal is the
+case it was built for.
+
+A vault is not a filter or a top-level folder — it is its own database, with its
+own backend, its own connected folder, its own model connection and its own
+`backstage/`. That distinction is the feature: a filter has to be applied
+correctly in every place that reads notes, and the first place it is forgotten
+is a work note surfacing in a personal search. Nothing here crosses, because
+there is nothing to cross — search, tags, `[[links]]`, backlinks, the calendar,
+Tag Folders and everything sent to a model are all reading one database, and it
+is the one you are in.
+
+**Where it is.** The head of the sidebar, which used to read "Slate", is the
+vault's name and the switcher. Click it for the list, *New vault…* and *Manage
+vaults…*; on a phone the same menu is a row at the top of More. Settings →
+Vaults is where they are renamed, recoloured and removed.
+
+**With one vault you would not know.** No colour, no stripe, no second name —
+just the word the sidebar always said and a chevron beside it. The colours turn
+on when there are two, which is when there is something to tell apart: a dot in
+the switcher, a stripe down the sidebar, and the vault's name in the window
+title so two windows are not both called Slate.
+
+**Switching reloads the page.** Deliberately, and it is the load-bearing
+decision in the whole feature. Every module that holds vault state holds it at
+module scope — the file map, the search index, the folder and template
+definitions, both reconcile engines, the connected folder's handle and its
+observer, the cross-window channel. Swapping all of that out in place would work
+most of the time, and the times it did not would be a personal note in a work
+search: exactly the failure a vault exists to prevent, arriving silently. A
+reload has none of that surface and costs a couple of hundred milliseconds,
+because opening a vault has always been "read IndexedDB and paint" with nothing
+on the network in front of it. Obsidian reloads its window to change vaults and
+VS Code reloads to change workspace.
+
+**Two at once.** The vault is in the URL (`?vault=…`), so two windows can show
+two different vaults — Settings → Vaults → *New window* opens one. They stay
+out of each other's way: the cross-window channel and the sync locks are named
+per vault, so windows only mirror writes to windows looking at the same notes.
+
+A plain launch with no parameter opens whichever vault was used last, and then
+writes that vault into its own URL. That second half matters more than it
+sounds: "last used" is shared by every window on the device, so without it,
+reloading one window would silently follow whichever vault another window had
+switched to — and a popped-out note, which opens a copy of its opener's URL,
+would land in the wrong vault entirely and start talking on that vault's
+channel. The parameter only appears once there is more than one vault, so the
+ordinary single-vault URL stays the clean one you bookmark.
+
+**What is shared, and it is almost nothing.** The device's name — the one
+version history credits an edit to — belongs to the machine, so renaming it
+under About renames it in every vault. Everything else is per vault, including
+the API key: a new vault starts with no model configured rather than inheriting
+one, because "which of my notes may leave this device" is exactly the line a
+vault is drawn along.
+
+**Removing one** deletes this device's copy and nothing else. Files on a WebDAV
+server, in a Drive folder or in a connected folder are untouched, so a vault
+with a backend can be got back by making a new one and pointing it at the same
+place; a local-only vault cannot, and the confirmation says which of the two you
+are looking at.
+
+**Upgrading does nothing.** A device that has been using Slate has one database
+and gains one vault record describing exactly it — same notes, same name,
+nothing moved, nothing to confirm. Multiple vaults arrive as a menu that was not
+there before.
+
+**Do not point two vaults at the same server or folder.** Two sets of notes
+reconciling against one target do not stay two sets: each run reads the other's
+files as notes some device created, and within a few minutes both hold
+everything, with no way back except by hand. Slate notices and says so in
+Settings → Vaults, but the check is after the fact — it cannot stop you.
+
+Sharing *one* target is enough, which is the version of this mistake that is
+easy to make: a second vault set up against the same server as the first and
+given its own folder feels separate and is not. Each place a vault is kept is
+compared on its own for exactly that reason.
+
+---
+
 ## Setting up sync
+
+All of this is per **vault**, and a device can have several — see
+[Vaults](#vaults). What follows is how you set up whichever one you are in.
+
+Two independent things, and most desktops want both:
+
+|  | reaches | needs |
+| --- | --- | --- |
+| **A connected folder** | this machine, and everything else on it | a Chromium desktop browser |
+| **A backend** (WebDAV or Drive) | your other devices, phones included | a server or a Google account |
+
+A folder is not one of the backend choices and does not replace one. Attach both
+and each edit takes the obvious route: something typed in Obsidian is read off
+the disk and pushed to the server, so it is on your phone a minute later;
+something typed on the phone comes down from the server and is written to disk,
+so Obsidian has it the next time you look.
+
+### A folder on this machine — desktop only
+
+Keep the vault as ordinary files in a directory you choose, so every other tool
+you own can work on the same notes.
+
+Settings → Sync → **Choose a folder…**, pick a directory, and Slate shows what
+connecting it would do before writing anything:
+
+> **“Notes” — what connecting would do:**
+> **12** files in the folder will be added to this vault.
+> **34** notes from this vault will be written into the folder.
+> **3** files are on both sides. Where they match, nothing happens; where they
+> differ, both versions are kept and the second is named as a conflict copy.
+
+Nothing is written until you press **Connect this folder**. Pointing Slate at a
+directory that already holds notes is the ordinary way this gets used — a vault
+Obsidian has been keeping, a folder inside Dropbox or Syncthing — and it is
+exactly the moment you want to know you are not about to lose the other side.
+
+Afterwards the folder holds [the tree below](#how-your-notes-are-stored), with
+your notes at the top level, attachments where the attachment setting says, and
+`backstage/` for the app's own files.
+
+**What it does not touch.** Anything whose name begins with a dot, plus
+`node_modules`, `~$…` lock files and `Thumbs.db`. Slate never reads, writes or
+deletes `.git`, `.obsidian`, `.trash` or `.stfolder` — they are invisible to it,
+which is what stops it from replicating another tool's state *or* from deciding
+those files were notes somebody deleted elsewhere.
+
+**Noticing outside edits.** Nothing tells a web page that a file changed on
+disk, so Slate sweeps the folder on a timer while the window is visible — 5
+seconds by default, settable — and again whenever you switch back to it. Where
+the browser supports `FileSystemObserver` the sweep drops back to a safety net
+and a file saved in Obsidian shows up immediately. Where it is present but
+refuses to watch a particular folder, it is asked once and then not again for
+the session; sweeping is a complete substitute rather than a degraded one.
+
+**Permission has to be re-granted.** The browser remembers the folder across
+reloads but usually not the right to use it: a permission prompt is only allowed
+inside a click, so on a new session the status bar shows **Reconnect “Notes”**
+and one click restores it. The same appears if permission is withdrawn while the
+app is open — it is re-checked at the top of every sweep, because nothing tells
+a page when that happens and the only control that can put it right needs to be
+on screen to be clicked. Installing Slate as a PWA makes Chromium far more
+likely to keep the grant. Until it is granted nothing is lost or changed on
+either side — the folder simply is not being kept in step.
+
+**Disconnecting is safe.** Settings → Sync → **Disconnect**. Every file stays
+exactly where it is and every note stays in Slate; they just stop being kept in
+step. What is dropped is this device's memory of the folder, so reconnecting
+later starts fresh rather than trusting a description of a directory that may
+since have been moved or restored from a backup.
+
+**Where it isn't.** The File System Access API is Chromium-desktop only —
+Chrome, Edge, Brave, Arc, Vivaldi. Firefox and Safari have not shipped the
+picker, and neither has any browser on a phone. Elsewhere the section is
+replaced by a sentence saying so, and everything else works exactly as it always
+did.
 
 ### WebDAV — recommended
 
@@ -1534,6 +1710,14 @@ Perfectly usable. Notes stay in this browser's storage. In Settings → About,
 "Request persistent storage" asks the browser not to evict them; installing the
 app as a PWA makes that far more likely to be granted.
 
+A connected folder with no backend is a coherent setup in its own right, and on
+a desktop it is a better one: the vault is a directory you can see, back up and
+open in anything, rather than a database inside a browser profile. It just does
+not reach a phone, and a folder inside Dropbox, iCloud Drive or Syncthing is
+the way round that without running a server — Slate keeps the files in step with
+the vault, and whatever owns the directory keeps them in step with your other
+machines.
+
 ---
 
 ## Deploying
@@ -1619,6 +1803,16 @@ scoped to the app. Neither touches your notes; those live in IndexedDB.
 Your vault is an ordinary folder of ordinary files. Open it in Obsidian, edit it
 in vim, grep it, back it up with `rsync`. Nothing here is a lock-in format.
 
+On the server this is what is there; with a
+[connected folder](#a-folder-on-this-machine--desktop-only) it is also what is
+on your own disk, at a path you chose, being written to as you type.
+
+On the device, one vault is one IndexedDB. That is the whole of how
+[several vaults](#vaults) stay apart, and it is why nothing else in the app has
+to remember to scope itself: the notes, the version history, the credentials,
+the folder handle and the model connection are all inside it, so opening a
+different database changes every one of them at once.
+
 ```
 Vault/
 ├─ Start.md
@@ -1636,8 +1830,9 @@ Vault/
 
 `backstage/` syncs like everything else but never appears in the note list,
 search, calendar, tags or link autocomplete. Credentials are the one thing that
-is deliberately *not* in there — a WebDAV password or a Drive client ID stays in
-the browser's local database on each device, so secrets never enter the vault.
+is deliberately *not* in there — a WebDAV password, a Drive client ID, and the
+handle for a connected folder stay in the browser's local database on each
+device, so secrets never enter the vault.
 
 `config.json` is written on a 1.5-second timer, because a pane resizer would
 otherwise write a vault file on every frame of a drag, and it is overlaid over
@@ -1659,8 +1854,41 @@ the file dirty, and returns. Sync happens later, on a timer, when the app become
 visible, when the network returns, and a few seconds after edits settle.
 
 Each file remembers three things from its last successful sync: a hash of the
-content, the server's revision id, and — for notes — the full text. That third
+content, the target's revision id, and — for notes — the full text. That third
 one is the common ancestor, and it is what makes a real three-way merge possible.
+
+### Two targets, one engine
+
+A vault can be reconciled against two places at once — the backend from
+Settings, and a [connected folder](#a-folder-on-this-machine--desktop-only) —
+and they are the same problem: a set of files somewhere else that has to be
+brought into agreement with the set of files here. So they are the same code,
+`core/engine.ts`, run twice. Each instance owns one half of every file's
+bookkeeping and speaks for that target only.
+
+That is the whole mechanism, and it is worth being precise about because it is
+what carries an edit from Obsidian to a phone. Content read off the disk is
+recorded as settled with the folder and *unknown to the server*, so the cloud
+run sends it onward. Content pulled from the server is recorded as settled with
+the server and unknown to the folder, so the folder run writes it to disk.
+Neither engine knows the other exists; each simply declines to speak for a
+target that is not its own, and the vault in the middle is what they meet in.
+
+Running two engines converges for the same reason running one on two devices
+does — every run only ever moves content from somewhere that has it to somewhere
+that does not — so whichever order they happen in, an edit made anywhere ends up
+everywhere.
+
+Deletion is the one case where that is not enough on its own, and getting it
+wrong is how a deleted note comes back from the dead. Delete a note on your
+phone: the cloud run here accepts it, but the same note is still sitting in the
+folder on disk. Simply forgetting the file would mean the next sweep reads that
+copy as something new, pulls it back in, and the next cloud run pushes it to the
+phone again — the note reappears everywhere, and keeps reappearing. So accepting
+a deletion from one target turns it into a tombstone *owed to the other*, and
+the row is only dropped once nothing still owes the deletion.
+`src/core/foldersync.test.ts` runs exactly that sequence, several rounds past
+the point where a naive implementation would have resurrected it.
 
 When a file has changed on both sides:
 
@@ -1683,7 +1911,12 @@ into the merge above. Deletes are conditional in the same way — replicating
 another device's delete cannot destroy an edit that landed after the listing, and
 a refused delete resurrects the file instead. (Google Drive has no conditional
 request, so its adapter re-reads the file's revision immediately before writing
-or trashing and refuses if it moved.) A pull that finds the file edited locally
+or trashing and refuses if it moved. A folder on disk has neither a conditional
+write nor a revision id at all, so its adapter uses the modified time and size
+as the revision and re-reads it immediately before opening the file, which
+narrows the window to microseconds rather than to a whole sync run — and the
+three-way merge behind it is what makes that acceptable: the worst case is a
+conflict copy, not a lost edit.) A pull that finds the file edited locally
 while it was in flight merges rather than installs, so an edit made mid-sync is
 not erased by the download it raced.
 
@@ -1720,11 +1953,25 @@ response says who wrote a file, so every device keeps one file of its own —
 `backstage/devices/<id>.json`, listing its name and the paths it recently
 pushed. Only its owner ever writes it, so the registry cannot conflict; a pull
 credits whichever device last pushed that path, and says nothing at all when it
-has not heard of one.
+has not heard of one. Those records are reconciled as a phase of their own,
+finished before any note is touched: a version snapshot is written once, at the
+moment of the pull, so a note that arrives ahead of the record naming its author
+is credited to nobody *permanently*. They used to be merely sorted to the front
+of one list, which is not the same thing — five workers draw from that list at
+once, and the first note began downloading beside the record and raced it.
+
+The device a snapshot names is the machine, not the vault: it lives in the vault
+registry rather than in any one vault's settings, so a laptop with two vaults is
+one device in both of their histories.
 
 `src/core/sync.test.ts` runs two independent "devices" — separate module
 instances with separate databases — against one in-memory server and asserts
-every one of these behaviours.
+every one of these behaviours. `src/core/foldersync.test.ts` runs the
+arrangement the folder exists for: a desktop with both a folder and a backend,
+and a phone with only the backend, over an in-memory filesystem — an edit made
+in "Obsidian" reaching the phone, an edit made on the phone landing on disk, a
+delete from either side sticking, and everything settling with all three holding
+the same bytes.
 
 ---
 
@@ -1736,7 +1983,13 @@ src/
 │  ├─ types.ts        data model + the RemoteAdapter contract
 │  ├─ vault.ts        in-memory source of truth, derived indexes
 │  ├─ db.ts           IndexedDB: cache, journal, version history
-│  ├─ sync.ts         the reconcile engine
+│  ├─ vaults.ts       the registry of vaults, which one this window is showing,
+│  │                  and the device identity they share
+│  ├─ engine.ts       the reconcile engine, pointed at one target
+│  ├─ sync.ts         that engine pointed at the backend, and its scheduling
+│  ├─ foldersync.ts   that engine pointed at a folder on this machine: the
+│  │                  stored handle, the permission that has to be re-asked
+│  │                  for, and how an outside edit gets noticed at all
 │  ├─ merge.ts        three-way merge (diff3), and the two-way diff a rewrite
 │  │                  is shown as
 │  ├─ rebase.ts       folding a synced change into the buffer being typed in
@@ -1768,7 +2021,7 @@ src/
 │  │                  rule, the notes it pins, what retrieval refuses to read,
 │  │                  and the check that an answer cited only what it was given
 │  └─ settings.ts     device-local vs vault-wide preferences
-├─ adapters/      webdav.ts · gdrive.ts · llm.ts · memory.ts (tests)
+├─ adapters/      webdav.ts · gdrive.ts · folder.ts · llm.ts · memory.ts (tests)
 ├─ editor/        CodeMirror 6: live preview, widgets, completion, paste
 │  ├─ format.ts     the formatting commands behind the rich-text bar
 │  ├─ caret.ts      the two edges of a line whose markup is hidden, and what
@@ -1809,6 +2062,9 @@ src/
    ├─ pickNote.ts    what it was opened for, and what to leave out of it
    ├─ QuickAdd.tsx   the capture sheet, kept mounted so the keyboard can be
    │                 raised inside the tap that asked for it
+   ├─ VaultSwitcher.tsx  the sidebar head: which vault this is, and the menu
+   │                 that changes it
+   ├─ VaultsCard.tsx Settings › Vaults — rename, recolour, remove
    └─ Mobile.tsx     phone tab bar and full-screen tab views
 ```
 
@@ -1818,10 +2074,19 @@ Two rules keep it comprehensible:
 a journal. Wipe it and a sync repopulates it. Nothing lives only there except
 version history.
 
-**A backend is five methods.** `list`, `getText`/`getBlob`, `put`, `remove`,
-`ensureDir`. All the difficult reasoning is in `sync.ts`. Adding S3, Dropbox or
-the File System Access API is a couple hundred lines in `src/adapters/` and one
-line in `src/app/backend.ts` — no changes to the engine.
+**A target is five methods.** `list`, `getText`/`getBlob`, `put`, `remove`,
+`ensureDir`. All the difficult reasoning is in `engine.ts`. Adding S3 or Dropbox
+is a couple hundred lines in `src/adapters/` and one line in
+`src/app/backend.ts`.
+
+The File System Access adapter was the same couple hundred lines, and it is
+worth saying where the claim above stopped short: it is the first target that
+runs *alongside* another rather than instead of it, and one file cannot be
+described by one record of what "the remote" last confirmed when there are two
+remotes. So the engine grew a notion of *which* target it speaks for — each file
+now keeps a `sync` record for the backend and a `folder` one beside it, and the
+engine reads and writes only its own. That is the entire change; the reconcile
+itself is untouched, which is why `sync.test.ts` passed through it unmodified.
 
 **Bundle.** ~200 KB gzipped for the editor core, ~1.1 MB precached including the
 16 lazily-loaded code-block language modes. CodeMirror's full language catalogue
@@ -1838,6 +2103,55 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 - **Dragging a note only works with a pointer.** A folder row takes a dropped
   note, but a drag with a finger is a scroll, so touch keeps long-press →
   *Move to…* — which is also still what a keyboard reaches.
+- **Nothing crosses between vaults, including the things you might want to.**
+  There is no search across vaults, no command palette that reaches into
+  another one, and no way to move a note from one to another. All three are
+  buildable and all three dissolve the boundary the feature is for, so the
+  honest version is that they are absent rather than half-present: to move a
+  note, open it, copy it, switch, paste — or use Export, which is two clicks
+  and keeps the file.
+- **Vaults share one browser storage allowance.** The figure under About is the
+  origin's total, not the vault's, and a browser low on space evicts by origin —
+  so a large vault is a risk to a small one beside it. Settings › Vaults says
+  so, and setting up a backend is what turns that from a loss into a
+  re-download.
+- **Switching vaults reloads.** A couple of hundred milliseconds, and the
+  reasoning is in [Vaults](#vaults) — but it does mean an in-flight sync is
+  abandoned mid-run rather than finished. Nothing is lost by that (the files it
+  had not reached are still pending and go on the next run), but a switch during
+  a large first sync makes that sync start again.
+- **A connected folder is Chromium-desktop only, and it has to be handed back
+  every session.** The File System Access API is not in Firefox or Safari and
+  not on any phone, so the feature is offered where it exists and absent where
+  it does not. Where it does exist, the browser remembers the directory but
+  usually not the permission — a prompt is only allowed inside a click, so the
+  status bar has to ask, and there is no way to make that automatic short of
+  installing the app as a PWA and hoping Chromium keeps the grant.
+- **Outside edits are found by sweeping, not by being told.** Where
+  `FileSystemObserver` exists a change arrives immediately; everywhere else a
+  file saved in Obsidian is picked up at the next sweep, which is 5 seconds by
+  default and only runs while the window is visible. A sweep is a directory walk
+  and a stat of every file — local and fast, but a 5,000-file vault on a slow
+  disk is a reason to move the interval up rather than down. Slate's own writes
+  do not trigger a sweep of themselves: each one records the revision it
+  produced, so the next sweep reads it as agreement rather than as somebody
+  else's edit.
+- **A folder rename outside Slate looks like a delete and a create.** Nothing in
+  the API reports a move, so renaming `Roof.md` to `Roof repairs.md` in Finder
+  reads as one file gone and another arrived — the note keeps its content but
+  loses its version history, and `[[Roof]]` links are not repointed the way an
+  in-app rename repoints them. Renaming inside Slate does the right thing.
+- **A name your filesystem will not take stops that one file, and says so.**
+  WebDAV and Drive accept filenames a local disk will refuse — `:` and `?` are
+  the usual offenders, and some sandboxed or network-mounted filesystems are
+  stricter still. Such a file is named in the folder's error line with the
+  suggestion to rename the note; the rest of the vault syncs regardless, and the
+  file is retried on every sweep until it can be written. The same goes for a
+  file that cannot be read at the moment — one another program is holding open,
+  or one whose permission was withdrawn mid-session. That is deliberately *not*
+  treated as the file being absent: reading it that way would let a delete
+  report success while the file sat there, and the next sweep would pull the
+  supposedly deleted note back and push it to every other device.
 - **A folded callout is folded everywhere.** The fold is a `-` in the marker
   rather than a per-window state, which is what makes it survive a reload and a
   sync — and also means folding one on the laptop folds it on the phone. That
@@ -1940,8 +2254,6 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
   exists.
 - **Publish a note** as a read-only shared link, straight from the adapter.
 - **Encrypted vaults**, as above — a clean fit behind `RemoteAdapter`.
-- **Multiple vaults**, which is nearly free: `db.ts` already reads its database
-  name from a global so more than one can coexist in a profile.
 - **Tag Folder rules over dates** — `created:<2026-01-01`, `due:overdue` — which
   the parser is already shaped to accept.
 
@@ -1950,8 +2262,8 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 918 unit + two-device sync tests
-node scripts/smoke.mjs  # 654 checks in headless Chromium against dist/
+npm test                # 1000 unit + two-device sync + folder round-trip tests
+node scripts/smoke.mjs  # 708 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 
@@ -1990,6 +2302,31 @@ in the middle of a word, which is what an index over words rather than runs
 would quietly stop finding. A browser dialog is now a *failure* in the folder
 section: naming a folder is the app's own dialog, and `prompt()` is what that
 used to be.
+
+The vaults section is driven entirely through the UI, because what is most
+likely to be wrong is not the registry — the unit tests cover that — but whether
+the switcher is where somebody would look and whether a switch really lands
+where it said. It makes a second vault from the sidebar's menu, checks the
+reload put `?vault=` in the URL and the new vault's name in the window title,
+checks the new vault is empty rather than filtered, writes a note in it,
+switches back, and searches the first vault for a word that only exists in the
+second. Then it removes one from Settings › Vaults and checks the app goes back
+to not mentioning vaults at all, with the remaining notes untouched.
+
+The Connected Folder section runs the whole feature against the *real* File
+System Access API rather than a stand-in. Only the file-chooser dialog is
+replaced — a headless browser genuinely cannot open one — and it hands back an
+origin-private directory, so the preview, the adapter, the engine and every
+write are the shipping code working on real handles. It connects, checks the
+vault landed as files and the attachments as bytes, writes a file into the
+directory from outside and watches it become a note, types into that note and
+reads the same text back off the file moments later, then disconnects and
+asserts that not one file moved and not one note left the vault. It also asks
+the directory up front whether it will take a non-ASCII filename, because the
+sandboxed one in some Chromium builds will not: where it refuses, the run
+asserts the thing that actually matters when a filesystem refuses a name — the
+file is named, the run reports itself degraded rather than done, and every other
+note is written out regardless.
 
 Three of its sections are there because the browser is the only place the answer
 exists. The spreadsheet paste is driven through a real `ClipboardEvent` carrying every
