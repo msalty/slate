@@ -1932,6 +1932,20 @@ button.property-kind:hover {
   color: color-mix(in srgb, var(--text-on-accent) 70%, transparent);
 }
 
+/*
+ * What the list is saying about itself — "Showing 40 of 63 tags" — rather than
+ * another row to open. Quieter than a row and separated from the last one, so
+ * it reads as a footnote and not as a result that failed to render.
+ */
+.palette-note {
+  padding: 9px 12px 6px;
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+  color: var(--text-faint);
+  font-size: 12px;
+  text-align: center;
+}
+
 /* ------------------------------------------------------- the file picker
 
    A palette, so the box you type in is the first thing under the cursor and

@@ -7364,6 +7364,102 @@ try {
   await page.waitForTimeout(400)
   await page.screenshot({ path: join(SHOTS, '05-light.png') })
 
+  /* ---- a list taller than the palette ----------------------------------
+   *
+   * Both of these are about a result list that does not fit. A palette is a
+   * keyboard instrument, and until now ↓ walked the selection off the bottom
+   * of the box — you could not see what was selected, and Enter opened
+   * whatever it had landed on. A short window makes the overflow certain
+   * rather than marginal.
+   */
+  {
+    await page.setViewportSize({ width: 1440, height: 620 })
+    await page.waitForTimeout(300)
+
+    const openWith = async (text) => {
+      await page.keyboard.press('Escape')
+      await page.waitForTimeout(150)
+      await page.keyboard.press('Control+k')
+      await page.waitForSelector('.palette input', { timeout: 3000 })
+      await page.waitForTimeout(350)
+      await page.locator('.palette input').fill(text)
+      await page.waitForTimeout(400)
+    }
+    /** Is the selected row inside the part of the list you can actually see? */
+    const selectionVisible = () =>
+      page.evaluate(() => {
+        const list = document.querySelector('.palette-list')
+        const row = list?.querySelector('[data-sel="1"]')
+        if (!list || !row) return null
+        const l = list.getBoundingClientRect()
+        const r = row.getBoundingClientRect()
+        return r.top >= l.top - 1 && r.bottom <= l.bottom + 1
+      })
+
+    await openWith('>')
+    const rowCount = await page.locator('.palette-row').count()
+    const overflows = await page.evaluate(() => {
+      const l = document.querySelector('.palette-list')
+      return l.scrollHeight > l.clientHeight + 4
+    })
+    check('the command list is taller than the box it is in', overflows, `${rowCount} rows`)
+    check('the selection starts visible', (await selectionVisible()) === true)
+
+    for (let i = 0; i < rowCount - 1; i++) await page.keyboard.press('ArrowDown')
+    await page.waitForTimeout(300)
+    check(
+      '↓ to the last row scrolls it into view instead of off the bottom',
+      (await selectionVisible()) === true,
+      `row ${rowCount} of ${rowCount}`,
+    )
+    for (let i = 0; i < rowCount - 1; i++) await page.keyboard.press('ArrowUp')
+    await page.waitForTimeout(300)
+    check('and ↑ back to the top follows it home', (await selectionVisible()) === true)
+
+    /* ---- a capped list says that it is capped -------------------------- */
+    // Forty-five new tags on one note, which is far cheaper than forty-five
+    // notes and enough to push a bare `#` past the forty it will show.
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(200)
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.waitForTimeout(300)
+    await page.click('[title^="New note"]')
+    await page.waitForSelector('.cm-editor')
+    await page.waitForTimeout(400)
+    const manyTags = Array.from({ length: 45 }, (_, i) => `#z${String(i).padStart(3, '0')}`).join(' ')
+    await page.locator('.cm-content').click()
+    await page.locator('.cm-content').pressSequentially(`${manyTags}\n`, { delay: 1 })
+    await page.waitForTimeout(900)
+
+    await openWith('#')
+    const shown = await page.locator('.palette-row').count()
+    const capNote = await page
+      .locator('.palette-note')
+      .innerText()
+      .catch(() => '')
+    check('a capped collection list hands back exactly its cap', shown === 40, `${shown} rows`)
+    check(
+      'and says how many of how many, rather than quietly dropping the rest',
+      /^Showing 40 of \d+ tags — type to narrow\.$/.test(capNote.trim()),
+      capNote.trim() || 'nothing said',
+    )
+    check(
+      'the line is not a row, so the arrows and Enter step past it',
+      (await page.locator('.palette-note.palette-row').count()) === 0,
+    )
+    // Narrowing is exactly what the line asked for, so it stops asking.
+    await page.locator('.palette input').fill('#z01')
+    await page.waitForTimeout(400)
+    check(
+      'and it goes quiet once the list is the whole answer',
+      (await page.locator('.palette-note').count()) === 0 &&
+        (await page.locator('.palette-row').count()) === 10,
+      `${await page.locator('.palette-row').count()} rows, ${await page.locator('.palette-note').count()} notes`,
+    )
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(200)
+  }
+
   /* ---- responsive ------------------------------------------------------ */
   await page.setViewportSize({ width: 420, height: 860 })
   await page.evaluate(() => document.documentElement.removeAttribute('data-theme'))
@@ -7373,6 +7469,37 @@ try {
   )
   check('no horizontal overflow on a phone viewport', !horizontalOverflow)
   await page.screenshot({ path: join(SHOTS, '06-mobile.png') })
+
+  /*
+   * Neither panel command exists where neither panel does.
+   *
+   * The compact layout renders no calendar rail at all, and no scrim to
+   * dismiss a drawer with — so "Show calendar" did nothing whatsoever, and a
+   * sidebar opened from here would have covered the screen with no way to tap
+   * it away. Absent rather than disabled, the rule the AI commands already
+   * follow: a palette that lists what you cannot do is one people scroll past.
+   */
+  await page.keyboard.press('Control+k')
+  await page.waitForSelector('.palette input', { timeout: 3000 })
+  await page.waitForTimeout(350)
+  await page.locator('.palette input').fill('>')
+  await page.waitForTimeout(400)
+  const compactCommands = await page.locator('.palette-row').allInnerTexts()
+  check(
+    'a compact layout is offered no sidebar, calendar or focus-mode command',
+    compactCommands.length > 6 &&
+      !compactCommands.some((t) => /sidebar|calendar|focus mode|new window/i.test(t)),
+    `${compactCommands.length} commands: ${
+      compactCommands.filter((t) => /sidebar|calendar|focus|window/i.test(t)).join(', ') ||
+      'none of the four, as it should be'
+    }`,
+  )
+  check(
+    'but the ones that do work there are still offered',
+    compactCommands.some((t) => /New note/i.test(t)) && compactCommands.some((t) => /Sync now/i.test(t)),
+  )
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(250)
 
   /* ---- console -------------------------------------------------------- */
   const realErrors = consoleErrors.filter(

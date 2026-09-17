@@ -19,8 +19,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 1020 unit, two-device sync and folder round-trip tests
-node scripts/smoke.mjs # 725-check browser smoke test against dist/
+npm test               # 1025 unit, two-device sync and folder round-trip tests
+node scripts/smoke.mjs # 735-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -1349,6 +1349,11 @@ somewhere to keep what you use rather than an index of everything you own:
 | `>sync` | commands only |
 | `#`, `/` or `>` alone | every tag, every folder, or **every command** |
 
+A prefixed list shows at most 40 collections and says so when there are more
+(*Showing 40 of 63 tags — type to narrow*), rather than implying the first
+forty are all you have. The arrow keys scroll the list as they move through it,
+so the selection is always the row you can see.
+
 A collection sits above the note hits, because with a folder called Work and
 thirty notes that mention work, the folder is nearly always what was meant —
 and there are never enough collections to push the notes off the screen. Ties
@@ -2290,7 +2295,7 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 1020 unit + two-device sync + folder round-trip tests
+npm test                # 1025 unit + two-device sync + folder round-trip tests
 node scripts/smoke.mjs  # 708 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```

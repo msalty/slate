@@ -60,6 +60,17 @@ const PLAIN_LIMIT = 6
  */
 const PREFIXED_LIMIT = 40
 
+export interface PlaceResult {
+  places: Place[]
+  /**
+   * How many matched before the cap, so the caller can say when it is showing
+   * a sample. A bare `#` reads as "all my tags", and a vault with sixty of them
+   * getting forty and no word about it is the palette quietly answering a
+   * different question than the one it was asked.
+   */
+  total: number
+}
+
 /**
  * What the box is asking for: everything at once, one kind of collection, or
  * the commands.
@@ -87,6 +98,25 @@ export function parsePaletteQuery(raw: string): PaletteQuery {
   return { mode: 'everything', kinds: ['folder', 'smart', 'tag'], term: q }
 }
 
+/** "tags" or "folders", for the messages that name what was being looked for. */
+function kindNoun(kinds: PlaceKind[]): string {
+  return kinds[0] === 'tag' ? 'tags' : 'folders'
+}
+
+/**
+ * The line under a capped list, or nothing when the list is the whole answer.
+ *
+ * Only ever shown for a prefixed query. A bare `#` means "all my tags" and has
+ * to say when it is not showing all of them; an unprefixed search caps the
+ * collections at a handful *on purpose*, to leave the notes room, and counting
+ * that out loud would be noise about a limit nobody is up against.
+ */
+export function cappedPaletteNote(raw: string, result: PlaceResult): string | undefined {
+  const { mode, kinds } = parsePaletteQuery(raw)
+  if (mode !== 'places' || result.total <= result.places.length) return undefined
+  return `Showing ${result.places.length} of ${result.total} ${kindNoun(kinds)} — type to narrow.`
+}
+
 /** What to say when a query of this shape matched nothing at all. */
 export function emptyPaletteMessage(raw: string): string {
   const { mode, kinds } = parsePaletteQuery(raw)
@@ -96,7 +126,7 @@ export function emptyPaletteMessage(raw: string): string {
    * not ask — that row is not even in the list to press Enter on.
    */
   if (mode === 'commands') return 'No commands match.'
-  if (mode === 'places') return kinds[0] === 'tag' ? 'No tags match.' : 'No folders match.'
+  if (mode === 'places') return `No ${kindNoun(kinds)} match.`
   return 'Nothing matches. Press Enter on “New note” to start one.'
 }
 
@@ -144,16 +174,16 @@ function countOf(n: number, noun: 'note' | 'task'): string {
  * not have it: alphabetical is the right order to *read* a list of tags in and
  * the wrong order to *guess* one in.
  */
-export function matchPlaces(raw: string): Place[] {
+export function matchPlaces(raw: string): PlaceResult {
   const { mode, kinds, term } = parsePaletteQuery(raw)
   // `>` is asking for the commands; no collection is an answer to it.
-  if (mode === 'commands') return []
+  if (mode === 'commands') return { places: [], total: 0 }
   /*
    * Nothing typed and no prefix: the palette opens on a few commands and a
    * dozen recent notes, and dropping the whole vault's folders in underneath
    * them would be the sidebar's own problem moved into a dialog.
    */
-  if (!term && mode === 'everything') return []
+  if (!term && mode === 'everything') return { places: [], total: 0 }
 
   const terms = searchTerms(term)
   const scored: Array<{ place: Place; rank: number; size: number }> = []
@@ -231,5 +261,6 @@ export function matchPlaces(raw: string): Place[] {
       b.size - a.size ||
       a.place.label.localeCompare(b.place.label, undefined, { numeric: true }),
   )
-  return scored.slice(0, mode === 'places' ? PREFIXED_LIMIT : PLAIN_LIMIT).map((s) => s.place)
+  const limit = mode === 'places' ? PREFIXED_LIMIT : PLAIN_LIMIT
+  return { places: scored.slice(0, limit).map((s) => s.place), total: scored.length }
 }

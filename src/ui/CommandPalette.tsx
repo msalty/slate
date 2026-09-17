@@ -40,7 +40,13 @@ import {
   scopeLabel,
   settingsOpen,
 } from './state'
-import { emptyPaletteMessage, matchPlaces, parsePaletteQuery, type Place } from './places'
+import {
+  cappedPaletteNote,
+  emptyPaletteMessage,
+  matchPlaces,
+  parsePaletteQuery,
+  type Place,
+} from './places'
 import { folderTree, smartFolders } from '../core/folders'
 import { relativeTime, startOfDay } from '../core/util'
 import { newNoteInFolder } from './EditorPane'
@@ -99,6 +105,16 @@ export function CommandPalette() {
   const [q, setQ] = useState('')
   const [sel, setSel] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+  /*
+   * Whether the selection last moved by key rather than by pointer.
+   *
+   * Only the keyboard scrolls the list. Hovering a row that is half off the
+   * bottom would otherwise scroll it into view, which moves the rows under the
+   * cursor, which fires another hover — the list twitching away from the mouse
+   * that is trying to reach it.
+   */
+  const byKey = useRef(false)
   const open = paletteOpen.value
 
   useEffect(() => {
@@ -114,6 +130,28 @@ export function CommandPalette() {
     setSel(0)
     requestAnimationFrame(() => inputRef.current?.focus())
   }, [open])
+
+  /*
+   * Follow the selection with the scroll.
+   *
+   * A palette is a keyboard instrument — ⌘K, type, arrow down, Enter — and a
+   * bare `#` in a vault of sixty tags is far longer than the eight or so rows
+   * that fit. Without this, ↓ walks the selection off the bottom of the box:
+   * you cannot see what is selected, and Enter opens whatever it landed on.
+   * `nearest` scrolls the least it can, so a row already on screen never
+   * moves the list under you.
+   */
+  useEffect(() => {
+    if (!byKey.current) return
+    listRef.current
+      ?.querySelector('[data-sel="1"]')
+      ?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [sel])
+
+  /* A new query is a new list, and it is read from the top. */
+  useEffect(() => {
+    if (listRef.current) listRef.current.scrollTop = 0
+  }, [q])
 
   // The day the calendar is filtered to, if it is filtered to one at all.
   const day = scope.value.kind === 'day' ? startOfDay(scope.value.date) : undefined
@@ -264,33 +302,36 @@ export function CommandPalette() {
         run: () => update({ editorMode: nextEditorMode(settings.value.editorMode) }),
       },
       /*
-       * Both panels go through the same toggles their shortcuts use, and both
-       * labels are read off what is actually on screen rather than off the
-       * setting. Below the width where a panel can sit inline it is a drawer,
-       * and the setting behind it is not what decides whether you can see it —
-       * so "Hide calendar" used to flip a preference that changed nothing on a
-       * 1200px window, while ⌘⇧R, claimed by this very row as its shortcut,
-       * opened the drawer properly.
-       */
-      {
-        id: 'sidebar',
-        label: sidebarState.value === 'hidden' ? 'Show sidebar' : 'Hide sidebar',
-        hint: '⌘\\',
-        run: () => toggleSidebar(),
-      },
-      {
-        id: 'rail',
-        label: railState.value === 'hidden' ? 'Show calendar' : 'Hide calendar',
-        hint: '⌘⇧R',
-        run: () => toggleRail(),
-      },
-      /*
-       * Both of these are desktop ideas: a phone's editor is already the whole
-       * screen, and it has no second window to put a note in.
+       * All four of these are desktop ideas, and absent rather than disabled
+       * below the breakpoint — the rule the AI commands and the Transcribe
+       * button already follow. A phone's editor is the whole screen, it has no
+       * second window to put a note in, and neither side panel exists there at
+       * all: the compact layout does not render the rail, and the scrim that
+       * dismisses a drawer is not rendered either, so a sidebar opened from
+       * here would have covered the screen with no way to tap it away.
+       *
+       * Both panels go through the same toggle their shortcut uses and take
+       * their label from what is on screen rather than from the setting.
+       * Between 1180 and 1400 the rail is a drawer and `showRightRail` is not
+       * what decides whether you can see it, so "Hide calendar" used to flip a
+       * preference that changed nothing while ⌘⇧R — claimed by that very row
+       * as its shortcut — opened the drawer properly.
        */
       ...(layoutMode.value === 'compact'
         ? []
         : [
+            {
+              id: 'sidebar',
+              label: sidebarState.value === 'hidden' ? 'Show sidebar' : 'Hide sidebar',
+              hint: '⌘\\',
+              run: () => toggleSidebar(),
+            },
+            {
+              id: 'rail',
+              label: railState.value === 'hidden' ? 'Show calendar' : 'Hide calendar',
+              hint: '⌘⇧R',
+              run: () => toggleRail(),
+            },
             {
               id: 'focus',
               label: editorMaximized.value ? 'Leave focus mode' : 'Focus mode',
@@ -361,7 +402,13 @@ export function CommandPalette() {
     ],
   )
 
-  const results = useMemo((): { matchedCommands: Cmd[]; places: Place[]; noteHits: SearchHit[] } => {
+  const results = useMemo((): {
+    matchedCommands: Cmd[]
+    places: Place[]
+    noteHits: SearchHit[]
+    /** Set when the collection list is a sample rather than the whole answer. */
+    capped?: string
+  } => {
     const { mode, term } = parsePaletteQuery(q)
     const matching = (list: Cmd[]) =>
       term ? list.filter((c) => c.label.toLowerCase().includes(term.toLowerCase())) : list
@@ -379,8 +426,11 @@ export function CommandPalette() {
      * commands stand aside — otherwise typing `/Work` would search every note
      * for the literal string and bury the folder it named.
      */
-    const places = matchPlaces(q)
-    if (mode === 'places') return { matchedCommands: [], places, noteHits: [] }
+    const found = matchPlaces(q)
+    const places = found.places
+    if (mode === 'places') {
+      return { matchedCommands: [], places, noteHits: [], capped: cappedPaletteNote(q, found) }
+    }
 
     /*
      * Unprefixed, the commands stay a handful: this is the "find me a note"
@@ -435,15 +485,18 @@ export function CommandPalette() {
           placeholder="Search notes, #tags, /folders — or > for every command"
           aria-label="Search notes, tags and folders, or type a chevron for every command"
           onInput={(e) => {
+            byKey.current = false
             setQ((e.target as HTMLInputElement).value)
             setSel(0)
           }}
           onKeyDown={(e) => {
             if (e.key === 'ArrowDown') {
               e.preventDefault()
+              byKey.current = true
               setSel((s) => Math.min(flat.length - 1, s + 1))
             } else if (e.key === 'ArrowUp') {
               e.preventDefault()
+              byKey.current = true
               setSel((s) => Math.max(0, s - 1))
             } else if (e.key === 'Enter') {
               e.preventDefault()
@@ -453,7 +506,7 @@ export function CommandPalette() {
             }
           }}
         />
-        <div class="palette-list">
+        <div class="palette-list" ref={listRef}>
           {flat.length === 0 && (
             <div class="empty" style={{ padding: '24px' }}>
               {emptyPaletteMessage(q)}
@@ -464,7 +517,10 @@ export function CommandPalette() {
               key={rowKey(item)}
               class="palette-row"
               data-sel={i === sel ? '1' : '0'}
-              onMouseEnter={() => setSel(i)}
+              onMouseEnter={() => {
+                byKey.current = false
+                setSel(i)
+              }}
               onClick={() => void choose(i)}
             >
               <span
@@ -491,6 +547,12 @@ export function CommandPalette() {
               <small>{rowSub(item)}</small>
             </button>
           ))}
+          {/*
+           * Below the rows and outside `flat`, so the arrows step past it and
+           * Enter can never land on it: it is something the list is saying
+           * about itself, not another thing to open.
+           */}
+          {results.capped && <div class="palette-note">{results.capped}</div>}
         </div>
       </div>
     </div>
