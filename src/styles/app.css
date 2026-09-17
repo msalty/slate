@@ -45,6 +45,16 @@
   --radius: 10px;
   --radius-lg: 14px;
   --dur: 140ms;
+
+  /*
+   * A side panel opening or closing, which is a longer and heavier movement than
+   * anything --dur covers: a whole column's worth of layout, not a hover colour.
+   * One token for both the inline collapse and the drawers, so the two ways a
+   * panel can leave the screen feel like the same gesture. PANEL_MS in layout.ts
+   * is the same number — it keeps a leaving drawer mounted for exactly this long.
+   */
+  --panel-dur: 180ms;
+  --panel-ease: cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 /* ---- light ------------------------------------------------------------- */

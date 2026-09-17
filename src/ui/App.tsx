@@ -67,8 +67,12 @@ import {
   installKeyboardWatcher,
   installLayoutWatcher,
   layoutMode,
+  leavingDrawer,
   listInline,
+  panelsAnimating,
+  railMounted,
   railState,
+  sidebarMounted,
   sidebarState,
   toggleRail,
   toggleSidebar,
@@ -395,6 +399,12 @@ export function App() {
         data-list={listInline.value ? '1' : '0'}
         data-zen={zen ? '1' : '0'}
         /*
+         * Whether the panels may move rather than jump. Set only by a toggle and
+         * only for as long as the movement lasts — see layout.ts, where the
+         * reasoning about resizes lives.
+         */
+        data-animate={panelsAnimating.value ? '1' : '0'}
+        /*
          * Only once there is more than one vault. A colour that identifies a
          * set of one identifies nothing, and a stripe down the sidebar of an
          * app nobody has asked to keep two things apart is decoration.
@@ -410,9 +420,22 @@ export function App() {
           '--vault-colour': activeVault()?.colour ?? 'transparent',
         }}
       >
-        {/* --- sidebar: inline on wide, a drawer otherwise --- */}
-        {sidebarState.value !== 'hidden' && (
-          <div class="pane sidebar" data-floating={sidebarState.value === 'floating' ? '1' : '0'}>
+        {/*
+          --- sidebar: inline on wide, a drawer otherwise ---
+
+          Mounted rather than shown: on wide it stays in the tree while hidden so
+          its column has something to collapse, and a drawer outlives its own
+          close by the length of the slide out. `sidebarState` still says whether
+          it is actually showing.
+        */}
+        {sidebarMounted.value && (
+          <div
+            class="pane sidebar"
+            data-floating={
+              sidebarState.value === 'floating' || leavingDrawer.value === 'sidebar' ? '1' : '0'
+            }
+            data-closing={leavingDrawer.value === 'sidebar' ? '1' : '0'}
+          >
             <div class="pane-head">
               <VaultSwitcher />
               <span class="spacer" />
@@ -469,15 +492,26 @@ export function App() {
         )}
 
         {/* --- calendar rail: inline when there's room, a drawer otherwise --- */}
-        {railState.value !== 'hidden' && mode !== 'compact' && (
-          <div class="rail-host" data-floating={railState.value === 'floating' ? '1' : '0'}>
+        {railMounted.value && (
+          <div
+            class="rail-host"
+            data-floating={
+              railState.value === 'floating' || leavingDrawer.value === 'rail' ? '1' : '0'
+            }
+            data-closing={leavingDrawer.value === 'rail' ? '1' : '0'}
+          >
             <RightRail />
           </div>
         )}
 
-        {/* --- one scrim for whichever drawer is open --- */}
-        {drawer.value && mode !== 'compact' && (
-          <div class="drawer-scrim" onClick={closeDrawer} aria-hidden="true" />
+        {/* --- one scrim for whichever drawer is open, and for the one leaving --- */}
+        {(drawer.value || leavingDrawer.value) && mode !== 'compact' && (
+          <div
+            class="drawer-scrim"
+            data-closing={drawer.value ? '0' : '1'}
+            onClick={closeDrawer}
+            aria-hidden="true"
+          />
         )}
       </div>
 

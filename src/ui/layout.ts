@@ -55,6 +55,83 @@ export const layoutMode = computed<LayoutMode>(() =>
 /** Which floating panel is open. Only meaningful outside `wide`. */
 export const drawer = signal<'sidebar' | 'rail' | null>(null)
 
+/**
+ * The panel that is on its way out, held in the tree until it has finished
+ * sliding. There is nothing to animate out of an element that has already been
+ * removed, and a drawer that slides in and then simply vanishes on close reads
+ * as a glitch rather than as the same movement reversed.
+ */
+const closingDrawer = signal<'sidebar' | 'rail' | null>(null)
+
+/** Read-only view of the above, for the components that draw the exit. */
+export const leavingDrawer = computed(() => closingDrawer.value)
+
+/**
+ * How long a panel takes to open or close.
+ *
+ * Shared with `--panel-dur` in shell.css, which is the half that actually moves
+ * anything: this is only how long a leaving element has to stay mounted for. The
+ * two have to agree, so they are commented at both ends.
+ */
+export const PANEL_MS = 180
+
+let closeTimer: ReturnType<typeof setTimeout> | undefined
+let animateTimer: ReturnType<typeof setTimeout> | undefined
+
+/**
+ * Panels move only when somebody toggled one.
+ *
+ * A window resize that crosses a breakpoint changes exactly the same attributes
+ * a toggle does. Letting CSS animate that would put panels in motion while the
+ * window edge is being dragged — the "things rearranging underneath you" this
+ * file's header is about — so the transition is opt-in rather than always on: a
+ * toggle turns it on for the length of the movement and everything else,
+ * resizes included, changes instantly.
+ */
+export const panelsAnimating = signal(false)
+
+function animatePanels() {
+  clearTimeout(animateTimer)
+  panelsAnimating.value = true
+  // A little past the end, so a transition is never cut short by its own gate.
+  animateTimer = setTimeout(() => {
+    panelsAnimating.value = false
+  }, PANEL_MS + 40)
+}
+
+/** Open, close or swap the floating panel, animating whatever leaves. */
+function setDrawer(next: 'sidebar' | 'rail' | null) {
+  const prev = drawer.peek()
+  if (prev === next) return
+  clearTimeout(closeTimer)
+  animatePanels()
+  // Whatever was open is leaving — unless it is also what is arriving, which is
+  // how re-opening a panel mid-exit catches it rather than crossing it.
+  closingDrawer.value = prev !== null && prev !== next ? prev : null
+  drawer.value = next
+  if (closingDrawer.value !== null) {
+    closeTimer = setTimeout(() => {
+      closingDrawer.value = null
+    }, PANEL_MS)
+  }
+}
+
+/**
+ * Drop the floating panel outright, with no exit. For resizes, not for clicks.
+ *
+ * It calls off any movement still in flight too. A toggle a moment before a
+ * breakpoint crossing would otherwise leave the gate open across it, and the
+ * inline panels would animate to their new arrangement — the one thing this is
+ * being called to prevent.
+ */
+function dismissDrawer() {
+  clearTimeout(closeTimer)
+  clearTimeout(animateTimer)
+  closingDrawer.value = null
+  drawer.value = null
+  panelsAnimating.value = false
+}
+
 export function installLayoutWatcher(): () => void {
   const onResize = () => {
     viewportWidth.value = window.innerWidth
@@ -126,16 +203,31 @@ effect(() => {
   document.documentElement.style.setProperty('--kb-inset', `${keyboardInset.value}px`)
 })
 
-// Close any floating panel when the mode changes, so a resize can never leave
-// a drawer hanging over the editor.
+/* -------------------------------------------------------- derived visibility */
+
+/** Is there room for the calendar rail to sit inline rather than overlay? */
+const railMayBeInline = computed(
+  () => layoutMode.value === 'wide' && viewportWidth.value >= RAIL_INLINE_MIN,
+)
+
+/*
+ * Drop any floating panel when the layout crosses a boundary, so a resize can
+ * never leave a drawer hanging over the editor. RAIL_INLINE_MIN counts as one of
+ * those boundaries even though it doesn't change the mode: past it the rail
+ * becomes an inline column, and the drawer it was a moment ago has no meaning.
+ */
 let lastMode: LayoutMode | undefined
+let lastRailInline: boolean | undefined
 effect(() => {
   const m = layoutMode.value
-  if (lastMode !== undefined && lastMode !== m) drawer.value = null
+  const r = railMayBeInline.value
+  const crossed =
+    (lastMode !== undefined && lastMode !== m) ||
+    (lastRailInline !== undefined && lastRailInline !== r)
   lastMode = m
+  lastRailInline = r
+  if (crossed) dismissDrawer()
 })
-
-/* -------------------------------------------------------- derived visibility */
 
 /** Is the sidebar showing, and is it inline or floating? */
 export const sidebarState = computed<'hidden' | 'inline' | 'floating'>(() => {
@@ -144,30 +236,55 @@ export const sidebarState = computed<'hidden' | 'inline' | 'floating'>(() => {
 })
 
 export const railState = computed<'hidden' | 'inline' | 'floating'>(() => {
-  if (layoutMode.value === 'wide' && viewportWidth.value >= RAIL_INLINE_MIN)
-    return settings.value.showRightRail ? 'inline' : 'hidden'
+  if (railMayBeInline.value) return settings.value.showRightRail ? 'inline' : 'hidden'
   return drawer.value === 'rail' ? 'floating' : 'hidden'
 })
+
+/**
+ * Whether the panel is in the tree at all — which is not the same question as
+ * whether it is showing, and is the reason both exist.
+ *
+ * In `wide` a collapsed panel stays mounted and its grid track is animated down
+ * to zero width instead. That buys the animation something to run on, and it
+ * keeps the panel's scroll position and its expanded folders across a hide —
+ * the same bargain focus mode makes for the note list, and for the same reason
+ * (see the comment on the focus-mode rules in shell.css). Elsewhere a closed
+ * drawer really is gone, once it has finished leaving.
+ */
+export const sidebarMounted = computed(
+  () =>
+    layoutMode.value === 'wide' ||
+    sidebarState.value !== 'hidden' ||
+    closingDrawer.value === 'sidebar',
+)
+
+export const railMounted = computed(
+  () =>
+    layoutMode.value !== 'compact' &&
+    (railMayBeInline.value || railState.value !== 'hidden' || closingDrawer.value === 'rail'),
+)
 
 /** The note list is inline everywhere except compact, where it's a whole tab. */
 export const listInline = computed(() => layoutMode.value !== 'compact')
 
 export function toggleSidebar() {
   if (layoutMode.value === 'wide') {
+    animatePanels()
     settings.value = { ...settings.value, showSidebar: !settings.value.showSidebar }
   } else {
-    drawer.value = drawer.value === 'sidebar' ? null : 'sidebar'
+    setDrawer(drawer.value === 'sidebar' ? null : 'sidebar')
   }
 }
 
 export function toggleRail() {
-  if (layoutMode.value === 'wide' && viewportWidth.value >= RAIL_INLINE_MIN) {
+  if (railMayBeInline.value) {
+    animatePanels()
     settings.value = { ...settings.value, showRightRail: !settings.value.showRightRail }
   } else {
-    drawer.value = drawer.value === 'rail' ? null : 'rail'
+    setDrawer(drawer.value === 'rail' ? null : 'rail')
   }
 }
 
 export function closeDrawer() {
-  drawer.value = null
+  setDrawer(null)
 }
