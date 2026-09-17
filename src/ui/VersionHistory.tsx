@@ -84,7 +84,7 @@ export function VersionHistory() {
             {list.map((v) => (
               <button
                 key={v.id}
-                class="backlink-row"
+                class="version-row"
                 style={{
                   background: sel?.id === v.id ? 'var(--row-active)' : undefined,
                 }}

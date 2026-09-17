@@ -75,6 +75,7 @@ import {
 } from './caret'
 import { clipboardHandler } from './paste'
 import { editableCompartment, editableFacet } from './reading'
+import { noteFooter } from './footer'
 import { WikiLink } from './wikilink-syntax'
 import { noteContext, requestLinkDialog } from './context'
 import { setDueAtCaret } from './due'
@@ -223,6 +224,11 @@ export interface EditorOptions {
    * inside the heading.
    */
   caret?: number
+  /**
+   * An element to hang past the last line of the note, inside its scroll. The
+   * shell puts the note's linked mentions there; see editor/footer.ts.
+   */
+  footer?: HTMLElement
 }
 
 /**
@@ -447,6 +453,8 @@ export function createEditorState(opts: EditorOptions): EditorState {
    * them would never be heard. See editor/vars.ts.
    */
   extensions.push(propertyLock(!!opts.readOnly))
+
+  if (opts.footer) extensions.push(noteFooter(opts.footer))
 
   return EditorState.create({
     doc: opts.doc,

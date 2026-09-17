@@ -928,12 +928,12 @@ body.resizing .pane-resizer::after {
 /*
  * Body width (Settings → Editor). The default is the full pane, flush left —
  * the width rules for that live with the rest of the content box in
- * editor/theme.ts. 'measure' caps the body at a reading column and centres it;
- * the backlinks list takes the same cap so it stays aligned under the body.
- * Below the measure — a phone, a narrow pane — the cap is inert either way.
+ * editor/theme.ts. 'measure' caps the body at a reading column and centres it.
+ * The linked mentions are inside that box rather than beside it, so they take
+ * the cap with the text and need no rule of their own. Below the measure — a
+ * phone, a narrow pane — the cap is inert either way.
  */
-.editor-pane[data-width='measure'] .editor-host .cm-content,
-.editor-pane[data-width='measure'] .backlinks-inner {
+.editor-pane[data-width='measure'] .editor-host .cm-content {
   max-width: var(--editor-measure);
   margin: 0 auto;
 }
@@ -1345,26 +1345,55 @@ button.property-kind:hover {
   display: none;
 }
 
-.backlinks {
+/* ---- linked mentions, at the end of the note ---------------------------
+ *
+ * The block the editor hangs past the last line (editor/footer.ts), filled by
+ * ui/LinkedMentions.tsx. It sits inside CodeMirror's content box, which is what
+ * keeps it tracking the note above it — flush left or in the reading measure,
+ * with the phone's wider gutters — without a second set of width rules.
+ *
+ * Nothing here gives the slot itself any height: a note nothing links to
+ * renders no footer at all, and an empty block at the end of the document has
+ * to measure zero or it reads as a stray blank line.
+ */
+.cm-note-footer {
+  /* The app's own type, not the note's: this is about the note, not in it. */
+  font-family: var(--font-body);
+  font-size: 13px;
+  line-height: 1.45;
+  letter-spacing: normal;
+}
+.mentions {
+  /* 4px to clear `.cm-line`'s own padding and land under the first character. */
+  margin: 30px 4px 0;
   border-top: 1px solid var(--border);
-  padding: 14px 0 20px;
-  flex: 0 0 auto;
-  max-height: 30vh;
-  overflow-y: auto;
+  padding-top: 8px;
 }
-/* Flush left and full width by default, so it tracks the note body above it. */
-.backlinks-inner {
-  padding: 0 4px;
-}
-.backlinks h3 {
+.mentions-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 5px 6px;
+  border-radius: 7px;
   font-size: 11px;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-faint);
-  margin: 0 0 8px;
-  font-weight: 600;
+  text-align: left;
+  transition:
+    color var(--dur),
+    background var(--dur);
 }
-.backlink-row {
+.mentions-head:hover {
+  background: var(--row-hover);
+  color: var(--text-muted);
+}
+.mentions-count {
+  font-variant-numeric: tabular-nums;
+}
+.mention-row {
   display: block;
   width: 100%;
   text-align: left;
@@ -1372,10 +1401,35 @@ button.property-kind:hover {
   border-radius: 7px;
   font-size: 13px;
 }
-.backlink-row:hover {
+.mention-row:hover {
   background: var(--row-hover);
 }
-.backlink-row small {
+/* Long titles and excerpts end in an ellipsis; nothing here scrolls sideways. */
+.mention-title,
+.mention-excerpt {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mention-excerpt {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+/* A version in the history dialog: the same shape, a line over its detail. */
+.version-row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  border-radius: 7px;
+  font-size: 13px;
+}
+.version-row:hover {
+  background: var(--row-hover);
+}
+.version-row small {
   display: block;
   color: var(--text-faint);
   font-size: 12px;
@@ -3301,7 +3355,23 @@ button.property-kind:hover {
     z-index: 25;
     border-top: 1px solid var(--border);
   }
-  .backlinks {
-    max-height: 26vh;
+  /*
+   * Linked mentions, thumb-sized. The presentation is the phone's too — the
+   * list is in the note's scroll here exactly as it is on a desktop — but a
+   * 26px row is not something you can reliably hit with a finger, so the
+   * header and every row are given the full 44px target.
+   */
+  .mentions-head,
+  .mention-row {
+    min-height: 44px;
+  }
+  .mentions-head {
+    padding: 8px 6px;
+  }
+  .mention-row {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 8px;
   }
 }

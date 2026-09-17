@@ -508,9 +508,59 @@ try {
     check('clicking a wikilink navigates', nowTitle === 'Lisbon Trip', `landed on "${nowTitle}"`)
   }
 
-  /* ---- backlinks ----------------------------------------------------- */
-  const backlinks = await page.locator('.backlinks .backlink-row').count()
-  check('backlink is recorded', backlinks > 0, `${backlinks} linked mentions`)
+  /* ---- linked mentions ------------------------------------------------
+   *
+   * The list lives at the end of the note itself rather than in a strip under
+   * the editor, so the two things worth proving in a real browser are that it
+   * is inside CodeMirror's own content — which is what makes it scroll with the
+   * note and take none of the pane's height — and that the editor still reaches
+   * the bottom of the pane with mentions on screen.
+   */
+  const mentions = await page.evaluate(() => {
+    const el = document.querySelector('.mentions')
+    if (!el) return null
+    const scroller = document.querySelector('.cm-scroller').getBoundingClientRect()
+    const pane = document.querySelector('.editor-pane').getBoundingClientRect()
+    return {
+      inTheNote: !!el.closest('.cm-content'),
+      rows: el.querySelectorAll('.mention-row').length,
+      // `textContent`, not `innerText`: the DOM text is what a screen reader
+      // announces, whatever the stylesheet does about capitals.
+      label: el.querySelector('.mentions-head').textContent.replace(/\s+/g, ' ').trim(),
+      scrolls: el.scrollHeight > el.clientHeight,
+      shortfall: Math.round(pane.bottom - scroller.bottom),
+    }
+  })
+  check('backlink is recorded', !!mentions && mentions.rows > 0, `${mentions?.rows} linked mentions`)
+  check('the list is in the note, not under it', !!mentions?.inTheNote)
+  check('and has no scrollbar of its own', mentions?.scrolls === false)
+  check(
+    'the editor still reaches the bottom of the pane',
+    Math.abs(mentions?.shortfall ?? 99) <= 1,
+    `${mentions?.shortfall}px short`,
+  )
+  check('the header counts them', mentions?.label === 'Linked mentions 1', mentions?.label)
+
+  /* Folded with the pointer, reopened from the keyboard. */
+  await page.locator('.mentions-head').click()
+  await page.waitForTimeout(200)
+  check(
+    'the header folds the list away',
+    (await page.locator('.mention-row').count()) === 0 &&
+      (await page.getAttribute('.mentions-head', 'aria-expanded')) === 'false',
+  )
+  check(
+    'and folding it does not drop a caret into the note',
+    (await page.getAttribute('.cm-content', 'contenteditable')) === 'false',
+  )
+  await page.locator('.mentions-head').focus()
+  await page.keyboard.press('Enter')
+  await page.waitForTimeout(200)
+  check(
+    'and the keyboard opens it again',
+    (await page.locator('.mention-row').count()) > 0 &&
+      (await page.getAttribute('.mentions-head', 'aria-expanded')) === 'true',
+  )
 
   /* ---- back and forward ------------------------------------------------
    *
@@ -541,6 +591,20 @@ try {
       (await page.locator('.editor-title-input').inputValue()) === 'Lisbon Trip',
     )
   }
+
+  /* ---- and a mention opens the note it came from ---------------------- */
+  await page.locator('.mention-row').first().click()
+  await page.waitForTimeout(400)
+  check(
+    'a linked mention opens its source note',
+    (await page.locator('.editor-title-input').inputValue()) === 'Packing List',
+  )
+  check(
+    'a note nothing links to shows no footer',
+    (await page.locator('.mentions').count()) === 0,
+  )
+  await page.click('.editor-nav [aria-label="Back"]')
+  await page.waitForTimeout(350)
 
   /* ---- paste an image ------------------------------------------------ */
   await page.locator('.cm-content').click()

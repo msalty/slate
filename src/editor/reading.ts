@@ -94,6 +94,10 @@ const TAP_MS = 600
  * you cannot read through without falling into the editor is not a reading
  * mode.
  *
+ * The note's footer is on the list as a whole: what links here is the shell's
+ * own block, hung past the last line (editor/footer.ts), and folding the list
+ * away or opening one of the notes in it is never also a request to write.
+ *
  * The date chip belongs here for the same reason the checkbox does: reading is
  * not read-only, and giving a task a date while reading through a note is the
  * same kind of act as ticking one off. Without it the picker opened *and* the
@@ -106,7 +110,7 @@ const TAP_MS = 600
  * concerned, a tap on the note.
  */
 const SELF_HANDLED =
-  '.cm-task-checkbox, .cm-embed, .cm-code-copy, .cm-due-chip, .cm-callout-fold'
+  '.cm-task-checkbox, .cm-embed, .cm-code-copy, .cm-due-chip, .cm-callout-fold, .cm-note-footer'
 
 /** A table is content, not a control — but it places its own caret. */
 const TABLE = '.cm-table-wrap'
