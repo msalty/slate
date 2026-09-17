@@ -2534,6 +2534,78 @@ try {
     !/\[!WARNING\][-+]/.test(await noteAfterEdit('# Heading one', '[!WARNING] ')),
   )
 
+  /* ---- folding from inside the callout ----------------------------------
+   *
+   * The case the checks above cannot reach, because they click the chevron
+   * with the caret somewhere else entirely. Two safeguards used to cancel out
+   * here: the chevron preserved the selection, since a caret on the header
+   * line hands back the raw marker and takes the chevron with it, and the
+   * renderer refuses to hide a range holding the selection, since a fold that
+   * swallowed the caret would be text you could type into and not see. With
+   * the caret in the body the `-` went in, the arrow turned, and the body
+   * stayed exactly where it was.
+   *
+   * It needs a real browser: the caret only counts once the editor is focused
+   * and the user has actually done something, and neither is true of a test
+   * that sets a selection programmatically.
+   */
+  const bodyLine = page.locator('.cm-line.cm-callout-warning').nth(1)
+  await bodyLine.click()
+  await page.waitForTimeout(300)
+  const caretInBody = await page.evaluate(() => {
+    const sel = document.getSelection()
+    const node = sel?.anchorNode
+    const el = node?.nodeType === 3 ? node.parentElement : node
+    return !!el?.closest?.('.cm-line.cm-callout-warning')
+  })
+  check('clicking a callout body puts the caret in it', caretInBody)
+
+  const beforeInsideFold = await page.locator('.cm-line.cm-callout').count()
+  await page.locator('.cm-callout-fold').first().click()
+  await page.waitForTimeout(400)
+  check(
+    'folding from inside the body actually collapses it',
+    (await page.locator('.cm-callout-folded').count()) === 1 &&
+      (await page.locator('.cm-line.cm-callout').count()) < beforeInsideFold,
+    `${beforeInsideFold} → ${await page.locator('.cm-line.cm-callout').count()} lines, ${await page.locator('.cm-callout-folded').count()} placeholder`,
+  )
+  check(
+    'and the caret came out with it, rather than being folded away',
+    await page.evaluate(() => {
+      const sel = document.getSelection()
+      const node = sel?.anchorNode
+      const el = node?.nodeType === 3 ? node.parentElement : node
+      return !el?.closest?.('.cm-line.cm-callout')
+    }),
+  )
+  check(
+    'the chevron survived, so the callout can be opened again',
+    (await page.locator('.cm-callout-fold[data-folded="1"]').count()) === 1,
+  )
+
+  await page.locator('.cm-callout-fold[data-folded="1"]').first().click()
+  await page.waitForTimeout(400)
+  check(
+    'and it opens again from there',
+    (await page.locator('.cm-callout-folded').count()) === 0 &&
+      (await page.locator('.cm-line.cm-callout').count()) === calloutLinesBefore,
+  )
+
+  /*
+   * Hand the note back. Clicking into the body above is what put this note into
+   * editing, and everything below here reads the same note expecting to find it
+   * as a page — which is the gesture Escape exists for: read, click to fix a
+   * line, Escape, keep reading.
+   */
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(350)
+  const handedBack = await readingState()
+  check(
+    'and Escape hands the note back afterwards',
+    handedBack.flag === '1' && !handedBack.focused.includes('cm-content'),
+    `reading=${handedBack.flag}, focused ${handedBack.focused || 'nothing'}`,
+  )
+
   await page.screenshot({ path: join(SHOTS, '07-kitchen-sink.png') })
 
   /* ---- the copy button on a code block ---------------------------------
