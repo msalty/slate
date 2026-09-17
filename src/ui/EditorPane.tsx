@@ -1,6 +1,7 @@
 import { highlightTask } from '../editor/taskHighlight'
 /** Right-of-centre column: the note itself. */
 
+import { render } from 'preact'
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks'
 import { EditorView } from '@codemirror/view'
 import {
@@ -13,7 +14,6 @@ import {
 import { FormatBar } from './FormatBar'
 import { Properties } from './Properties'
 import {
-  backlinkMap,
   getEntry,
   getRaw,
   isTrashed,
@@ -94,6 +94,7 @@ import { NoteNav } from './NoteNav'
 import { hasCamera, hasPhotoLibrary, pickAndInsert } from '../editor/pickImage'
 import { openFilePicker } from './pickFile'
 import { insertVaultFiles } from '../editor/paste'
+import { LinkedMentions } from './LinkedMentions'
 
 /**
  * A save that did not land.
@@ -237,9 +238,20 @@ export function EditorPane() {
     propertiesOpen.value = false
     setLocked(isLocked(parseFrontmatter(text).data))
 
+    /*
+     * The note's footer — what links here — built per editor and rendered into
+     * by this pane. The editor only hangs it past the last line (see
+     * editor/footer.ts); everything in it is shell, and it is thrown away with
+     * the editor it belongs to, so what is on screen is always this note's.
+     */
+    const footer = document.createElement('div')
+    footer.className = 'cm-note-footer'
+    render(<LinkedMentions path={path} />, footer)
+
     const state = createEditorState({
       doc: text,
       path,
+      footer,
       mode: settings.value.editorMode,
       fontSize: settings.value.fontSize,
       readOnly: isTrashed(path),
@@ -305,6 +317,7 @@ export function EditorPane() {
       view.scrollDOM.removeEventListener('scroll', onScroll)
       view.dom.removeEventListener('keydown', onKeyDown)
       stopTaps()
+      render(null, footer)
     }
   }, [path, popped])
 
@@ -490,7 +503,6 @@ export function EditorPane() {
     )
   }
 
-  const links = backlinkMap.value.get(path) ?? []
   /*
    * The note's text as the vault holds it, for the questions the chrome asks
    * about the note rather than about the buffer: is this a conversation, and
@@ -1004,26 +1016,6 @@ export function EditorPane() {
         !(compact && formatSheetOpen.value) && (
           <Composer getView={() => viewRef.current} text={noteText} path={path} />
         )}
-
-      {links.length > 0 && (
-        <div class="backlinks">
-          <div class="backlinks-inner">
-            <h3>
-              {links.length} linked mention{links.length === 1 ? '' : 's'}
-            </h3>
-            {links.map((p) => {
-              const e = getEntry(p)
-              if (!e) return null
-              return (
-                <button key={p} class="backlink-row" onClick={() => (activePath.value = p)}>
-                  {e.title}
-                  <small>{e.excerpt}</small>
-                </button>
-              )
-            })}
-          </div>
-        </div>
-      )}
     </div>
   )
 }

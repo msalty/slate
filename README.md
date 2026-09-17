@@ -217,7 +217,8 @@ note was created.
 The body itself runs flush with the left edge of its pane and takes the full
 width, so on a big monitor a wider window is wider text rather than wider
 margins. Settings → Editor → **Body width** switches it to a centred 760px
-reading column instead; the backlinks underneath follow whichever you pick.
+reading column instead; the linked mentions at the end of the note sit inside
+the same column, so they follow whichever you pick.
 
 **Links that leave the vault.** A `https://`, a `mailto:`, a `tel:`, an
 `ssh://` to the box you keep notes about — written as markdown or left bare —
@@ -236,7 +237,16 @@ from a shared vault is untrusted input.
 **Linking.** `[[Note Title]]` links notes to each other. Typing `[[` opens an
 autocomplete over every note; picking one that doesn't exist yet offers to create
 it. Clicking a broken link creates the note on the spot. Renaming a note rewrites
-every link that pointed at it. Each note lists its own backlinks underneath.
+every link that pointed at it.
+
+**Linked mentions.** What points at a note is listed at the end of the note, past
+the last line and inside the same scroll: a hairline, a *Linked mentions* header
+with the count, and a row per source note with its title and first line. It is
+part of the note rather than a strip along the bottom of the pane, so it costs
+the editor no height on the notes nothing links to — which is most of them — and
+it is simply there when you read to the end of one that something does. Fold it
+away from the header and it stays folded for the rest of the session; it is never
+synced, because how you left a disclosure is about the window in front of you.
 
 **Images and files.** Paste, drop, or use the toolbar's insert button — **File
 in Slate**, **Take Photo**, **Photo Library**, or **Upload a File**. File in
