@@ -19,8 +19,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 1036 unit, two-device sync and folder round-trip tests
-node scripts/smoke.mjs # 751-check browser smoke test against dist/
+npm test               # 1074 unit, two-device sync and folder round-trip tests
+node scripts/smoke.mjs # 783-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -1364,6 +1364,17 @@ A prefixed list shows at most 40 collections and says so when there are more
 forty are all you have. The arrow keys scroll the list as they move through it,
 so the selection is always the row you can see.
 
+**A note's row gives its title the whole width**, with the line that matched
+underneath it rather than beside it. A note is the one row whose subtitle is
+not a fixed caption but a line lifted out of the note itself, as long as it
+happens to be, and sharing a line with it cut the title to a few characters —
+so two chapters of the same book, or a conversation and the note it was about,
+were both truncated to exactly the words they have in common and the row could
+not answer the only question being asked of it. A command and a collection keep
+theirs beside them: a shortcut and *Folder in Clients · 12 notes* are short and
+fixed, and belong in a column at the right-hand end where the eye can run down
+them.
+
 A collection sits above the note hits, because with a folder called Work and
 thirty notes that mention work, the folder is nearly always what was meant —
 and there are never enough collections to push the notes off the screen. Ties
@@ -1420,6 +1431,50 @@ because the one thing a result row has to answer is why it is in the list, and
 a note's opening line usually says nothing about it. A word that appears only
 in the title keeps its ordinary excerpt: there is nothing in the body to point
 at, and the marked title has already said why the note is there.
+
+**The search box also speaks the Tag Folder rule language.** A rule answers the
+question substring matching cannot — *which* notes, rather than which words —
+and it is a language the app already has. So `#work`, `folder:Clients`,
+`has:tasks`, `due:overdue`, `-` to negate, `OR` and parentheses to group all
+work in the box, mixed into a line with the words you are looking for:
+
+```
+#work budget                  notes tagged #work, searched for "budget"
+folder:Clients -#done invoice
+#home OR #errands             a rule on its own, nothing to search for
+```
+
+**The rule filters and the words still search**, in that order. Nothing about
+the text half changes — the same scorer ranks it, the same snippets come back,
+the same words are marked in the rows — so a query with no rule terms in it
+behaves exactly as it always has, which is nearly all of them. A rule with no
+words beside it has nothing to rank by, so those notes come back in the order
+the list was already in.
+
+A term is a rule term only when it says so out loud: a leading `#`, or one of
+the language's own keys with a colon and a value. Everything else is prose, so
+`re-open`, `budget (2024)` and `ratio 3:1` are searched for rather than parsed
+at. It follows the same rule everything else about search follows — it applies
+where the list is showing notes or tasks, and a rule has nothing to say about a
+file or a deleted note, so in Files and Deleted `#work` is five characters to
+look for.
+
+**What the box is doing is written under it**, in the same plain English the
+Tag Folder dialog uses — `Notes #work and not #done · searching for "roof"` —
+because a filter you cannot see is the one thing this must not become. Beside
+it is **Save rule…**, which opens the Tag Folder dialog with the rule already
+in it: a search worth running twice is a Tag Folder, and this is the shortest
+road between the two. The words are a search rather than part of the rule, so
+they are not what gets saved, and the dialog shows exactly what it is about to
+keep before anything is written.
+
+A rule that doesn't parse — `#a OR` is what `#a OR #b` looks like a keystroke
+earlier — filters by nothing at all and says what is wrong where the gloss
+would have been. The list falls back to the plain text search it was before,
+so nothing is quietly filtered by half a rule and nothing is quietly not
+filtered either. A trailing `AND` or `OR` is the one thing forgiven silently:
+directly behind a rule it is punctuation waiting for its other half, not a word
+to go looking for.
 
 **A folder is made from the + on the Folders header**, or from *New
 subfolder…* on any folder, and renamed from its own menu — each of them a
@@ -2041,6 +2096,9 @@ src/
 │  ├─ tagquery.ts     the rule language behind Tag Folders, over notes or tasks
 │  ├─ folders.ts      nested folders + the Tag Folder tree and inheritance
 │  ├─ searchindex.ts  what stops a search from reading every note
+│  ├─ searchquery.ts the search box's two halves: which of the words you
+│  │                 typed are a rule and which are prose, and why the split
+│  │                 is on shape rather than on meaning
 │  ├─ templates.ts    folder templates: the fields, and which folder uses what
 │  ├─ starters.ts     the seven templates `Templates/` is created with
 │  ├─ snippets.ts     `Snippets.md`, parsed into triggers and what they expand to
@@ -2242,6 +2300,16 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
   installed again. Nothing short of that does it — see the long note in
   `vite.config.ts`, which was written the hard way.
 
+- **A half-typed tag in the search box matches nothing, briefly.** `#wo` on the
+  way to `#work` is a rule about a tag called `wo`, and tags match whole or
+  hierarchically — `#work` matches `#work/active`, but nothing matches `#wo`.
+  So the list empties for a keystroke or two and fills again on the `k`. The
+  alternative is a tag term that means something different in the search box
+  than it means in a Tag Folder, which is a worse trade than a flicker: the
+  whole point is that it is one language. The line under the box says which
+  tag it is currently filtering on throughout, so the empty list is at least
+  never unexplained.
+
 - **Quick capture writes where the setting says, not where you are looking.** A
   task captured from a note about something else still goes to the daily note or
   the Inbox; the sheet names the file, and changing it is a tap, but there is no
@@ -2305,8 +2373,8 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 1036 unit + two-device sync + folder round-trip tests
-node scripts/smoke.mjs  # 751 checks in headless Chromium against dist/
+npm test                # 1074 unit + two-device sync + folder round-trip tests
+node scripts/smoke.mjs  # 783 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

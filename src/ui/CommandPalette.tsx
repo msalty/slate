@@ -543,27 +543,39 @@ export function CommandPalette() {
               onClick={() => void choose(i)}
             >
               <span
+                class="palette-glyph"
                 style={{
                   // An emoji dimmed to 55% reads as a rendering fault rather
                   // than as a quieter glyph, so only the typographic ones dim.
                   opacity: item.kind === 'place' && item.place.kind === 'smart' ? 1 : 0.55,
-                  width: 16,
-                  flex: '0 0 auto',
                 }}
               >
                 {rowGlyph(item)}
               </span>
-              <span
-                style={{
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                  minWidth: 0,
-                }}
-              >
-                {rowLabel(item)}
-              </span>
-              <small>{rowSub(item)}</small>
+              {/*
+                * A note stacks; a command and a collection do not.
+                *
+                * Their subtitles are short and fixed — a shortcut, "Folder ·
+                * 12 notes" — and belong at the right-hand end where the eye
+                * can run down them. A note's is a line lifted out of the note
+                * itself, which is as long as it happens to be: sharing the row
+                * with it truncated the title to a few characters, so the one
+                * thing you were reading the row for was the one thing not on
+                * it. Stacked, the title gets the full width and the line that
+                * matched sits under it, where it confirms the title rather
+                * than competing with it.
+                */}
+              {item.kind === 'note' ? (
+                <span class="palette-stack">
+                  <span class="palette-title">{rowLabel(item)}</span>
+                  {rowSub(item) && <small class="palette-preview">{rowSub(item)}</small>}
+                </span>
+              ) : (
+                <>
+                  <span class="palette-label">{rowLabel(item)}</span>
+                  <small>{rowSub(item)}</small>
+                </>
+              )}
             </button>
           ))}
           {/*

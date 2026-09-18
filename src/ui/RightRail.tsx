@@ -22,6 +22,7 @@ import { settings, update } from '../core/settings'
 import { openMenu } from './Menu'
 import { DAILY_FOLDER, dailyNoteFor } from '../core/daily'
 import { monthGrid, searchTerms, startOfDay, ymd } from '../core/util'
+import { parseSearch } from '../core/searchquery'
 import { openConfirm } from './ConfirmDialog'
 import {
   calendarDayIntent,
@@ -378,7 +379,12 @@ export function TasksPanel({
   query?: string
 }) {
   const searching = !!query?.trim()
-  const hlTerms = searching ? searchTerms(query!) : []
+  /*
+   * The words, not the rule: `#home` in the box is why these tasks are here,
+   * and marking it inside a task's own text would underline the wrong thing.
+   * `matchingTasks` applies both halves.
+   */
+  const hlTerms = searching ? searchTerms(parseSearch(query!).text) : []
   const all = searching ? matchingTasks(items ?? tasks.value) : (items ?? tasks.value)
   const open = all.filter((t) => !t.done)
   const done = all.filter((t) => t.done)

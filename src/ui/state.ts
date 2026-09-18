@@ -14,7 +14,16 @@ import {
   type SearchHit,
 } from '../core/vault'
 import { dailyNotePath } from '../core/daily'
-import { notesForSmartFolder, showsTasks, smartFolderById } from '../core/folders'
+import {
+  contextFor,
+  notesForSmartFolder,
+  notesMatching,
+  showsTasks,
+  smartFolderById,
+  taskContextFor,
+} from '../core/folders'
+import { parseSearch, type SearchQuery } from '../core/searchquery'
+import { evaluateQuery } from '../core/tagquery'
 import { settings } from '../core/settings'
 import type { AppSettings, NoteIndexEntry, TaskItem } from '../core/types'
 import { matchesAll, searchTerms, startOfDay } from '../core/util'
@@ -377,17 +386,36 @@ export function searchLabel(k: SearchKind): string {
 }
 
 /**
+ * The query, split into the rule half and the words half.
+ *
+ * Only where a rule could mean something. The rule language asks questions
+ * about notes and about tasks — what they are tagged, which folder they are
+ * in, whether they are done — and has nothing to say about a file, a deleted
+ * note or an unresolved link. So in those three lists `#work` is five
+ * characters to look for, exactly as it was before the box learned any of
+ * this, and the same sentence covers both halves: search filters the kind of
+ * thing the list is showing.
+ */
+export const searchQuery = computed<SearchQuery>(() => {
+  const k = searchKind.value
+  if (k !== 'notes' && k !== 'tasks') return { text: query.value.trim(), rule: '' }
+  return parseSearch(query.value)
+})
+
+/**
  * The terms a list has to match, empty when nothing is being searched.
  *
  * Exported because the rows mark them: a result row shows the words you typed
- * where they appear, in the title and in the snippet.
+ * where they appear, in the title and in the snippet. The rule half is not
+ * among them — marking `#work` in a note body would be underlining the reason
+ * the note is in the list rather than the thing you were looking for.
  */
-export const queryTerms = computed(() => searchTerms(query.value))
+export const queryTerms = computed(() => searchTerms(searchQuery.value.text))
 
 const terms = queryTerms
 
-/** True while the search box has something in it. */
-export const searching = computed(() => terms.value.length > 0)
+/** True while the search box has something in it that narrows the list. */
+export const searching = computed(() => terms.value.length > 0 || !!searchQuery.value.node)
 
 /**
  * The ranked note hits for the current query, scored once.
@@ -398,7 +426,7 @@ export const searching = computed(() => terms.value.length > 0)
  * to do twice.
  */
 const noteHits = computed<SearchHit[]>(() =>
-  searchKind.value === 'notes' && searching.value ? search(query.value) : [],
+  searchKind.value === 'notes' && terms.value.length ? search(searchQuery.value.text) : [],
 )
 
 /**
@@ -468,12 +496,36 @@ export function scopeLabel(s: Scope): string {
   }
 }
 
+/** How the list is ordered, for every path through it that isn't a ranking. */
+function comparator(
+  sort: AppSettings['sortBy'],
+): (a: NoteIndexEntry, b: NoteIndexEntry) => number {
+  return sort === 'title'
+    ? (a, b) => a.title.localeCompare(b.title)
+    : sort === 'ctime'
+      ? (a, b) => b.ctime - a.ctime
+      : (a, b) => b.mtime - a.mtime
+}
+
 /** The notes shown in the middle column, after scope and search are applied. */
 export const visibleNotes = computed<NoteIndexEntry[]>(() => {
   // A scope showing files, tasks or deleted things has its own list below and
   // no notes to contribute, searching or not.
   if (searchKind.value !== 'notes') return []
-  if (searching.value) return noteHits.value.map((h) => h.entry)
+  if (searching.value) {
+    const node = searchQuery.value.node
+    /*
+     * Words and a rule are two different jobs, in this order: the words rank,
+     * the rule filters what they ranked. A rule on its own has nothing to rank
+     * by, so those notes come back in the order the list was already in —
+     * which is also the order they go back to the moment the words are deleted.
+     */
+    if (!terms.value.length) {
+      return [...notesMatching(node!)].sort(comparator(settings.value.sortBy))
+    }
+    const hits = noteHits.value.map((h) => h.entry)
+    return node ? hits.filter((n) => evaluateQuery(node, contextFor(n))) : hits
+  }
 
   const s = scope.value
   const sort = settings.value.sortBy
@@ -520,12 +572,7 @@ export const visibleNotes = computed<NoteIndexEntry[]>(() => {
       list = contentNotes.value
   }
 
-  const cmp =
-    sort === 'title'
-      ? (a: NoteIndexEntry, b: NoteIndexEntry) => a.title.localeCompare(b.title)
-      : sort === 'ctime'
-        ? (a: NoteIndexEntry, b: NoteIndexEntry) => b.ctime - a.ctime
-        : (a: NoteIndexEntry, b: NoteIndexEntry) => b.mtime - a.mtime
+  const cmp = comparator(sort)
 
   // Pinned notes float to the top, exactly like Apple Notes.
   return [...list].sort((a, b) => (a.pinned === b.pinned ? cmp(a, b) : a.pinned ? -1 : 1))
@@ -555,11 +602,20 @@ export const unlinkedList = computed(() =>
   ),
 )
 
-/** Tasks for the Tasks row, filtered the same way. */
+/**
+ * Tasks for the Tasks row, filtered the same way — plus the rule, which over
+ * tasks reaches `is:` and `due:` as well as the tags and folders it reaches
+ * over notes. A task carries its note's tags too, so `#home due:overdue` in
+ * the box is the same question a Tag Folder over tasks would have asked.
+ */
 export function matchingTasks(list: TaskItem[]): TaskItem[] {
-  if (!terms.value.length) return list
-  return list.filter((t) =>
-    matchesAll(`${t.text} ${getEntry(t.path)?.title ?? t.noteTitle}`, terms.value),
+  const node = searchQuery.value.node
+  const today = startOfDay(Date.now())
+  if (!terms.value.length && !node) return list
+  return list.filter(
+    (t) =>
+      matchesAll(`${t.text} ${getEntry(t.path)?.title ?? t.noteTitle}`, terms.value) &&
+      (!node || evaluateQuery(node, taskContextFor(t, today))),
   )
 }
 

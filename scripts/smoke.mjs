@@ -3183,6 +3183,83 @@ try {
   check('folders persist across a reload', (await page.locator('.side-row:has-text("Clients")').count()) > 0)
   await page.screenshot({ path: join(SHOTS, '08-tag-folders.png') })
 
+  /* ---- the search box speaks the same rule language ----------------------
+   *
+   * A Tag Folder is a saved rule, and until this the only way to ask its
+   * question was to save one. The box takes a rule and words together — the
+   * rule filters, the words still search — so the load-bearing check is the
+   * first one: a query with no rule in it has to behave exactly as it did.
+   *
+   * Checked here because the tagged notes are on disk by now and nothing else
+   * in the run has to be disturbed to do it.
+   */
+  {
+    const listed = async (q) => {
+      await page.fill('.search-box input', q)
+      await page.waitForTimeout(400)
+      return (await page.locator('.note-row-title').allInnerTexts()).sort().join(',')
+    }
+    const strip = async () =>
+      (await page.locator('.search-rule').count())
+        ? (await page.locator('.search-rule').innerText()).replace(/\s+/g, ' ').trim()
+        : ''
+
+    const plain = await listed('budget')
+    check('a search that is only words is untouched by any of this', plain.includes('Budget'), plain)
+    check('and says nothing about rules, because there is no rule in it', (await strip()) === '', await strip())
+
+    const tagged = await listed('#work')
+    check(
+      'a tag in the box filters the list to what carries it',
+      tagged === 'Budget,Retro,Sprint planning',
+      tagged,
+    )
+    check('and the box says which rule it applied', /#work/.test(await strip()), await strip())
+
+    const both = await listed('#work budget')
+    check('a rule and words are the two halves of one line', both === 'Budget', both)
+    check(
+      'and the line says so, naming each half',
+      /#work/.test(await strip()) && /budget/.test(await strip()),
+      await strip(),
+    )
+
+    const negated = await listed('#work -#archived')
+    check('negation narrows it the way the rule language does', negated === 'Budget,Sprint planning', negated)
+
+    const either = await listed('#home OR #archived')
+    check('an explicit OR keeps both sides of itself', either === 'Groceries,Retro,Roof', either)
+
+    /*
+     * Half a rule is what a whole one looks like a keystroke earlier, so it
+     * cannot blank the list *and* cannot quietly filter by a guess. It reads
+     * as text — which finds nothing — and the line says what is wrong.
+     */
+    const broken = await listed('is:maybe')
+    check('an unfinished rule filters by nothing at all', broken === '', broken)
+    check(
+      'and names the problem rather than leaving the list unexplained',
+      (await page.getAttribute('.search-rule', 'data-error')) === '1',
+      await strip(),
+    )
+
+    // --- and the rule you just typed can be kept -------------------------
+    await listed('#work -#archived')
+    await page.click('.search-rule-save')
+    await ruleDialogReady()
+    const handed = await page.locator('.rule-input').inputValue()
+    check('the search hands its rule to a new Tag Folder', handed === '#work -#archived', handed)
+    check(
+      'and it is a new folder, waiting to be named',
+      (await page.locator('.dialog h2').innerText()) === 'New Tag Folder',
+      await page.locator('.dialog h2').innerText(),
+    )
+    await page.click('.dialog-foot .btn:not(.btn-primary)')
+    await page.waitForTimeout(300)
+    await page.fill('.search-box input', '')
+    await page.waitForTimeout(300)
+  }
+
   /* ---- ⌘K reaches the collections, not just the notes --------------------
    *
    * Checked here because this is the first point in the run where all three
@@ -3210,11 +3287,17 @@ try {
         )
         .catch(() => {})
       await page.waitForTimeout(350)
+      /*
+       * Read by class rather than by child position: a note's row stacks its
+       * title over the line that matched, so its label and its subtitle are
+       * inside one element and `children[1]` is both of them run together.
+       */
       return page.$$eval('.palette-row', (els) =>
         els.map((e) => ({
-          glyph: e.children[0]?.textContent ?? '',
-          label: e.children[1]?.textContent ?? '',
-          sub: e.children[2]?.textContent ?? '',
+          glyph: e.querySelector('.palette-glyph')?.textContent ?? '',
+          label: e.querySelector('.palette-title, .palette-label')?.textContent ?? '',
+          sub: e.querySelector('small')?.textContent ?? '',
+          stacked: !!e.querySelector('.palette-stack'),
         })),
       )
     }
@@ -3279,6 +3362,30 @@ try {
         plain.findIndex((r) => r.glyph === '›') >
           plain.findIndex((r) => r.glyph === '#' || r.glyph === '/'),
       plain.map((r) => `${r.glyph}${r.label}`).join(' '),
+    )
+    /*
+     * A note's row gives its title the whole width and puts the line that
+     * matched underneath, rather than sharing one line with it. Two notes
+     * whose titles start the same way — a book's chapters, a conversation and
+     * the note it was about — were otherwise both truncated to the words they
+     * have in common, so the row could not answer the only question being
+     * asked of it. A command keeps its one line: its hint is a shortcut, and
+     * shortcuts are read down a column at the right-hand end.
+     */
+    check(
+      'a note row stacks its title over the line that matched',
+      plain.filter((r) => r.glyph === '›').every((r) => r.stacked),
+      plain.filter((r) => r.glyph === '›').map((r) => `${r.label} / ${r.sub}`).join(' · '),
+    )
+    check(
+      'and a command or a collection keeps its subtitle beside it',
+      plain.filter((r) => r.glyph !== '›').every((r) => !r.stacked),
+      plain.filter((r) => r.glyph !== '›').map((r) => `${r.glyph}${r.label}`).join(' '),
+    )
+    check(
+      'a title long enough to truncate is still the whole title in the markup',
+      plain.some((r) => r.glyph === '›' && r.label.length > 0),
+      plain.find((r) => r.glyph === '›')?.label ?? 'no note row',
     )
     await page.screenshot({ path: join(SHOTS, '33-palette-places.png') })
 

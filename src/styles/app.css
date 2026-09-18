@@ -561,6 +561,53 @@ textarea {
   -webkit-appearance: none;
 }
 
+/*
+ * What the rule half of a search is doing, under the box that was typed into.
+ *
+ * A status line rather than a result, so it takes the same quiet grey the Tag
+ * Folder dialog's own line under the rule field takes — an accent tint here
+ * sat a shade away from the selected row directly beneath it and read as one.
+ * The accent is spent on the button instead, which is the only part of this
+ * that does anything. It is absent entirely for a search that is only words,
+ * which is most of them.
+ */
+.search-rule {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 5px 9px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.search-rule[data-error='1'] {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
+}
+.search-rule-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.search-rule strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.search-rule-save {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border-radius: 6px;
+  color: var(--accent);
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.search-rule-save:hover {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
 .list-scroll {
   flex: 1 1 auto;
   overflow-y: auto;
@@ -1994,6 +2041,44 @@ button.property-kind:hover {
 }
 .palette-row[data-sel='1'] small {
   color: color-mix(in srgb, var(--text-on-accent) 70%, transparent);
+}
+.palette-glyph {
+  width: 16px;
+  flex: 0 0 auto;
+}
+.palette-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * A note's row: its title on a line of its own, the line that matched beneath.
+ *
+ * Both are still one line each and still truncate — the list is a list, and a
+ * row that grows with its snippet makes the arrow keys scroll by an unknown
+ * amount. What changed is which of them has to do the truncating: the title
+ * now has the whole width, which for a note called "Harry Potter and the
+ * Sorcerer's Stone — Chapter 1" is the difference between recognising it and
+ * reading the first two words of three notes that all start the same way.
+ */
+.palette-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.palette-title,
+.palette-preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.palette-row .palette-preview {
+  margin-left: 0;
+  font-size: 11.5px;
 }
 
 /*

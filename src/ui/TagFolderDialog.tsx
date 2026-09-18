@@ -30,8 +30,17 @@ import { IconClose } from './Icons'
 
 const editing = signal<Partial<SmartFolder> | null>(null)
 
-export function openTagFolderDialog(existing?: SmartFolder, parentId?: string) {
-  editing.value = existing ?? { name: '', query: '', icon: '🏷️', parentId, inherit: true }
+/**
+ * Open the dialog on an existing folder, or on a new one.
+ *
+ * A partial draft is allowed so somewhere else can hand the dialog a rule it
+ * already has — the search box does, when a search that filtered by a rule is
+ * worth keeping. Whatever it does not say falls back to the defaults a new
+ * folder starts with, and a draft with no `id` is a new folder however much of
+ * it arrives filled in.
+ */
+export function openTagFolderDialog(existing?: Partial<SmartFolder>, parentId?: string) {
+  editing.value = { name: '', query: '', icon: '🏷️', parentId, inherit: true, ...existing }
 }
 
 /*
