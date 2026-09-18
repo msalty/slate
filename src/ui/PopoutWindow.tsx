@@ -29,7 +29,14 @@ import { onTableBandRequest } from './tableMenu'
 import { applyDue } from '../editor/due'
 import { adoptFromStorage, getEntry, ready, resolveLink, revision } from '../core/vault'
 import { settings } from '../core/settings'
-import { activePath, lightboxPath, notify, openNote, propertiesOpen } from './state'
+import {
+  activePath,
+  anchorTarget,
+  lightboxPath,
+  notify,
+  openNote,
+  propertiesOpen,
+} from './state'
 import { compactAllowed, installLayoutWatcher, layoutMode } from './layout'
 import { installMirror, reportHolding } from './popout'
 
@@ -116,10 +123,12 @@ export function PopoutWindow() {
    */
   useEffect(() => {
     const onLink = async (e: Event) => {
-      const { target, exists } = (e as CustomEvent<{ target: string; exists: boolean }>).detail
+      const { target, exists, anchor } = (
+        e as CustomEvent<{ target: string; exists: boolean; anchor?: string }>
+      ).detail
       const resolved = resolveLink(target)
       if (resolved) {
-        openNote(resolved)
+        openNote(resolved, anchorTarget(resolved, anchor))
         return
       }
       if (!exists) {

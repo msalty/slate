@@ -14,14 +14,17 @@
  *   #work   tags only
  *   /Work   folders only
  *   >sync   commands only
+ *   @costs  headings in the note that is open
  *
  * A bare `#`, `/` or `>` lists everything of that kind: tags and folders
  * busiest first — the closest thing the app has to a tag browser — and the
  * commands in the order they are declared, which is the only way to read the
- * whole list. All three fall out of the same code.
+ * whole list. A bare `@` is the whole outline of the open note, which is the
+ * ordinary way to use it. All four fall out of the same code.
  *
  * `>` for commands is the convention every other palette uses, so it is the
- * one people arrive already knowing.
+ * one people arrive already knowing, and `@` for "somewhere inside this file"
+ * is the other half of that convention.
  */
 
 import { allTags } from '../core/vault'
@@ -75,7 +78,7 @@ export interface PlaceResult {
  * What the box is asking for: everything at once, one kind of collection, or
  * the commands.
  */
-export type PaletteMode = 'everything' | 'places' | 'commands'
+export type PaletteMode = 'everything' | 'places' | 'commands' | 'headings'
 
 export interface PaletteQuery {
   mode: PaletteMode
@@ -95,6 +98,7 @@ export function parsePaletteQuery(raw: string): PaletteQuery {
   if (q.startsWith('#')) return { mode: 'places', kinds: ['tag'], term: q.slice(1).trim() }
   if (q.startsWith('/')) return { mode: 'places', kinds: ['folder'], term: q.slice(1).trim() }
   if (q.startsWith('>')) return { mode: 'commands', kinds: [], term: q.slice(1).trim() }
+  if (q.startsWith('@')) return { mode: 'headings', kinds: [], term: q.slice(1).trim() }
   return { mode: 'everything', kinds: ['folder', 'smart', 'tag'], term: q }
 }
 
@@ -117,8 +121,20 @@ export function cappedPaletteNote(raw: string, result: PlaceResult): string | un
   return `Showing ${result.places.length} of ${result.total} ${kindNoun(kinds)} — type to narrow.`
 }
 
-/** What to say when a query of this shape matched nothing at all. */
-export function emptyPaletteMessage(raw: string): string {
+/**
+ * What to say when a query of this shape matched nothing at all.
+ *
+ * `outline` is the state behind an `@` query, because an empty outline has
+ * three quite different causes and only one of them is "nothing matched": no
+ * note is open, the note has no headings at all, or it has some and none of
+ * them answer to what was typed. Saying "No headings match" to somebody
+ * looking at a note without a single `#` in it sends them off editing their
+ * query when the query was never the problem.
+ */
+export function emptyPaletteMessage(
+  raw: string,
+  outline?: { noteOpen: boolean; total: number },
+): string {
   const { mode, kinds } = parsePaletteQuery(raw)
   /*
    * A prefixed query asked for one kind of thing, and telling somebody who
@@ -127,6 +143,11 @@ export function emptyPaletteMessage(raw: string): string {
    */
   if (mode === 'commands') return 'No commands match.'
   if (mode === 'places') return `No ${kindNoun(kinds)} match.`
+  if (mode === 'headings') {
+    if (!outline?.noteOpen) return 'No note is open, so there are no headings to jump to.'
+    if (outline.total === 0) return 'This note has no headings.'
+    return 'No headings match.'
+  }
   return 'Nothing matches. Press Enter on “New note” to start one.'
 }
 

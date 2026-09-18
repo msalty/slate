@@ -56,16 +56,20 @@ const RULES: Array<{
     build: (m, ctx) => embedNode(m[2], undefined, ctx, m[1]),
   },
   {
-    re: /^\[\[([^\]\n|#]+)(?:#[^\]\n|]+)?(?:\|([^\]\n]*))?\]\]/,
+    re: /^\[\[([^\]\n|#]+)(?:#([^\]\n|]+))?(?:\|([^\]\n]*))?\]\]/,
     build: (m) => {
       const target = m[1].trim()
+      // The `#Heading` half, kept for the same reason live preview keeps it:
+      // a link in a table cell is still a link, and still lands somewhere.
+      const anchor = m[2]?.trim()
       const el = document.createElement('span')
       const resolved = resolveLink(target)
       el.className = resolved ? 'cm-wikilink' : 'cm-wikilink cm-wikilink-broken'
       el.dataset.wikilink = target
+      if (anchor) el.dataset.anchor = anchor
       el.dataset.exists = resolved ? '1' : '0'
-      el.title = resolved ?? `Create "${target}"`
-      el.textContent = m[2] ?? target
+      el.title = resolved ? (anchor ? `${resolved} — ${anchor}` : resolved) : `Create "${target}"`
+      el.textContent = m[3] ?? target
       return el
     },
   },

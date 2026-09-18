@@ -3,10 +3,12 @@ import {
   calendarDateFor,
   excerptOf,
   findDue,
+  findHeading,
   isLocked,
   isTaskLine,
   parseDue,
   parseFrontmatter,
+  scanHeadings,
   scanTags,
   resolveVars,
   scanTasks,
@@ -407,5 +409,83 @@ describe('paths and sizing', () => {
   it('splits a width fragment off an embed URL', () => {
     expect(splitSizeFragment('a/b.png#w=420')).toEqual(['a/b.png', 420])
     expect(splitSizeFragment('a/b.png')).toEqual(['a/b.png', undefined])
+  })
+})
+
+describe('headings', () => {
+  const note = [
+    '---',
+    'title: Trip',
+    '# a YAML comment, not a heading',
+    '---',
+    '',
+    '# Lisbon Trip',
+    '',
+    'Some prose.',
+    '',
+    '## Costs ##',
+    '',
+    '### **Flights**',
+    '',
+    '```bash',
+    '# install the thing',
+    '```',
+    '',
+    '#lisbon',
+    '',
+    '##',
+    '',
+    '## [[Hotels]] and other places',
+  ].join('\n')
+
+  it('reads the level, the words and the line of each one', () => {
+    expect(scanHeadings(note).map((h) => [h.level, h.text, h.line])).toEqual([
+      [1, 'Lisbon Trip', 5],
+      [2, 'Costs', 9],
+      [3, 'Flights', 11],
+      [2, 'Hotels and other places', 21],
+    ])
+  })
+
+  it('leaves out the four things that look like headings and are not', () => {
+    const text = scanHeadings(note).map((h) => h.text)
+    // A YAML comment, a fenced `# install`, a `#tag` on its own line, and a
+    // `##` with nothing after it.
+    expect(text).not.toContain('a YAML comment, not a heading')
+    expect(text).not.toContain('install the thing')
+    expect(text.some((t) => /lisbon$/i.test(t) && t !== 'Lisbon Trip')).toBe(false)
+    expect(text).toHaveLength(4)
+  })
+
+  it('points at the "#" itself, so navigation lands on the line', () => {
+    const h = scanHeadings('# One\n\n## Two\n')
+    expect(h[1].from).toBe('# One\n\n'.length)
+  })
+
+  it('needs a space after the marker, which is what keeps a tag a tag', () => {
+    expect(scanHeadings('#work\n')).toEqual([])
+    expect(scanHeadings('# work\n')).toHaveLength(1)
+    // Seven marks is not a heading in markdown either.
+    expect(scanHeadings('####### Deep\n')).toEqual([])
+  })
+
+  it('has no opinion about an indented one, the way the editor never has', () => {
+    expect(scanHeadings('- item\n  # not a heading here\n')).toEqual([])
+  })
+
+  it('finds the heading an anchor names, however it was written', () => {
+    expect(findHeading(note, 'Costs')?.line).toBe(9)
+    expect(findHeading(note, 'costs')?.line).toBe(9)
+    // The anchor is the words, not the markup: `### **Flights**` is "Flights".
+    expect(findHeading(note, 'Flights')?.line).toBe(11)
+    expect(findHeading(note, 'Hotels and other places')?.line).toBe(21)
+  })
+
+  it('finds nothing for an anchor no heading answers to', () => {
+    expect(findHeading(note, 'Insurance')).toBeUndefined()
+    expect(findHeading(note, '')).toBeUndefined()
+    // A block reference is a syntax this does not implement; it is not a
+    // heading, and saying so is better than guessing at one.
+    expect(findHeading(note, '^b3f1a2')).toBeUndefined()
   })
 })

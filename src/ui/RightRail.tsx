@@ -322,11 +322,11 @@ function TaskRow({
         class="task-text"
         role="button"
         tabIndex={0}
-        onClick={() => openNote(t.path, { taskLine: t.line })}
+        onClick={() => openNote(t.path, { line: t.line })}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault()
-            openNote(t.path, { taskLine: t.line })
+            openNote(t.path, { line: t.line })
           }
         }}
       >

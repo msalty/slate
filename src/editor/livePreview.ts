@@ -493,7 +493,15 @@ function buildDecorations(view: EditorView): DecorationSet {
           const raw = state.doc.sliceString(node.from, node.to)
           const inner = raw.slice(2, -2)
           const [targetPart, alias] = splitPipe(inner)
-          const target = targetPart.split('#')[0].trim()
+          /*
+           * `[[Note#Costs]]`: the note is the target, the heading is where in
+           * it to land. Split rather than sliced, so a `#` inside the heading
+           * — `[[Notes#C# bindings]]` — stays part of it, and carried on the
+           * element because the click handler has nothing else to work from.
+           */
+          const hash = targetPart.split('#')
+          const target = hash[0].trim()
+          const anchor = hash.slice(1).join('#').trim()
           const resolved = resolveLink(target)
           const open = node.from + 2
           const close = node.to - 2
@@ -514,8 +522,13 @@ function buildDecorations(view: EditorView): DecorationSet {
                 class: resolved ? 'cm-wikilink' : 'cm-wikilink cm-wikilink-broken',
                 attributes: {
                   'data-wikilink': target,
+                  ...(anchor ? { 'data-anchor': anchor } : {}),
                   'data-exists': resolved ? '1' : '0',
-                  title: resolved ?? `Create "${target}"`,
+                  title: resolved
+                    ? anchor
+                      ? `${resolved} — ${anchor}`
+                      : resolved
+                    : `Create "${target}"`,
                 },
               }).range(textFrom, close),
             )

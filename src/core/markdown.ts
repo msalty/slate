@@ -562,6 +562,88 @@ export function firstHeading(text: string, bodyStart = 0): string | undefined {
   return m?.[1].trim()
 }
 
+/* ---------------------------------------------------------------- headings */
+
+export interface Heading {
+  /** 1–6, from how many `#` marks it was written with. */
+  level: number
+  /** The words, with inline markup taken off — what a list of them shows. */
+  text: string
+  /** Character offset of the first `#`. */
+  from: number
+  /** Zero-based line, which is what navigation moves by — the same as a task. */
+  line: number
+}
+
+/**
+ * A `#` at the start of a line and a space after it. Three things are not a
+ * heading and each has cost somebody an afternoon somewhere:
+ *
+ * - `#work` — no space, so it is a tag, and tags on their own line at the top
+ *   of a note are how half this vault is written.
+ * - a `#` indented under a list item — CommonMark allows three spaces, this app
+ *   has never drawn one as a heading, and matching at column 0 is what the rest
+ *   of the file already does (see `firstHeading`).
+ * - `# comment` inside the frontmatter block, which is YAML, not prose.
+ */
+const HEADING = /^(#{1,6})[ \t]+(.*)$/
+
+/**
+ * Every heading in a note, in the order they appear.
+ *
+ * The frontmatter is skipped and so are fenced code blocks, which is the whole
+ * reason this takes the same `codeRegions` every other scanner here takes: a
+ * `# Install` inside a shell sample is a comment somebody wrote, and an outline
+ * that jumps you into the middle of a code block is worse than no outline.
+ *
+ * A heading with nothing after the marker is left out, on the rule the tasks
+ * already follow: `- [ ]` with nothing after it is not a job, and `##` with
+ * nothing after it is not a place you could ask to be taken to. The editor
+ * still draws both — they are markup in the note, they are simply not things a
+ * list can offer you.
+ */
+export function scanHeadings(text: string, regions = codeRegions(text)): Heading[] {
+  const out: Heading[] = []
+  /*
+   * Read here rather than taken as a parameter. Every caller would otherwise
+   * have to remember that YAML comments start with the same character markdown
+   * headings do, and the parse costs nothing on a note with no frontmatter —
+   * it returns on the first character.
+   */
+  const bodyStart = parseFrontmatter(text).bodyStart
+  const lines = text.split('\n')
+  let offset = 0
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    const at = offset
+    offset += line.length + 1
+    if (at < bodyStart) continue
+    const m = HEADING.exec(line)
+    if (!m || inRegions(regions, at)) continue
+    // `## Title ##` is one heading in CommonMark; the closing run is decoration.
+    const body = m[2].replace(/[ \t]+#+[ \t]*$/, '')
+    const clean = stripInline(body)
+    if (!clean) continue
+    out.push({ level: m[1].length, text: clean, from: at, line: i })
+  }
+  return out
+}
+
+/**
+ * The heading a `[[Note#Anchor]]` is pointing at, if the note has one.
+ *
+ * Matched on the words as they read rather than as they are written, so
+ * `[[Trip#Costs]]` finds `## **Costs**` — the anchor is what somebody typed
+ * after the hash, and nobody types the asterisks. Case is ignored for the same
+ * reason. The first match wins: two headings with the same words are a note
+ * whose author did not mean to distinguish them.
+ */
+export function findHeading(text: string, anchor: string): Heading | undefined {
+  const want = stripInline(anchor).toLowerCase()
+  if (!want) return undefined
+  return scanHeadings(text).find((h) => h.text.toLowerCase() === want)
+}
+
 /**
  * The date a note is filed under in the calendar. Priority:
  *   1. `date:` or `created:` in frontmatter

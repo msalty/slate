@@ -3460,6 +3460,214 @@ try {
     await page.waitForTimeout(300)
   }
 
+  /* ---- the outline, and the anchor that was never live ------------------
+   *
+   * `@` is the open note read as a table of contents, and ⌘⇧O is that with a
+   * key on it. Driven in a browser because the interesting half is not the
+   * list — that is a filter over a pure scanner, and unit-tested as one — but
+   * the *jump*: a long note's line heights are estimated until they have been
+   * measured, and a heading put at the top of the pane has no slack to absorb
+   * the correction. It used to land a line high, which puts the heading you
+   * asked for off the top of the screen with its section showing underneath.
+   */
+  {
+    const long = [
+      '# Field notes',
+      '',
+      'Written up afterwards.',
+      '',
+      '## Measurements ##',
+      '',
+      ...Array(40).fill('A line of the first section, long enough to need scrolling past.'),
+      '',
+      '### **Depth**',
+      '',
+      ...Array(40).fill('A line of the second section, the one the outline has to reach.'),
+      '',
+      '#fieldwork',
+      '',
+      '```bash',
+      '# not a heading, a shell comment',
+      '```',
+      '',
+      '##',
+      '',
+      '## Follow-up',
+      '',
+      'The numbers are in [[Field notes#Depth]].',
+      '',
+      'Nothing is in [[Field notes#Nowhere]].',
+      '',
+    ].join('\n')
+
+    await page.evaluate(async (text) => {
+      const db = await new Promise((res, rej) => {
+        const r = indexedDB.open('slate')
+        r.onsuccess = () => res(r.result)
+        r.onerror = () => rej(r.error)
+      })
+      const tx = db.transaction('files', 'readwrite')
+      tx.objectStore('files').put({
+        path: 'Field notes.md',
+        kind: 'note',
+        text,
+        mime: 'text/markdown',
+        size: text.length,
+        hash: 'outline1',
+        mtime: Date.now(),
+        ctime: Date.now(),
+      })
+      await new Promise((r) => (tx.oncomplete = r))
+    }, long)
+    await page.reload({ waitUntil: 'networkidle' })
+    await page.waitForSelector('.note-row')
+    await page.waitForTimeout(500)
+
+    /** Open the outline on a query and hand back the rows it is offering. */
+    const outlineRows = async (text = '@') => {
+      await page.keyboard.press('Escape')
+      await page.waitForTimeout(150)
+      await page.keyboard.press('Control+Shift+o')
+      await page.waitForSelector('.palette input', { timeout: 3000 })
+      await page.waitForTimeout(350)
+      if (text !== '@') await page.locator('.palette input').fill(text)
+      await page.waitForTimeout(300)
+      return page.$$eval('.palette-row', (els) =>
+        els.map((e) => ({
+          label: e.querySelector('.palette-label')?.textContent ?? '',
+          level: e.dataset.level ?? '',
+          indent: parseFloat(getComputedStyle(e).paddingLeft),
+        })),
+      )
+    }
+
+    await page.locator('.note-row').filter({ hasText: 'Field notes' }).first().click()
+    await page.waitForTimeout(600)
+
+    // --- the outline itself ---
+    const rows = await outlineRows()
+    check('⌘⇧O opens the palette on the outline', (await page.locator('.palette input').inputValue()) === '@')
+    check(
+      'the outline lists every heading in the open note, in order',
+      rows.map((r) => r.label).join(' / ') === 'Field notes / Measurements / Depth / Follow-up',
+      rows.map((r) => r.label).join(' / '),
+    )
+    check(
+      'and nothing that only looks like one',
+      // A fenced `# comment`, a `#tag` on its own line, and a bare `##`.
+      !rows.some((r) => /shell comment|fieldwork/.test(r.label)) && rows.every((r) => r.label),
+      rows.map((r) => r.label).join(' / '),
+    )
+    check(
+      'a closing run of hashes is decoration, not part of the words',
+      rows[1]?.label === 'Measurements',
+      rows[1]?.label ?? 'no row',
+    )
+    check(
+      'the level is drawn as an indent, which is what a level means',
+      rows[0].indent < rows[1].indent && rows[1].indent < rows[2].indent,
+      rows.map((r) => `${r.label}@${r.indent}`).join(' '),
+    )
+    await page.screenshot({ path: join(SHOTS, '35-outline.png') })
+
+    const narrowed = await outlineRows('@dep')
+    check(
+      'and it narrows on the words, not the markup',
+      narrowed.length === 1 && narrowed[0].label === 'Depth',
+      narrowed.map((r) => r.label).join(', '),
+    )
+
+    /**
+     * Where the marked line sits inside the editor's scroller. The whole point
+     * of the alignment is that this is a small positive number: negative means
+     * the heading is off the top, large means it was centred.
+     */
+    const markedAt = () =>
+      page.evaluate(() => {
+        const hit = document.querySelector('.cm-nav-target')
+        const scroller = document.querySelector('.cm-scroller')
+        if (!hit || !scroller) return { text: '', top: NaN }
+        return {
+          text: hit.textContent ?? '',
+          top: Math.round(hit.getBoundingClientRect().top - scroller.getBoundingClientRect().top),
+        }
+      })
+
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(900)
+    const jumped = await markedAt()
+    check('choosing a heading marks it', jumped.text === 'Depth', jumped.text || 'nothing marked')
+    check(
+      'and puts it at the top of the pane, where its section is below it',
+      jumped.top >= 0 && jumped.top < 120,
+      `${jumped.top}px from the top of the editor`,
+    )
+    check(
+      'without taking the caret: being shown a line is not editing it',
+      (await page.locator('.cm-content').getAttribute('contenteditable')) === 'false',
+      `contenteditable=${await page.locator('.cm-content').getAttribute('contenteditable')}`,
+    )
+    await page.screenshot({ path: join(SHOTS, '36-outline-jump.png') })
+
+    // --- a miss in a note that has headings says something different again ---
+    await outlineRows('@zzzznope')
+    check(
+      'a miss inside a note that does have headings is a miss, not an empty note',
+      /No headings match/.test((await page.locator('.palette-list').innerText()).trim()),
+      (await page.locator('.palette-list').innerText()).trim(),
+    )
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(250)
+
+    /* ---- [[Note#Heading]], which until now went to the top of the note ----
+     *
+     * The anchor has been parsed since wikilinks were written and carried
+     * through every rename since; nothing ever navigated to it. A link that
+     * looks like it goes somewhere and doesn't is worse than one you could not
+     * write, so the check is that it lands on the heading and not at the top.
+     */
+    const toFollowUp = await outlineRows('@follow')
+    check('the outline reaches the section holding the link', toFollowUp.length === 1, toFollowUp.map((r) => r.label).join())
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(900)
+
+    const anchorLink = page.locator('.cm-wikilink').first()
+    check(
+      'a wikilink carries its anchor, and says so on hover',
+      (await anchorLink.getAttribute('data-anchor')) === 'Depth' &&
+        /— Depth$/.test((await anchorLink.getAttribute('title')) ?? ''),
+      `anchor=${await anchorLink.getAttribute('data-anchor')}, title=${await anchorLink.getAttribute('title')}`,
+    )
+    await anchorLink.click()
+    await page.waitForTimeout(900)
+    const followed = await markedAt()
+    check(
+      'and following it lands on that heading rather than at the top of the note',
+      followed.text === 'Depth' && followed.top >= 0 && followed.top < 120,
+      `${followed.text || 'nothing marked'} at ${followed.top}px`,
+    )
+    await page.screenshot({ path: join(SHOTS, '37-anchor-link.png') })
+
+    /*
+     * And an anchor naming a heading that is not there says so. Quietly
+     * behaving like a plain link would leave you at the top of a note
+     * wondering whether you had misread your own link.
+     */
+    await outlineRows('@follow')
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(900)
+    await page.locator('.cm-wikilink').nth(1).click()
+    await page.waitForTimeout(500)
+    check(
+      'an anchor no heading answers to says so rather than going to the top',
+      /No heading called/.test((await page.locator('.toast').innerText().catch(() => '')) ?? ''),
+      (await page.locator('.toast').innerText().catch(() => '(no toast)')) ?? '(no toast)',
+    )
+
+    await page.locator('.side-row:has-text("All Notes")').first().click()
+    await page.waitForTimeout(300)
+  }
+
   /* ---- the folder tree remembers its shape ------------------------------
    *
    * Which rows are unfolded is per folder and kept in this device's own store,

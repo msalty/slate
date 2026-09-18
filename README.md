@@ -19,8 +19,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 1074 unit, two-device sync and folder round-trip tests
-node scripts/smoke.mjs # 783-check browser smoke test against dist/
+npm test               # 1086 unit, two-device sync and folder round-trip tests
+node scripts/smoke.mjs # 797-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -1357,7 +1357,8 @@ somewhere to keep what you use rather than an index of everything you own:
 | `#work` | tags only |
 | `/Work` | folders only |
 | `>sync` | commands only |
-| `#`, `/` or `>` alone | every tag, every folder, or **every command** |
+| `@costs` | headings in the note that is open |
+| `#`, `/`, `>` or `@` alone | every tag, every folder, **every command**, or the whole outline |
 
 A prefixed list shows at most 40 collections and says so when there are more
 (*Showing 40 of 63 tags — type to narrow*), rather than implying the first
@@ -1389,6 +1390,42 @@ way to find out what the app can do without already knowing the name of the
 thing you are looking for. Unprefixed, the palette still leads with a handful
 of commands and then the notes, because that is the box you came to to find a
 note. *All commands…* in the list's **⋯** menu opens it on `>` for you.
+
+**`@` is the note you have open, read as a table of contents** — its headings,
+in the order they appear, indented by level, and ⌘⇧O is the same list with a
+key on it. Type to narrow it (`@costs`, or `@cost fl` for "Flight costs" —
+every word has to land, the rule the rest of the app follows), and Enter takes
+you there.
+
+It is the palette rather than a panel for the reason every prefix here is the
+palette: this is the box you already open to get somewhere, and a second place
+to look would be a second thing to remember. It costs no space on screen, it
+works on a phone where there is no room for a panel at all, and it reaches the
+editor the same way ⌘K does.
+
+**The heading goes to the top of the pane, not the middle**, because what it
+names is *below* it — centring one spends half the screen on the section you
+just left and starts the section you asked for halfway down. Getting that right
+is most of the work: a long note's line heights are estimated until they have
+been measured, so the first scroll lands against an estimate that is corrected a
+frame later, and a heading put at the top has no slack to absorb the
+correction. It used to arrive one line high, which puts the heading off the top
+of the screen with its section showing underneath — so the scroll is re-asserted
+while the layout settles, and gives up the moment an edit or a click says you
+have moved on.
+
+Jumping never takes the caret. Being shown a line is not editing it, and a note
+you were reading stays a note you are reading — the same rule a task tapped in
+the Tasks list already followed, and the same brief highlight marks where you
+landed.
+
+**And `[[Note#Heading]]` goes to that heading.** The anchor has been parsed
+since wikilinks were written and carried carefully through every rename since,
+and until now nothing ever did anything with it: the link opened the note at the
+top, exactly like a link without one. It is matched on the words as they read
+rather than as they are written, so `[[Trip#Costs]]` finds `## **Costs**`, and
+case is ignored. A heading that has since been renamed away says so rather than
+quietly behaving like a plain link.
 
 Folders inside those sections keep their own shape. A folder is unfolded
 because you unfolded it, so unfolding a section — or a folder — never unfolds
@@ -1509,6 +1546,7 @@ bar above the list carries an **Edit** next to the **Close**.
 |---|---|
 | ⌘K | Command palette — a note, a folder, a tag, or a command; from anywhere, the editor included |
 | ⌘K then `>` | Every command, with its shortcut beside it |
+| ⌘⇧O | Outline — jump to a heading in this note |
 | ⌘N | New note |
 | ⌘S | Sync now |
 | ⌘F | Find in note |
@@ -2091,7 +2129,9 @@ src/
 │  ├─ merge.ts        three-way merge (diff3), and the two-way diff a rewrite
 │  │                  is shown as
 │  ├─ rebase.ts       folding a synced change into the buffer being typed in
-│  ├─ markdown.ts     frontmatter, links, tags, tasks, due dates
+│  ├─ markdown.ts     frontmatter, links, tags, tasks, due dates, headings —
+│  │                  and the three things that look like a heading and are
+│  │                  not: a `#tag`, a `#` in a code fence, a YAML comment
 │  ├─ properties.ts   the same frontmatter as an ordered, editable list
 │  ├─ tagquery.ts     the rule language behind Tag Folders, over notes or tasks
 │  ├─ folders.ts      nested folders + the Tag Folder tree and inheritance
@@ -2129,6 +2169,9 @@ src/
 │  │                 Enter, Backspace and Delete do on each of them
 │  ├─ links.ts      external URI recognition, opening and editing
 │  ├─ linkClicks.ts following a link from the text — clicks and taps alike
+│  ├─ navTarget.ts  being taken to a line from outside the note: a task from
+│  │                 a list, a heading from the outline — where each one
+│  │                 lands, and why the scroll has to be asked for twice
 │  ├─ table.ts      the pipe-table grid: parse, edit rows/columns, print
 │  ├─ tableChrome.ts the handles on a rendered table: press to pick a row or
 │  │                 column out, press again for its menu, drag to reorder
@@ -2300,6 +2343,26 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
   installed again. Nothing short of that does it — see the long note in
   `vite.config.ts`, which was written the hard way.
 
+- **The outline reads `#` headings and nothing else.** A `#` at the start of a
+  line with a space after it, which is what the editor has always drawn as a
+  heading and what everything here writes. Setext headings (`Title` over
+  `=====`) are not listed, and neither is one indented under a list item —
+  CommonMark allows three spaces of indent, this app has never rendered one, and
+  an outline that offers to take you somewhere the editor does not agree is a
+  heading would be worse than one that leaves it out.
+
+- **`![[Note#Heading]]` still embeds nothing.** Section *embeds* are a different
+  feature from section *links* — one transcludes, the other navigates — and only
+  the link half is built. An embed with an anchor on it does not resolve, which
+  it did not before either; it shows as a broken embed rather than quietly
+  embedding the whole note.
+
+- **A popped-out window has no outline.** ⌘K is not there either: a window
+  holding one note has no list to jump around and no palette in it, so `@` and
+  ⌘⇧O are both absent. A `[[Note#Heading]]` link clicked in one still lands on
+  the heading, because that goes through the link handler rather than the
+  palette.
+
 - **A half-typed tag in the search box matches nothing, briefly.** `#wo` on the
   way to `#work` is a rule about a tag called `wo`, and tags match whole or
   hierarchically — `#work` matches `#work/active`, but nothing matches `#wo`.
@@ -2373,8 +2436,8 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 1074 unit + two-device sync + folder round-trip tests
-node scripts/smoke.mjs  # 783 checks in headless Chromium against dist/
+npm test                # 1086 unit + two-device sync + folder round-trip tests
+node scripts/smoke.mjs  # 797 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

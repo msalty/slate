@@ -42,6 +42,7 @@ import {
 import { ready, resolveLink } from '../core/vault'
 import {
   activePath,
+  anchorTarget,
   closeMobileEditor,
   editorMaximized,
   goToScope,
@@ -53,6 +54,7 @@ import {
   notify,
   openDailyNote,
   openNote,
+  openPalette,
   paletteOpen,
   propertiesOpen,
   scope,
@@ -204,10 +206,12 @@ export function App() {
   /* ---- links, tags and embeds coming out of the editor -------------- */
   useEffect(() => {
     const onLink = async (e: Event) => {
-      const { target, exists } = (e as CustomEvent<{ target: string; exists: boolean }>).detail
+      const { target, exists, anchor } = (
+        e as CustomEvent<{ target: string; exists: boolean; anchor?: string }>
+      ).detail
       const path = resolveLink(target)
       if (path) {
-        openNote(path)
+        openNote(path, anchorTarget(path, anchor))
         return
       }
       if (!exists) {
@@ -316,6 +320,15 @@ export function App() {
         if (layoutMode.value === 'compact') return
         e.preventDefault()
         editorMaximized.value = !editorMaximized.value
+      } else if (k === 'o' && e.shiftKey) {
+        /*
+         * The outline, which is the palette on `@` — so it reaches the editor
+         * the same way ⌘K does, and there is one list to learn rather than a
+         * panel somewhere with its own behaviour. Nothing to show without a
+         * note; the palette says so rather than opening on an empty list.
+         */
+        e.preventDefault()
+        openPalette('@')
       } else if (k === 'u' && e.shiftKey) {
         /*
          * Reached from inside the editor, unlike ⌘K — which is the point. It

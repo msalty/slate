@@ -4,6 +4,7 @@ import { computed, signal } from '@preact/signals'
 import {
   contentNotes,
   getEntry,
+  getText,
   notes,
   notesByDay,
   search,
@@ -14,6 +15,7 @@ import {
   type SearchHit,
 } from '../core/vault'
 import { dailyNotePath } from '../core/daily'
+import { findHeading } from '../core/markdown'
 import {
   contextFor,
   notesForSmartFolder,
@@ -202,8 +204,20 @@ let openForWriting: string | undefined
 let openCaret: number | undefined
 let takenCaret: number | undefined
 
-/** A fresh object also retriggers navigation within the already-open note. */
-export const taskNavigation = signal<{ path: string; line: number } | undefined>(undefined)
+/**
+ * "Open this note, and take me to this line in it."
+ *
+ * Two things ask: a task tapped in a list, and a heading picked from the
+ * outline. `align` is the only thing that differs between them — see
+ * `editor/navTarget.ts` for why a heading goes to the top and a task to the
+ * middle — so they share one message rather than having one signal each.
+ *
+ * A fresh object also retriggers navigation within the already-open note,
+ * which is the common case for an outline and never the case for a task.
+ */
+export const noteNavigation = signal<
+  { path: string; line: number; align: 'center' | 'start' } | undefined
+>(undefined)
 
 /**
  * Open a note from anywhere. On a phone this also pushes the editor over the
@@ -211,14 +225,51 @@ export const taskNavigation = signal<{ path: string; line: number } | undefined>
  * note rather than silently changing something off-screen.
  *
  * `editing` is for a note that was just created to be typed into: it opens with
- * the caret in it, because there is nothing in it to read yet.
+ * the caret in it, because there is nothing in it to read yet. `line` is the
+ * opposite request — somewhere to be shown, with the caret left where it was.
  */
-export function openNote(path: string, opts?: { editing?: boolean; caret?: number; taskLine?: number }) {
-  taskNavigation.value = opts?.taskLine === undefined ? undefined : { path, line: opts.taskLine }
+export function openNote(
+  path: string,
+  opts?: {
+    editing?: boolean
+    caret?: number
+    /** Zero-based line to be taken to, once the note is open. */
+    line?: number
+    align?: 'center' | 'start'
+  },
+) {
+  noteNavigation.value =
+    opts?.line === undefined ? undefined : { path, line: opts.line, align: opts.align ?? 'center' }
   openForWriting = opts?.editing ? path : undefined
   openCaret = opts?.editing ? opts.caret : undefined
   activePath.value = path
   if (layoutMode.value === 'compact') mobileEditorOpen.value = true
+}
+
+/**
+ * Where `[[Note#Costs]]` should land, as options for `openNote`.
+ *
+ * The anchor has been parsed and carried through renames since wikilinks were
+ * written, and until now nothing ever did anything with it: the link opened
+ * the note at the top, which is the same thing a link without an anchor does.
+ * A link that looks like it goes somewhere and doesn't is worse than one you
+ * could not write, so a heading that has gone says so rather than quietly
+ * behaving like a plain link.
+ *
+ * Nothing is said when there is no anchor at all, which is almost every link.
+ */
+export function anchorTarget(
+  path: string,
+  anchor: string | undefined,
+): { line: number; align: 'start' } | undefined {
+  if (!anchor) return undefined
+  const text = getText(path)
+  const heading = text ? findHeading(text, anchor) : undefined
+  if (!heading) {
+    notify(`No heading called “${anchor}” in that note`)
+    return undefined
+  }
+  return { line: heading.line, align: 'start' }
 }
 
 /** True once, for a note that was opened to be written in rather than read. */

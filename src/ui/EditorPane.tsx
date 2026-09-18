@@ -1,4 +1,3 @@
-import { highlightTask } from '../editor/taskHighlight'
 /** Right-of-centre column: the note itself. */
 
 import { render } from 'preact'
@@ -27,6 +26,7 @@ import {
   trashTitle,
 } from '../core/vault'
 import { activeEditor } from '../editor/context'
+import { revealLine } from '../editor/navTarget'
 import { canTransform, openTransform } from './TransformDialog'
 import { askAboutNote } from './AskDialog'
 import { Composer } from './Composer'
@@ -49,7 +49,7 @@ import {
   opensForWriting,
   propertiesOpen,
   takeOpenCaret,
-  taskNavigation,
+  noteNavigation,
   readingMode,
 } from './state'
 import {
@@ -120,7 +120,7 @@ export function EditorPane() {
   const viewRef = useRef<EditorView | null>(null)
   const pathRef = useRef<string | undefined>(undefined)
   const [scrolled, setScrolled] = useState(false)
-  const taskTarget = taskNavigation.value
+  const navTarget = noteNavigation.value
   const path = activePath.value
   const compact = layoutMode.value === 'compact'
   /*
@@ -347,13 +347,20 @@ export function EditorPane() {
       notify('This note changed elsewhere while you were typing — both edits are marked in place')
   }, [path, rev])
 
+  /*
+   * Being taken to a line — a task from a list, a heading from the outline.
+   *
+   * Reading mode either way: you asked to be shown something, not to type in
+   * it, and a jump that took the caret would turn a note being read into one
+   * being written. The alignment is the asker's to choose; see navTarget.ts.
+   */
   useLayoutEffect(() => {
     const view = viewRef.current
-    if (!view || popped || !taskTarget || taskTarget.path !== path) return
+    if (!view || popped || !navTarget || navTarget.path !== path) return
     readingMode.value = true
     endEditing(view)
-    highlightTask(view, taskTarget.line)
-  }, [path, popped, taskTarget])
+    revealLine(view, navTarget.line, navTarget.align)
+  }, [path, popped, navTarget])
 
   /*
    * On a phone, the keyboard and the Format sheet never share the screen.

@@ -2046,6 +2046,32 @@ button.property-kind:hover {
   width: 16px;
   flex: 0 0 auto;
 }
+
+/*
+ * A heading's level, drawn as an indent.
+ *
+ * The level is the only thing about a heading that a list cannot say in words,
+ * and it is the thing you are reading an outline *for* — "what is under what".
+ * An H1 sits where every other palette row sits, so a note whose headings are
+ * all the same level looks like an ordinary list rather than a list that has
+ * been pushed sideways for no reason. The step is deliberately small: six
+ * levels at any generous indent would leave an H6 with no room for its words.
+ */
+.palette-row[data-level='2'] {
+  padding-left: 26px;
+}
+.palette-row[data-level='3'] {
+  padding-left: 40px;
+}
+.palette-row[data-level='4'] {
+  padding-left: 54px;
+}
+.palette-row[data-level='5'] {
+  padding-left: 68px;
+}
+.palette-row[data-level='6'] {
+  padding-left: 82px;
+}
 .palette-label {
   min-width: 0;
   overflow: hidden;

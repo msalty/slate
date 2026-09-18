@@ -1,4 +1,4 @@
-import { taskHighlightExtension } from './taskHighlight'
+import { navTargetExtension } from './navTarget'
 /**
  * Editor assembly: the extension set, the keymap, and the compartments that
  * let settings change without tearing the editor down.
@@ -406,7 +406,7 @@ export function createEditorState(opts: EditorOptions): EditorState {
       },
     }),
     editorTheme,
-    taskHighlightExtension,
+    navTargetExtension,
     highlighting,
     contextCompartment.of(noteContext.of({ path: opts.path })),
     editableCompartment.of(editableFacet(opts.editable !== false)),

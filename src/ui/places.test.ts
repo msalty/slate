@@ -179,6 +179,7 @@ describe('the prefixes', () => {
     expect(mode('#work')).toBe('places')
     expect(mode('/Work')).toBe('places')
     expect(mode('>sync')).toBe('commands')
+    expect(mode('@costs')).toBe('headings')
     expect(mode('work')).toBe('everything')
     // The prefix comes off, so the rest is matched on its own.
     expect(m.places.parsePaletteQuery('  > sync  ').term).toBe('sync')
@@ -191,6 +192,15 @@ describe('the prefixes', () => {
     expect(found(m, '>work')).toEqual([])
     expect(found(m, '>')).toEqual([])
   })
+
+  it('offers no collection for an outline query either', async () => {
+    const m = await fresh()
+    await seed(m)
+    // `@work` is a heading in the open note, never the Work folder — the
+    // prefix says which question is being asked.
+    expect(found(m, '@work')).toEqual([])
+    expect(found(m, '@')).toEqual([])
+  })
 })
 
 describe('what it says when nothing matched', () => {
@@ -201,6 +211,18 @@ describe('what it says when nothing matched', () => {
     expect(m.places.emptyPaletteMessage('>nope')).toBe('No commands match.')
     // Unprefixed, a new note really is the useful next move.
     expect(m.places.emptyPaletteMessage('nope')).toMatch(/New note/)
+  })
+
+  it('tells the three empty outlines apart, because they are three problems', async () => {
+    const m = await fresh()
+    const msg = (o: { noteOpen: boolean; total: number }) => m.places.emptyPaletteMessage('@x', o)
+    // Nothing to outline at all.
+    expect(msg({ noteOpen: false, total: 0 })).toMatch(/No note is open/)
+    // A note, but nothing in it to jump to — the query was never the problem,
+    // and "No headings match" would send somebody off editing it.
+    expect(msg({ noteOpen: true, total: 0 })).toBe('This note has no headings.')
+    // A note with headings, none of them this one.
+    expect(msg({ noteOpen: true, total: 4 })).toBe('No headings match.')
   })
 })
 
