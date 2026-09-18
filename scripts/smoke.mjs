@@ -7725,6 +7725,152 @@ try {
     )
   }
 
+  /* ---- a drawer that changes its mind mid-slide -------------------------
+   *
+   * The one thing about the panel animation that unit tests cannot see. They
+   * know which panels are mounted and which signals are set; what they cannot
+   * ask is where a panel actually *is* on screen, which is the only place the
+   * interesting bug lives.
+   *
+   * It lived there once. Opening ran a `drawer-in` keyframe and closing swapped
+   * it for a `drawer-out`, and CSS does not carry one animation's interpolated
+   * value into the next — so closing a drawer that was still sliding in threw it
+   * to fully open before starting out, and reopening one mid-exit threw it back
+   * to the far edge. Both directions, a visible jump of most of the panel's
+   * width, and every state assertion green throughout. A transition reverses
+   * from wherever the thing is, which is why it is a transition now.
+   *
+   * So this samples the rendered transform every frame and asks the only
+   * question that catches it: does an interrupted movement ever step further in
+   * one frame than an ordinary one does? The ease is steep at the start — about
+   * a third of the travel in the first frames — so the comparison is against a
+   * measured uninterrupted run rather than a number picked here.
+   */
+  await page.setViewportSize({ width: 1000, height: 800 })
+  await page.waitForTimeout(400)
+
+  /**
+   * Toggle a drawer, toggle it again two frames later, and watch where it goes.
+   *
+   * Reported as distance from open, as a fraction of the panel's own width, so
+   * the two drawers are one number regardless of which edge they live on or how
+   * wide they are: 0 is fully open, 1 is fully out of sight.
+   *
+   * Reversed early on purpose. The seam is widest when the panel has barely
+   * moved — that is when "start again from the underlying value" is furthest
+   * from where the panel actually is, and the same bug interrupted late is only
+   * a few pixels and worth nobody's test.
+   */
+  const reverse = (label, closing) =>
+    page.evaluate(
+      async ({ label, closing }) => {
+        const toggle = () => {
+          const rx = new RegExp(label, 'i')
+          const b = [...document.querySelectorAll('button')].find(
+            (el) => rx.test(el.title || '') || rx.test(el.getAttribute('aria-label') || ''),
+          )
+          if (!b) throw new Error(`no ${label} toggle`)
+          b.click()
+        }
+        const sel = label === 'sidebar' ? '.pane.sidebar' : '.rail-host'
+        const out = () => {
+          const e = document.querySelector(sel)
+          if (!e) return null
+          const w = e.getBoundingClientRect().width || 1
+          return Math.abs(new DOMMatrixReadOnly(getComputedStyle(e).transform).m41 / w)
+        }
+        const scrim = () => {
+          const s = document.querySelector('.drawer-scrim')
+          return s ? Number(getComputedStyle(s).opacity) : null
+        }
+        const frames = []
+        const t0 = performance.now()
+        let turned = -1
+        toggle()
+        await new Promise((done) => {
+          const tick = () => {
+            const t = performance.now() - t0
+            if (turned < 0 && t >= 32) {
+              turned = frames.length
+              toggle()
+            }
+            frames.push([out(), scrim()])
+            if (t < 420) requestAnimationFrame(tick)
+            else done()
+          }
+          requestAnimationFrame(tick)
+        })
+        /*
+         * How far a value ever went the wrong way after the second toggle. Once
+         * a drawer has been told to close it can only get further out, and once
+         * told to open, only nearer in; the scrim follows whichever it belongs
+         * to. Anything else is the animation having lost its place.
+         */
+        const backtrack = (pick, wantRising) => {
+          const v = frames.slice(turned).map(pick).filter((n) => n !== null)
+          let worst = 0
+          for (let i = 1; i < v.length; i++) {
+            const wrongWay = wantRising ? v[i - 1] - v[i] : v[i] - v[i - 1]
+            worst = Math.max(worst, wrongWay)
+          }
+          return worst
+        }
+        return {
+          from: frames.find((f) => f[0] !== null)?.[0] ?? null,
+          at: frames[turned]?.[0] ?? null,
+          panel: backtrack((f) => f[0], closing),
+          scrim: backtrack((f) => f[1], !closing),
+        }
+      },
+      { label, closing },
+    )
+
+  for (const label of ['sidebar', 'calendar']) {
+    const shut = await reverse(label, true)
+    check(
+      `the ${label} drawer arrives from off its own edge rather than appearing`,
+      shut.from !== null && shut.from >= 0.9,
+      `starts ${shut.from?.toFixed(2)}× its width out`,
+    )
+    /*
+     * This is the check that would have caught the bug this whole section is
+     * here for, and the frame-to-frame step size is not: swapping a `drawer-in`
+     * keyframe for a `drawer-out` threw the panel to fully open before starting
+     * it outwards, which is a movement in the wrong direction, not merely a big
+     * one. Measured at a tenth of the panel's width; the seam was the whole of
+     * it.
+     */
+    check(
+      `a ${label} drawer told to close never moves further open first`,
+      shut.panel <= 0.1,
+      `went ${shut.panel.toFixed(2)}× the wrong way from ${shut.at?.toFixed(2)}× out`,
+    )
+    check(
+      `…and its scrim only darkens further, never lightens`,
+      shut.scrim <= 0.1,
+      `went ${shut.scrim.toFixed(2)} the wrong way`,
+    )
+    await page.waitForTimeout(500)
+
+    // Now the same interruption the other way round: reopened mid-exit.
+    await page.evaluate((l) => {
+      const rx = new RegExp(l, 'i')
+      ;[...document.querySelectorAll('button')]
+        .find((el) => rx.test(el.title || '') || rx.test(el.getAttribute('aria-label') || ''))
+        .click()
+    }, label)
+    await page.waitForTimeout(400)
+    const back = await reverse(label, false)
+    check(
+      `a ${label} drawer caught on its way out never jumps back to the edge`,
+      back.panel <= 0.1,
+      `went ${back.panel.toFixed(2)}× the wrong way from ${back.at?.toFixed(2)}× out`,
+    )
+    await page.waitForTimeout(500)
+    await page.evaluate(() => document.querySelector('.drawer-scrim')?.click())
+    await page.waitForTimeout(400)
+  }
+
   /* ---- responsive ------------------------------------------------------ */
   await page.setViewportSize({ width: 420, height: 860 })
   await page.evaluate(() => document.documentElement.removeAttribute('data-theme'))

@@ -231,8 +231,20 @@
   position: relative;
 }
 
-/* --- floating panels ---------------------------------------------------- */
-
+/* --- floating panels ----------------------------------------------------
+ *
+ * One transition on one property, in both directions. The obvious build — a
+ * `drawer-in` keyframe on open and a `drawer-out` on close — is wrong in a way
+ * that only shows up when you change your mind: swapping one named animation
+ * for another drops the first one's interpolated value on the floor, so closing
+ * a drawer that was still sliding in snapped it to fully open before starting
+ * out, and reopening one mid-exit threw it back to the far edge. A transition
+ * has no such seam. It reverses from wherever the panel actually is, so a
+ * flicked-open-and-shut drawer stays one continuous movement.
+ *
+ * --drawer-from is which edge this panel belongs to: the offscreen position it
+ * arrives from and leaves towards, which for a transition are the same place.
+ */
 .shell .pane.sidebar[data-floating='1'],
 .shell .rail-host[data-floating='1'] {
   position: absolute;
@@ -240,7 +252,8 @@
   bottom: 0;
   z-index: 40;
   box-shadow: var(--shadow-float);
-  animation: drawer-in var(--panel-dur) var(--panel-ease);
+  transform: translateX(0);
+  transition: transform var(--panel-dur) var(--panel-ease);
 }
 .shell .pane.sidebar[data-floating='1'] {
   left: 0;
@@ -249,36 +262,35 @@
 .shell .rail-host[data-floating='1'] {
   right: 0;
   width: min(330px, 88vw);
-}
-@keyframes drawer-in {
-  from {
-    transform: translateX(var(--drawer-from, -100%));
-  }
-}
-.shell .rail-host[data-floating='1'] {
   --drawer-from: 100%;
 }
 
 /*
- * …and the same movement, reversed, on the way out. A drawer used to slide in
- * and then simply cease to exist, which read as two different gestures.
- *
- * It is here rather than in the rule above because it has to win the tie on
- * specificity, which between two equal selectors is decided by order. layout.ts
- * keeps the element mounted for --panel-dur to give this somewhere to run;
- * `forwards` holds it off-screen for the few frames between the end of the
- * animation and the unmount.
+ * Where a drawer is before it is anywhere — the one thing a transition cannot
+ * work out for itself, since the element does not exist until the moment it is
+ * asked to be open. @starting-style is what a newly mounted element transitions
+ * *from*; browsers without it (Safari before 17.5, Firefox before 129) have no
+ * start position to move from and the drawer simply appears, which is a fair
+ * thing to lose.
+ */
+@starting-style {
+  .shell .pane.sidebar[data-floating='1'],
+  .shell .rail-host[data-floating='1'] {
+    transform: translateX(var(--drawer-from, -100%));
+  }
+}
+
+/*
+ * On the way out. layout.ts keeps the element mounted for --panel-dur to give
+ * this somewhere to run — the two durations have to agree, and are commented at
+ * both ends. It sits after the rule above because it has to win the tie on
+ * specificity, which between two equal selectors is decided by order.
  */
 .shell .pane.sidebar[data-closing='1'],
 .shell .rail-host[data-closing='1'] {
-  animation: drawer-out var(--panel-dur) var(--panel-ease) forwards;
+  transform: translateX(var(--drawer-from, -100%));
   /* On its way out it is no longer something you can click into. */
   pointer-events: none;
-}
-@keyframes drawer-out {
-  to {
-    transform: translateX(var(--drawer-from, -100%));
-  }
 }
 
 .rail-host {
@@ -289,16 +301,27 @@
   overflow: hidden;
 }
 
+/*
+ * Fades with the drawer it belongs to, and by the same means: one transition
+ * rather than a `fade` animation and a reversed copy of it, so that a drawer
+ * closed mid-open takes the scrim back down from the opacity it had reached
+ * instead of from full.
+ */
 .drawer-scrim {
   position: absolute;
   inset: 0;
   z-index: 35;
   background: rgba(0, 0, 0, 0.28);
-  animation: fade var(--dur) ease;
+  opacity: 1;
+  transition: opacity var(--panel-dur) ease;
 }
-/* Fades out with the drawer it belongs to, rather than blinking off. */
+@starting-style {
+  .drawer-scrim {
+    opacity: 0;
+  }
+}
 .drawer-scrim[data-closing='1'] {
-  animation: fade var(--panel-dur) ease reverse forwards;
+  opacity: 0;
   pointer-events: none;
 }
 
