@@ -19,7 +19,7 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 1104 unit, two-device sync and folder round-trip tests
+npm test               # 1131 unit, two-device sync and folder round-trip tests
 node scripts/smoke.mjs # 806-check browser smoke test against dist/
 ```
 
@@ -2154,6 +2154,9 @@ src/
 │  ├─ tagquery.ts     the rule language behind Tag Folders, over notes or tasks
 │  ├─ folders.ts      nested folders + the Tag Folder tree and inheritance
 │  ├─ searchindex.ts  what stops a search from reading every note
+│  ├─ related.ts      NOT WIRED UP — the related-notes prototype: which notes
+│  │                  look like this one, and why each one is on the list.
+│  │                  See "Ideas worth considering next"
 │  ├─ searchquery.ts the search box's two halves: which of the words you
 │  │                 typed are a rule and which are prose, and why the split
 │  │                 is on shape rather than on meaning
@@ -2227,7 +2230,10 @@ src/
    ├─ VaultSwitcher.tsx  the sidebar head: which vault this is, and the menu
    │                 that changes it
    ├─ VaultsCard.tsx Settings › Vaults — rename, recolour, remove
-   └─ Mobile.tsx     phone tab bar and full-screen tab views
+   ├─ Mobile.tsx     phone tab bar and full-screen tab views
+   └─ RelatedProbe.tsx  a lab bench for core/related.ts, at `?probe=related`
+                     and nowhere else — lazily loaded, so neither it nor the
+                     scoring is in the bundle an ordinary load fetches
 ```
 
 Two rules keep it comprehensible:
@@ -2450,22 +2456,68 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 
 ## Ideas worth considering next
 
-- **A graph or "related notes" view**, built on the backlink map that already
-  exists.
+- **Related notes** — prototyped, not shipped. The scoring is in
+  `core/related.ts` and nothing in the app imports it; `?probe=related` opens a
+  lab bench over your own vault, and `npx vite-node scripts/related.ts <folder>`
+  asks the same question of a folder of markdown.
+
+  It offers the notes you *didn't* link — what points at a note is already
+  answered by Linked mentions — scored on shared tags and shared citations,
+  each weighted by how rare it is. Reading its output over a vault found the
+  same mistake twice, and both are written into the constants: **filing is not
+  subject matter.** One shared bookkeeping tag related Reading list to Car
+  insurance to Roof survey; demanding corroboration left "Q1 budget is related
+  to Gift ideas, because both cite Working Agreements and both are tagged
+  #work". So a signal must be worth `log 8` — on at most one note in eight — to
+  count at all, and `log 20` to stand alone without a second opinion.
+
+  What is left to decide is whether the answers are *good*, which no test can
+  say. The number to look at is **how many notes get nothing**: it should be
+  most of them.
 - **Publish a note** as a read-only shared link, straight from the adapter.
 - **Encrypted vaults**, as above — a clean fit behind `RemoteAdapter`.
 - **Tag Folder rules over dates** — `created:<2026-01-01`, `due:overdue` — which
   the parser is already shaped to accept.
+
+**And one idea deliberately not taken.** The outline was going to live in the
+right rail, which would have become a switcher between *Today* (the calendar
+and tasks, as now) and *This note* (the outline and related notes). It was a
+good shape — two views on a real axis, your time or the note in front of you,
+so a view replaces a view and nothing gets denser. The palette was built first
+precisely to find out whether the rail was needed, and it wasn't: `@` and ⌘⇧O
+cost nothing on screen, work on a phone where a panel would not fit, and answer
+the same question. What the rail would have added is the outline *ambient*
+rather than summoned, which turned out to be a much smaller thing than it
+looked.
+
+It is written down rather than forgotten because the reasoning survives a
+change of mind: if related notes proves worth shipping, it will need a home,
+and that is a better argument for the rail than the outline ever was.
 
 ---
 
 ## Testing
 
 ```bash
-npm test                # 1104 unit + two-device sync + folder round-trip tests
+npm test                # 1131 unit + two-device sync + folder round-trip tests
 node scripts/smoke.mjs  # 806 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
+
+One thing here is deliberately not a test. The related-notes scoring can be
+checked for everything that would make a good ranking *impossible* — and is,
+in `core/related.test.ts` — but whether its answers are ones you would have
+given is not something an assertion can say. That question is asked by reading
+the output, either over your own vault at `?probe=related` or over a folder of
+markdown:
+
+```bash
+npx vite-node scripts/related.ts ~/Notes
+npx vite-node scripts/related.ts ~/Notes --note "Roof repairs"
+```
+
+Both print *why* each answer is on the list, which is the part that makes a bad
+one a bug report rather than a feeling.
 
 The smoke test covers what unit tests can't reach: live-preview rendering,
 autocomplete, clipboard paste with real image re-encoding, IndexedDB persistence

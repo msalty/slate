@@ -42,6 +42,18 @@ async function main() {
     return
   }
 
+  /*
+   * `?probe=related` opens a lab bench for the related-notes scoring instead
+   * of the app — see ui/RelatedProbe. Imported here and nowhere else, so
+   * neither it nor the scoring is in the bundle an ordinary load fetches, and
+   * checked after the vault is open because the whole point is the notes in it.
+   */
+  if (new URLSearchParams(location.search).get('probe') === 'related') {
+    const { RelatedProbe } = await import('./ui/RelatedProbe')
+    render(<RelatedProbe />, root)
+    return
+  }
+
   if (popout) {
     preparePopout(popout)
     render(<PopoutWindow />, root)

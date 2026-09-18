@@ -17,16 +17,16 @@
  *
  *   npx vite-node scripts/related.ts ~/Notes
  *   npx vite-node scripts/related.ts ~/Notes --note "Roof repairs"
- *   npx vite-node scripts/related.ts ~/Notes --sample 30 --floor 0.6
+ *   npx vite-node scripts/related.ts ~/Notes --sample 30 --evidence 1.6
  *
- * It reads and writes nothing. The three numbers at the end are the ones that
- * say whether the floor is set right — see `summarise`.
+ * It reads and writes nothing. The numbers at the end are the ones that say
+ * whether the evidence bar is set right — see `summarise`.
  */
 
 import { readdir, readFile } from 'node:fs/promises'
 import { join, relative, sep } from 'node:path'
 import { parseFrontmatter, scanTags, scanWikiLinks } from '../src/core/markdown'
-import { relatedNotes, type RelatedInput } from '../src/core/related'
+import { EVIDENCE, relatedNotes, type RelatedInput } from '../src/core/related'
 
 /* ------------------------------------------------------------------ input */
 
@@ -42,13 +42,16 @@ const flag = (name: string) => flags.get(name)
 const root = positional[0]
 
 if (!root) {
-  console.error('Usage: npx vite-node scripts/related.ts <folder> [--note "Title"] [--sample N] [--limit N] [--floor X]')
+  console.error(
+    'Usage: npx vite-node scripts/related.ts <folder> [--note "Title"] [--sample N] [--limit N] [--evidence X]',
+  )
   process.exit(1)
 }
 
 const sampleSize = Number(flag('sample') ?? 12)
 const limit = Number(flag('limit') ?? 8)
-const floor = flag('floor') === undefined ? undefined : Number(flag('floor'))
+/** `log(1 / fraction)` — how rare a tag or citation must be to count at all. */
+const evidence = flag('evidence') === undefined ? undefined : Number(flag('evidence'))
 const only = flag('note')
 
 /* ------------------------------------------------------- read the folder */
@@ -109,7 +112,7 @@ const dim = (s: string) => `\x1b[2m${s}\x1b[0m`
 const bold = (s: string) => `\x1b[1m${s}\x1b[0m`
 
 function report(n: RelatedInput) {
-  const hits = relatedNotes(notes, n.path, { limit, floor })
+  const hits = relatedNotes(notes, n.path, { limit, evidence })
   console.log(`\n${bold(n.title)} ${dim(`${n.folder || '/'} · ${n.tags.map((t) => `#${t}`).join(' ') || 'no tags'}`)}`)
   if (!hits.length) {
     console.log(dim('   (nothing related)'))
@@ -121,7 +124,7 @@ function report(n: RelatedInput) {
 }
 
 /**
- * The three numbers that say whether the floor is set right.
+ * The numbers that say whether the evidence bar is set right.
  *
  * **How many notes get nothing** should be a large fraction. Most notes in most
  * vaults have nothing much to do with each other, and a prototype where every
@@ -130,15 +133,15 @@ function report(n: RelatedInput) {
  * **The median list length** should be short — two or three. Eight is the cap,
  * and hitting it routinely means the tail is padding.
  *
- * **The median top score** says how far above the floor the good answers sit.
- * Bunched just above it, the floor is doing all the work and a small change to
- * it would change every answer.
+ * **The median top score** says how far above the bar the good answers sit.
+ * Bunched just above it, the bar is doing all the work and a small change to it
+ * would change every answer.
  */
 function summarise() {
   const lengths: number[] = []
   const tops: number[] = []
   for (const n of notes) {
-    const hits = relatedNotes(notes, n.path, { limit, floor })
+    const hits = relatedNotes(notes, n.path, { limit, evidence })
     lengths.push(hits.length)
     if (hits.length) tops.push(hits[0].score)
   }
@@ -151,7 +154,10 @@ function summarise() {
   console.log(`   nothing related    ${((empty / notes.length) * 100).toFixed(0)}%  ${dim('want this high — most notes are unrelated')}`)
   console.log(`   hit the cap of ${limit}   ${((full / notes.length) * 100).toFixed(0)}%  ${dim('want this low — a full list is usually padding')}`)
   console.log(`   median list        ${median(lengths)}   ${dim('want 1–3')}`)
-  console.log(`   median top score   ${median(tops).toFixed(2)}  ${dim(`floor is ${(floor ?? Math.log(3)).toFixed(2)}`)}`)
+  const bar = evidence ?? EVIDENCE
+  console.log(
+    `   median top score   ${median(tops).toFixed(2)}  ${dim(`evidence bar ${bar.toFixed(2)} — one note in ${Math.round(Math.exp(bar))}`)}`,
+  )
 }
 
 /* ------------------------------------------------------------------- run */

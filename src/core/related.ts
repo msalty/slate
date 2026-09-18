@@ -91,24 +91,14 @@ const LINK_WEIGHT = 1.4
 const FOLDER_BONUS = 0.35
 
 /**
- * Below this, a note is not offered at all.
- *
- * An empty list is a good answer and a common one: most notes in most vaults
- * have nothing much to do with each other, and a feature that always finds
- * eight things has stopped being about relatedness.
- *
- * **It needs no scaling, which is the reason to use `log(N/df)` rather than
- * anything homemade.** An idf depends only on the *fraction* of notes carrying
- * the thing — `log(N / (N/3))` is `log 3` whether N is thirty or thirty
- * thousand — so one fixed number means the same thing in every vault. This one
- * is `log 3`: a tag on at most a third of your notes, which is the weakest
- * thing worth a row of its own. A tag on half of them scores `log 2` and is
- * cut, at any size.
- */
-const FLOOR = Math.log(3)
-
-/**
  * The two bars a signal can clear, and what each one buys.
+ *
+ * **These are the whole calibration.** There was a third — a minimum on the
+ * total score — until a probe over a real vault showed a slider for it
+ * changing nothing at all: anything clearing the bars below already scores
+ * more than twice what that minimum asked for, so it could never bind. A
+ * constant that cannot have an effect is worse than no constant, because it
+ * reads like a safeguard.
  *
  * Both of these came out of running the scoring over a vault and reading it,
  * which is what `scripts/related.ts` is for. Two failures showed up, and they
@@ -137,30 +127,52 @@ const FLOOR = Math.log(3)
  *
  * Measured after the weights, so a link counts slightly more readily than a
  * tag. Citing something is a deliberate act; tagging is often a reflex.
+ *
+ * **Both are `log(1 / fraction)`, which is why they are single numbers rather
+ * than one per vault size.** `log 8` *is* "one note in eight", at thirty notes
+ * and at thirty thousand — see the test that says so.
  */
-const EVIDENCE = Math.log(8)
-const STRONG = Math.log(20)
+export const EVIDENCE = Math.log(8)
+export const STRONG = Math.log(20)
 
 export interface RelatedOptions {
   limit?: number
-  /** Lowered in tests and by the prototype script, to see what is being cut. */
-  floor?: number
+  /**
+   * How rare a signal has to be to count as evidence, and to stand alone
+   * without a second opinion — both as `log(1 / fraction of the vault)`.
+   *
+   * Exposed so the probe can move them and watch what appears, which is the
+   * only way to decide where they belong. Nothing in the app passes them.
+   */
+  evidence?: number
+  strong?: number
+}
+
+interface Index<T extends RelatedInput> {
+  byPath: Map<string, T>
+  tagDf: Map<string, number>
+  /** path -> the notes it links to; and how many notes point at each one. */
+  outOf: Map<string, Set<string>>
+  inDegree: Map<string, number>
+  total: number
 }
 
 /**
- * The notes most like `path`, best first.
+ * Counting how common every tag and every cited note is takes a pass over the
+ * whole vault, and the answer is the same for every note asked about — so it
+ * is built once per list rather than once per question.
  *
- * Returns an empty list — not a bad list — when nothing clears the floor.
+ * Keyed on the array itself, weakly: the vault hands out a new array when it
+ * changes and the old one becomes garbage, which is exactly the lifetime this
+ * wants. Asking about one note stays a pass over the vault; asking about all
+ * of them, which is what the probe and the prototype script both do, stops
+ * being a pass over the vault *per note*.
  */
-export function relatedNotes<T extends RelatedInput>(
-  notes: readonly T[],
-  path: string,
-  opts: RelatedOptions = {},
-): Array<RelatedNote<T>> {
-  const limit = opts.limit ?? 8
-  const floor = opts.floor ?? FLOOR
-  const me = notes.find((n) => n.path === path)
-  if (!me || notes.length < 2) return []
+const indexCache = new WeakMap<object, Index<never>>()
+
+function indexOf<T extends RelatedInput>(notes: readonly T[]): Index<T> {
+  const hit = indexCache.get(notes as unknown as object) as Index<T> | undefined
+  if (hit) return hit
 
   const byPath = new Map(notes.map((n) => [n.path, n]))
   const byTitle = new Map<string, string>()
@@ -178,14 +190,9 @@ export function relatedNotes<T extends RelatedInput>(
     return byTitle.get(t.toLowerCase())
   }
 
-  /* ---- how common is each thing ------------------------------------- */
-
-  const total = notes.length
   const tagDf = new Map<string, number>()
-  /** path -> the notes it links to; and how many notes point at each one. */
   const outOf = new Map<string, Set<string>>()
   const inDegree = new Map<string, number>()
-
   for (const n of notes) {
     for (const t of expandTags(n.tags)) tagDf.set(t, (tagDf.get(t) ?? 0) + 1)
     const out = new Set<string>()
@@ -196,6 +203,29 @@ export function relatedNotes<T extends RelatedInput>(
     outOf.set(n.path, out)
     for (const p of out) inDegree.set(p, (inDegree.get(p) ?? 0) + 1)
   }
+
+  const index: Index<T> = { byPath, tagDf, outOf, inDegree, total: notes.length }
+  indexCache.set(notes as unknown as object, index as unknown as Index<never>)
+  return index
+}
+
+/**
+ * The notes most like `path`, best first.
+ *
+ * Returns an empty list — not a bad list — when nothing is corroborated.
+ */
+export function relatedNotes<T extends RelatedInput>(
+  notes: readonly T[],
+  path: string,
+  opts: RelatedOptions = {},
+): Array<RelatedNote<T>> {
+  const limit = opts.limit ?? 8
+  const evidenceBar = opts.evidence ?? EVIDENCE
+  const strongBar = opts.strong ?? STRONG
+  if (notes.length < 2) return []
+  const { byPath, tagDf, outOf, inDegree, total } = indexOf(notes)
+  const me = byPath.get(path)
+  if (!me) return []
 
   /* ---- what this note already knows about --------------------------- */
 
@@ -254,14 +284,13 @@ export function relatedNotes<T extends RelatedInput>(
       reasons.push({ text: `in ${me.folder}`, worth: FOLDER_BONUS, evidence: false })
     }
 
-    if (score < floor) continue
     /*
      * Corroborated, or overwhelming. One ordinary signal is the shape every
      * bad answer took when this was run over a real vault, so one ordinary
      * signal is not an answer.
      */
-    const evidence = reasons.filter((r) => r.evidence && r.worth >= EVIDENCE)
-    if (evidence.length < 2 && !evidence.some((r) => r.worth >= STRONG)) continue
+    const evidence = reasons.filter((r) => r.evidence && r.worth >= evidenceBar)
+    if (evidence.length < 2 && !evidence.some((r) => r.worth >= strongBar)) continue
     out.push({
       note: n,
       score,
