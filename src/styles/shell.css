@@ -70,7 +70,36 @@
 }
 
 /*
+ * How much of each side panel's column is showing: 1 open, 0 collapsed.
+ *
+ * Registered, because that is the whole trick. An ordinary custom property has
+ * no type, so nothing can interpolate it and a transition on it does nothing;
+ * declaring a syntax gives it one. Browsers without @property (Firefox before
+ * 128, Safari before 16.4) ignore this block, find nothing to interpolate, and
+ * get panels that snap open and shut exactly as they did before — which is the
+ * right thing to degrade to. The `1` fallbacks below are not from here: they are
+ * written out in the rules, so the grid stays valid where @property is missing.
+ */
+@property --sidebar-open {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 1;
+}
+@property --rail-open {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 1;
+}
+
+/*
  * --- wide: sidebar | list | editor | rail -------------------------------
+ *
+ * All four tracks are always in the template, and a hidden panel is a track
+ * multiplied by zero. That is what makes hiding one something the browser can
+ * animate: grid-template-columns only interpolates between lists with the same
+ * number of tracks, so a template that dropped a track per hidden panel could
+ * only ever snap, however much transition you put on it. Zero-width tracks cost
+ * nothing — a floating panel is out of flow and doesn't sit in one anyway.
  *
  * The two resizable columns are minmax(0, …): they are exactly as wide as
  * their variable says while there is room, and give way when there is not.
@@ -79,18 +108,70 @@
  * from the panels — which is rule 1 of this layout, inverted.
  */
 .shell[data-mode='wide'] {
-  grid-template-columns: minmax(0, var(--sidebar-w)) minmax(0, var(--list-w)) minmax(460px, 1fr);
-}
-.shell[data-mode='wide'][data-sidebar='hidden'] {
-  grid-template-columns: minmax(0, var(--list-w)) minmax(460px, 1fr);
-}
-.shell[data-mode='wide'][data-rail='inline'] {
+  --sidebar-open: 1;
+  --rail-open: 1;
   grid-template-columns:
-    minmax(0, var(--sidebar-w)) minmax(0, var(--list-w)) minmax(460px, 1fr)
-    minmax(0, var(--rail-w));
+    minmax(0, calc(var(--sidebar-w) * var(--sidebar-open)))
+    minmax(0, var(--list-w))
+    minmax(460px, 1fr)
+    minmax(0, calc(var(--rail-w) * var(--rail-open)));
 }
-.shell[data-mode='wide'][data-sidebar='hidden'][data-rail='inline'] {
-  grid-template-columns: minmax(0, var(--list-w)) minmax(460px, 1fr) minmax(0, var(--rail-w));
+.shell[data-mode='wide']:not([data-sidebar='inline']) {
+  --sidebar-open: 0;
+}
+.shell[data-mode='wide']:not([data-rail='inline']) {
+  --rail-open: 0;
+}
+
+/*
+ * The movement, and the gate on it.
+ *
+ * Only ever on a toggle: the same two attributes change when a resize crosses a
+ * breakpoint, and a panel sliding shut because the window got narrower is the
+ * thing this layout exists to prevent. layout.ts sets data-animate for the
+ * length of the movement and nothing else ever does.
+ *
+ * Cheap enough to do this way. Dragging the sidebar's edge already relays out
+ * the same grid — and re-wraps the editor with it — on every pointer move, for
+ * as long as someone cares to drag; this is that same frame, ten times, with an
+ * end to it.
+ */
+.shell[data-mode='wide'][data-animate='1'] {
+  transition:
+    --sidebar-open var(--panel-dur) var(--panel-ease),
+    --rail-open var(--panel-dur) var(--panel-ease);
+}
+
+/*
+ * A collapsed panel is still in the tree — that is what there is to animate — so
+ * it has to leave the tab order too, or ⇥ lands in a sidebar nobody can see.
+ * Hidden at the end of the collapse and visible at the very start of the
+ * opening: the delay does the first, and the absence of any visibility
+ * transition in the open state does the second.
+ */
+.shell[data-mode='wide'][data-sidebar='hidden'] > .pane.sidebar,
+.shell[data-mode='wide'][data-rail='hidden'] > .rail-host {
+  visibility: hidden;
+  transition: visibility 0s linear var(--panel-dur);
+}
+
+/*
+ * The panel's contents hold the panel's full width while its track collapses,
+ * so the thing slides behind the clip instead of being squeezed through it.
+ * Letting them follow the track would re-wrap every folder row and every
+ * calendar cell on each frame — visibly wrong, and the most expensive layout in
+ * the app to ask for sixty times a second. The pane already clips, so pinning
+ * the width here is the whole fix.
+ *
+ * Not the resizer: it is positioned against the pane's trailing edge and has a
+ * width of its own. Not a floating panel either: a drawer's width is its own
+ * (see below), and it slides by transform without any of this.
+ */
+.shell[data-mode='wide'] > .pane.sidebar[data-floating='0'] > *:not(.pane-resizer) {
+  width: var(--sidebar-w);
+}
+.shell[data-mode='wide'] > .rail-host[data-floating='0'] > .rail {
+  width: var(--rail-w);
 }
 
 /* --- medium: list | editor, side panels float -------------------------- */
@@ -150,8 +231,20 @@
   position: relative;
 }
 
-/* --- floating panels ---------------------------------------------------- */
-
+/* --- floating panels ----------------------------------------------------
+ *
+ * One transition on one property, in both directions. The obvious build — a
+ * `drawer-in` keyframe on open and a `drawer-out` on close — is wrong in a way
+ * that only shows up when you change your mind: swapping one named animation
+ * for another drops the first one's interpolated value on the floor, so closing
+ * a drawer that was still sliding in snapped it to fully open before starting
+ * out, and reopening one mid-exit threw it back to the far edge. A transition
+ * has no such seam. It reverses from wherever the panel actually is, so a
+ * flicked-open-and-shut drawer stays one continuous movement.
+ *
+ * --drawer-from is which edge this panel belongs to: the offscreen position it
+ * arrives from and leaves towards, which for a transition are the same place.
+ */
 .shell .pane.sidebar[data-floating='1'],
 .shell .rail-host[data-floating='1'] {
   position: absolute;
@@ -159,7 +252,8 @@
   bottom: 0;
   z-index: 40;
   box-shadow: var(--shadow-float);
-  animation: drawer-in 180ms cubic-bezier(0.32, 0.72, 0, 1);
+  transform: translateX(0);
+  transition: transform var(--panel-dur) var(--panel-ease);
 }
 .shell .pane.sidebar[data-floating='1'] {
   left: 0;
@@ -168,14 +262,35 @@
 .shell .rail-host[data-floating='1'] {
   right: 0;
   width: min(330px, 88vw);
+  --drawer-from: 100%;
 }
-@keyframes drawer-in {
-  from {
+
+/*
+ * Where a drawer is before it is anywhere — the one thing a transition cannot
+ * work out for itself, since the element does not exist until the moment it is
+ * asked to be open. @starting-style is what a newly mounted element transitions
+ * *from*; browsers without it (Safari before 17.5, Firefox before 129) have no
+ * start position to move from and the drawer simply appears, which is a fair
+ * thing to lose.
+ */
+@starting-style {
+  .shell .pane.sidebar[data-floating='1'],
+  .shell .rail-host[data-floating='1'] {
     transform: translateX(var(--drawer-from, -100%));
   }
 }
-.shell .rail-host[data-floating='1'] {
-  --drawer-from: 100%;
+
+/*
+ * On the way out. layout.ts keeps the element mounted for --panel-dur to give
+ * this somewhere to run — the two durations have to agree, and are commented at
+ * both ends. It sits after the rule above because it has to win the tie on
+ * specificity, which between two equal selectors is decided by order.
+ */
+.shell .pane.sidebar[data-closing='1'],
+.shell .rail-host[data-closing='1'] {
+  transform: translateX(var(--drawer-from, -100%));
+  /* On its way out it is no longer something you can click into. */
+  pointer-events: none;
 }
 
 .rail-host {
@@ -186,12 +301,28 @@
   overflow: hidden;
 }
 
+/*
+ * Fades with the drawer it belongs to, and by the same means: one transition
+ * rather than a `fade` animation and a reversed copy of it, so that a drawer
+ * closed mid-open takes the scrim back down from the opacity it had reached
+ * instead of from full.
+ */
 .drawer-scrim {
   position: absolute;
   inset: 0;
   z-index: 35;
   background: rgba(0, 0, 0, 0.28);
-  animation: fade var(--dur) ease;
+  opacity: 1;
+  transition: opacity var(--panel-dur) ease;
+}
+@starting-style {
+  .drawer-scrim {
+    opacity: 0;
+  }
+}
+.drawer-scrim[data-closing='1'] {
+  opacity: 0;
+  pointer-events: none;
 }
 
 /* --- shared chrome ------------------------------------------------------ */
