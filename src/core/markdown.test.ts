@@ -140,6 +140,19 @@ describe('wikilinks', () => {
     const targets = scanWikiLinks(doc).map((l) => l.target)
     expect(targets).toEqual(['One'])
   })
+
+  it('reads an anchor with no note in front of it as a link into this one', () => {
+    const links = scanWikiLinks('The numbers are in [[#Costs]], and [[#Costs|below]].')
+    expect(links).toHaveLength(2)
+    expect(links[0].target).toBe('')
+    expect(links[0].anchor).toBe('Costs')
+    expect(links[1].alias).toBe('below')
+  })
+
+  it('but brackets round nothing at all are still not a link', () => {
+    // Naming neither a note nor a place in one, there is nothing to open.
+    expect(scanWikiLinks('empty [[]] and [[|alias]] and [[ ]]')).toEqual([])
+  })
 })
 
 describe('tags', () => {

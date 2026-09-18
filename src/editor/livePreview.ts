@@ -502,7 +502,12 @@ function buildDecorations(view: EditorView): DecorationSet {
           const hash = targetPart.split('#')
           const target = hash[0].trim()
           const anchor = hash.slice(1).join('#').trim()
-          const resolved = resolveLink(target)
+          /*
+           * `[[#Costs]]` — an anchor with no note in front of it is a heading
+           * in this one. It always resolves, because the note it points at is
+           * the note it is written in, so it is never drawn as broken.
+           */
+          const resolved = target ? resolveLink(target) : anchor ? ctx.path : undefined
           const open = node.from + 2
           const close = node.to - 2
           const active = touched(state, node.from, node.to)
@@ -524,11 +529,13 @@ function buildDecorations(view: EditorView): DecorationSet {
                   'data-wikilink': target,
                   ...(anchor ? { 'data-anchor': anchor } : {}),
                   'data-exists': resolved ? '1' : '0',
-                  title: resolved
-                    ? anchor
-                      ? `${resolved} — ${anchor}`
-                      : resolved
-                    : `Create "${target}"`,
+                  title: !resolved
+                    ? `Create "${target}"`
+                    : !anchor
+                      ? resolved
+                      : target
+                        ? `${resolved} — ${anchor}`
+                        : `${anchor} — in this note`,
                 },
               }).range(textFrom, close),
             )

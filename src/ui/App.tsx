@@ -209,11 +209,18 @@ export function App() {
       const { target, exists, anchor } = (
         e as CustomEvent<{ target: string; exists: boolean; anchor?: string }>
       ).detail
-      const path = resolveLink(target)
+      /*
+       * `[[#Costs]]` names no note, because it means this one — so the note it
+       * opens is the note it was clicked in. Which also means there is nothing
+       * to create when it does not resolve: an empty target is never an
+       * invitation to make a note with no name.
+       */
+      const path = target ? resolveLink(target) : activePath.value
       if (path) {
         openNote(path, anchorTarget(path, anchor))
         return
       }
+      if (!target) return
       if (!exists) {
         await newNoteInFolder('', target, { fallback: `# ${target}\n\n` })
         notify(`Created "${target}"`)

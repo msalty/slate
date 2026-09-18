@@ -19,8 +19,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 1086 unit, two-device sync and folder round-trip tests
-node scripts/smoke.mjs # 797-check browser smoke test against dist/
+npm test               # 1104 unit, two-device sync and folder round-trip tests
+node scripts/smoke.mjs # 806-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -238,6 +238,19 @@ from a shared vault is untrusted input.
 autocomplete over every note; picking one that doesn't exist yet offers to create
 it. Clicking a broken link creates the note on the spot. Renaming a note rewrites
 every link that pointed at it.
+
+**And `#` points inside one.** Type `[[Trip#` and the list stops being about
+notes and becomes that note's headings, in the order they appear, each saying
+which section it sits under. The `#` is the same statement the `|` is — the note
+has been named, and what is being named now is a place in it — so it is answered
+the same way. `[[#` with no note in front of it is *this* note, read off the
+buffer rather than the vault, so a heading you typed a moment ago can be linked
+to before it has been saved.
+
+Both write a link that goes there: `[[Trip#Costs]]` opens Trip at Costs, and
+`[[#Costs]]` moves within the note it is written in without opening anything. A
+link into the note you are already in is not a link *between* notes, so it earns
+no backlink, and it never turns up in Unlinked as a link with no name.
 
 **Linked mentions.** What points at a note is listed at the end of the note, past
 the last line and inside the same scroll: a hairline, a *Linked mentions* header
@@ -1427,6 +1440,11 @@ rather than as they are written, so `[[Trip#Costs]]` finds `## **Costs**`, and
 case is ignored. A heading that has since been renamed away says so rather than
 quietly behaving like a plain link.
 
+`[[#Costs]]` — an anchor with no note in front of it — is a heading in the note
+it is written in, and moves within it rather than opening anything. Brackets
+round nothing at all (`[[]]`, `[[|alias]]`) name neither a note nor a place in
+one, and stay the inert text they always were.
+
 Folders inside those sections keep their own shape. A folder is unfolded
 because you unfolded it, so unfolding a section — or a folder — never unfolds
 everything beneath it, and folding one and opening it again brings back exactly
@@ -2355,7 +2373,15 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
   feature from section *links* — one transcludes, the other navigates — and only
   the link half is built. An embed with an anchor on it does not resolve, which
   it did not before either; it shows as a broken embed rather than quietly
-  embedding the whole note.
+  embedding the whole note. The heading completion stays out of `![[` for the
+  same reason: offering them there would be completing somebody into an embed
+  that resolves to nothing.
+
+- **A heading completion is over one note, not over the vault.** `[[#` and
+  `[[Trip#` both need the note named first — there is no "find me the section
+  about costs, wherever it is". Searching every note's headings at once is a
+  different feature with a different shape, and the palette's `@` is the same
+  shape as this one: a note, then a place in it.
 
 - **A popped-out window has no outline.** ⌘K is not there either: a window
   holding one note has no list to jump around and no palette in it, so `@` and
@@ -2436,8 +2462,8 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 ## Testing
 
 ```bash
-npm test                # 1086 unit + two-device sync + folder round-trip tests
-node scripts/smoke.mjs  # 797 checks in headless Chromium against dist/
+npm test                # 1104 unit + two-device sync + folder round-trip tests
+node scripts/smoke.mjs  # 806 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

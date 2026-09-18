@@ -10,12 +10,21 @@
 
 import type { Completion, CompletionContext, CompletionResult } from '@codemirror/autocomplete'
 import type { EditorView } from '@codemirror/view'
-import { allTags, attachments, notes } from '../core/vault'
+import { allTags, attachments, getText, notes, resolveLink } from '../core/vault'
 import { expandSnippet, matchSnippets, previewOf, type Snippet } from '../core/snippets'
+import { scanHeadings } from '../core/markdown'
 import { basename, mediaClass, relativeTime } from '../core/util'
 import { CALLOUT_NAMES, calloutSpec } from './callout'
 
-function rank(title: string, q: string, mtime: number): number {
+/**
+ * Exact, then prefix, then substring, then initials — and lately-touched first
+ * among equals.
+ *
+ * `mtime` is optional because recency is a sensible tiebreak between two notes
+ * and no question at all about two headings *inside* one: they were written
+ * whenever the note was, and what orders them is where they sit in it.
+ */
+function rank(title: string, q: string, mtime?: number): number {
   const t = title.toLowerCase()
   let score = 0
   if (!q) score = 1
@@ -23,7 +32,7 @@ function rank(title: string, q: string, mtime: number): number {
   else if (t.startsWith(q)) score = 500 - t.length
   else if (t.includes(q)) score = 200 - t.indexOf(q)
   else {
-    // Initials match: "mn" finds "Meeting Notes".
+    // Initials match: "mn" finds "Meeting Notes", "fc" finds "Flight costs".
     const initials = title
       .split(/[\s/_-]+/)
       .map((w) => w[0]?.toLowerCase() ?? '')
@@ -31,6 +40,7 @@ function rank(title: string, q: string, mtime: number): number {
     if (initials.startsWith(q)) score = 120
     else return -1
   }
+  if (mtime === undefined) return score
   return score + Math.max(0, 40 - (Date.now() - mtime) / (86_400_000 * 7))
 }
 
@@ -53,6 +63,70 @@ function applyTarget(text: string) {
   }
 }
 
+/**
+ * The headings of whichever note a `[[…#` names, as completions.
+ *
+ * Two notes it can be asking about, and they are read from different places on
+ * purpose. `[[#` is *this* note, so its headings come off the buffer — the
+ * heading you typed a moment ago is offerable before it has been saved, which
+ * is exactly when you want to link to it. `[[Trip#` is another note, so its
+ * headings come off the vault, which is the only copy of it there is.
+ *
+ * `detail` carries the heading this one sits under rather than its level. The
+ * completion list cannot indent, and "H3" says less about where you are going
+ * than the name of the section above it.
+ */
+function headingOptions(context: CompletionContext, target: string, q: string): Completion[] {
+  const text = target
+    ? (() => {
+        const path = resolveLink(target)
+        return path ? getText(path) : undefined
+      })()
+    : context.state.doc.toString()
+  if (!text) return []
+
+  const headings = scanHeadings(text)
+  const options: Completion[] = []
+  /** The nearest heading above this one that outranks it. */
+  const parentOf = (i: number): string | undefined => {
+    for (let j = i - 1; j >= 0; j--) if (headings[j].level < headings[i].level) return headings[j].text
+    return undefined
+  }
+  headings.forEach((h, i) => {
+    const s = rank(h.text, q)
+    if (s < 0) return
+    /*
+     * Document order, inside the -99..99 that boosts have to live in.
+     *
+     * `clampBoost` divides by ten and rounds, which is right for note scores
+     * running into the thousands and fatal here: every heading in an unfiltered
+     * `[[Trip#` ranks the same, the fractional tiebreak rounded away, and
+     * CodeMirror fell back to sorting the labels alphabetically. An outline
+     * read in alphabetical order is not an outline.
+     *
+     * So the tier is expressed directly, twenty apart, and position contributes
+     * at most nineteen — enough to order the top of any note, never enough to
+     * lift a worse match above a better one. Past the twentieth heading the
+     * positions tie, which only matters for a query that matched half a long
+     * note.
+     */
+    const tier = s >= 1000 ? 60 : s >= 400 ? 40 : s >= 100 ? 20 : 0
+    options.push({
+      label: h.text,
+      detail: parentOf(i),
+      boost: Math.min(99, tier + Math.max(0, 19 - i)),
+      /*
+       * Only the heading is inserted, never the target with it. The list is
+       * anchored after the `#` — which is what lets the completion filter on
+       * the heading as it is typed — and it leaves the note half exactly as it
+       * was written, case, spacing and all.
+       */
+      apply: applyTarget(h.text),
+    })
+  })
+  return options
+}
+
 export function wikiCompletion(context: CompletionContext): CompletionResult | null {
   // Match an unclosed [[ or ![[ on the current line.
   const before = context.matchBefore(/!?\[\[[^\]\n]*/)
@@ -63,6 +137,24 @@ export function wikiCompletion(context: CompletionContext): CompletionResult | n
   if (typed.includes('|')) return null
   const q = typed.toLowerCase()
   const from = before.from + (isEmbed ? 3 : 2)
+
+  /*
+   * A `#` says the note has been named and a place in it is being named now —
+   * the same statement the `|` above makes about the alias, and answered the
+   * same way: the list stops being about notes and becomes about headings.
+   *
+   * Links only. `![[Note#Heading]]` does not embed a section — that is a
+   * different feature and not one that exists — so offering the headings there
+   * would be completing somebody into an embed that resolves to nothing.
+   */
+  const hash = typed.indexOf('#')
+  if (hash >= 0) {
+    if (isEmbed) return null
+    const target = typed.slice(0, hash).trim()
+    const options = headingOptions(context, target, typed.slice(hash + 1).toLowerCase())
+    if (!options.length) return null
+    return { from: from + hash + 1, options: options.slice(0, 60), validFor: /^[^\]\n|]*$/ }
+  }
 
   const options: Completion[] = []
 
@@ -114,7 +206,15 @@ export function wikiCompletion(context: CompletionContext): CompletionResult | n
   return {
     from,
     options: options.slice(0, 60),
-    validFor: /^[^\]\n|]*$/,
+    /*
+     * `#` deliberately invalidates this result.
+     *
+     * While a result is valid CodeMirror re-filters it in place rather than
+     * asking the source again — so with `#` allowed here, typing it kept the
+     * *note* list alive and quietly filtered it down to nothing. The headings
+     * branch above never ran, and `[[Trip#` showed an empty list.
+     */
+    validFor: /^[^\]\n|#]*$/,
   }
 }
 

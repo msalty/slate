@@ -3588,7 +3588,9 @@ try {
         const scroller = document.querySelector('.cm-scroller')
         if (!hit || !scroller) return { text: '', top: NaN }
         return {
-          text: hit.textContent ?? '',
+          // Trimmed: a heading written `## Costs ##` renders with the closing
+          // run hidden, which leaves the space in front of it behind.
+          text: (hit.textContent ?? '').trim(),
           top: Math.round(hit.getBoundingClientRect().top - scroller.getBoundingClientRect().top),
         }
       })
@@ -3662,6 +3664,121 @@ try {
       'an anchor no heading answers to says so rather than going to the top',
       /No heading called/.test((await page.locator('.toast').innerText().catch(() => '')) ?? ''),
       (await page.locator('.toast').innerText().catch(() => '(no toast)')) ?? '(no toast)',
+    )
+
+    /* ---- [[Note# offers that note's headings ---------------------------
+     *
+     * The `#` says the note has been named and a place in it is being named
+     * now — the same statement the `|` makes about an alias. Driven in a
+     * browser because the thing that breaks is not the list but *when
+     * CodeMirror asks for it*: while a result is valid it re-filters in place
+     * rather than asking again, so a `#` that did not invalidate the note list
+     * left it alive, filtered to nothing, showing an empty box.
+     */
+    const cmOptions = () =>
+      page.$$eval('.cm-tooltip-autocomplete li', (els) =>
+        els.map((e) => ({
+          label: e.querySelector('.cm-completionLabel')?.textContent ?? '',
+          detail: e.querySelector('.cm-completionDetail')?.textContent ?? '',
+        })),
+      )
+    const lastLine = () =>
+      page.evaluate(() => {
+        const lines = [...document.querySelectorAll('.cm-line')]
+        return lines[lines.length - 1]?.textContent ?? ''
+      })
+
+    const notesEditor = page.locator('.cm-content')
+    await notesEditor.click()
+    await page.waitForTimeout(300)
+    await page.keyboard.press('Control+End')
+    await page.waitForTimeout(200)
+
+    await notesEditor.pressSequentially('\nSee [[Field notes', { delay: 20 })
+    await page.waitForTimeout(500)
+    const beforeHash = await cmOptions()
+    check(
+      'a wikilink still completes on note titles',
+      beforeHash.some((o) => o.label === 'Field notes'),
+      beforeHash.map((o) => o.label).join(', ') || '(no list)',
+    )
+
+    await notesEditor.pressSequentially('#', { delay: 20 })
+    await page.waitForTimeout(500)
+    const afterHash = await cmOptions()
+    check(
+      'and the # turns the list into that note’s headings, in document order',
+      afterHash.map((o) => o.label).join(' / ') === 'Field notes / Measurements / Depth / Follow-up',
+      afterHash.map((o) => o.label).join(' / ') || '(no list)',
+    )
+    check(
+      'each one saying which section it sits under',
+      afterHash.find((o) => o.label === 'Depth')?.detail === 'Measurements',
+      afterHash.map((o) => `${o.label}:${o.detail}`).join(', '),
+    )
+    await page.screenshot({ path: join(SHOTS, '38-heading-completion.png') })
+
+    await notesEditor.pressSequentially('dep', { delay: 20 })
+    await page.waitForTimeout(400)
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(400)
+    check(
+      'accepting one writes the anchor and closes the link',
+      (await lastLine()) === 'See [[Field notes#Depth]]',
+      await lastLine(),
+    )
+
+    /* ---- and [[# is this note, read off the buffer -------------------- */
+    await notesEditor.pressSequentially('\nAlso [[#', { delay: 20 })
+    await page.waitForTimeout(500)
+    const selfList = await cmOptions()
+    check(
+      'a bare [[# offers the headings of the note being typed in',
+      selfList.map((o) => o.label).join(' / ') === 'Field notes / Measurements / Depth / Follow-up',
+      selfList.map((o) => o.label).join(' / ') || '(no list)',
+    )
+    await notesEditor.pressSequentially('meas', { delay: 20 })
+    await page.waitForTimeout(400)
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(600)
+    check(
+      'and writes an anchor with no note in front of it',
+      (await lastLine()) === 'Also [[#Measurements]]',
+      await lastLine(),
+    )
+
+    // Take the caret out of the note so the link is drawn rather than revealed.
+    await page.locator('.list-pane .pane-title').click()
+    await page.waitForTimeout(500)
+    const selfLink = page.locator('.cm-wikilink').last()
+    check(
+      'a self-anchor is a working link, not a broken one',
+      (await selfLink.getAttribute('data-exists')) === '1' &&
+        !((await selfLink.getAttribute('class')) ?? '').includes('broken') &&
+        (await selfLink.getAttribute('data-wikilink')) === '',
+      `exists=${await selfLink.getAttribute('data-exists')}, class=${await selfLink.getAttribute('class')}`,
+    )
+    await selfLink.click()
+    await page.waitForTimeout(900)
+    const inside = await markedAt()
+    check(
+      'and following it moves within the note it is written in',
+      inside.text === 'Measurements' && inside.top >= 0 && inside.top < 120,
+      `${inside.text || 'nothing marked'} at ${inside.top}px`,
+    )
+
+    /*
+     * A link into this note is not a link *between* notes, so it earns no
+     * backlink and — the one that would actually show — no nameless row in the
+     * Unlinked list, which reads its targets straight off the index.
+     */
+    await page.locator('.side-row:has-text("Unlinked")').first().click()
+    await page.waitForTimeout(400)
+    const unlinked = (await page.locator('.list-scroll').innerText()).trim()
+    check(
+      'and it never turns up in Unlinked as a link with no name',
+      !/^\s*$/m.test(unlinked.split('\n')[0] ?? '') && !unlinked.includes('Measurements'),
+      unlinked.slice(0, 120).replace(/\n/g, ' | '),
     )
 
     await page.locator('.side-row:has-text("All Notes")').first().click()

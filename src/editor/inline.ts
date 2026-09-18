@@ -56,20 +56,32 @@ const RULES: Array<{
     build: (m, ctx) => embedNode(m[2], undefined, ctx, m[1]),
   },
   {
-    re: /^\[\[([^\]\n|#]+)(?:#([^\]\n|]+))?(?:\|([^\]\n]*))?\]\]/,
-    build: (m) => {
+    // The target may be empty — `[[#Costs]]` is a heading in this note — but
+    // not both halves at once, which the guard below rejects.
+    re: /^\[\[([^\]\n|#]*)(?:#([^\]\n|]+))?(?:\|([^\]\n]*))?\]\]/,
+    build: (m, ctx) => {
       const target = m[1].trim()
       // The `#Heading` half, kept for the same reason live preview keeps it:
       // a link in a table cell is still a link, and still lands somewhere.
       const anchor = m[2]?.trim()
       const el = document.createElement('span')
-      const resolved = resolveLink(target)
+      if (!target && !anchor) {
+        el.textContent = m[0]
+        return el
+      }
+      const resolved = target ? resolveLink(target) : ctx.notePath
       el.className = resolved ? 'cm-wikilink' : 'cm-wikilink cm-wikilink-broken'
       el.dataset.wikilink = target
       if (anchor) el.dataset.anchor = anchor
       el.dataset.exists = resolved ? '1' : '0'
-      el.title = resolved ? (anchor ? `${resolved} — ${anchor}` : resolved) : `Create "${target}"`
-      el.textContent = m[3] ?? target
+      el.title = !resolved
+        ? `Create "${target}"`
+        : !anchor
+          ? resolved
+          : target
+            ? `${resolved} — ${anchor}`
+            : `${anchor} — in this note`
+      el.textContent = m[3] ?? (target ? target : `#${anchor}`)
       return el
     },
   },

@@ -126,11 +126,14 @@ export function PopoutWindow() {
       const { target, exists, anchor } = (
         e as CustomEvent<{ target: string; exists: boolean; anchor?: string }>
       ).detail
-      const resolved = resolveLink(target)
+      // An anchor with no note in front of it means the note it was clicked
+      // in, which in this window is the only note there is.
+      const resolved = target ? resolveLink(target) : activePath.value
       if (resolved) {
         openNote(resolved, anchorTarget(resolved, anchor))
         return
       }
+      if (!target) return
       if (!exists) {
         await newNoteInFolder('', target, { fallback: `# ${target}\n\n` })
         notify(`Created "${target}"`)

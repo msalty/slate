@@ -283,7 +283,13 @@ export interface WikiLink {
   embed: boolean
 }
 
-const WIKI = /(!?)\[\[([^\]\n|#]+)(?:#([^\]\n|]+))?(?:\|([^\]\n]*))?\]\]/g
+/*
+ * The target is allowed to be empty, which is what makes `[[#Costs]]` a link:
+ * an anchor with no note in front of it means a heading in *this* note. Both
+ * halves empty is not a link at all — see the guard in the scan — so `[[]]`
+ * and `[[|alias]]` stay inert text the way they always were.
+ */
+const WIKI = /(!?)\[\[([^\]\n|#]*)(?:#([^\]\n|]+))?(?:\|([^\]\n]*))?\]\]/g
 
 export function scanWikiLinks(text: string, regions = codeRegions(text)): WikiLink[] {
   const out: WikiLink[] = []
@@ -291,11 +297,16 @@ export function scanWikiLinks(text: string, regions = codeRegions(text)): WikiLi
   let m: RegExpExecArray | null
   while ((m = WIKI.exec(text))) {
     if (inRegions(regions, m.index)) continue
+    const target = m[2].trim()
+    const anchor = m[3]?.trim()
+    // Brackets round nothing. Naming neither a note nor a place in one, it
+    // points at nothing that could be opened.
+    if (!target && !anchor) continue
     out.push({
       from: m.index,
       to: m.index + m[0].length,
-      target: m[2].trim(),
-      anchor: m[3]?.trim(),
+      target,
+      anchor,
       alias: m[4]?.trim(),
       embed: m[1] === '!',
     })

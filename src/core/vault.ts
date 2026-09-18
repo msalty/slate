@@ -349,6 +349,14 @@ function buildEntry(f: VaultFile): NoteIndexEntry | undefined {
   const links: string[] = []
   const embeds: string[] = []
   for (const l of scanWikiLinks(text)) {
+    /*
+     * `[[#Costs]]` points into the note it is written in, so it is not a link
+     * *between* notes and has no business in this index: it would be a
+     * backlink from a note to itself, an unresolved link with no name, and an
+     * empty row in the Unlinked list. One guard rather than three, because the
+     * index is the one place all three read from.
+     */
+    if (!l.target) continue
     if (l.embed) embeds.push(l.target)
     else links.push(l.target)
   }
