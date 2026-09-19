@@ -258,6 +258,39 @@ describe('expandToMarkup', () => {
     expect(range('**==«word»==**')).toBe('«**==word==**»')
   })
 
+  /*
+   * A selection can run across several constructs, and every one whose visible
+   * text it takes in full leaves its delimiters behind. Cutting the visible
+   * text of `**bold** and *italic*` left `***` — the opener of the first and
+   * the closer of the second, orphaned by a rule that only widened when both
+   * edges matched one span.
+   */
+  it('takes in every span whose visible text the selection covers', () => {
+    expect(range('**«bold** and *italic»*')).toBe('«**bold** and *italic*»')
+    expect(range('**«bold** and more»')).toBe('«**bold** and more»')
+    expect(range('a **«bold** b»')).toBe('a «**bold** b»')
+  })
+
+  it('reaches a span on the last line of a selection that spans lines', () => {
+    // The scan only ever looked at the line the selection started on, so a
+    // closer on any later line was left behind.
+    expect(range('**«bold**\nand *italic»*')).toBe('«**bold**\nand *italic*»')
+  })
+
+  it('knows the underscore spellings, which the editor renders the same', () => {
+    // `__bold__` is StrongEmphasis and `_italic_` is Emphasis to the parser
+    // that draws them — but the scanner knew only the asterisk spellings, so
+    // cutting the visible word left `____` behind.
+    expect(range('a __«word»__ b')).toBe('a «__word__» b')
+    expect(range('a _«word»_ b')).toBe('a «_word_» b')
+  })
+
+  it('but not an underscore inside a word, which nothing renders', () => {
+    // `foo_bar_baz` is one plain word to CommonMark. Widening over it would
+    // invent a construct the editor never drew.
+    expect(range('a foo_«bar»_baz b')).toBe('a foo_«bar»_baz b')
+  })
+
   it('leaves a selection that covers only part of a span', () => {
     expect(range('a ==w«or»d== b')).toBe('a ==w«or»d== b')
     expect(range('a «==word==» b')).toBe('a «==word==» b')

@@ -281,6 +281,17 @@ export const clipboardHandler = EditorView.domEventHandlers({
 
     event.preventDefault()
     dt.setData('text/plain', view.state.sliceDoc(grown.from, grown.to))
+    /*
+     * A note locked by its own properties refuses every edit, and `readOnly` is
+     * where it says so — but it is consulted by CodeMirror's *commands*, and
+     * this builds its own delete out of a raw dispatch, which nothing checks.
+     * So a cut took text out of a note that had said no, while a plain cut in
+     * the same note was correctly refused.
+     *
+     * Copying still happens. Taking a quote out of a note you cannot edit is
+     * not an edit, and it is already what a plain cut does there.
+     */
+    if (view.state.readOnly) return true
     view.dispatch({
       changes: { from: grown.from, to: grown.to, insert: '' },
       selection: { anchor: grown.from },
@@ -322,6 +333,36 @@ export const clipboardHandler = EditorView.domEventHandlers({
     if (images.length) {
       event.preventDefault()
       insertFiles(view, images)
+      return true
+    }
+
+    /*
+     * The same widening the copy and the cut above already apply, applied to
+     * what the paste replaces — because a selection of the visible text inside
+     * `==word==` *means* `==word==`, and all three have to agree about that or
+     * none of them is right.
+     *
+     * They did not. Copy took `==word==` and paste put it back over `word`
+     * alone, so copying a highlighted word and pasting it straight back over
+     * itself — which has to be a no-op — wrote `====word====`. Bold did the
+     * same with `****bold****`.
+     *
+     * The cost is real and worth stating: pasting plain text over a
+     * highlighted word now replaces the highlight rather than landing inside
+     * it. That is the same thing cutting there already did, and the
+     * alternative was a clipboard whose three operations disagreed about what
+     * the selection was.
+     */
+    const grown = markedSelection(view)
+    const pasted = event.clipboardData?.getData('text/plain')
+    if (grown && pasted) {
+      event.preventDefault()
+      const insert = pasted.replace(/\r\n?/g, '\n')
+      view.dispatch({
+        changes: { from: grown.from, to: grown.to, insert },
+        selection: { anchor: grown.from + insert.length },
+        userEvent: 'input.paste',
+      })
       return true
     }
     return false

@@ -19,7 +19,7 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 1141 unit, two-device sync and folder round-trip tests
+npm test               # 1153 unit, two-device sync and folder round-trip tests
 node scripts/smoke.mjs # 806-check browser smoke test against dist/
 ```
 
@@ -65,7 +65,17 @@ so nothing is ever silently rewritten:
   holds: Enter at the end of a highlighted phrase lands after the highlight
   rather than through it. And what you copy carries what you cannot see with it:
   a highlighted word arrives somewhere else still highlighted, a heading still a
-  heading, and cutting one leaves an empty line rather than a stray `## `.
+  heading, and cutting one leaves an empty line rather than a stray `## `. A
+  selection running across several of them takes all their markers, so cutting
+  the visible words out of `**bold** and *italic*` leaves nothing behind rather
+  than a stray `***`.
+
+  **Pasting replaces the same thing copying would have taken**, which is what
+  makes copying a highlighted word and pasting it straight back over itself do
+  nothing at all. The trade is worth stating: paste plain text over a
+  highlighted word and the highlight goes with it, rather than the text landing
+  inside it. That is already what cutting there does, and the alternative was a
+  clipboard whose three operations disagreed about what the selection was.
 
   The bar also inserts the two things markdown makes tedious by hand: a
   **link**, through a dialog with the words and the address as separate fields,
@@ -2508,7 +2518,7 @@ and that is a better argument for the rail than the outline ever was.
 ## Testing
 
 ```bash
-npm test                # 1141 unit + two-device sync + folder round-trip tests
+npm test                # 1153 unit + two-device sync + folder round-trip tests
 node scripts/smoke.mjs  # 806 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
