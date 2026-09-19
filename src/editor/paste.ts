@@ -229,39 +229,63 @@ async function writeBothFlavours(text: string, html: string): Promise<boolean> {
  * left the other alone, and "alone" meant gone, the transaction having
  * replaced the whole selection with a single cursor.
  *
- * Null too when any range is empty: there is nothing to widen at a bare
- * cursor, and CodeMirror's own handling of a mixed selection is right.
+ * The empty ranges are kept rather than being a reason to stand back. Putting
+ * a second cursor down somewhere else used to switch the whole thing off, so
+ * the word that *was* selected got pasted over without its markup counted and
+ * `**one**` became `****X****`. A bare cursor is a place to insert, not a
+ * statement about the ranges that are not bare. What each operation then does
+ * with an empty range is CodeMirror's rule, kept at both call sites: a paste
+ * writes into it, a copy and a cut pass over it.
  */
 function markedRanges(
   view: EditorView,
 ): { ranges: Array<{ from: number; to: number }>; main: number } | null {
   if (view.state.facet(previewMode) !== 'rich') return null
   const sel = view.state.selection
-  if (sel.ranges.some((r) => r.empty)) return null
 
-  let widened = false
-  let main = 0
+  const grown = sel.ranges.map((r) =>
+    r.empty ? { from: r.from, to: r.to } : expandToMarkup(view.state, r.from, r.to),
+  )
+  if (grown.every((g, i) => g.from === sel.ranges[i].from && g.to === sel.ranges[i].to)) return null
+
+  /*
+   * Growing can make two ranges overlap, where the selection's own never do,
+   * and two changes over one piece of document is an error CodeMirror throws
+   * on. Ranges arrive sorted, so an overlap is always with the ones just
+   * built — and only a real one: two spans that merely end and begin at the
+   * same offset are two separate edits, and merging them there would paste
+   * once where twice was asked for.
+   */
   const out: Array<{ from: number; to: number }> = []
-  sel.ranges.forEach((r, i) => {
-    const g = expandToMarkup(view.state, r.from, r.to)
-    if (g.from !== r.from || g.to !== r.to) widened = true
-    /*
-     * Growing can make two ranges overlap, where the selection's own never do,
-     * and two changes over one piece of document is an error CodeMirror throws
-     * on. Ranges arrive sorted, so an overlap is always with the one just
-     * built — and only a real one: two spans that merely end and begin at the
-     * same offset are two separate edits, and merging them there would paste
-     * once where twice was asked for.
-     */
-    const prev = out[out.length - 1]
-    if (prev && g.from < prev.to) prev.to = Math.max(prev.to, g.to)
-    else out.push({ from: g.from, to: g.to })
-    if (i === sel.mainIndex) main = out.length - 1
-  })
-  return widened ? { ranges: out, main } : null
+  for (const g of grown) {
+    let cur = { from: g.from, to: g.to }
+    while (out.length && cur.from < out[out.length - 1].to) {
+      const prev = out.pop()!
+      cur = { from: Math.min(cur.from, prev.from), to: Math.max(cur.to, prev.to) }
+    }
+    out.push(cur)
+  }
+
+  // Whichever of them ended up holding the range the caret was really in.
+  const { main } = sel
+  const at = out.findIndex((r) => main.from >= r.from && main.to <= r.to)
+  return { ranges: out, main: Math.max(0, at) }
 }
 
 type Marked = NonNullable<ReturnType<typeof markedRanges>>
+
+/**
+ * The ranges a copy or a cut is about: the ones with something in them.
+ *
+ * CodeMirror ignores an empty range while any range is not empty, and only
+ * copies whole lines when the selection is *all* cursors. That second case has
+ * nothing to widen over, so it never gets this far — but the check stays,
+ * because a copy that put a blank line on the clipboard for each stray cursor
+ * would be this handler inventing a rule of its own.
+ */
+function filled(grown: Marked): Array<{ from: number; to: number }> {
+  return grown.ranges.filter((r) => r.from !== r.to)
+}
 
 /** What several ranges read as on the clipboard: one per line, as CodeMirror writes them. */
 function joinRanges(view: EditorView, ranges: Array<{ from: number; to: number }>): string {
@@ -321,9 +345,10 @@ export const clipboardHandler = EditorView.domEventHandlers({
     }
 
     const grown = markedRanges(view)
-    if (!grown) return false
+    const taken = grown && filled(grown)
+    if (!taken?.length) return false
     event.preventDefault()
-    dt.setData('text/plain', joinRanges(view, grown.ranges))
+    dt.setData('text/plain', joinRanges(view, taken))
     return true
   },
 
@@ -337,10 +362,11 @@ export const clipboardHandler = EditorView.domEventHandlers({
     const dt = event.clipboardData
     if (!dt) return false
     const grown = markedRanges(view)
-    if (!grown) return false
+    const taken = grown && filled(grown)
+    if (!taken?.length) return false
 
     event.preventDefault()
-    dt.setData('text/plain', joinRanges(view, grown.ranges))
+    dt.setData('text/plain', joinRanges(view, taken))
     /*
      * A note locked by its own properties refuses every edit, and `readOnly` is
      * where it says so — but it is consulted by CodeMirror's *commands*, and
@@ -352,8 +378,13 @@ export const clipboardHandler = EditorView.domEventHandlers({
      * not an edit, and it is already what a plain cut does there.
      */
     if (view.state.readOnly) return true
+    /*
+     * No selection of its own: the changes map the one that is there, which
+     * collapses each deleted range to a cursor and leaves the bare cursors
+     * where they were. Spelling it out would have had to say the same thing.
+     */
     view.dispatch({
-      ...spread(grown, () => ''),
+      changes: taken.map((r) => ({ from: r.from, to: r.to, insert: '' })),
       userEvent: 'delete.cut',
     })
     return true

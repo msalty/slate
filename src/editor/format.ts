@@ -15,7 +15,8 @@
 import { signal } from '@preact/signals'
 import { EditorSelection, type EditorState, type TransactionSpec } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
-import { fencedRegions, inRegions } from '../core/markdown'
+import { ensureSyntaxTree, syntaxTree } from '@codemirror/language'
+import type { SyntaxNode } from '@lezer/common'
 import { bareUriAt, linkAt } from './links'
 import { tableAt, type Align } from './table'
 
@@ -458,6 +459,43 @@ export function toggleInline(state: EditorState, mark: InlineMark): TransactionS
   })
 }
 
+/** Long enough that a note has to be enormous to outrun it, short enough to be free. */
+const PARSE_BUDGET_MS = 100
+
+/**
+ * Whether a position is inside a code block, where nothing on the line is markup.
+ *
+ * Asked of the parser rather than answered here, and that is the point. In a
+ * code block the asterisks *are* the text — a sample showing `**literal**`
+ * means those ten characters — so widening over them meant selecting `literal`
+ * and pasting replaced the markers too, deleting characters nobody had
+ * selected in the one place in a note where markup is not markup. The same for
+ * the `# ` of a shell comment, which is not a heading marker.
+ *
+ * This first read three backticks in column one, which is one spelling of a
+ * code block out of three: an indented block lost its indentation as well as
+ * its asterisks, and a fenced block inside a blockquote lost its `> `. Every
+ * rule written here to catch the rest — four spaces means code, a fence may
+ * have a `>` in front — is a markdown parser being written badly a second
+ * time, and gets the ordinary things wrong: a nested list after a blank line
+ * is indented past four spaces and is not code at all. The editor is already
+ * running the real one, over this exact document, and it is what live preview
+ * draws from, so it is the thing to ask.
+ *
+ * `side` faces the selection inward: an edge that merely touches a block from
+ * the prose outside it is not inside it. A note long enough for the parse not
+ * to have reached the caret yet is a note whose tree is worth waiting the few
+ * milliseconds for — and if it still has not, the partial tree answers "not
+ * code" and the widening is the one it always was.
+ */
+function inCodeBlock(state: EditorState, pos: number, side: -1 | 1): boolean {
+  const tree = ensureSyntaxTree(state, pos, PARSE_BUDGET_MS) ?? syntaxTree(state)
+  for (let n: SyntaxNode | null = tree.resolveInner(pos, side); n; n = n.parent) {
+    if (n.name === 'FencedCode' || n.name === 'CodeBlock') return true
+  }
+  return false
+}
+
 /**
  * Grow a range outward over the markup it covers the whole of but cannot see.
  *
@@ -495,20 +533,8 @@ export function expandToMarkup(
 ): { from: number; to: number } {
   if (from === to) return { from, to }
 
-  /*
-   * Inside a fenced block, nothing widens — because inside a fenced block the
-   * asterisks *are* the text. A sample showing `**literal**` means those
-   * characters, so selecting `literal` and pasting used to replace the markers
-   * too, deleting four characters nobody had selected in the one place in a
-   * note where markup is not markup. The same for the `# ` of a shell comment,
-   * which is not a heading marker and does not belong to the line's text.
-   *
-   * Read to the end of the line holding `to`, so a fence line is never seen
-   * half-written; either edge landing inside a block is enough, since it is the
-   * edges that this widens.
-   */
-  const fenced = fencedRegions(state.doc.sliceString(0, state.doc.lineAt(to).to))
-  if (inRegions(fenced, from) || inRegions(fenced, to)) return { from, to }
+  // Either edge in code is enough, since the edges are what this widens.
+  if (inCodeBlock(state, from, 1) || inCodeBlock(state, to, -1)) return { from, to }
 
   const line = state.doc.lineAt(from)
 

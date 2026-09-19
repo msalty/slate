@@ -61,6 +61,18 @@ function selectVisible(view: EditorView, visible: string) {
   view.dispatch({ selection: EditorSelection.single(at, at + visible.length) })
 }
 
+/** A selection of one visible word plus a bare cursor somewhere after it. */
+function selectAndCursor(view: EditorView, visible: string, cursorAt: number) {
+  const at = view.state.doc.toString().indexOf(visible)
+  expect(at).toBeGreaterThanOrEqual(0)
+  view.dispatch({
+    selection: EditorSelection.create(
+      [EditorSelection.range(at, at + visible.length), EditorSelection.cursor(cursorAt)],
+      0,
+    ),
+  })
+}
+
 /** Select several pieces of visible text at once, the way ⌘-click does. */
 function selectEach(view: EditorView, ...visible: string[]) {
   const doc = view.state.doc.toString()
@@ -187,6 +199,37 @@ describe('pasting replaces what copying would have taken', () => {
     }
   })
 
+  /*
+   * A second cursor put down somewhere else used to switch all of this off:
+   * one empty range in the selection and the handler stood back entirely, so
+   * the selected word was pasted over without its markup being taken into
+   * account and `**one**` became `****X****`. An empty range is a place to
+   * insert, not a reason to stop reading the ranges that are not empty.
+   */
+  it('still cleans up a marked-up range when another cursor is empty', () => {
+    const view = editor('**one** and two')
+    try {
+      selectAndCursor(view, 'one', view.state.doc.length)
+      fire(view, 'paste', clipboard('**X**'))
+      expect(view.state.doc.toString()).toBe('**X** and two**X**')
+    } finally {
+      view.destroy()
+    }
+  })
+
+  it('counts the empty ranges when deciding to paste a line each', () => {
+    // CodeMirror counts every range, empty or not, and so must this or the
+    // same clipboard lands differently depending on who handled the event.
+    const view = editor('**one** and two')
+    try {
+      selectAndCursor(view, 'one', view.state.doc.length)
+      fire(view, 'paste', clipboard('first\nsecond'))
+      expect(view.state.doc.toString()).toBe('first and twosecond')
+    } finally {
+      view.destroy()
+    }
+  })
+
   it('replaces exactly the selection when there is no markup to widen over', () => {
     // Nothing hidden here, so the widened range and the selection are the same
     // range and the result is an ordinary paste.
@@ -206,6 +249,25 @@ describe('cutting', () => {
     const view = editor('a ==word== b')
     try {
       selectVisible(view, 'word')
+      const clip = clipboard()
+      fire(view, 'cut', clip)
+      expect(clip.text).toBe('==word==')
+      expect(view.state.doc.toString()).toBe('a  b')
+    } finally {
+      view.destroy()
+    }
+  })
+
+  /*
+   * CodeMirror's own rule, which these have to keep: an empty range is ignored
+   * while any range is not empty, and only a selection that is *all* cursors
+   * copies whole lines. So the bare cursor contributes nothing here rather
+   * than a blank line on the clipboard.
+   */
+  it('ignores a bare cursor beside a real selection', () => {
+    const view = editor('a ==word== b')
+    try {
+      selectAndCursor(view, 'word', view.state.doc.length)
       const clip = clipboard()
       fire(view, 'cut', clip)
       expect(clip.text).toBe('==word==')

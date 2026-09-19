@@ -8,6 +8,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { EditorState, type TransactionSpec } from '@codemirror/state'
+import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import {
   expandToMarkup,
   indentList,
@@ -20,17 +21,25 @@ import {
   toggleQuote,
 } from './format'
 
-/** Build a state from a fixture, stripping the caret/selection markers. */
+/**
+ * Build a state from a fixture, stripping the caret/selection markers.
+ *
+ * With the markdown language in it, because one of these rules asks the parser
+ * what kind of block a position is in rather than deciding for itself — and a
+ * state with no parse would answer "not code" to everything and quietly pass
+ * the tests that are here to catch exactly that.
+ */
 function st(fixture: string): EditorState {
+  const extensions = [markdown({ base: markdownLanguage })]
   const caret = fixture.indexOf('‸')
   if (caret >= 0) {
     const doc = fixture.replace('‸', '')
-    return EditorState.create({ doc, selection: { anchor: caret } })
+    return EditorState.create({ doc, selection: { anchor: caret }, extensions })
   }
   const from = fixture.indexOf('«')
   const to = fixture.indexOf('»') - 1
   const doc = fixture.replace('«', '').replace('»', '')
-  return EditorState.create({ doc, selection: { anchor: from, head: to } })
+  return EditorState.create({ doc, selection: { anchor: from, head: to }, extensions })
 }
 
 /** Apply a spec and render the result with the caret/selection marked. */
@@ -302,6 +311,41 @@ describe('expandToMarkup', () => {
     expect(range('```\n# «Heading»\n```')).toBe('```\n# «Heading»\n```')
     // And still widens in the prose on either side of one.
     expect(range('```\ncode\n```\n\na ==«word»== b')).toBe('```\ncode\n```\n\na «==word==» b')
+  })
+
+  /*
+   * A code block is not only three backticks in column one, and a guard that
+   * thought so protected the one spelling it recognised. An indented block
+   * lost its asterisks *and* its indentation — the leading spaces being read
+   * as a line prefix with content after it — and a fenced block inside a
+   * blockquote lost its `> ` as well, which is the whole quote.
+   */
+  it('leaves an indented code block alone too', () => {
+    expect(range('text\n\n    **«literal»**\n')).toBe('text\n\n    **«literal»**\n')
+    expect(range('text\n\n    # «Heading»\n')).toBe('text\n\n    # «Heading»\n')
+  })
+
+  it('and a fenced block inside a blockquote', () => {
+    expect(range('> ```\n> **«literal»**\n> ```\n')).toBe('> ```\n> **«literal»**\n> ```\n')
+    // The quote's own prose still widens, markers and all: `> ` is a prefix
+    // there, and cutting the whole line of it should not leave one behind.
+    expect(range('> a ==«word»== b\n')).toBe('> a «==word==» b\n')
+  })
+
+  /*
+   * The trap in every rule of the "four spaces means code" kind, and the
+   * reason this reads the editor's own parse instead of counting spaces: a
+   * nested list is indented too, and after a blank line it is indented past
+   * the four a hand-written rule would have called code. It is a list, its
+   * markup is markup, and widening there has to go on working.
+   */
+  it('and still widens in a nested list, which is indented and is not code', () => {
+    expect(range('- item\n    - sub ==«word»== here\n')).toBe(
+      '- item\n    - sub «==word==» here\n',
+    )
+    expect(range('- item\n\n    - sub ==«word»== here\n')).toBe(
+      '- item\n\n    - sub «==word==» here\n',
+    )
   })
 
   it('leaves a selection that covers only part of a span', () => {

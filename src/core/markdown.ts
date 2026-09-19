@@ -252,18 +252,24 @@ export function codeRegions(text: string): Array<[number, number]> {
 /**
  * The fenced blocks alone, without the inline spans.
  *
- * Both kinds of code hide a `#hashtag` from the scanners, but they are not the
- * same thing to an editor: the delimiters of `` `code` `` are inline markup
- * that a selection of its visible text should still grow out to, while nothing
- * inside a fenced block is markup at all.
+ * This is the index's answer, not the editor's. The editor asks its own
+ * markdown parser, which knows an indented code block from a nested list; this
+ * runs over every note in the vault at load and reads the lines. So it stops at
+ * what can be read off a line on its own, and an indented block — four spaces,
+ * which is also what a nested list and a wrapped list paragraph look like — is
+ * deliberately not one of them: calling those code would lose the tags and
+ * links people actually write inside lists to catch the few written in an
+ * indented sample.
  */
-export function fencedRegions(text: string): Array<[number, number]> {
+function fencedRegions(text: string): Array<[number, number]> {
   const out: Array<[number, number]> = []
   /*
    * The whole run of fence characters, not the first three of it, because how
-   * long a fence is decides what can close it.
+   * long a fence is decides what can close it — and after any blockquote
+   * markers, because a fenced block quoted out of somewhere else is still a
+   * fenced block and its `#tag` is still a code sample.
    */
-  const fence = /^(\s*)(`{3,}|~{3,})([^\n]*)$/gm
+  const fence = /^([ \t>]*)(`{3,}|~{3,})([^\n]*)$/gm
   let m: RegExpExecArray | null
   let openAt: number | null = null
   let openMark = ''

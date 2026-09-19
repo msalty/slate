@@ -19,7 +19,7 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 1162 unit, two-device sync and folder round-trip tests
+npm test               # 1169 unit, two-device sync and folder round-trip tests
 node scripts/smoke.mjs # 806-check browser smoke test against dist/
 ```
 
@@ -77,10 +77,16 @@ so nothing is ever silently rewritten:
   inside it. That is already what cutting there does, and the alternative was a
   clipboard whose three operations disagreed about what the selection was. All
   three read every range of a multi-cursor selection and not just the one you
-  made last, so pasting over two selected words rewrites both. **Inside a code
-  block none of this happens**: there the asterisks are the sample, not markup
-  hiding from you, so selecting `literal` out of `**literal**` and pasting
-  replaces exactly `literal`.
+  made last, so pasting over two selected words rewrites both, and a bare
+  cursor put down beside a selection is somewhere to paste rather than a reason
+  to stop. **Inside a code block none of this happens**: there the asterisks
+  are the sample, not markup hiding from you, so selecting `literal` out of
+  `**literal**` and pasting replaces exactly `literal`. Any code block —
+  fenced, indented, or fenced inside a blockquote — because the question is put
+  to the markdown parser the editor is already running rather than to a rule
+  about backticks in the first column. A rule of that kind protects the one
+  spelling it knows and gets the ordinary things wrong: a nested list is
+  indented too, and its markup is markup.
 
   The bar also inserts the two things markdown makes tedious by hand: a
   **link**, through a dialog with the words and the address as separate fields,
@@ -519,7 +525,16 @@ A fence longer than three characters closes only on one at least as long, and a
 closing fence carries no language — which is how a ` ````markdown ` block holds
 a ` ``` ` example, and the reason writing about markdown in markdown does not
 end the block at the first line of the sample and read the rest of it as
-headings.
+headings. A fence quoted inside a `>` opens one too, so a code sample pasted
+into a quote does not hand the note the `#tags` written in it.
+
+The vault index reads all this off the lines, because it runs over every note
+you have and there is no editor to ask. An **indented** code block is the one
+thing it does not try to recognise: four spaces is also a nested list and a
+wrapped list paragraph, and calling those code would lose the tags and links
+people write inside lists to catch the few written in an indented sample. The
+editor has no such problem — it asks its own parser, so an indented block is a
+code block to everything the editor does.
 
 **A note names itself, if you let it.** A note made with *New note here* — and
 every note started from a template — is called `Untitled`, so typing a heading
@@ -2536,7 +2551,7 @@ and that is a better argument for the rail than the outline ever was.
 ## Testing
 
 ```bash
-npm test                # 1162 unit + two-device sync + folder round-trip tests
+npm test                # 1169 unit + two-device sync + folder round-trip tests
 node scripts/smoke.mjs  # 806 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```

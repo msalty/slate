@@ -491,6 +491,17 @@ describe('headings', () => {
     expect(scanHeadings(doc).map((h) => h.text)).toEqual(['Real'])
   })
 
+  /*
+   * A fence quoted out of somewhere else is still a fence. The scan read the
+   * `>` as ordinary text and never opened the block, so a `#tag` inside a
+   * quoted code sample was counted as a tag of the note quoting it.
+   */
+  it('opens a fence that a blockquote carries', () => {
+    const doc = ['> ```', '> #nottag', '> [[Not a link]]', '> ```', '', '#real', ''].join('\n')
+    expect(scanTags(doc)).toEqual(['real'])
+    expect(codeRegions(doc)).toHaveLength(1)
+  })
+
   it('leaves out the four things that look like headings and are not', () => {
     const text = scanHeadings(note).map((h) => h.text)
     // A YAML comment, a fenced `# install`, a `#tag` on its own line, and a
