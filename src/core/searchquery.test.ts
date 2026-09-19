@@ -117,6 +117,20 @@ describe('lifting the rule out', () => {
     expect(q.text).toBe('budget -')
   })
 
+  it('takes a negation nested inside a group with the group', () => {
+    /*
+     * The outer group is only a rule if everything in it is rule material, and
+     * a symbolic negation was being counted as ordinary text — so the brackets
+     * were left behind and searched for literally. The rule still came out
+     * right, by luck, which made it worse: the list was filtered correctly and
+     * then emptied by a demand that every note contain a "(".
+     */
+    const q = parseSearch('(#work OR -(#home)) budget')
+    expect(describeQuery(q.node!)).toBe('#work or not #home')
+    expect(q.text).toBe('budget')
+    expect(parseSearch('(#work OR !(#home))').text).toBe('')
+  })
+
   it('takes a parenthesised group whole', () => {
     const q = parseSearch('(#work OR #home) -#done roof')
     expect(describeQuery(q.node!)).toBe('(#work or #home) and not #done')

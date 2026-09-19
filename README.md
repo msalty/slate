@@ -19,7 +19,7 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 1138 unit, two-device sync and folder round-trip tests
+npm test               # 1141 unit, two-device sync and folder round-trip tests
 node scripts/smoke.mjs # 806-check browser smoke test against dist/
 ```
 
@@ -2383,6 +2383,15 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
   same reason: offering them there would be completing somebody into an embed
   that resolves to nothing.
 
+- **A heading with a `|` or a `]` in it cannot be linked to.** `[[Note#Anchor]]`
+  ends its anchor at a `]` and splits it at a `|`, and the syntax has no escape
+  for either: `[[#Revenue | costs]]` reads as the anchor "Revenue" with the
+  alias "costs", and `[[#Status [draft]]]` truncates to "Status [draft". So the
+  completion leaves those headings out rather than offering a link that could
+  never resolve. The outline still reaches them — ⌘⇧O navigates rather than
+  writing a link — so what is missing is linking to them, which was never
+  possible.
+
 - **A heading completion is over one note, not over the vault.** `[[#` and
   `[[Trip#` both need the note named first — there is no "find me the section
   about costs, wherever it is". Searching every note's headings at once is a
@@ -2499,7 +2508,7 @@ and that is a better argument for the rail than the outline ever was.
 ## Testing
 
 ```bash
-npm test                # 1138 unit + two-device sync + folder round-trip tests
+npm test                # 1141 unit + two-device sync + folder round-trip tests
 node scripts/smoke.mjs  # 806 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```

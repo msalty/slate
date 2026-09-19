@@ -193,9 +193,22 @@ function unitEnd(toks: Tok[], i: number): number {
 
   const close = closing(toks, j)
   if (close < 0) return -1
-  const inner = toks.slice(j + 1, close)
-  if (!inner.some((x) => x.kind === 'rule')) return -1
-  if (!inner.every((x) => x.kind !== 'text')) return -1
+  /*
+   * Walked over the original array rather than a slice of it, because whether
+   * a `-` is a negation depends on the token *after* it — and the one after
+   * the last token inside the group lives outside the slice.
+   *
+   * A symbolic negation in here is rule material, not prose. Counting it as
+   * text rejected the outer group of `(#work OR -(#home))`, which left the
+   * brackets behind to be searched for literally: the rule came out right and
+   * the list was then emptied by a demand that every note contain a "(".
+   */
+  let hasRule = false
+  for (let k = j + 1; k < close; k++) {
+    if (toks[k].kind === 'rule') hasRule = true
+    else if (toks[k].kind === 'text' && !negates(toks, k)) return -1
+  }
+  if (!hasRule) return -1
   return close + 1
 }
 

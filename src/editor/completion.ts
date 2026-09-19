@@ -64,6 +64,21 @@ function applyTarget(text: string) {
 }
 
 /**
+ * A heading no `[[Note#Anchor]]` could name.
+ *
+ * The anchor ends at a `]` and splits at a `|`, and the syntax has no escape
+ * for either — so `## Revenue | costs` becomes the anchor "Revenue" with the
+ * alias "costs", and `## Status [draft]` truncates to "Status [draft". Both
+ * resolve to nothing.
+ *
+ * Offering them completed somebody into a link that could never work, which is
+ * the same mistake as offering headings inside an embed. The outline still
+ * reaches these headings — ⌘⇧O navigates rather than writing a link — so what
+ * is lost is linking to them, which was never possible in the first place.
+ */
+const UNNAMEABLE = /[|\]]/
+
+/**
  * The headings of whichever note a `[[…#` names, as completions.
  *
  * Two notes it can be asking about, and they are read from different places on
@@ -93,6 +108,7 @@ function headingOptions(context: CompletionContext, target: string, q: string): 
     return undefined
   }
   headings.forEach((h, i) => {
+    if (UNNAMEABLE.test(h.text)) return
     const s = rank(h.text, q)
     if (s < 0) return
     /*

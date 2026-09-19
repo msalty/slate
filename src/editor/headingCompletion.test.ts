@@ -47,6 +47,11 @@ async function freshVault(): Promise<void> {
       '',
       '## Packing',
       '',
+      // Two headings a wikilink has no way to name — see the tests below.
+      '## Revenue | costs',
+      '',
+      '## Status [draft]',
+      '',
     ].join('\n'),
   )
   ;({ wikiCompletion: complete } = await import('./completion'))
@@ -121,6 +126,30 @@ describe('completing a heading in another note', () => {
     // There are no headings to list, and "Nowhere#" is not a note anybody
     // meant to make — which is what the note list underneath used to offer.
     expect(at('See [[Nowhere#')).toBeNull()
+  })
+
+  /*
+   * `[[Note#Anchor]]` ends its anchor at a `]` and splits it at a `|`, and
+   * there is no escape for either — so a heading carrying one cannot be named
+   * by a link at all. `[[#Revenue | costs]]` parses as the anchor "Revenue"
+   * with the alias "costs", and `[[#Status [draft]]]` truncates to "Status
+   * [draft". Both resolve to nothing.
+   *
+   * Offering them completed somebody into a link that could never work, which
+   * is the same mistake as offering headings inside an embed. The outline
+   * still reaches these headings — ⌘⇧O navigates rather than writing a link —
+   * so what is lost is linking to them, which was never possible.
+   */
+  it('will not offer a heading no link could name', () => {
+    const l = labels('See [[Trip#') ?? []
+    expect(l).not.toContain('Revenue | costs')
+    expect(l).not.toContain('Status [draft]')
+    expect(l).toContain('Packing')
+  })
+
+  it('and says nothing at all when only those would have matched', () => {
+    expect(at('See [[Trip#revenue')).toBeNull()
+    expect(at('See [[Trip#status')).toBeNull()
   })
 
   it('goes back to notes once the # is gone', () => {
