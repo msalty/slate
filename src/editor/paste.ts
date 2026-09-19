@@ -9,6 +9,7 @@
  * disappearing silently.
  */
 
+import { EditorSelection, type SelectionRange } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { addAttachment } from '../core/vault'
 import { attachmentPath, imagesFromDataTransfer, optimizeImage } from '../core/images'
@@ -221,13 +222,72 @@ async function writeBothFlavours(text: string, html: string): Promise<boolean> {
  * heading, so a selection can only ever be the visible text between them — and
  * the copy comes out plain. Null when the selection already covers whatever it
  * is inside, which is every other mode and nearly every selection in this one.
+ *
+ * Every range of it, not only the main one. The copy and the cut put one
+ * string on the clipboard either way, but a paste writes into each range
+ * separately — so reading only the main range rewrote one selected word and
+ * left the other alone, and "alone" meant gone, the transaction having
+ * replaced the whole selection with a single cursor.
+ *
+ * Null too when any range is empty: there is nothing to widen at a bare
+ * cursor, and CodeMirror's own handling of a mixed selection is right.
  */
-function markedSelection(view: EditorView): { from: number; to: number } | null {
+function markedRanges(
+  view: EditorView,
+): { ranges: Array<{ from: number; to: number }>; main: number } | null {
   if (view.state.facet(previewMode) !== 'rich') return null
-  const { main } = view.state.selection
-  if (main.empty) return null
-  const grown = expandToMarkup(view.state, main.from, main.to)
-  return grown.from === main.from && grown.to === main.to ? null : grown
+  const sel = view.state.selection
+  if (sel.ranges.some((r) => r.empty)) return null
+
+  let widened = false
+  let main = 0
+  const out: Array<{ from: number; to: number }> = []
+  sel.ranges.forEach((r, i) => {
+    const g = expandToMarkup(view.state, r.from, r.to)
+    if (g.from !== r.from || g.to !== r.to) widened = true
+    /*
+     * Growing can make two ranges overlap, where the selection's own never do,
+     * and two changes over one piece of document is an error CodeMirror throws
+     * on. Ranges arrive sorted, so an overlap is always with the one just
+     * built — and only a real one: two spans that merely end and begin at the
+     * same offset are two separate edits, and merging them there would paste
+     * once where twice was asked for.
+     */
+    const prev = out[out.length - 1]
+    if (prev && g.from < prev.to) prev.to = Math.max(prev.to, g.to)
+    else out.push({ from: g.from, to: g.to })
+    if (i === sel.mainIndex) main = out.length - 1
+  })
+  return widened ? { ranges: out, main } : null
+}
+
+type Marked = NonNullable<ReturnType<typeof markedRanges>>
+
+/** What several ranges read as on the clipboard: one per line, as CodeMirror writes them. */
+function joinRanges(view: EditorView, ranges: Array<{ from: number; to: number }>): string {
+  return ranges.map((r) => view.state.sliceDoc(r.from, r.to)).join(view.state.lineBreak)
+}
+
+/**
+ * One transaction writing `text(i)` over each range, leaving a cursor after each.
+ *
+ * The ranges are positions in the document as it stands, so each cursor has to
+ * be moved by what the edits before it added or removed — `shift` is that
+ * running total. Everything here could be `changeByRange` if the ranges still
+ * matched the selection's one for one, but widening can merge two of them into
+ * one, which is exactly when getting this wrong would throw.
+ */
+function spread(grown: Marked, text: (i: number) => string) {
+  const changes: Array<{ from: number; to: number; insert: string }> = []
+  const cursors: SelectionRange[] = []
+  let shift = 0
+  grown.ranges.forEach((r, i) => {
+    const insert = text(i)
+    changes.push({ from: r.from, to: r.to, insert })
+    cursors.push(EditorSelection.cursor(r.from + shift + insert.length))
+    shift += insert.length - (r.to - r.from)
+  })
+  return { changes, selection: EditorSelection.create(cursors, grown.main) }
 }
 
 export const clipboardHandler = EditorView.domEventHandlers({
@@ -260,10 +320,10 @@ export const clipboardHandler = EditorView.domEventHandlers({
       return true
     }
 
-    const grown = markedSelection(view)
+    const grown = markedRanges(view)
     if (!grown) return false
     event.preventDefault()
-    dt.setData('text/plain', view.state.sliceDoc(grown.from, grown.to))
+    dt.setData('text/plain', joinRanges(view, grown.ranges))
     return true
   },
 
@@ -276,11 +336,11 @@ export const clipboardHandler = EditorView.domEventHandlers({
     if ((event.target as HTMLElement | null)?.closest?.('.cm-table-cell')) return false
     const dt = event.clipboardData
     if (!dt) return false
-    const grown = markedSelection(view)
+    const grown = markedRanges(view)
     if (!grown) return false
 
     event.preventDefault()
-    dt.setData('text/plain', view.state.sliceDoc(grown.from, grown.to))
+    dt.setData('text/plain', joinRanges(view, grown.ranges))
     /*
      * A note locked by its own properties refuses every edit, and `readOnly` is
      * where it says so — but it is consulted by CodeMirror's *commands*, and
@@ -293,8 +353,7 @@ export const clipboardHandler = EditorView.domEventHandlers({
      */
     if (view.state.readOnly) return true
     view.dispatch({
-      changes: { from: grown.from, to: grown.to, insert: '' },
-      selection: { anchor: grown.from },
+      ...spread(grown, () => ''),
       userEvent: 'delete.cut',
     })
     return true
@@ -353,14 +412,22 @@ export const clipboardHandler = EditorView.domEventHandlers({
      * alternative was a clipboard whose three operations disagreed about what
      * the selection was.
      */
-    const grown = markedSelection(view)
+    const grown = markedRanges(view)
     const pasted = event.clipboardData?.getData('text/plain')
     if (grown && pasted) {
       event.preventDefault()
       const insert = pasted.replace(/\r\n?/g, '\n')
+      /*
+       * CodeMirror's own rule for a multi-range paste, kept because taking the
+       * event away from it must not change what pasting means: as many lines
+       * as there are ranges is one line each — it is how a column copied out of
+       * one place lands in another — and anything else is the whole text into
+       * every range.
+       */
+      const lines = insert.split('\n')
+      const perRange = lines.length === grown.ranges.length
       view.dispatch({
-        changes: { from: grown.from, to: grown.to, insert },
-        selection: { anchor: grown.from + insert.length },
+        ...spread(grown, (i) => (perRange ? lines[i] : insert)),
         userEvent: 'input.paste',
       })
       return true

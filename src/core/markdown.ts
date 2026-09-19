@@ -239,8 +239,31 @@ export function isLocked(data: Record<string, FrontmatterValue>): boolean {
  * tag and a `[[foo]]` in a snippet becomes a phantom link.
  */
 export function codeRegions(text: string): Array<[number, number]> {
+  const out = fencedRegions(text)
+  const inline = /`+[^`\n]*`+/g
+  let m: RegExpExecArray | null
+  while ((m = inline.exec(text))) {
+    const s = m.index
+    if (!out.some(([a, b]) => s >= a && s < b)) out.push([s, s + m[0].length])
+  }
+  return out
+}
+
+/**
+ * The fenced blocks alone, without the inline spans.
+ *
+ * Both kinds of code hide a `#hashtag` from the scanners, but they are not the
+ * same thing to an editor: the delimiters of `` `code` `` are inline markup
+ * that a selection of its visible text should still grow out to, while nothing
+ * inside a fenced block is markup at all.
+ */
+export function fencedRegions(text: string): Array<[number, number]> {
   const out: Array<[number, number]> = []
-  const fence = /^(\s*)(```|~~~)[^\n]*$/gm
+  /*
+   * The whole run of fence characters, not the first three of it, because how
+   * long a fence is decides what can close it.
+   */
+  const fence = /^(\s*)(`{3,}|~{3,})([^\n]*)$/gm
   let m: RegExpExecArray | null
   let openAt: number | null = null
   let openMark = ''
@@ -248,18 +271,22 @@ export function codeRegions(text: string): Array<[number, number]> {
     if (openAt === null) {
       openAt = m.index
       openMark = m[2]
-    } else if (m[2][0] === openMark[0]) {
+      continue
+    }
+    /*
+     * A fence closes one only if it is the same character, *at least as long*,
+     * and carries no language after it — all three of them CommonMark, and all
+     * three of them the reason a four-backtick block can quote a three-backtick
+     * one. Without the length, writing about markdown in markdown ended the
+     * block at the inner example, and everything below it — `# Not a heading`
+     * included — came back out as prose.
+     */
+    if (m[2][0] === openMark[0] && m[2].length >= openMark.length && !m[3].trim()) {
       out.push([openAt, m.index + m[0].length])
       openAt = null
     }
   }
   if (openAt !== null) out.push([openAt, text.length])
-
-  const inline = /`+[^`\n]*`+/g
-  while ((m = inline.exec(text))) {
-    const s = m.index
-    if (!out.some(([a, b]) => s >= a && s < b)) out.push([s, s + m[0].length])
-  }
   return out
 }
 

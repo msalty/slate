@@ -5,6 +5,7 @@ import {
   contentNotes,
   getEntry,
   getText,
+  isTemplatePath,
   notes,
   notesByDay,
   search,
@@ -594,10 +595,22 @@ export const visibleNotes = computed<NoteIndexEntry[]>(() => {
       return [...notesMatching(node!)].sort(comparator(settings.value.sortBy))
     }
     const hits = noteHits.value.map((h) => h.entry)
-    // Cut here rather than in the search, so the cap is over what survived the
-    // rule rather than over what it was about to be applied to.
+    /*
+     * Cut here rather than in the search, so the cap is over what survived the
+     * rule rather than over what it was about to be applied to.
+     *
+     * And over the same notes the rule alone is about, which is the whole
+     * point of `notesMatching` above: a Tag Folder has never contained the
+     * template that describes it. The ranked text search deliberately reads
+     * templates — looking for `#meeting` and not finding the template that
+     * defines it would be worse than finding it — so without this the corpus
+     * changed underneath the rule, and typing a word after `#work` to narrow
+     * the answer widened it with templates `#work` had correctly left out.
+     */
     return node
-      ? hits.filter((n) => evaluateQuery(node, contextFor(n))).slice(0, LIST_LIMIT)
+      ? hits
+          .filter((n) => !isTemplatePath(n.path) && evaluateQuery(node, contextFor(n)))
+          .slice(0, LIST_LIMIT)
       : hits
   }
 

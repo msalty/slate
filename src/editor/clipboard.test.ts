@@ -61,6 +61,19 @@ function selectVisible(view: EditorView, visible: string) {
   view.dispatch({ selection: EditorSelection.single(at, at + visible.length) })
 }
 
+/** Select several pieces of visible text at once, the way ⌘-click does. */
+function selectEach(view: EditorView, ...visible: string[]) {
+  const doc = view.state.doc.toString()
+  let at = 0
+  const ranges = visible.map((v) => {
+    const i = doc.indexOf(v, at)
+    expect(i).toBeGreaterThanOrEqual(0)
+    at = i + v.length
+    return EditorSelection.range(i, at)
+  })
+  view.dispatch({ selection: EditorSelection.create(ranges, ranges.length - 1) })
+}
+
 describe('copying takes the markup with it', () => {
   it('puts the delimiters on the clipboard, not just what is on screen', () => {
     const view = editor('a ==word== b')
@@ -97,6 +110,78 @@ describe('pasting replaces what copying would have taken', () => {
       selectVisible(view, 'word')
       fire(view, 'paste', clipboard('plain'))
       expect(view.state.doc.toString()).toBe('a plain b')
+    } finally {
+      view.destroy()
+    }
+  })
+
+  /*
+   * A multi-cursor selection is several ranges, and this handler only ever read
+   * the main one — so pasting over two selected words rewrote one of them and
+   * dropped the other range on the floor, the second selection vanishing with
+   * nothing pasted into it. Either every range is served or the handler has no
+   * business taking the event off CodeMirror, which serves them all.
+   */
+  it('serves every range of a multi-cursor selection, not just the main one', () => {
+    const view = editor('**one** and **two**')
+    try {
+      selectEach(view, 'one', 'two')
+      fire(view, 'paste', clipboard('X'))
+      expect(view.state.doc.toString()).toBe('X and X')
+      expect(view.state.selection.ranges.map((r) => r.head)).toEqual(['X'.length, 'X and X'.length])
+    } finally {
+      view.destroy()
+    }
+  })
+
+  it('gives each range its own line when the paste has one line per range', () => {
+    // CodeMirror's own rule for a multi-range paste, which this has to keep:
+    // two lines into two cursors is one line each, not both into both.
+    const view = editor('**one** and **two**')
+    try {
+      selectEach(view, 'one', 'two')
+      fire(view, 'paste', clipboard('first\nsecond'))
+      expect(view.state.doc.toString()).toBe('first and second')
+    } finally {
+      view.destroy()
+    }
+  })
+
+  it('widens each range on its own terms', () => {
+    // The first is inside markup and grows; the second is plain and does not.
+    const view = editor('**one** and two')
+    try {
+      selectEach(view, 'one', 'two')
+      fire(view, 'paste', clipboard('X'))
+      expect(view.state.doc.toString()).toBe('X and X')
+    } finally {
+      view.destroy()
+    }
+  })
+
+  it('keeps two spans that touch as two pastes', () => {
+    // `==one====two==` is two highlights with nothing between them, so the
+    // grown ranges meet at one offset without overlapping. Two edits, not one
+    // merged edit that would paste once where twice was asked for.
+    const view = editor('==one====two==')
+    try {
+      selectEach(view, 'one', 'two')
+      fire(view, 'paste', clipboard('X'))
+      expect(view.state.doc.toString()).toBe('XX')
+    } finally {
+      view.destroy()
+    }
+  })
+
+  it('leaves a range covering only part of a span where it is', () => {
+    // Both words are inside one `**…**` and neither selection covers all of
+    // it, so nothing widens and nothing is orphaned — `**X X**` is still bold.
+    // Widening an edge alone would have written `**X` and broken it.
+    const view = editor('**one two**')
+    try {
+      selectEach(view, 'one', 'two')
+      fire(view, 'paste', clipboard('X'))
+      expect(view.state.doc.toString()).toBe('**X X**')
     } finally {
       view.destroy()
     }

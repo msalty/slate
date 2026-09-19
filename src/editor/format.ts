@@ -15,6 +15,7 @@
 import { signal } from '@preact/signals'
 import { EditorSelection, type EditorState, type TransactionSpec } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
+import { fencedRegions, inRegions } from '../core/markdown'
 import { bareUriAt, linkAt } from './links'
 import { tableAt, type Align } from './table'
 
@@ -493,6 +494,22 @@ export function expandToMarkup(
   to: number,
 ): { from: number; to: number } {
   if (from === to) return { from, to }
+
+  /*
+   * Inside a fenced block, nothing widens — because inside a fenced block the
+   * asterisks *are* the text. A sample showing `**literal**` means those
+   * characters, so selecting `literal` and pasting used to replace the markers
+   * too, deleting four characters nobody had selected in the one place in a
+   * note where markup is not markup. The same for the `# ` of a shell comment,
+   * which is not a heading marker and does not belong to the line's text.
+   *
+   * Read to the end of the line holding `to`, so a fence line is never seen
+   * half-written; either edge landing inside a block is enough, since it is the
+   * edges that this widens.
+   */
+  const fenced = fencedRegions(state.doc.sliceString(0, state.doc.lineAt(to).to))
+  if (inRegions(fenced, from) || inRegions(fenced, to)) return { from, to }
+
   const line = state.doc.lineAt(from)
 
   /*

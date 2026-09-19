@@ -377,6 +377,33 @@ describe('a rule in the search box', () => {
     expect(st.visibleNotes.value.map((n) => n.title)).toEqual(['Quarterly review'])
   })
 
+  /*
+   * A rule and a rule plus words have to be about the same set of notes, or
+   * adding a word to narrow a search widens it instead.
+   *
+   * `#work` on its own is a Tag Folder rule, and a Tag Folder has never
+   * contained the template that describes it: a template full of `#work` is
+   * not a note about work. But the ranked text search deliberately *does* read
+   * templates — looking for `#meeting` and not finding the template that
+   * defines it would be worse than finding it — so filtering the rule over the
+   * text hits let templates back in, and `#work budget` showed a template that
+   * `#work` had correctly left out.
+   */
+  it('keeps a rule about the same notes whether or not words are typed beside it', async () => {
+    const { v, st } = await vault()
+    await v.createNote('Templates', 'Weekly review', '# Weekly review\n\n#work\n\nbudget goes here\n')
+
+    st.query.value = '#work'
+    expect(st.visibleNotes.value.map((n) => n.title).sort()).toEqual(['Quarterly review', 'Roof'])
+    st.query.value = '#work budget'
+    expect(st.visibleNotes.value.map((n) => n.title).sort()).toEqual(['Quarterly review', 'Roof'])
+
+    // And the words alone still reach it, which is the whole reason the text
+    // search reads templates in the first place.
+    st.query.value = 'budget'
+    expect(st.visibleNotes.value.map((n) => n.title)).toContain('Weekly review')
+  })
+
   it('reaches folders and the other keys the language knows', async () => {
     const { st } = await vault()
     st.query.value = 'folder:Home'

@@ -8,6 +8,7 @@ import {
   isTaskLine,
   parseDue,
   parseFrontmatter,
+  codeRegions,
   scanHeadings,
   scanTags,
   resolveVars,
@@ -458,6 +459,36 @@ describe('headings', () => {
       [3, 'Flights', 11],
       [2, 'Hotels and other places', 21],
     ])
+  })
+
+  it('stays inside a fence long enough to hold a shorter one', () => {
+    /*
+     * A four-backtick fence exists precisely so its contents can *contain* a
+     * three-backtick one — it is how you write about markdown in markdown. The
+     * scan closed on any fence of the same character whatever its length, so
+     * the inner example ended the block and everything after it, `# Not a
+     * heading` included, was read as prose.
+     */
+    const doc = [
+      '# Real heading',
+      '',
+      '````markdown',
+      '```',
+      '# Not a heading',
+      '```',
+      '````',
+      '',
+      '## Also real',
+      '',
+    ].join('\n')
+    expect(scanHeadings(doc).map((h) => h.text)).toEqual(['Real heading', 'Also real'])
+    // One region, covering the whole outer fence rather than two half-blocks.
+    expect(codeRegions(doc)).toHaveLength(1)
+  })
+
+  it('and a closing fence carries no language, or it is another opening one', () => {
+    const doc = ['```', 'x', '```js', '# Not a heading', '```', '', '## Real', ''].join('\n')
+    expect(scanHeadings(doc).map((h) => h.text)).toEqual(['Real'])
   })
 
   it('leaves out the four things that look like headings and are not', () => {

@@ -291,6 +291,19 @@ describe('expandToMarkup', () => {
     expect(range('a foo_«bar»_baz b')).toBe('a foo_«bar»_baz b')
   })
 
+  it('leaves everything inside a fenced block alone', () => {
+    /*
+     * In a code block the asterisks are the point — they are what the sample
+     * is showing. Widening over them meant selecting `literal` and pasting
+     * replaced `**literal**`, deleting two pairs of characters nobody had
+     * selected, in the one place in a note where markup is not markup.
+     */
+    expect(range('```\n**«literal»**\n```')).toBe('```\n**«literal»**\n```')
+    expect(range('```\n# «Heading»\n```')).toBe('```\n# «Heading»\n```')
+    // And still widens in the prose on either side of one.
+    expect(range('```\ncode\n```\n\na ==«word»== b')).toBe('```\ncode\n```\n\na «==word==» b')
+  })
+
   it('leaves a selection that covers only part of a span', () => {
     expect(range('a ==w«or»d== b')).toBe('a ==w«or»d== b')
     expect(range('a «==word==» b')).toBe('a «==word==» b')

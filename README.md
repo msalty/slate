@@ -19,7 +19,7 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 1153 unit, two-device sync and folder round-trip tests
+npm test               # 1162 unit, two-device sync and folder round-trip tests
 node scripts/smoke.mjs # 806-check browser smoke test against dist/
 ```
 
@@ -75,7 +75,12 @@ so nothing is ever silently rewritten:
   nothing at all. The trade is worth stating: paste plain text over a
   highlighted word and the highlight goes with it, rather than the text landing
   inside it. That is already what cutting there does, and the alternative was a
-  clipboard whose three operations disagreed about what the selection was.
+  clipboard whose three operations disagreed about what the selection was. All
+  three read every range of a multi-cursor selection and not just the one you
+  made last, so pasting over two selected words rewrites both. **Inside a code
+  block none of this happens**: there the asterisks are the sample, not markup
+  hiding from you, so selecting `literal` out of `**literal**` and pasting
+  replaces exactly `literal`.
 
   The bar also inserts the two things markdown makes tedious by hand: a
   **link**, through a dialog with the words and the address as separate fields,
@@ -510,6 +515,12 @@ label and could not find the ends of. Everything else about a code block stays
 hidden in rich text; this is a fence, a link's URL and a callout's `[!type]`
 being the same kind of thing.
 
+A fence longer than three characters closes only on one at least as long, and a
+closing fence carries no language — which is how a ` ````markdown ` block holds
+a ` ``` ` example, and the reason writing about markdown in markdown does not
+end the block at the first line of the sample and read the rest of it as
+headings.
+
 **A note names itself, if you let it.** A note made with *New note here* — and
 every note started from a template — is called `Untitled`, so typing a heading
 into one leaves the file, the note list and any `[[wikilink]]` to it all saying
@@ -767,8 +778,10 @@ So the roll-ups — the note list, its count, tasks, tag counts, the calendar,
 Tag Folder matches, backlinks and broken links — read your notes without the
 templates. Everything that looks at one named thing still sees them: browsing
 `Templates/` (which is the only way a template gets edited, so hiding the
-folder the way `backstage/` is hidden was never an option), search, wikilink
-targets, version history and sync. Two of those are not preferences but
+folder the way `backstage/` is hidden was never an option), searching for
+words, wikilink targets, version history and sync. A rule in the search box is
+a Tag Folder match rather than a word, so `#work` there leaves them out — with
+or without words typed beside it. Two of those are not preferences but
 correctness — **the orphan scan** has to see templates or a picture used only
 by one is reported unused and invited to be deleted, and **rename repointing**
 has to, or a template's links break when a note it mentions is renamed.
@@ -1514,7 +1527,12 @@ the text half changes — the same scorer ranks it, the same snippets come back,
 the same words are marked in the rows — so a query with no rule terms in it
 behaves exactly as it always has, which is nearly all of them. A rule with no
 words beside it has nothing to rank by, so those notes come back in the order
-the list was already in.
+the list was already in. A rule is about the same notes either way: a Tag
+Folder has never contained the template that describes it, so neither does a
+rule in the box, and adding a word to `#work` narrows the answer rather than
+letting templates into it. The words on their own still reach a template —
+looking for `#meeting` and not finding the template that defines it would be
+worse than finding it.
 
 A term is a rule term only when it says so out loud: a leading `#`, or one of
 the language's own keys with a colon and a value. Everything else is prose, so
@@ -2518,7 +2536,7 @@ and that is a better argument for the rail than the outline ever was.
 ## Testing
 
 ```bash
-npm test                # 1153 unit + two-device sync + folder round-trip tests
+npm test                # 1162 unit + two-device sync + folder round-trip tests
 node scripts/smoke.mjs  # 806 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
