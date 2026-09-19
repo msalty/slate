@@ -222,8 +222,12 @@ describe('tags nest, the way they do everywhere else', () => {
     const hits = relatedNotes(vault, 'A.md')
     expect(titles(hits)).toEqual(['Same leaf', 'Same parent'])
     expect(hits[0].score).toBeGreaterThan(hits[1].score)
-    // Sharing the leaf means sharing the parent too, so the better hit says both.
-    expect(hits[0].why).toEqual(['#work/roofing', '#work'])
+    /*
+     * Sharing the leaf means sharing the parent too — which is why the parent
+     * is *not* listed as well. It is implied rather than independent, and this
+     * test used to assert both, which was the bug written down as a promise.
+     */
+    expect(hits[0].why).toEqual(['#work/roofing'])
     expect(hits[1].why).toEqual(['#work'])
   })
 })
@@ -327,5 +331,49 @@ describe('the shape of the answer', () => {
 
   it('says why every note is in it', () => {
     for (const hit of relatedNotes(vault, 'Roof 0.md')) expect(hit.why.length).toBeGreaterThan(0)
+  })
+})
+
+describe('a nested tag is one signal, not two', () => {
+  /*
+   * `#status/inbox` is `status` and `status/inbox`, and both were counted as
+   * independent evidence — so nesting a bookkeeping tag was enough to
+   * manufacture the corroboration that plain `#inbox` correctly failed to
+   * find. An ancestor is not a second opinion about its own descendant.
+   */
+  const plain = [
+    note('Reading list', { tags: ['inbox'] }),
+    note('Car insurance', { tags: ['inbox'] }),
+    ...filler(18),
+  ]
+  const nested = [
+    note('Reading list', { tags: ['status/inbox'] }),
+    note('Car insurance', { tags: ['status/inbox'] }),
+    ...filler(18),
+  ]
+
+  it('answers the same whether the tag is nested or not', () => {
+    expect(relatedNotes(plain, 'Reading list.md')).toEqual([])
+    expect(relatedNotes(nested, 'Reading list.md')).toEqual([])
+  })
+
+  it('says the most specific shared tag once, not the whole chain', () => {
+    const vault = [
+      note('A', { tags: ['work/roofing'] }),
+      note('B', { tags: ['work/roofing'] }),
+      ...filler(58, ['home']),
+    ]
+    const hits = relatedNotes(vault, 'A.md')
+    expect(titles(hits)).toEqual(['B'])
+    expect(hits[0].why).toEqual(['#work/roofing'])
+  })
+
+  it('but still counts a parent that is genuinely all they share', () => {
+    const vault = [
+      note('A', { tags: ['work/roofing'] }),
+      note('B', { tags: ['work/plumbing'] }),
+      ...filler(58, ['home']),
+    ]
+    expect(relatedNotes(vault, 'A.md')[0]?.why).toEqual(['#work'])
   })
 })

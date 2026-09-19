@@ -152,17 +152,40 @@ function closing(toks: Tok[], i: number): number {
 }
 
 /**
+ * Is the token at `j` a negation of whatever comes next?
+ *
+ * `NOT` is a word and arrives as an operator. `-` and `!` usually arrive
+ * *inside* the word they negate — `-#done` is one token, and `classify`
+ * already strips the mark to read it — but in front of a bracket they cannot,
+ * because a bracket ends a word. So `-(#work OR #home)` scanned as a bare `-`
+ * and a group, the dash was classified as ordinary text, and the rule came out
+ * as the *positive* group with a `-` searched for beside it: a filter quietly
+ * meaning the opposite of what was typed.
+ *
+ * Only when it is glued to what it negates. `budget - #work` is prose with a
+ * dash in it, and a space is the whole difference between a negation and a
+ * hyphen somebody typed.
+ */
+function negates(toks: Tok[], j: number): boolean {
+  const t = toks[j]
+  if (!t) return false
+  if (t.op === 'NOT') return true
+  if (t.kind !== 'text' || (t.text !== '-' && t.text !== '!')) return false
+  return toks[j + 1]?.from === t.to
+}
+
+/**
  * The token after the rule unit starting at `i`, or -1 if none starts there.
  *
  * A unit is a rule term or a parenthesised group, either one behind as many
- * `NOT`s as were typed. A group counts only when everything inside it is rule
- * material and at least one of those is an actual term — `(budget OR tax)` is
- * two words in brackets, and treating it as a rule would be reading a wish
+ * negations as were typed. A group counts only when everything inside it is
+ * rule material and at least one of those is an actual term — `(budget OR tax)`
+ * is two words in brackets, and treating it as a rule would be reading a wish
  * into it.
  */
 function unitEnd(toks: Tok[], i: number): number {
   let j = i
-  while (toks[j]?.op === 'NOT') j++
+  while (negates(toks, j)) j++
   const t = toks[j]
   if (!t) return -1
   if (t.kind === 'rule') return j + 1

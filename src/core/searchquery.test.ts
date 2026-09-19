@@ -94,6 +94,29 @@ describe('lifting the rule out', () => {
     expect(q.text).toBe('budget')
   })
 
+  it('keeps a symbolic negation with the group it negates', () => {
+    /*
+     * `-(` and `!(` are the same statement `NOT (` is, and the rule parser
+     * takes all three — but the `-` was being read as an ordinary word, so
+     * the rule came out as the *positive* group and the dash was searched for
+     * as text. A filter that quietly means the opposite of what was typed is
+     * the worst thing this module can do.
+     */
+    for (const src of ['-(#work OR #home) budget', '!(#work OR #home) budget']) {
+      const q = parseSearch(src)
+      expect(describeQuery(q.node!)).toBe('not (#work or #home)')
+      expect(q.text).toBe('budget')
+    }
+  })
+
+  it('and a spaced dash is still just a dash', () => {
+    // Only a negation glued to what it negates counts. "budget - #work" is
+    // prose with a dash in it, and reading it as NOT would be inventing one.
+    const q = parseSearch('budget - #work')
+    expect(describeQuery(q.node!)).toBe('#work')
+    expect(q.text).toBe('budget -')
+  })
+
   it('takes a parenthesised group whole', () => {
     const q = parseSearch('(#work OR #home) -#done roof')
     expect(describeQuery(q.node!)).toBe('(#work or #home) and not #done')

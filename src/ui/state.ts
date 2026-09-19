@@ -476,9 +476,28 @@ export const searching = computed(() => terms.value.length > 0 || !!searchQuery.
  * note body, which is cheap enough to do on a keystroke and not cheap enough
  * to do twice.
  */
-const noteHits = computed<SearchHit[]>(() =>
-  searchKind.value === 'notes' && terms.value.length ? search(searchQuery.value.text) : [],
-)
+/**
+ * How many notes the list is handed at once.
+ *
+ * Named because two things have to agree about it: the ranked search that
+ * produces the hits, and the rule that filters them afterwards. They did not.
+ */
+const LIST_LIMIT = 200
+
+const noteHits = computed<SearchHit[]>(() => {
+  if (searchKind.value !== 'notes' || !terms.value.length) return []
+  /*
+   * Uncapped when a rule is going to filter these, because the cut has to
+   * come *after* the filter and not before it. Ranking is what decides which
+   * two hundred you see, and a rule is not a ranking: a note matching both
+   * halves was invisible for the sole reason that two hundred notes matched
+   * the words better, which is an empty answer that looks like a confident one.
+   *
+   * It costs nothing to ask for. The scorer already reads and ranks every
+   * candidate; the limit only decides where the array is sliced.
+   */
+  return search(searchQuery.value.text, searchQuery.value.node ? Infinity : LIST_LIMIT)
+})
 
 /**
  * Path -> the bit of the note the query matched.
@@ -575,7 +594,11 @@ export const visibleNotes = computed<NoteIndexEntry[]>(() => {
       return [...notesMatching(node!)].sort(comparator(settings.value.sortBy))
     }
     const hits = noteHits.value.map((h) => h.entry)
-    return node ? hits.filter((n) => evaluateQuery(node, contextFor(n))) : hits
+    // Cut here rather than in the search, so the cap is over what survived the
+    // rule rather than over what it was about to be applied to.
+    return node
+      ? hits.filter((n) => evaluateQuery(node, contextFor(n))).slice(0, LIST_LIMIT)
+      : hits
   }
 
   const s = scope.value

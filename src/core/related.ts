@@ -257,8 +257,25 @@ export function relatedNotes<T extends RelatedInput>(
      */
     const reasons: Array<{ text: string; worth: number; evidence: boolean }> = []
 
-    for (const t of expandTags(n.tags)) {
-      if (!myTags.has(t)) continue
+    /*
+     * Shared tags, with ancestors dropped when a descendant is also shared.
+     *
+     * `#status/inbox` expands to `status` and `status/inbox`, and counting
+     * both made one tag look like two independent signals — which is exactly
+     * the corroboration the evidence bar exists to demand. Nesting a
+     * bookkeeping tag was therefore enough to manufacture a relation that the
+     * same tag unnested correctly refused: plain `#inbox` on two notes of
+     * twenty said nothing, `#status/inbox` on the same two said they were
+     * related. An ancestor is not a second opinion about its own descendant.
+     *
+     * The parent still counts when it is genuinely all they share — one note
+     * tagged `#work/roofing` and another `#work/plumbing` have `work` in
+     * common and nothing below it.
+     */
+    const shared = [...expandTags(n.tags)].filter((t) => myTags.has(t))
+    const specific = shared.filter((t) => !shared.some((o) => o.startsWith(`${t}/`)))
+
+    for (const t of specific) {
       const worth = TAG_WEIGHT * idf(total, tagDf.get(t) ?? 0)
       if (worth <= 0) continue
       score += worth

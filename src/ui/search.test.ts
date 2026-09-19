@@ -433,3 +433,39 @@ describe('a rule in the search box', () => {
     expect(st.visibleNotes.value).toEqual([])
   })
 })
+
+describe('a rule filters before the list is cut, not after', () => {
+  beforeEach(() => {
+    seq++
+  })
+
+  it('finds a tagged match past the two hundredth text hit', async () => {
+    const { v, st } = await fresh()
+    /*
+     * The ranked text search hands back its best 200. Filtering the rule over
+     * *those* meant a note that matched both could be invisible simply for
+     * ranking 201st on the words — and the emptier the answer, the more
+     * confidently wrong it looked.
+     *
+     * "budget" is in the title of all 240 so they outrank the one note whose
+     * body merely mentions it, which is the note actually being asked for.
+     */
+    for (let i = 0; i < 240; i++) await v.createNote('', `Budget ${i}`, '#noise\n\nthe budget\n')
+    const wanted = await v.createNote('', 'Roof', '#wanted\n\nthe budget for the roof\n')
+    st.setScope({ kind: 'all' })
+
+    st.query.value = 'budget'
+    expect(st.visibleNotes.value.length).toBe(200)
+
+    st.query.value = '#wanted budget'
+    expect(st.visibleNotes.value.map((n) => n.path)).toEqual([wanted])
+  })
+
+  it('still caps what it hands the list once the rule has been applied', async () => {
+    const { v, st } = await fresh()
+    for (let i = 0; i < 240; i++) await v.createNote('', `Budget ${i}`, '#wanted\n\nthe budget\n')
+    st.setScope({ kind: 'all' })
+    st.query.value = '#wanted budget'
+    expect(st.visibleNotes.value.length).toBe(200)
+  })
+})
