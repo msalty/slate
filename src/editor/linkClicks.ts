@@ -51,7 +51,7 @@ export function followLink(
 ): boolean {
   const wiki = el.dataset.wikilink
   if (wiki !== undefined) {
-    requestOpenLink(wiki, el.dataset.exists === '1')
+    requestOpenLink(wiki, el.dataset.exists === '1', el.dataset.anchor || undefined)
     return true
   }
   const tag = el.dataset.tag

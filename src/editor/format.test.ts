@@ -8,6 +8,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { EditorState, type TransactionSpec } from '@codemirror/state'
+import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import {
   expandToMarkup,
   indentList,
@@ -20,17 +21,25 @@ import {
   toggleQuote,
 } from './format'
 
-/** Build a state from a fixture, stripping the caret/selection markers. */
+/**
+ * Build a state from a fixture, stripping the caret/selection markers.
+ *
+ * With the markdown language in it, because one of these rules asks the parser
+ * what kind of block a position is in rather than deciding for itself — and a
+ * state with no parse would answer "not code" to everything and quietly pass
+ * the tests that are here to catch exactly that.
+ */
 function st(fixture: string): EditorState {
+  const extensions = [markdown({ base: markdownLanguage })]
   const caret = fixture.indexOf('‸')
   if (caret >= 0) {
     const doc = fixture.replace('‸', '')
-    return EditorState.create({ doc, selection: { anchor: caret } })
+    return EditorState.create({ doc, selection: { anchor: caret }, extensions })
   }
   const from = fixture.indexOf('«')
   const to = fixture.indexOf('»') - 1
   const doc = fixture.replace('«', '').replace('»', '')
-  return EditorState.create({ doc, selection: { anchor: from, head: to } })
+  return EditorState.create({ doc, selection: { anchor: from, head: to }, extensions })
 }
 
 /** Apply a spec and render the result with the caret/selection marked. */
@@ -256,6 +265,87 @@ describe('expandToMarkup', () => {
 
   it('unwraps nested marks one layer at a time', () => {
     expect(range('**==«word»==**')).toBe('«**==word==**»')
+  })
+
+  /*
+   * A selection can run across several constructs, and every one whose visible
+   * text it takes in full leaves its delimiters behind. Cutting the visible
+   * text of `**bold** and *italic*` left `***` — the opener of the first and
+   * the closer of the second, orphaned by a rule that only widened when both
+   * edges matched one span.
+   */
+  it('takes in every span whose visible text the selection covers', () => {
+    expect(range('**«bold** and *italic»*')).toBe('«**bold** and *italic*»')
+    expect(range('**«bold** and more»')).toBe('«**bold** and more»')
+    expect(range('a **«bold** b»')).toBe('a «**bold** b»')
+  })
+
+  it('reaches a span on the last line of a selection that spans lines', () => {
+    // The scan only ever looked at the line the selection started on, so a
+    // closer on any later line was left behind.
+    expect(range('**«bold**\nand *italic»*')).toBe('«**bold**\nand *italic*»')
+  })
+
+  it('knows the underscore spellings, which the editor renders the same', () => {
+    // `__bold__` is StrongEmphasis and `_italic_` is Emphasis to the parser
+    // that draws them — but the scanner knew only the asterisk spellings, so
+    // cutting the visible word left `____` behind.
+    expect(range('a __«word»__ b')).toBe('a «__word__» b')
+    expect(range('a _«word»_ b')).toBe('a «_word_» b')
+  })
+
+  it('but not an underscore inside a word, which nothing renders', () => {
+    // `foo_bar_baz` is one plain word to CommonMark. Widening over it would
+    // invent a construct the editor never drew.
+    expect(range('a foo_«bar»_baz b')).toBe('a foo_«bar»_baz b')
+  })
+
+  it('leaves everything inside a fenced block alone', () => {
+    /*
+     * In a code block the asterisks are the point — they are what the sample
+     * is showing. Widening over them meant selecting `literal` and pasting
+     * replaced `**literal**`, deleting two pairs of characters nobody had
+     * selected, in the one place in a note where markup is not markup.
+     */
+    expect(range('```\n**«literal»**\n```')).toBe('```\n**«literal»**\n```')
+    expect(range('```\n# «Heading»\n```')).toBe('```\n# «Heading»\n```')
+    // And still widens in the prose on either side of one.
+    expect(range('```\ncode\n```\n\na ==«word»== b')).toBe('```\ncode\n```\n\na «==word==» b')
+  })
+
+  /*
+   * A code block is not only three backticks in column one, and a guard that
+   * thought so protected the one spelling it recognised. An indented block
+   * lost its asterisks *and* its indentation — the leading spaces being read
+   * as a line prefix with content after it — and a fenced block inside a
+   * blockquote lost its `> ` as well, which is the whole quote.
+   */
+  it('leaves an indented code block alone too', () => {
+    expect(range('text\n\n    **«literal»**\n')).toBe('text\n\n    **«literal»**\n')
+    expect(range('text\n\n    # «Heading»\n')).toBe('text\n\n    # «Heading»\n')
+  })
+
+  it('and a fenced block inside a blockquote', () => {
+    expect(range('> ```\n> **«literal»**\n> ```\n')).toBe('> ```\n> **«literal»**\n> ```\n')
+    // The quote's own prose still widens, markers and all: `> ` is a prefix
+    // there, and cutting the whole line of it should not leave one behind.
+    expect(range('> a ==«word»== b\n')).toBe('> a «==word==» b\n')
+  })
+
+  /*
+   * The trap in every rule of the "four spaces means code" kind, and the
+   * reason this reads the editor's own parse instead of counting spaces: a
+   * nested list is indented too, and after a blank line it is indented past
+   * the four a hand-written rule would have called code. It is a list, its
+   * markup is markup, and widening there has to go on working.
+   */
+  it('and still widens in a nested list, which is indented and is not code', () => {
+    expect(range('- item\n    - sub ==«word»== here\n')).toBe(
+      '- item\n    - sub «==word==» here\n',
+    )
+    expect(range('- item\n\n    - sub ==«word»== here\n')).toBe(
+      '- item\n\n    - sub «==word==» here\n',
+    )
   })
 
   it('leaves a selection that covers only part of a span', () => {

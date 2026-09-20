@@ -493,8 +493,21 @@ function buildDecorations(view: EditorView): DecorationSet {
           const raw = state.doc.sliceString(node.from, node.to)
           const inner = raw.slice(2, -2)
           const [targetPart, alias] = splitPipe(inner)
-          const target = targetPart.split('#')[0].trim()
-          const resolved = resolveLink(target)
+          /*
+           * `[[Note#Costs]]`: the note is the target, the heading is where in
+           * it to land. Split rather than sliced, so a `#` inside the heading
+           * — `[[Notes#C# bindings]]` — stays part of it, and carried on the
+           * element because the click handler has nothing else to work from.
+           */
+          const hash = targetPart.split('#')
+          const target = hash[0].trim()
+          const anchor = hash.slice(1).join('#').trim()
+          /*
+           * `[[#Costs]]` — an anchor with no note in front of it is a heading
+           * in this one. It always resolves, because the note it points at is
+           * the note it is written in, so it is never drawn as broken.
+           */
+          const resolved = target ? resolveLink(target) : anchor ? ctx.path : undefined
           const open = node.from + 2
           const close = node.to - 2
           const active = touched(state, node.from, node.to)
@@ -514,8 +527,15 @@ function buildDecorations(view: EditorView): DecorationSet {
                 class: resolved ? 'cm-wikilink' : 'cm-wikilink cm-wikilink-broken',
                 attributes: {
                   'data-wikilink': target,
+                  ...(anchor ? { 'data-anchor': anchor } : {}),
                   'data-exists': resolved ? '1' : '0',
-                  title: resolved ?? `Create "${target}"`,
+                  title: !resolved
+                    ? `Create "${target}"`
+                    : !anchor
+                      ? resolved
+                      : target
+                        ? `${resolved} — ${anchor}`
+                        : `${anchor} — in this note`,
                 },
               }).range(textFrom, close),
             )

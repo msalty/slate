@@ -332,3 +332,167 @@ describe('what a result row shows', () => {
     expect(st.queryTerms.value).toEqual(['budget', 'hotel'])
   })
 })
+
+/**
+ * The search box speaking the Tag Folder rule language.
+ *
+ * The rule filters and the words still search, so every test here is really
+ * about the seam between the two — and the first one is about there being no
+ * seam at all for a search that is only words.
+ */
+describe('a rule in the search box', () => {
+  beforeEach(() => {
+    seq++
+  })
+
+  /** Three notes across two tags and two folders, plus a task on one. */
+  async function vault() {
+    const { v, st, f } = await fresh()
+    await v.createNote('Work', 'Quarterly review', '# Quarterly review\n\n#work\n\nbudget ahead of plan\n')
+    await v.createNote('Work', 'Roof', '# Roof\n\n#work #done\n\nthe budget for the roof\n')
+    await v.createNote('Home', 'Groceries', '# Groceries\n\n#home\n\n- [ ] oat milk\n')
+    st.setScope({ kind: 'all' })
+    return { v, st, f }
+  }
+
+  it('leaves a search that is only words exactly as it was', async () => {
+    const { st } = await vault()
+    st.query.value = 'budget'
+    expect(st.visibleNotes.value.map((n) => n.title).sort()).toEqual(['Quarterly review', 'Roof'])
+    expect(st.searchQuery.value.rule).toBe('')
+  })
+
+  it('filters by a tag with no words to search for', async () => {
+    const { st } = await vault()
+    st.query.value = '#home'
+    expect(st.searching.value).toBe(true)
+    expect(st.visibleNotes.value.map((n) => n.title)).toEqual(['Groceries'])
+  })
+
+  it('applies the rule to what the words ranked', async () => {
+    const { st } = await vault()
+    st.query.value = '#work budget'
+    expect(st.visibleNotes.value.map((n) => n.title).sort()).toEqual(['Quarterly review', 'Roof'])
+    st.query.value = '#work budget -#done'
+    expect(st.visibleNotes.value.map((n) => n.title)).toEqual(['Quarterly review'])
+  })
+
+  /*
+   * A rule and a rule plus words have to be about the same set of notes, or
+   * adding a word to narrow a search widens it instead.
+   *
+   * `#work` on its own is a Tag Folder rule, and a Tag Folder has never
+   * contained the template that describes it: a template full of `#work` is
+   * not a note about work. But the ranked text search deliberately *does* read
+   * templates — looking for `#meeting` and not finding the template that
+   * defines it would be worse than finding it — so filtering the rule over the
+   * text hits let templates back in, and `#work budget` showed a template that
+   * `#work` had correctly left out.
+   */
+  it('keeps a rule about the same notes whether or not words are typed beside it', async () => {
+    const { v, st } = await vault()
+    await v.createNote('Templates', 'Weekly review', '# Weekly review\n\n#work\n\nbudget goes here\n')
+
+    st.query.value = '#work'
+    expect(st.visibleNotes.value.map((n) => n.title).sort()).toEqual(['Quarterly review', 'Roof'])
+    st.query.value = '#work budget'
+    expect(st.visibleNotes.value.map((n) => n.title).sort()).toEqual(['Quarterly review', 'Roof'])
+
+    // And the words alone still reach it, which is the whole reason the text
+    // search reads templates in the first place.
+    st.query.value = 'budget'
+    expect(st.visibleNotes.value.map((n) => n.title)).toContain('Weekly review')
+  })
+
+  it('reaches folders and the other keys the language knows', async () => {
+    const { st } = await vault()
+    st.query.value = 'folder:Home'
+    expect(st.visibleNotes.value.map((n) => n.title)).toEqual(['Groceries'])
+    st.query.value = 'has:tasks'
+    expect(st.visibleNotes.value.map((n) => n.title)).toEqual(['Groceries'])
+  })
+
+  it('searches the whole vault, the way every other search does', async () => {
+    const { st } = await vault()
+    // Scoped to Home, asking for #work: the rule is the question, not a second
+    // filter on top of the folder you happened to be standing in.
+    st.setScope({ kind: 'folder', path: 'Home' })
+    st.query.value = '#work'
+    expect(st.visibleNotes.value.map((n) => n.title).sort()).toEqual(['Quarterly review', 'Roof'])
+  })
+
+  it('marks the words in the rows and never the rule', async () => {
+    const { st } = await vault()
+    st.query.value = '#work budget'
+    expect(st.queryTerms.value).toEqual(['budget'])
+  })
+
+  it('narrows tasks by the same rule, reaching is: and due:', async () => {
+    const { v, st } = await vault()
+    st.setScope({ kind: 'tasks' })
+    st.query.value = '#home'
+    // The task is not tagged; its note is, which is the whole point of a rule
+    // over tasks.
+    expect(st.matchingTasks(v.tasks.value).map((t) => t.text)).toEqual(['oat milk'])
+    st.query.value = '#home is:done'
+    expect(st.matchingTasks(v.tasks.value)).toEqual([])
+  })
+
+  it('leaves the lists a rule cannot describe searching for the text of it', async () => {
+    const { v, st } = await fresh()
+    const png = new Blob(['x'], { type: 'image/png' })
+    await v.addAttachment(png, 'attachments/#work-chart.png')
+    await v.addAttachment(png, 'attachments/holiday.png')
+    st.setScope({ kind: 'files' })
+    st.query.value = '#work'
+    // A file has no tags to match, so `#work` is four characters to look for —
+    // which is what it always was here.
+    expect(st.searchQuery.value.rule).toBe('')
+    expect(st.fileList.value.map((f) => f.path)).toEqual(['attachments/#work-chart.png'])
+  })
+
+  it('filters by nothing while a rule is half-typed, and says why', async () => {
+    const { st } = await vault()
+    st.query.value = 'is:maybe'
+    expect(st.searchQuery.value.error).toBeTruthy()
+    expect(st.searchQuery.value.node).toBeUndefined()
+    // Read as text, so the list is honest rather than silently unfiltered.
+    expect(st.visibleNotes.value).toEqual([])
+  })
+})
+
+describe('a rule filters before the list is cut, not after', () => {
+  beforeEach(() => {
+    seq++
+  })
+
+  it('finds a tagged match past the two hundredth text hit', async () => {
+    const { v, st } = await fresh()
+    /*
+     * The ranked text search hands back its best 200. Filtering the rule over
+     * *those* meant a note that matched both could be invisible simply for
+     * ranking 201st on the words — and the emptier the answer, the more
+     * confidently wrong it looked.
+     *
+     * "budget" is in the title of all 240 so they outrank the one note whose
+     * body merely mentions it, which is the note actually being asked for.
+     */
+    for (let i = 0; i < 240; i++) await v.createNote('', `Budget ${i}`, '#noise\n\nthe budget\n')
+    const wanted = await v.createNote('', 'Roof', '#wanted\n\nthe budget for the roof\n')
+    st.setScope({ kind: 'all' })
+
+    st.query.value = 'budget'
+    expect(st.visibleNotes.value.length).toBe(200)
+
+    st.query.value = '#wanted budget'
+    expect(st.visibleNotes.value.map((n) => n.path)).toEqual([wanted])
+  })
+
+  it('still caps what it hands the list once the rule has been applied', async () => {
+    const { v, st } = await fresh()
+    for (let i = 0; i < 240; i++) await v.createNote('', `Budget ${i}`, '#wanted\n\nthe budget\n')
+    st.setScope({ kind: 'all' })
+    st.query.value = '#wanted budget'
+    expect(st.visibleNotes.value.length).toBe(200)
+  })
+})

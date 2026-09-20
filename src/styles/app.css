@@ -561,6 +561,53 @@ textarea {
   -webkit-appearance: none;
 }
 
+/*
+ * What the rule half of a search is doing, under the box that was typed into.
+ *
+ * A status line rather than a result, so it takes the same quiet grey the Tag
+ * Folder dialog's own line under the rule field takes — an accent tint here
+ * sat a shade away from the selected row directly beneath it and read as one.
+ * The accent is spent on the button instead, which is the only part of this
+ * that does anything. It is absent entirely for a search that is only words,
+ * which is most of them.
+ */
+.search-rule {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 5px 9px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.search-rule[data-error='1'] {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
+}
+.search-rule-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.search-rule strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.search-rule-save {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border-radius: 6px;
+  color: var(--accent);
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.search-rule-save:hover {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
 .list-scroll {
   flex: 1 1 auto;
   overflow-y: auto;
@@ -1995,6 +2042,70 @@ button.property-kind:hover {
 .palette-row[data-sel='1'] small {
   color: color-mix(in srgb, var(--text-on-accent) 70%, transparent);
 }
+.palette-glyph {
+  width: 16px;
+  flex: 0 0 auto;
+}
+
+/*
+ * A heading's level, drawn as an indent.
+ *
+ * The level is the only thing about a heading that a list cannot say in words,
+ * and it is the thing you are reading an outline *for* — "what is under what".
+ * An H1 sits where every other palette row sits, so a note whose headings are
+ * all the same level looks like an ordinary list rather than a list that has
+ * been pushed sideways for no reason. The step is deliberately small: six
+ * levels at any generous indent would leave an H6 with no room for its words.
+ */
+.palette-row[data-level='2'] {
+  padding-left: 26px;
+}
+.palette-row[data-level='3'] {
+  padding-left: 40px;
+}
+.palette-row[data-level='4'] {
+  padding-left: 54px;
+}
+.palette-row[data-level='5'] {
+  padding-left: 68px;
+}
+.palette-row[data-level='6'] {
+  padding-left: 82px;
+}
+.palette-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * A note's row: its title on a line of its own, the line that matched beneath.
+ *
+ * Both are still one line each and still truncate — the list is a list, and a
+ * row that grows with its snippet makes the arrow keys scroll by an unknown
+ * amount. What changed is which of them has to do the truncating: the title
+ * now has the whole width, which for a note called "Harry Potter and the
+ * Sorcerer's Stone — Chapter 1" is the difference between recognising it and
+ * reading the first two words of three notes that all start the same way.
+ */
+.palette-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.palette-title,
+.palette-preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.palette-row .palette-preview {
+  margin-left: 0;
+  font-size: 11.5px;
+}
 
 /*
  * What the list is saying about itself — "Showing 40 of 63 tags" — rather than
@@ -3384,4 +3495,138 @@ button.property-kind:hover {
     justify-content: center;
     padding: 8px;
   }
+}
+
+/* ------------------------------------------------- the related-notes probe
+
+   A lab bench, not a feature: reached only by `?probe=related` in the address
+   bar, and styled plainly on purpose. It is somewhere to read numbers and
+   decide something, so it borrows the app's tokens and none of its chrome —
+   nothing here should ever look like a screen you arrived at by accident. */
+
+.probe {
+  height: 100dvh;
+  overflow-y: auto;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+}
+.probe-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 20px 24px 14px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.probe-head h1 {
+  margin: 0 0 14px;
+  font-size: 17px;
+}
+.probe-head h1 small {
+  margin-left: 10px;
+  color: var(--text-faint);
+  font-size: 12px;
+  font-weight: 400;
+}
+.probe-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 22px;
+  margin-bottom: 14px;
+}
+.probe-stat-value {
+  font-size: 21px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.probe-stat-label {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+.probe-stat-note {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.probe-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+}
+.probe-controls label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.probe-controls input[type='range'] {
+  width: 170px;
+}
+.probe-reset {
+  color: var(--accent);
+  font-size: 11.5px;
+}
+.probe-find {
+  flex: 1 1 240px;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 12.5px;
+}
+.probe-hint {
+  margin: 12px 0 0;
+  max-width: 78ch;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+.probe-list {
+  padding: 8px 24px 64px;
+}
+.probe-note {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.probe-title {
+  font-weight: 600;
+  margin-bottom: 3px;
+}
+.probe-title small {
+  margin-left: 8px;
+  font-weight: 400;
+  color: var(--text-faint);
+}
+.probe-hit {
+  display: flex;
+  gap: 12px;
+  padding: 1px 0 1px 18px;
+  line-height: 1.55;
+}
+.probe-score {
+  flex: 0 0 46px;
+  text-align: right;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.probe-name {
+  flex: 0 0 min(34ch, 40%);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.probe-why {
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.probe-none {
+  padding-left: 18px;
+  color: var(--text-faint);
 }

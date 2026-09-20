@@ -3,10 +3,13 @@ import {
   calendarDateFor,
   excerptOf,
   findDue,
+  findHeading,
   isLocked,
   isTaskLine,
   parseDue,
   parseFrontmatter,
+  codeRegions,
+  scanHeadings,
   scanTags,
   resolveVars,
   scanTasks,
@@ -137,6 +140,19 @@ describe('wikilinks', () => {
     const doc = ['Real [[One]]', '', '```', 'not [[Two]]', '```', '', 'also `[[Three]]` inline'].join('\n')
     const targets = scanWikiLinks(doc).map((l) => l.target)
     expect(targets).toEqual(['One'])
+  })
+
+  it('reads an anchor with no note in front of it as a link into this one', () => {
+    const links = scanWikiLinks('The numbers are in [[#Costs]], and [[#Costs|below]].')
+    expect(links).toHaveLength(2)
+    expect(links[0].target).toBe('')
+    expect(links[0].anchor).toBe('Costs')
+    expect(links[1].alias).toBe('below')
+  })
+
+  it('but brackets round nothing at all are still not a link', () => {
+    // Naming neither a note nor a place in one, there is nothing to open.
+    expect(scanWikiLinks('empty [[]] and [[|alias]] and [[ ]]')).toEqual([])
   })
 })
 
@@ -407,5 +423,396 @@ describe('paths and sizing', () => {
   it('splits a width fragment off an embed URL', () => {
     expect(splitSizeFragment('a/b.png#w=420')).toEqual(['a/b.png', 420])
     expect(splitSizeFragment('a/b.png')).toEqual(['a/b.png', undefined])
+  })
+})
+
+describe('headings', () => {
+  const note = [
+    '---',
+    'title: Trip',
+    '# a YAML comment, not a heading',
+    '---',
+    '',
+    '# Lisbon Trip',
+    '',
+    'Some prose.',
+    '',
+    '## Costs ##',
+    '',
+    '### **Flights**',
+    '',
+    '```bash',
+    '# install the thing',
+    '```',
+    '',
+    '#lisbon',
+    '',
+    '##',
+    '',
+    '## [[Hotels]] and other places',
+  ].join('\n')
+
+  it('reads the level, the words and the line of each one', () => {
+    expect(scanHeadings(note).map((h) => [h.level, h.text, h.line])).toEqual([
+      [1, 'Lisbon Trip', 5],
+      [2, 'Costs', 9],
+      [3, 'Flights', 11],
+      [2, 'Hotels and other places', 21],
+    ])
+  })
+
+  it('stays inside a fence long enough to hold a shorter one', () => {
+    /*
+     * A four-backtick fence exists precisely so its contents can *contain* a
+     * three-backtick one — it is how you write about markdown in markdown. The
+     * scan closed on any fence of the same character whatever its length, so
+     * the inner example ended the block and everything after it, `# Not a
+     * heading` included, was read as prose.
+     */
+    const doc = [
+      '# Real heading',
+      '',
+      '````markdown',
+      '```',
+      '# Not a heading',
+      '```',
+      '````',
+      '',
+      '## Also real',
+      '',
+    ].join('\n')
+    expect(scanHeadings(doc).map((h) => h.text)).toEqual(['Real heading', 'Also real'])
+    // One region, covering the whole outer fence rather than two half-blocks.
+    expect(codeRegions(doc)).toHaveLength(1)
+  })
+
+  it('and a closing fence carries no language, or it is another opening one', () => {
+    const doc = ['```', 'x', '```js', '# Not a heading', '```', '', '## Real', ''].join('\n')
+    expect(scanHeadings(doc).map((h) => h.text)).toEqual(['Real'])
+  })
+
+  /*
+   * A fence quoted out of somewhere else is still a fence. The scan read the
+   * `>` as ordinary text and never opened the block, so a `#tag` inside a
+   * quoted code sample was counted as a tag of the note quoting it.
+   */
+  it('opens a fence that a blockquote carries', () => {
+    const doc = ['> ```', '> #nottag', '> [[Not a link]]', '> ```', '', '#real', ''].join('\n')
+    expect(scanTags(doc)).toEqual(['real'])
+    expect(codeRegions(doc)).toHaveLength(1)
+  })
+
+  /*
+   * And closes it when the quote does, which is a thing an unclosed fence at
+   * the top of a note does *not* do: that one runs to the end of the document
+   * on purpose. Once fences could be opened from inside a quote, an unclosed
+   * one there took the same road and swallowed the rest of the note — the
+   * editor still drew the heading and the prose below it, while the index
+   * returned no headings, no tags and no links for any of it. A quoted block
+   * lives in the quote and ends with it.
+   */
+  it('and closes it where the blockquote ends, not at the end of the note', () => {
+    const doc = ['> ```', '> sample', '', '# Real heading', '', '#work [[Other]]', ''].join('\n')
+    expect(scanHeadings(doc).map((h) => h.text)).toEqual(['Real heading'])
+    expect(scanTags(doc)).toEqual(['work'])
+    expect(scanWikiLinks(doc).map((l) => l.target)).toEqual(['Other'])
+  })
+
+  it('and where the quote stops being quoted at all', () => {
+    // No blank line to end it — the next line simply is not quoted, and a code
+    // block is the one thing a blockquote will not carry on into lazily.
+    const doc = ['> ```', '> sample', 'back to prose #work', ''].join('\n')
+    expect(scanTags(doc)).toEqual(['work'])
+  })
+
+  /*
+   * Looks wrong and is not, which is why it is written down. The quote ends at
+   * the unquoted line, taking its code block with it — and that line is itself
+   * a fence with no closer, so it opens a top-level block that runs to the end
+   * of the note. Checked against the parser the editor runs: it reads the same
+   * two blocks, so the note that gets indexed is the note that gets drawn.
+   */
+  it('lets an unquoted fence end the quote and open a block of its own', () => {
+    const doc = ['> ```', '> x', '```', 'after #tag', ''].join('\n')
+    expect(scanTags(doc)).toEqual([])
+    // Each region starts at its fence rather than at the line, since the `> `
+    // in front of the first one belongs to the quote and not to the block.
+    expect(codeRegions(doc)).toEqual([
+      ['> '.length, '> ```\n> x\n'.length],
+      ['> ```\n> x\n'.length, doc.length],
+    ])
+  })
+
+  /*
+   * A closing fence has to be in the same container as the one it closes, and
+   * a line of code that *looks* like one is not. Writing about quoted markdown
+   * — a `> ``` ` sample inside an ordinary block — closed the block at the
+   * sample, so the example heading and tag below it were indexed as real ones
+   * and the fence that actually closed the block opened another region that
+   * ran on and hid the prose after it. Two wrong answers from one line.
+   */
+  it('is not closed by a line of code that looks like a quoted fence', () => {
+    const doc = [
+      '```markdown',
+      '> ```',
+      '> # Example heading',
+      '> #exampletag',
+      '```',
+      '',
+      '# Real heading',
+      '',
+      '#work [[Other]]',
+      '',
+    ].join('\n')
+    expect(scanHeadings(doc).map((h) => h.text)).toEqual(['Real heading'])
+    expect(scanTags(doc)).toEqual(['work'])
+    expect(scanWikiLinks(doc).map((l) => l.target)).toEqual(['Other'])
+    expect(codeRegions(doc)).toHaveLength(1)
+  })
+
+  it('nor a quoted one by a line quoted more deeply than it', () => {
+    const doc = ['> ```', '> >> ```', '> #nottag', '> ```', '', '#real', ''].join('\n')
+    expect(scanTags(doc)).toEqual(['real'])
+    expect(codeRegions(doc)).toHaveLength(1)
+  })
+
+  /*
+   * An opener gets the same three columns its closer does, and for the same
+   * reason: four columns past the block it sits in is not a fence at all, it
+   * is a line of indented code that happens to be backticks. Opening one there
+   * left a block nothing could close, which ran to the end of the note and
+   * took every heading, tag and link below it out of the index — a sample
+   * indented one column too far, and the note was gone.
+   */
+  it('does not open a fence four columns past the block it is in', () => {
+    for (const open of ['    ```', '\t```', '        ```']) {
+      const doc = ['text', '', open, `${open.replace(/`+$/, '')}sample`, '', '# Real', '', '#work [[Other]]', ''].join('\n')
+      expect(scanHeadings(doc).map((h) => h.text)).toEqual(['Real'])
+      expect(scanTags(doc)).toEqual(['work'])
+      expect(scanWikiLinks(doc).map((l) => l.target)).toEqual(['Other'])
+    }
+  })
+
+  /*
+   * And the columns are counted to where the backticks actually are, which a
+   * wide gap after a marker moves without moving the item's content: five
+   * columns or more of it is indented code inside the item, so `-     ``` `
+   * is a line of code and not a fence. Measuring from the item's column
+   * instead opened a block there and hid what came after it.
+   */
+  it('nor one a wide gap after the marker has pushed too far in', () => {
+    for (const gap of ['     ', '      ']) {
+      /*
+       * Nothing opens, so what follows is read as prose and its `#insample` is
+       * indexed — the gap this scan documents, and the direction it is meant
+       * to fail in. What it must not do is open a block, which swallowed that
+       * line instead.
+       */
+      const doc = [`-${gap}\`\`\``, `${' '.repeat(gap.length + 1)}#insample`, '', '#work', ''].join('\n')
+      expect(scanTags(doc)).toEqual(['insample', 'work'])
+    }
+    // Four columns of gap is still the item's content, and still a fence.
+    const ok = ['-    ```', '     #nottag', '     ```', '', '#real', ''].join('\n')
+    expect(scanTags(ok)).toEqual(['real'])
+  })
+
+  it('but three columns is still a fence, and so is one at its list’s column', () => {
+    const indented = ['text', '', '   ```', '   #nottag', '   ```', '', '#real', ''].join('\n')
+    expect(scanTags(indented)).toEqual(['real'])
+    // Four columns from the margin and none from its own item, which is the
+    // case an allowance measured from the margin would have refused.
+    const nested = ['- a', '  - b', '    ```', '    #nottag', '    ```', '', '#real', ''].join('\n')
+    expect(scanTags(nested)).toEqual(['real'])
+  })
+
+  /*
+   * A closing fence may be indented up to three columns past its opener, and a
+   * line indented further is a line of the code. Relative to the opener, never
+   * from the margin: a fence inside a nested list starts four columns in or
+   * more and closes at the same indentation, so an absolute limit would have
+   * left all of those open to the end of the note. Both halves checked against
+   * the parser the editor runs.
+   */
+  it('is not closed by a line indented further than a closing fence may be', () => {
+    for (const closer of ['\t```', '    ```']) {
+      const doc = ['```', 'x', closer, '', '#real', ''].join('\n')
+      expect(scanTags(doc)).toEqual([])
+    }
+    // Three columns is still a closing fence, and still closes.
+    expect(scanTags(['```', 'x', '   ```', '', '#real', ''].join('\n'))).toEqual(['real'])
+  })
+
+  /*
+   * And the three columns are counted from the block the fence is in, not from
+   * the fence itself. An opener may be indented up to three columns of its own,
+   * and measuring the closer's allowance from *there* handed it as many as six
+   * — so a block opened at one space was closed by a four-space line that the
+   * editor rightly reads as code, and everything in the sample below it came
+   * out as headings and tags.
+   */
+  it('counts those columns from the margin, not from an indented opener', () => {
+    for (const open of [' ```', '  ```', '   ```']) {
+      const doc = [open, 'x', '    ```', '', '#real', ''].join('\n')
+      expect(scanTags(doc)).toEqual([])
+    }
+    // Three is still three, wherever the opener sits within them.
+    expect(scanTags(['   ```', 'x', '   ```', '', '#real', ''].join('\n'))).toEqual(['real'])
+    expect(scanTags([' ```', 'x', '```', '', '#real', ''].join('\n'))).toEqual(['real'])
+  })
+
+  it('and a fence nested in a list closes at its own indentation', () => {
+    const doc = ['- a', '  - b', '    ```', '    #nottag', '    ```', '', '#real', ''].join('\n')
+    expect(scanTags(doc)).toEqual(['real'])
+  })
+
+  /*
+   * Those columns are counted from the list item's content, which is the other
+   * half of the same rule: a fence written in a list begins where the item's
+   * text begins, so a closer three columns past *that* still closes it.
+   */
+  it('and gives a fence in a list the same leeway from its item', () => {
+    // The tag after the closer is inside the item too, so only the closer
+    // being *accepted* can free it — nothing else here ends the block.
+    const doc = ['- item', '  ```', '  #nottag', '     ```', '  #real', ''].join('\n')
+    expect(scanTags(doc)).toEqual(['real'])
+  })
+
+  /*
+   * A fence can be the first thing in a list item, written on the marker's own
+   * line, which is where it goes when the whole item is a code sample. The
+   * scan read the marker and stopped, so the line did not look like a fence at
+   * all and the sample's tags and links were handed to the index as the note's
+   * own.
+   */
+  it('opens a fence written on the list marker’s line', () => {
+    for (const marker of ['- ', '* ', '1. ', '10) ']) {
+      const pad = ' '.repeat(marker.length)
+      const doc = [`${marker}\`\`\`js`, `${pad}#nottag [[NotLink]]`, `${pad}\`\`\``, '', '#real', ''].join(
+        '\n',
+      )
+      expect(scanTags(doc)).toEqual(['real'])
+      expect(scanWikiLinks(doc)).toEqual([])
+    }
+  })
+
+  it('and measures it from the item, not from the marker', () => {
+    // The block belongs to the item, so its closer gets the item's column —
+    // and the region starts at the fence, the marker being the list's.
+    const doc = ['- ```', '  #nottag', '  ```', '  #real', ''].join('\n')
+    expect(scanTags(doc)).toEqual(['real'])
+    expect(codeRegions(doc)[0][0]).toBe('- '.length)
+  })
+
+  /*
+   * One line can open more than one container — `- - ``` ` is two items deep
+   * and `- > ``` ` is an item holding a quote — and each moves where the
+   * content after it begins. Reading one and stopping left the rest of the
+   * line looking like prose, so the fence after it opened nothing and the
+   * sample's tags and links were indexed as the note's own.
+   *
+   * Every one of these is checked against the editor's parser as well, for
+   * each of the ways two and three containers can be stacked.
+   */
+  it('walks every container the line opens, not only the first', () => {
+    const cases: Array<[string, string]> = [
+      ['- - ```', '    '],
+      ['- - - ```', '      '],
+      ['- 1. ```', '     '],
+      ['* > ```', '  > '],
+      ['> - - ```', '>     '],
+    ]
+    for (const [open, carry] of cases) {
+      const doc = [open, `${carry}#nottag [[NotLink]]`, `${carry}\`\`\``, '', '#real', ''].join('\n')
+      expect(scanTags(doc)).toEqual(['real'])
+      expect(scanWikiLinks(doc)).toEqual([])
+    }
+  })
+
+  it('and takes the depth of a quote opened on that same line', () => {
+    // `- > ``` ` is quoted, so the block ends where the quote does — at the
+    // unquoted line — rather than carrying on to the end of the note.
+    const doc = ['- > ```', '  > #nottag', '', '#real [[Other]]', ''].join('\n')
+    expect(scanTags(doc)).toEqual(['real'])
+    expect(scanWikiLinks(doc).map((l) => l.target)).toEqual(['Other'])
+  })
+
+  /*
+   * Lists live inside their blockquote. One written in a quote used to leave
+   * its column standing after the quote ended, so the next fence in the note —
+   * quoted by nobody — was measured against a list it was not in, and closed
+   * or ended in the wrong place.
+   */
+  it('forgets a quoted list once the quote is over', () => {
+    const doc = ['> - quoted item', '', '  ```', '  #nottag', '', '#real', ''].join('\n')
+    expect(scanTags(doc)).toEqual([])
+    // Unclosed and at the top level, so it runs on — which is the answer for a
+    // fence at the margin, and was not the answer while it inherited column 2.
+    expect(codeRegions(doc)).toEqual([['> - quoted item\n\n  '.length, doc.length]])
+  })
+
+  it('but keeps one written inside a quote while the quote lasts', () => {
+    const doc = ['> - quoted item', '>   ```', '>   #nottag', '>   ```', '', '#real', ''].join('\n')
+    expect(scanTags(doc)).toEqual(['real'])
+  })
+
+  /*
+   * And a list item holds a block the way a blockquote does, so an unclosed
+   * fence inside one ends with the item rather than running to the end of the
+   * note. A blank line is the difference between the two containers: a
+   * blockquote ends at one and a list item carries on through it.
+   */
+  it('ends an unclosed fence where the list item ends', () => {
+    const doc = ['- item', '  ```', '  #nottag', '', '  still the item #alsonot', 'out #real', ''].join(
+      '\n',
+    )
+    expect(scanTags(doc)).toEqual(['real'])
+  })
+
+  it('but an unclosed fence at the top level still runs to the end', () => {
+    const doc = ['```', 'sample', '', '# Not a heading', '#nottag', ''].join('\n')
+    expect(scanHeadings(doc)).toEqual([])
+    expect(scanTags(doc)).toEqual([])
+  })
+
+  it('leaves out the four things that look like headings and are not', () => {
+    const text = scanHeadings(note).map((h) => h.text)
+    // A YAML comment, a fenced `# install`, a `#tag` on its own line, and a
+    // `##` with nothing after it.
+    expect(text).not.toContain('a YAML comment, not a heading')
+    expect(text).not.toContain('install the thing')
+    expect(text.some((t) => /lisbon$/i.test(t) && t !== 'Lisbon Trip')).toBe(false)
+    expect(text).toHaveLength(4)
+  })
+
+  it('points at the "#" itself, so navigation lands on the line', () => {
+    const h = scanHeadings('# One\n\n## Two\n')
+    expect(h[1].from).toBe('# One\n\n'.length)
+  })
+
+  it('needs a space after the marker, which is what keeps a tag a tag', () => {
+    expect(scanHeadings('#work\n')).toEqual([])
+    expect(scanHeadings('# work\n')).toHaveLength(1)
+    // Seven marks is not a heading in markdown either.
+    expect(scanHeadings('####### Deep\n')).toEqual([])
+  })
+
+  it('has no opinion about an indented one, the way the editor never has', () => {
+    expect(scanHeadings('- item\n  # not a heading here\n')).toEqual([])
+  })
+
+  it('finds the heading an anchor names, however it was written', () => {
+    expect(findHeading(note, 'Costs')?.line).toBe(9)
+    expect(findHeading(note, 'costs')?.line).toBe(9)
+    // The anchor is the words, not the markup: `### **Flights**` is "Flights".
+    expect(findHeading(note, 'Flights')?.line).toBe(11)
+    expect(findHeading(note, 'Hotels and other places')?.line).toBe(21)
+  })
+
+  it('finds nothing for an anchor no heading answers to', () => {
+    expect(findHeading(note, 'Insurance')).toBeUndefined()
+    expect(findHeading(note, '')).toBeUndefined()
+    // A block reference is a syntax this does not implement; it is not a
+    // heading, and saying so is better than guessing at one.
+    expect(findHeading(note, '^b3f1a2')).toBeUndefined()
   })
 })

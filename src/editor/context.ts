@@ -23,9 +23,15 @@ export const noteContext = Facet.define<NoteContext, NoteContext>({
  */
 export const activeEditor = signal<EditorView | null>(null)
 
-/** Ask the shell to open a note by wikilink target. */
-export function requestOpenLink(target: string, exists: boolean) {
-  dispatchEvent(new CustomEvent('slate:open-link', { detail: { target, exists } }))
+/**
+ * Ask the shell to open a note by wikilink target.
+ *
+ * `anchor` is the `#Heading` half of `[[Note#Heading]]`, which the shell
+ * resolves against that note's own headings — the editor cannot, because the
+ * note being asked for is usually not the one it is holding.
+ */
+export function requestOpenLink(target: string, exists: boolean, anchor?: string) {
+  dispatchEvent(new CustomEvent('slate:open-link', { detail: { target, exists, anchor } }))
 }
 
 /** Ask the shell to open the lightbox for a vault file. */

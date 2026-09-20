@@ -29,7 +29,14 @@ import { onTableBandRequest } from './tableMenu'
 import { applyDue } from '../editor/due'
 import { adoptFromStorage, getEntry, ready, resolveLink, revision } from '../core/vault'
 import { settings } from '../core/settings'
-import { activePath, lightboxPath, notify, openNote, propertiesOpen } from './state'
+import {
+  activePath,
+  anchorTarget,
+  lightboxPath,
+  notify,
+  openNote,
+  propertiesOpen,
+} from './state'
 import { compactAllowed, installLayoutWatcher, layoutMode } from './layout'
 import { installMirror, reportHolding } from './popout'
 
@@ -116,12 +123,17 @@ export function PopoutWindow() {
    */
   useEffect(() => {
     const onLink = async (e: Event) => {
-      const { target, exists } = (e as CustomEvent<{ target: string; exists: boolean }>).detail
-      const resolved = resolveLink(target)
+      const { target, exists, anchor } = (
+        e as CustomEvent<{ target: string; exists: boolean; anchor?: string }>
+      ).detail
+      // An anchor with no note in front of it means the note it was clicked
+      // in, which in this window is the only note there is.
+      const resolved = target ? resolveLink(target) : activePath.value
       if (resolved) {
-        openNote(resolved)
+        openNote(resolved, anchorTarget(resolved, anchor))
         return
       }
+      if (!target) return
       if (!exists) {
         await newNoteInFolder('', target, { fallback: `# ${target}\n\n` })
         notify(`Created "${target}"`)

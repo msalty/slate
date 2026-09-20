@@ -130,15 +130,39 @@ export function installTapToEdit(
   view: EditorView,
   begin: (at: { x: number; y: number }, keepCaret: boolean) => void,
 ): () => void {
-  let down: { x: number; y: number; at: number } | null = null
+  let down: { x: number; y: number; at: number; handled: boolean } | null = null
 
   const onDown = (e: PointerEvent) => {
-    down = e.button === 0 ? { x: e.clientX, y: e.clientY, at: Date.now() } : null
+    down =
+      e.button === 0
+        ? {
+            x: e.clientX,
+            y: e.clientY,
+            at: Date.now(),
+            /*
+             * Whether the press *began* on something that answers for itself.
+             *
+             * Asking only at pointerup is not enough, because acting on a link
+             * can move the note out from under the finger that pressed it:
+             * `[[Note#Costs]]` scrolls to that heading, and the pointerup then
+             * arrives over whatever paragraph has slid into that spot. With
+             * nothing but the target to go on, that reads as a tap on plain
+             * text — so following a link put the note into edit mode and
+             * dropped a caret in an unrelated line, which also took the
+             * highlight off the heading it had just arrived at.
+             *
+             * A press that started on a link is that link's press, wherever
+             * the pointer happens to be when it comes back up.
+             */
+            handled: !!linkElementAt(e.target) || closest(e.target, SELF_HANDLED),
+          }
+        : null
   }
   const onUp = (e: PointerEvent) => {
     const start = down
     down = null
     if (!start || e.button !== 0) return
+    if (start.handled) return
     if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > TAP_SLOP) return
     if (Date.now() - start.at > TAP_MS) return
     if (linkElementAt(e.target) || closest(e.target, SELF_HANDLED)) return

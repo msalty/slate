@@ -239,28 +239,284 @@ export function isLocked(data: Record<string, FrontmatterValue>): boolean {
  * tag and a `[[foo]]` in a snippet becomes a phantom link.
  */
 export function codeRegions(text: string): Array<[number, number]> {
-  const out: Array<[number, number]> = []
-  const fence = /^(\s*)(```|~~~)[^\n]*$/gm
-  let m: RegExpExecArray | null
-  let openAt: number | null = null
-  let openMark = ''
-  while ((m = fence.exec(text))) {
-    if (openAt === null) {
-      openAt = m.index
-      openMark = m[2]
-    } else if (m[2][0] === openMark[0]) {
-      out.push([openAt, m.index + m[0].length])
-      openAt = null
-    }
-  }
-  if (openAt !== null) out.push([openAt, text.length])
-
+  const out = fencedRegions(text)
   const inline = /`+[^`\n]*`+/g
+  let m: RegExpExecArray | null
   while ((m = inline.exec(text))) {
     const s = m.index
     if (!out.some(([a, b]) => s >= a && s < b)) out.push([s, s + m[0].length])
   }
   return out
+}
+
+/**
+ * The fenced blocks alone, without the inline spans.
+ *
+ * This is the index's answer, not the editor's. The editor asks its own
+ * markdown parser, which knows an indented code block from a nested list; this
+ * runs over every note in the vault at load and reads the lines. So it stops at
+ * what can be read off a line on its own, and an indented block — four spaces,
+ * which is also what a nested list and a wrapped list paragraph look like — is
+ * deliberately not one of them: calling those code would lose the tags and
+ * links people actually write inside lists to catch the few written in an
+ * indented sample.
+ *
+ * What it does have to know is which *container* a fence is in, because both
+ * of the questions asked about a fence are asked relative to one: how far its
+ * closer may be indented, and where the block ends if no closer comes. Quote
+ * markers answer the first container and the list markers walked here answer
+ * the second; between them the regions this returns agree with the editor's
+ * parser everywhere except the indented blocks above.
+ */
+function fencedRegions(text: string): Array<[number, number]> {
+  const out: Array<[number, number]> = []
+  let openAt: number | null = null
+  let openMark = ''
+  let openDepth = 0
+  let openContainer = 0
+  let pos = 0
+  const items: Array<{ depth: number; column: number }> = []
+
+  for (const line of text.split('\n')) {
+    let m = FENCE.exec(line)
+    // At the backticks, not at the line: the markers before them belong to the
+    // quote or the list that holds the block, not to the block.
+    let fenceAt = m ? pos + m[1].length : pos
+    const depth = quoteDepth(line)
+    let fenceDepth = depth
+    let fenceColumn = m ? indentColumns(m[1]) : 0
+    const indent = indentColumns(INDENT.exec(line)![0])
+
+    /*
+     * A block ends where the thing holding it ends. An unclosed fence in the
+     * body of a note runs to the end of the note, which is CommonMark and is
+     * what somebody halfway through typing a code block should see; a fence
+     * inside a blockquote is held by the quote, and ends where the quote does
+     * — at a blank line, at an unquoted line, or at one quoted less deeply.
+     * Reading the second as the first is how one `> ```` with no closer hid
+     * every heading, tag and link below it from the index while the editor
+     * went on rendering them: the note looked fine and was not there.
+     *
+     * At the top level the depth is zero and nothing is ever below it, so the
+     * same comparison leaves that case exactly as it was.
+     *
+     * A list item holds a block the same way, and ends it the same way: at a
+     * line that steps back out of the item. Not at a blank line, though, which
+     * a list item carries on through where a blockquote does not — the one
+     * place these two containers part company.
+     */
+    if (openAt !== null && (depth < openDepth || (line.trim() !== '' && indent < openContainer))) {
+      out.push([openAt, pos])
+      openAt = null
+    }
+
+    if (openAt === null) {
+      /*
+       * Which list item this line is in, kept only while no fence is open —
+       * inside one the lines are code and say nothing about the note's shape.
+       * A line steps back out of every item whose content starts further in
+       * than the line does, and each marker on it opens one that starts after
+       * that marker.
+       */
+      if (line.trim()) {
+        /*
+         * Leaving a blockquote ends the lists written inside it, the same way
+         * it ends everything else in there — without that, a `> - item` left
+         * its column standing and the next fence in the note, quoted by
+         * nobody, was measured against a list it was not in.
+         */
+        while (items.length) {
+          const held = items[items.length - 1]
+          const gone = held.depth > depth || (held.depth === depth && indent < held.column)
+          if (!gone) break
+          items.pop()
+        }
+
+        /*
+         * Every container the line opens for itself, in the order it opens
+         * them. One line can open several — `- - ``` ` is two list items and
+         * `- > ``` ` is an item holding a quote — and each moves where the
+         * content after it begins, so they have to be walked rather than
+         * counted. Reading one and stopping left the rest of the line looking
+         * like prose, which for a fence meant no block at all: the sample's
+         * tags and links went into the index as the note's own.
+         */
+        let at = 0
+        let held = 0
+        let column = 0
+        let cursor = 0
+        for (;;) {
+          const li = LIST_ITEM.exec(line.slice(at))
+          if (!li) break
+          // A quote opened here restarts the column inside itself; without one
+          // the marker is measured from the content it was written in.
+          const quotes = quoteDepth(line.slice(at))
+          held += quotes
+          const base = quotes ? 0 : cursor
+          column = contentColumn(li, base)
+          /*
+           * Where the line's text carries on, which is not always where the
+           * item's content begins: a gap of five columns or more puts the
+           * item's content one column after the marker and leaves the rest of
+           * the gap as indented code inside it. Measuring a fence from the
+           * item's column rather than from here opened a block on `-     ``` `,
+           * which the parser reads as indented code, and hid what followed.
+           */
+          cursor = advance(base + indentColumns(li[1]) + li[2].length, li[3])
+          items.push({ depth: held, column })
+          at += li[0].length
+        }
+
+        /*
+         * `- ``` ` — a fence as the item's first content, which is where
+         * people put one when the whole item is a code sample. The region
+         * starts at the fence rather than at the marker, since the marker is
+         * the list's and not the block's.
+         */
+        if (!m && at) {
+          const after = FENCE.exec(line.slice(at))
+          if (after) {
+            m = after
+            // Past the markers to the backticks: a `>` between them belongs to
+            // the quote, the same way the `- ` belongs to the list.
+            fenceAt = pos + at + after[1].length
+            const quotes = quoteDepth(line.slice(at))
+            fenceDepth = held + quotes
+            fenceColumn = (quotes ? 0 : cursor) + indentColumns(after[1])
+          }
+        }
+      }
+
+      // The line that ended a quote can be the one that opens the next block.
+      const inner = items[items.length - 1]
+      const container = inner && inner.depth === fenceDepth ? inner.column : 0
+      /*
+       * Three columns past the block it sits in and no further, the same
+       * allowance its closer gets — because four columns in is not a fence at
+       * all, it is a line of indented code that happens to be backticks. The
+       * scan opened one there and, finding nothing able to close it, ran to the
+       * end of the note: a sample indented one column too far took every
+       * heading, tag and link below it out of the index.
+       *
+       * What is left is the indented block itself, whose contents this still
+       * reads as prose — the gap this scan documents, and the mild half of it.
+       * A tag written in such a sample is indexed as the note's own, where
+       * before the whole rest of the note went missing.
+       */
+      if (m && fenceColumn - container <= 3) {
+        openAt = fenceAt
+        openMark = m[2]
+        openDepth = fenceDepth
+        openContainer = container
+      }
+    } else if (
+      /*
+       * In the same container as the fence it closes, and then the mark itself.
+       *
+       * Three columns of leeway, counted from where the container's own content
+       * begins — from the *container*, which is the whole difficulty. An opener
+       * is allowed three columns of its own, so counting the closer's allowance
+       * from the opener handed it as many as six, and a block opened at one
+       * space was closed by a four-space line that is a line of code and
+       * nothing else. Counting from the margin instead is no better the other
+       * way round: a fence written in a list begins at the item's column, and
+       * measuring its closer from column zero leaves every one of those blocks
+       * open to the end of the note.
+       */
+      m &&
+      depth === openDepth &&
+      indentColumns(m[1]) <= openContainer + 3 &&
+      closes(m, openMark)
+    ) {
+      out.push([openAt, pos + line.length])
+      openAt = null
+    }
+
+    pos += line.length + 1
+  }
+
+  if (openAt !== null) out.push([openAt, text.length])
+  return out
+}
+
+/**
+ * The whole run of fence characters, not the first three of it, because how
+ * long a fence is decides what can close it — and after any blockquote
+ * markers, because a fenced block quoted out of somewhere else is still a
+ * fenced block and its `#tag` is still a code sample.
+ */
+const FENCE = /^([ \t>]*)(`{3,}|~{3,})(.*)$/
+
+/**
+ * Whether this fence line closes one opened with `openMark`.
+ *
+ * The same character, *at least as long*, and no language after it — all three
+ * of them CommonMark, and all three of them the reason a four-backtick block
+ * can quote a three-backtick one. Without the length, writing about markdown in
+ * markdown ended the block at the inner example, and everything below it —
+ * `# Not a heading` included — came back out as prose.
+ *
+ * The caller adds the container — the same quote depth, and close enough to
+ * the same column. A closing fence closes the block it is *in*, so a `> ``` ` in
+ * the middle of an ordinary block is a line of a sample about quoted markdown
+ * and not the end of anything — while it counted, that one line both released
+ * the example's headings and tags into the index as real ones and left the
+ * fence that really closed the block to open a region that hid the prose after
+ * it.
+ */
+function closes(m: RegExpExecArray, openMark: string): boolean {
+  return m[2][0] === openMark[0] && m[2].length >= openMark.length && !m[3].trim()
+}
+
+/** The whitespace and quote markers a line opens with. */
+const INDENT = /^[ \t>]*/
+
+/** A list marker and the gap after it, which together say where the item's content begins. */
+const LIST_ITEM = /^([ \t>]*)([-*+]|\d{1,9}[.)])([ \t]+|$)/
+
+/**
+ * The column a list item's content starts at, which is the column anything
+ * inside it is measured from.
+ *
+ * The marker, then the gap after it — except that a gap of five columns or
+ * more is indented code inside the item rather than a wider marker, and the
+ * content begins one column after the marker instead.
+ *
+ * `base` is the column the marker itself was written at, for the second and
+ * later markers on one line: `- - x` is an item inside an item, and the inner
+ * one starts where the outer one's content does rather than at the margin.
+ */
+function contentColumn(li: RegExpExecArray, base = 0): number {
+  const afterMark = base + indentColumns(li[1]) + li[2].length
+  const gap = advance(afterMark, li[3])
+  return gap - afterMark >= 5 || !li[3] ? afterMark + 1 : gap
+}
+
+/**
+ * How far a line is indented inside whatever holds it, in columns.
+ *
+ * Measured from after the quote markers, past the single space each one is
+ * allowed, with a tab going to the next stop of four the way a tab does.
+ */
+function indentColumns(prefix: string): number {
+  const quoted = prefix.lastIndexOf('>')
+  return advance(0, quoted < 0 ? prefix : prefix.slice(quoted + 1).replace(/^ /, ''))
+}
+
+/** That same walk, carried on from a column already reached. */
+function advance(col: number, text: string): number {
+  for (const c of text) col += c === '\t' ? 4 - (col % 4) : 1
+  return col
+}
+
+/** How many blockquotes deep a line is, counted off its own markers. */
+function quoteDepth(line: string): number {
+  let n = 0
+  for (const c of line) {
+    if (c === '>') n++
+    else if (c !== ' ' && c !== '\t') break
+  }
+  return n
 }
 
 export function inRegions(regions: Array<[number, number]>, i: number): boolean {
@@ -283,7 +539,13 @@ export interface WikiLink {
   embed: boolean
 }
 
-const WIKI = /(!?)\[\[([^\]\n|#]+)(?:#([^\]\n|]+))?(?:\|([^\]\n]*))?\]\]/g
+/*
+ * The target is allowed to be empty, which is what makes `[[#Costs]]` a link:
+ * an anchor with no note in front of it means a heading in *this* note. Both
+ * halves empty is not a link at all — see the guard in the scan — so `[[]]`
+ * and `[[|alias]]` stay inert text the way they always were.
+ */
+const WIKI = /(!?)\[\[([^\]\n|#]*)(?:#([^\]\n|]+))?(?:\|([^\]\n]*))?\]\]/g
 
 export function scanWikiLinks(text: string, regions = codeRegions(text)): WikiLink[] {
   const out: WikiLink[] = []
@@ -291,11 +553,16 @@ export function scanWikiLinks(text: string, regions = codeRegions(text)): WikiLi
   let m: RegExpExecArray | null
   while ((m = WIKI.exec(text))) {
     if (inRegions(regions, m.index)) continue
+    const target = m[2].trim()
+    const anchor = m[3]?.trim()
+    // Brackets round nothing. Naming neither a note nor a place in one, it
+    // points at nothing that could be opened.
+    if (!target && !anchor) continue
     out.push({
       from: m.index,
       to: m.index + m[0].length,
-      target: m[2].trim(),
-      anchor: m[3]?.trim(),
+      target,
+      anchor,
       alias: m[4]?.trim(),
       embed: m[1] === '!',
     })
@@ -560,6 +827,88 @@ export function excerptOf(
 export function firstHeading(text: string, bodyStart = 0): string | undefined {
   const m = /^#{1,6}\s+(.+)$/m.exec(text.slice(bodyStart, bodyStart + 4000))
   return m?.[1].trim()
+}
+
+/* ---------------------------------------------------------------- headings */
+
+export interface Heading {
+  /** 1–6, from how many `#` marks it was written with. */
+  level: number
+  /** The words, with inline markup taken off — what a list of them shows. */
+  text: string
+  /** Character offset of the first `#`. */
+  from: number
+  /** Zero-based line, which is what navigation moves by — the same as a task. */
+  line: number
+}
+
+/**
+ * A `#` at the start of a line and a space after it. Three things are not a
+ * heading and each has cost somebody an afternoon somewhere:
+ *
+ * - `#work` — no space, so it is a tag, and tags on their own line at the top
+ *   of a note are how half this vault is written.
+ * - a `#` indented under a list item — CommonMark allows three spaces, this app
+ *   has never drawn one as a heading, and matching at column 0 is what the rest
+ *   of the file already does (see `firstHeading`).
+ * - `# comment` inside the frontmatter block, which is YAML, not prose.
+ */
+const HEADING = /^(#{1,6})[ \t]+(.*)$/
+
+/**
+ * Every heading in a note, in the order they appear.
+ *
+ * The frontmatter is skipped and so are fenced code blocks, which is the whole
+ * reason this takes the same `codeRegions` every other scanner here takes: a
+ * `# Install` inside a shell sample is a comment somebody wrote, and an outline
+ * that jumps you into the middle of a code block is worse than no outline.
+ *
+ * A heading with nothing after the marker is left out, on the rule the tasks
+ * already follow: `- [ ]` with nothing after it is not a job, and `##` with
+ * nothing after it is not a place you could ask to be taken to. The editor
+ * still draws both — they are markup in the note, they are simply not things a
+ * list can offer you.
+ */
+export function scanHeadings(text: string, regions = codeRegions(text)): Heading[] {
+  const out: Heading[] = []
+  /*
+   * Read here rather than taken as a parameter. Every caller would otherwise
+   * have to remember that YAML comments start with the same character markdown
+   * headings do, and the parse costs nothing on a note with no frontmatter —
+   * it returns on the first character.
+   */
+  const bodyStart = parseFrontmatter(text).bodyStart
+  const lines = text.split('\n')
+  let offset = 0
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    const at = offset
+    offset += line.length + 1
+    if (at < bodyStart) continue
+    const m = HEADING.exec(line)
+    if (!m || inRegions(regions, at)) continue
+    // `## Title ##` is one heading in CommonMark; the closing run is decoration.
+    const body = m[2].replace(/[ \t]+#+[ \t]*$/, '')
+    const clean = stripInline(body)
+    if (!clean) continue
+    out.push({ level: m[1].length, text: clean, from: at, line: i })
+  }
+  return out
+}
+
+/**
+ * The heading a `[[Note#Anchor]]` is pointing at, if the note has one.
+ *
+ * Matched on the words as they read rather than as they are written, so
+ * `[[Trip#Costs]]` finds `## **Costs**` — the anchor is what somebody typed
+ * after the hash, and nobody types the asterisks. Case is ignored for the same
+ * reason. The first match wins: two headings with the same words are a note
+ * whose author did not mean to distinguish them.
+ */
+export function findHeading(text: string, anchor: string): Heading | undefined {
+  const want = stripInline(anchor).toLowerCase()
+  if (!want) return undefined
+  return scanHeadings(text).find((h) => h.text.toLowerCase() === want)
 }
 
 /**

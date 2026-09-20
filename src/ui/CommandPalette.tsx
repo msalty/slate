@@ -11,7 +11,8 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
-import { allTags, getEntry, notes, search, type SearchHit } from '../core/vault'
+import { allTags, getEntry, getText, notes, search, type SearchHit } from '../core/vault'
+import { scanHeadings, type Heading } from '../core/markdown'
 import { dailyNoteFor } from '../core/daily'
 import { sync } from '../core/sync'
 import {
@@ -48,7 +49,7 @@ import {
   type Place,
 } from './places'
 import { folderTree, smartFolders } from '../core/folders'
-import { relativeTime, startOfDay } from '../core/util'
+import { matchesAll, relativeTime, searchTerms, startOfDay } from '../core/util'
 import { newNoteInFolder } from './EditorPane'
 import { canShareFiles, shareNote } from './shareNote'
 import { openQuickAdd } from './QuickAdd'
@@ -64,15 +65,17 @@ interface Cmd {
   run: () => void | Promise<void>
 }
 
-/** One line of the palette, whichever of the three kinds it came from. */
+/** One line of the palette, whichever of the four kinds it came from. */
 type Row =
   | { kind: 'cmd'; cmd: Cmd }
   | { kind: 'place'; place: Place }
   | { kind: 'note'; path: string; title: string; sub: string }
+  | { kind: 'heading'; heading: Heading }
 
 function rowKey(row: Row): string {
   if (row.kind === 'cmd') return `cmd:${row.cmd.id}`
   if (row.kind === 'place') return row.place.id
+  if (row.kind === 'heading') return `head:${row.heading.line}`
   return `note:${row.path}`
 }
 
@@ -80,10 +83,16 @@ function rowKey(row: Row): string {
  * The glyph in front of a row, saying what kind of thing it is before the
  * label is read. A Tag Folder shows the emoji its owner gave it — the same one
  * the sidebar shows, so the row is recognised rather than parsed.
+ *
+ * A heading shows the `#` it is written with — which is also the tag glyph,
+ * and never beside one: `@` is a list of headings and nothing else, the same
+ * way `#` is a list of tags and nothing else. What tells the levels apart is
+ * the indent, because that is what a heading's level *means*.
  */
 function rowGlyph(row: Row): string {
   if (row.kind === 'cmd') return '⌘'
   if (row.kind === 'note') return '›'
+  if (row.kind === 'heading') return '#'
   if (row.place.kind === 'tag') return '#'
   if (row.place.kind === 'folder') return '/'
   return row.place.emoji ?? '🏷️'
@@ -92,12 +101,14 @@ function rowGlyph(row: Row): string {
 function rowLabel(row: Row): string {
   if (row.kind === 'cmd') return row.cmd.label
   if (row.kind === 'place') return row.place.label
+  if (row.kind === 'heading') return row.heading.text
   return row.title
 }
 
 function rowSub(row: Row): string {
   if (row.kind === 'cmd') return row.cmd.hint ?? ''
   if (row.kind === 'place') return row.place.sub
+  if (row.kind === 'heading') return ''
   return row.sub
 }
 
@@ -407,16 +418,31 @@ export function CommandPalette() {
     ],
   )
 
+  /**
+   * The open note's headings, read once per note rather than per keystroke.
+   *
+   * Scanning is a pass over one note's text, which is nothing — but it happens
+   * on every render of a box being typed into, and `outline.length` is what
+   * the empty message needs even when the filter has cut every row.
+   */
+  const outline = useMemo<Heading[]>(() => {
+    const path = activePath.value
+    const text = path ? getText(path) : undefined
+    return text ? scanHeadings(text) : []
+  }, [activePath.value, notes.value])
+
   const results = useMemo((): {
     matchedCommands: Cmd[]
     places: Place[]
     noteHits: SearchHit[]
+    headings: Heading[]
     /** Set when the collection list is a sample rather than the whole answer. */
     capped?: string
   } => {
     const { mode, term } = parsePaletteQuery(q)
     const matching = (list: Cmd[]) =>
       term ? list.filter((c) => c.label.toLowerCase().includes(term.toLowerCase())) : list
+    const none = { matchedCommands: [], places: [], noteHits: [], headings: [] }
 
     /*
      * `>` is the whole list, which is the only way to read it: a palette that
@@ -424,7 +450,19 @@ export function CommandPalette() {
      * you want is a palette you cannot learn anything from. Nothing is capped
      * and nothing else shares the list.
      */
-    if (mode === 'commands') return { matchedCommands: matching(commands), places: [], noteHits: [] }
+    if (mode === 'commands') return { ...none, matchedCommands: matching(commands) }
+
+    /*
+     * `@` is the open note read as a table of contents, so nothing else shares
+     * the list either — and `@` on its own is the whole outline, for the same
+     * reason a bare `>` is the whole command list. Matched on the words with
+     * the same every-term-has-to-land rule the rest of the app uses, so
+     * "cost fl" finds "Flight costs".
+     */
+    if (mode === 'headings') {
+      const terms = searchTerms(term)
+      return { ...none, headings: outline.filter((h) => matchesAll(h.text, terms)) }
+    }
 
     /*
      * `#` and `/` likewise say a collection is what's wanted, so notes and
@@ -434,7 +472,7 @@ export function CommandPalette() {
     const found = matchPlaces(q)
     const places = found.places
     if (mode === 'places') {
-      return { matchedCommands: [], places, noteHits: [], capped: cappedPaletteNote(q, found) }
+      return { ...none, places, capped: cappedPaletteNote(q, found) }
     }
 
     /*
@@ -446,8 +484,8 @@ export function CommandPalette() {
     const noteHits = term
       ? search(term, 30)
       : notes.value.slice(0, 12).map((entry) => ({ entry, score: 0, snippet: '' }))
-    return { matchedCommands, places, noteHits }
-  }, [q, commands, notes.value, folderTree.value, smartFolders.value, allTags.value])
+    return { matchedCommands, places, noteHits, headings: [] }
+  }, [q, commands, outline, notes.value, folderTree.value, smartFolders.value, allTags.value])
 
   const flat: Row[] = [
     ...results.matchedCommands.map((cmd) => ({ kind: 'cmd' as const, cmd })),
@@ -464,6 +502,7 @@ export function CommandPalette() {
       title: h.entry.title,
       sub: h.snippet || h.entry.folder || relativeTime(h.entry.mtime),
     })),
+    ...results.headings.map((heading) => ({ kind: 'heading' as const, heading })),
   ]
 
   if (!open) return null
@@ -474,7 +513,16 @@ export function CommandPalette() {
     paletteOpen.value = false
     if (item.kind === 'cmd') await item.cmd.run()
     else if (item.kind === 'place') goToScope(item.place.target)
-    else openNote(item.path)
+    /*
+     * The note is already open — that is what made the outline — so this is
+     * navigation within it. `align: 'start'` puts the heading at the top of
+     * the pane, because the section it names is below it.
+     */
+    else if (item.kind === 'heading') {
+      if (activePath.value) {
+        openNote(activePath.value, { line: item.heading.line, align: 'start' })
+      }
+    } else openNote(item.path)
   }
 
   return (
@@ -487,8 +535,8 @@ export function CommandPalette() {
            * The placeholder is where the prefixes are taught, since there is
            * nowhere else they could be and they are no use unguessed.
            */
-          placeholder="Search notes, #tags, /folders — or > for every command"
-          aria-label="Search notes, tags and folders, or type a chevron for every command"
+          placeholder="Search notes, #tags, /folders, @headings — or > for every command"
+          aria-label="Search notes, tags, folders and this note's headings, or type a chevron for every command"
           onInput={(e) => {
             byKey.current = false
             setQ((e.target as HTMLInputElement).value)
@@ -530,7 +578,10 @@ export function CommandPalette() {
         >
           {flat.length === 0 && (
             <div class="empty" style={{ padding: '24px' }}>
-              {emptyPaletteMessage(q)}
+              {emptyPaletteMessage(q, {
+                noteOpen: !!activePath.value,
+                total: outline.length,
+              })}
             </div>
           )}
           {flat.map((item, i) => (
@@ -539,31 +590,50 @@ export function CommandPalette() {
               class="palette-row"
               data-sel={i === sel ? '1' : '0'}
               data-i={i}
+              /*
+               * A heading's level, for the indent. On the row rather than on
+               * the label so the whole row reads as nested — an indent that
+               * starts after the glyph is a ragged left edge with a column of
+               * hashes down it.
+               */
+              data-level={item.kind === 'heading' ? item.heading.level : undefined}
               /* Takes its own index, so a click is never about what is selected. */
               onClick={() => void choose(i)}
             >
               <span
+                class="palette-glyph"
                 style={{
                   // An emoji dimmed to 55% reads as a rendering fault rather
                   // than as a quieter glyph, so only the typographic ones dim.
                   opacity: item.kind === 'place' && item.place.kind === 'smart' ? 1 : 0.55,
-                  width: 16,
-                  flex: '0 0 auto',
                 }}
               >
                 {rowGlyph(item)}
               </span>
-              <span
-                style={{
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                  minWidth: 0,
-                }}
-              >
-                {rowLabel(item)}
-              </span>
-              <small>{rowSub(item)}</small>
+              {/*
+                * A note stacks; a command and a collection do not.
+                *
+                * Their subtitles are short and fixed — a shortcut, "Folder ·
+                * 12 notes" — and belong at the right-hand end where the eye
+                * can run down them. A note's is a line lifted out of the note
+                * itself, which is as long as it happens to be: sharing the row
+                * with it truncated the title to a few characters, so the one
+                * thing you were reading the row for was the one thing not on
+                * it. Stacked, the title gets the full width and the line that
+                * matched sits under it, where it confirms the title rather
+                * than competing with it.
+                */}
+              {item.kind === 'note' ? (
+                <span class="palette-stack">
+                  <span class="palette-title">{rowLabel(item)}</span>
+                  {rowSub(item) && <small class="palette-preview">{rowSub(item)}</small>}
+                </span>
+              ) : (
+                <>
+                  <span class="palette-label">{rowLabel(item)}</span>
+                  <small>{rowSub(item)}</small>
+                </>
+              )}
             </button>
           ))}
           {/*

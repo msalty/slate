@@ -3183,6 +3183,83 @@ try {
   check('folders persist across a reload', (await page.locator('.side-row:has-text("Clients")').count()) > 0)
   await page.screenshot({ path: join(SHOTS, '08-tag-folders.png') })
 
+  /* ---- the search box speaks the same rule language ----------------------
+   *
+   * A Tag Folder is a saved rule, and until this the only way to ask its
+   * question was to save one. The box takes a rule and words together — the
+   * rule filters, the words still search — so the load-bearing check is the
+   * first one: a query with no rule in it has to behave exactly as it did.
+   *
+   * Checked here because the tagged notes are on disk by now and nothing else
+   * in the run has to be disturbed to do it.
+   */
+  {
+    const listed = async (q) => {
+      await page.fill('.search-box input', q)
+      await page.waitForTimeout(400)
+      return (await page.locator('.note-row-title').allInnerTexts()).sort().join(',')
+    }
+    const strip = async () =>
+      (await page.locator('.search-rule').count())
+        ? (await page.locator('.search-rule').innerText()).replace(/\s+/g, ' ').trim()
+        : ''
+
+    const plain = await listed('budget')
+    check('a search that is only words is untouched by any of this', plain.includes('Budget'), plain)
+    check('and says nothing about rules, because there is no rule in it', (await strip()) === '', await strip())
+
+    const tagged = await listed('#work')
+    check(
+      'a tag in the box filters the list to what carries it',
+      tagged === 'Budget,Retro,Sprint planning',
+      tagged,
+    )
+    check('and the box says which rule it applied', /#work/.test(await strip()), await strip())
+
+    const both = await listed('#work budget')
+    check('a rule and words are the two halves of one line', both === 'Budget', both)
+    check(
+      'and the line says so, naming each half',
+      /#work/.test(await strip()) && /budget/.test(await strip()),
+      await strip(),
+    )
+
+    const negated = await listed('#work -#archived')
+    check('negation narrows it the way the rule language does', negated === 'Budget,Sprint planning', negated)
+
+    const either = await listed('#home OR #archived')
+    check('an explicit OR keeps both sides of itself', either === 'Groceries,Retro,Roof', either)
+
+    /*
+     * Half a rule is what a whole one looks like a keystroke earlier, so it
+     * cannot blank the list *and* cannot quietly filter by a guess. It reads
+     * as text — which finds nothing — and the line says what is wrong.
+     */
+    const broken = await listed('is:maybe')
+    check('an unfinished rule filters by nothing at all', broken === '', broken)
+    check(
+      'and names the problem rather than leaving the list unexplained',
+      (await page.getAttribute('.search-rule', 'data-error')) === '1',
+      await strip(),
+    )
+
+    // --- and the rule you just typed can be kept -------------------------
+    await listed('#work -#archived')
+    await page.click('.search-rule-save')
+    await ruleDialogReady()
+    const handed = await page.locator('.rule-input').inputValue()
+    check('the search hands its rule to a new Tag Folder', handed === '#work -#archived', handed)
+    check(
+      'and it is a new folder, waiting to be named',
+      (await page.locator('.dialog h2').innerText()) === 'New Tag Folder',
+      await page.locator('.dialog h2').innerText(),
+    )
+    await page.click('.dialog-foot .btn:not(.btn-primary)')
+    await page.waitForTimeout(300)
+    await page.fill('.search-box input', '')
+    await page.waitForTimeout(300)
+  }
+
   /* ---- ⌘K reaches the collections, not just the notes --------------------
    *
    * Checked here because this is the first point in the run where all three
@@ -3210,11 +3287,17 @@ try {
         )
         .catch(() => {})
       await page.waitForTimeout(350)
+      /*
+       * Read by class rather than by child position: a note's row stacks its
+       * title over the line that matched, so its label and its subtitle are
+       * inside one element and `children[1]` is both of them run together.
+       */
       return page.$$eval('.palette-row', (els) =>
         els.map((e) => ({
-          glyph: e.children[0]?.textContent ?? '',
-          label: e.children[1]?.textContent ?? '',
-          sub: e.children[2]?.textContent ?? '',
+          glyph: e.querySelector('.palette-glyph')?.textContent ?? '',
+          label: e.querySelector('.palette-title, .palette-label')?.textContent ?? '',
+          sub: e.querySelector('small')?.textContent ?? '',
+          stacked: !!e.querySelector('.palette-stack'),
         })),
       )
     }
@@ -3279,6 +3362,30 @@ try {
         plain.findIndex((r) => r.glyph === '›') >
           plain.findIndex((r) => r.glyph === '#' || r.glyph === '/'),
       plain.map((r) => `${r.glyph}${r.label}`).join(' '),
+    )
+    /*
+     * A note's row gives its title the whole width and puts the line that
+     * matched underneath, rather than sharing one line with it. Two notes
+     * whose titles start the same way — a book's chapters, a conversation and
+     * the note it was about — were otherwise both truncated to the words they
+     * have in common, so the row could not answer the only question being
+     * asked of it. A command keeps its one line: its hint is a shortcut, and
+     * shortcuts are read down a column at the right-hand end.
+     */
+    check(
+      'a note row stacks its title over the line that matched',
+      plain.filter((r) => r.glyph === '›').every((r) => r.stacked),
+      plain.filter((r) => r.glyph === '›').map((r) => `${r.label} / ${r.sub}`).join(' · '),
+    )
+    check(
+      'and a command or a collection keeps its subtitle beside it',
+      plain.filter((r) => r.glyph !== '›').every((r) => !r.stacked),
+      plain.filter((r) => r.glyph !== '›').map((r) => `${r.glyph}${r.label}`).join(' '),
+    )
+    check(
+      'a title long enough to truncate is still the whole title in the markup',
+      plain.some((r) => r.glyph === '›' && r.label.length > 0),
+      plain.find((r) => r.glyph === '›')?.label ?? 'no note row',
     )
     await page.screenshot({ path: join(SHOTS, '33-palette-places.png') })
 
@@ -3349,6 +3456,331 @@ try {
 
     await page.keyboard.press('Escape')
     await page.waitForTimeout(250)
+    await page.locator('.side-row:has-text("All Notes")').first().click()
+    await page.waitForTimeout(300)
+  }
+
+  /* ---- the outline, and the anchor that was never live ------------------
+   *
+   * `@` is the open note read as a table of contents, and ⌘⇧O is that with a
+   * key on it. Driven in a browser because the interesting half is not the
+   * list — that is a filter over a pure scanner, and unit-tested as one — but
+   * the *jump*: a long note's line heights are estimated until they have been
+   * measured, and a heading put at the top of the pane has no slack to absorb
+   * the correction. It used to land a line high, which puts the heading you
+   * asked for off the top of the screen with its section showing underneath.
+   */
+  {
+    const long = [
+      '# Field notes',
+      '',
+      'Written up afterwards.',
+      '',
+      '## Measurements ##',
+      '',
+      ...Array(40).fill('A line of the first section, long enough to need scrolling past.'),
+      '',
+      '### **Depth**',
+      '',
+      ...Array(40).fill('A line of the second section, the one the outline has to reach.'),
+      '',
+      '#fieldwork',
+      '',
+      '```bash',
+      '# not a heading, a shell comment',
+      '```',
+      '',
+      '##',
+      '',
+      '## Follow-up',
+      '',
+      'The numbers are in [[Field notes#Depth]].',
+      '',
+      'Nothing is in [[Field notes#Nowhere]].',
+      '',
+    ].join('\n')
+
+    await page.evaluate(async (text) => {
+      const db = await new Promise((res, rej) => {
+        const r = indexedDB.open('slate')
+        r.onsuccess = () => res(r.result)
+        r.onerror = () => rej(r.error)
+      })
+      const tx = db.transaction('files', 'readwrite')
+      tx.objectStore('files').put({
+        path: 'Field notes.md',
+        kind: 'note',
+        text,
+        mime: 'text/markdown',
+        size: text.length,
+        hash: 'outline1',
+        mtime: Date.now(),
+        ctime: Date.now(),
+      })
+      await new Promise((r) => (tx.oncomplete = r))
+    }, long)
+    await page.reload({ waitUntil: 'networkidle' })
+    await page.waitForSelector('.note-row')
+    await page.waitForTimeout(500)
+
+    /** Open the outline on a query and hand back the rows it is offering. */
+    const outlineRows = async (text = '@') => {
+      await page.keyboard.press('Escape')
+      await page.waitForTimeout(150)
+      await page.keyboard.press('Control+Shift+o')
+      await page.waitForSelector('.palette input', { timeout: 3000 })
+      await page.waitForTimeout(350)
+      if (text !== '@') await page.locator('.palette input').fill(text)
+      await page.waitForTimeout(300)
+      return page.$$eval('.palette-row', (els) =>
+        els.map((e) => ({
+          label: e.querySelector('.palette-label')?.textContent ?? '',
+          level: e.dataset.level ?? '',
+          indent: parseFloat(getComputedStyle(e).paddingLeft),
+        })),
+      )
+    }
+
+    await page.locator('.note-row').filter({ hasText: 'Field notes' }).first().click()
+    await page.waitForTimeout(600)
+
+    // --- the outline itself ---
+    const rows = await outlineRows()
+    check('⌘⇧O opens the palette on the outline', (await page.locator('.palette input').inputValue()) === '@')
+    check(
+      'the outline lists every heading in the open note, in order',
+      rows.map((r) => r.label).join(' / ') === 'Field notes / Measurements / Depth / Follow-up',
+      rows.map((r) => r.label).join(' / '),
+    )
+    check(
+      'and nothing that only looks like one',
+      // A fenced `# comment`, a `#tag` on its own line, and a bare `##`.
+      !rows.some((r) => /shell comment|fieldwork/.test(r.label)) && rows.every((r) => r.label),
+      rows.map((r) => r.label).join(' / '),
+    )
+    check(
+      'a closing run of hashes is decoration, not part of the words',
+      rows[1]?.label === 'Measurements',
+      rows[1]?.label ?? 'no row',
+    )
+    check(
+      'the level is drawn as an indent, which is what a level means',
+      rows[0].indent < rows[1].indent && rows[1].indent < rows[2].indent,
+      rows.map((r) => `${r.label}@${r.indent}`).join(' '),
+    )
+    await page.screenshot({ path: join(SHOTS, '35-outline.png') })
+
+    const narrowed = await outlineRows('@dep')
+    check(
+      'and it narrows on the words, not the markup',
+      narrowed.length === 1 && narrowed[0].label === 'Depth',
+      narrowed.map((r) => r.label).join(', '),
+    )
+
+    /**
+     * Where the marked line sits inside the editor's scroller. The whole point
+     * of the alignment is that this is a small positive number: negative means
+     * the heading is off the top, large means it was centred.
+     */
+    const markedAt = () =>
+      page.evaluate(() => {
+        const hit = document.querySelector('.cm-nav-target')
+        const scroller = document.querySelector('.cm-scroller')
+        if (!hit || !scroller) return { text: '', top: NaN }
+        return {
+          // Trimmed: a heading written `## Costs ##` renders with the closing
+          // run hidden, which leaves the space in front of it behind.
+          text: (hit.textContent ?? '').trim(),
+          top: Math.round(hit.getBoundingClientRect().top - scroller.getBoundingClientRect().top),
+        }
+      })
+
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(900)
+    const jumped = await markedAt()
+    check('choosing a heading marks it', jumped.text === 'Depth', jumped.text || 'nothing marked')
+    check(
+      'and puts it at the top of the pane, where its section is below it',
+      jumped.top >= 0 && jumped.top < 120,
+      `${jumped.top}px from the top of the editor`,
+    )
+    check(
+      'without taking the caret: being shown a line is not editing it',
+      (await page.locator('.cm-content').getAttribute('contenteditable')) === 'false',
+      `contenteditable=${await page.locator('.cm-content').getAttribute('contenteditable')}`,
+    )
+    await page.screenshot({ path: join(SHOTS, '36-outline-jump.png') })
+
+    // --- a miss in a note that has headings says something different again ---
+    await outlineRows('@zzzznope')
+    check(
+      'a miss inside a note that does have headings is a miss, not an empty note',
+      /No headings match/.test((await page.locator('.palette-list').innerText()).trim()),
+      (await page.locator('.palette-list').innerText()).trim(),
+    )
+    await page.keyboard.press('Escape')
+    await page.waitForTimeout(250)
+
+    /* ---- [[Note#Heading]], which until now went to the top of the note ----
+     *
+     * The anchor has been parsed since wikilinks were written and carried
+     * through every rename since; nothing ever navigated to it. A link that
+     * looks like it goes somewhere and doesn't is worse than one you could not
+     * write, so the check is that it lands on the heading and not at the top.
+     */
+    const toFollowUp = await outlineRows('@follow')
+    check('the outline reaches the section holding the link', toFollowUp.length === 1, toFollowUp.map((r) => r.label).join())
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(900)
+
+    const anchorLink = page.locator('.cm-wikilink').first()
+    check(
+      'a wikilink carries its anchor, and says so on hover',
+      (await anchorLink.getAttribute('data-anchor')) === 'Depth' &&
+        /— Depth$/.test((await anchorLink.getAttribute('title')) ?? ''),
+      `anchor=${await anchorLink.getAttribute('data-anchor')}, title=${await anchorLink.getAttribute('title')}`,
+    )
+    await anchorLink.click()
+    await page.waitForTimeout(900)
+    const followed = await markedAt()
+    check(
+      'and following it lands on that heading rather than at the top of the note',
+      followed.text === 'Depth' && followed.top >= 0 && followed.top < 120,
+      `${followed.text || 'nothing marked'} at ${followed.top}px`,
+    )
+    await page.screenshot({ path: join(SHOTS, '37-anchor-link.png') })
+
+    /*
+     * And an anchor naming a heading that is not there says so. Quietly
+     * behaving like a plain link would leave you at the top of a note
+     * wondering whether you had misread your own link.
+     */
+    await outlineRows('@follow')
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(900)
+    await page.locator('.cm-wikilink').nth(1).click()
+    await page.waitForTimeout(500)
+    check(
+      'an anchor no heading answers to says so rather than going to the top',
+      /No heading called/.test((await page.locator('.toast').innerText().catch(() => '')) ?? ''),
+      (await page.locator('.toast').innerText().catch(() => '(no toast)')) ?? '(no toast)',
+    )
+
+    /* ---- [[Note# offers that note's headings ---------------------------
+     *
+     * The `#` says the note has been named and a place in it is being named
+     * now — the same statement the `|` makes about an alias. Driven in a
+     * browser because the thing that breaks is not the list but *when
+     * CodeMirror asks for it*: while a result is valid it re-filters in place
+     * rather than asking again, so a `#` that did not invalidate the note list
+     * left it alive, filtered to nothing, showing an empty box.
+     */
+    const cmOptions = () =>
+      page.$$eval('.cm-tooltip-autocomplete li', (els) =>
+        els.map((e) => ({
+          label: e.querySelector('.cm-completionLabel')?.textContent ?? '',
+          detail: e.querySelector('.cm-completionDetail')?.textContent ?? '',
+        })),
+      )
+    const lastLine = () =>
+      page.evaluate(() => {
+        const lines = [...document.querySelectorAll('.cm-line')]
+        return lines[lines.length - 1]?.textContent ?? ''
+      })
+
+    const notesEditor = page.locator('.cm-content')
+    await notesEditor.click()
+    await page.waitForTimeout(300)
+    await page.keyboard.press('Control+End')
+    await page.waitForTimeout(200)
+
+    await notesEditor.pressSequentially('\nSee [[Field notes', { delay: 20 })
+    await page.waitForTimeout(500)
+    const beforeHash = await cmOptions()
+    check(
+      'a wikilink still completes on note titles',
+      beforeHash.some((o) => o.label === 'Field notes'),
+      beforeHash.map((o) => o.label).join(', ') || '(no list)',
+    )
+
+    await notesEditor.pressSequentially('#', { delay: 20 })
+    await page.waitForTimeout(500)
+    const afterHash = await cmOptions()
+    check(
+      'and the # turns the list into that note’s headings, in document order',
+      afterHash.map((o) => o.label).join(' / ') === 'Field notes / Measurements / Depth / Follow-up',
+      afterHash.map((o) => o.label).join(' / ') || '(no list)',
+    )
+    check(
+      'each one saying which section it sits under',
+      afterHash.find((o) => o.label === 'Depth')?.detail === 'Measurements',
+      afterHash.map((o) => `${o.label}:${o.detail}`).join(', '),
+    )
+    await page.screenshot({ path: join(SHOTS, '38-heading-completion.png') })
+
+    await notesEditor.pressSequentially('dep', { delay: 20 })
+    await page.waitForTimeout(400)
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(400)
+    check(
+      'accepting one writes the anchor and closes the link',
+      (await lastLine()) === 'See [[Field notes#Depth]]',
+      await lastLine(),
+    )
+
+    /* ---- and [[# is this note, read off the buffer -------------------- */
+    await notesEditor.pressSequentially('\nAlso [[#', { delay: 20 })
+    await page.waitForTimeout(500)
+    const selfList = await cmOptions()
+    check(
+      'a bare [[# offers the headings of the note being typed in',
+      selfList.map((o) => o.label).join(' / ') === 'Field notes / Measurements / Depth / Follow-up',
+      selfList.map((o) => o.label).join(' / ') || '(no list)',
+    )
+    await notesEditor.pressSequentially('meas', { delay: 20 })
+    await page.waitForTimeout(400)
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(600)
+    check(
+      'and writes an anchor with no note in front of it',
+      (await lastLine()) === 'Also [[#Measurements]]',
+      await lastLine(),
+    )
+
+    // Take the caret out of the note so the link is drawn rather than revealed.
+    await page.locator('.list-pane .pane-title').click()
+    await page.waitForTimeout(500)
+    const selfLink = page.locator('.cm-wikilink').last()
+    check(
+      'a self-anchor is a working link, not a broken one',
+      (await selfLink.getAttribute('data-exists')) === '1' &&
+        !((await selfLink.getAttribute('class')) ?? '').includes('broken') &&
+        (await selfLink.getAttribute('data-wikilink')) === '',
+      `exists=${await selfLink.getAttribute('data-exists')}, class=${await selfLink.getAttribute('class')}`,
+    )
+    await selfLink.click()
+    await page.waitForTimeout(900)
+    const inside = await markedAt()
+    check(
+      'and following it moves within the note it is written in',
+      inside.text === 'Measurements' && inside.top >= 0 && inside.top < 120,
+      `${inside.text || 'nothing marked'} at ${inside.top}px`,
+    )
+
+    /*
+     * A link into this note is not a link *between* notes, so it earns no
+     * backlink and — the one that would actually show — no nameless row in the
+     * Unlinked list, which reads its targets straight off the index.
+     */
+    await page.locator('.side-row:has-text("Unlinked")').first().click()
+    await page.waitForTimeout(400)
+    const unlinked = (await page.locator('.list-scroll').innerText()).trim()
+    check(
+      'and it never turns up in Unlinked as a link with no name',
+      !/^\s*$/m.test(unlinked.split('\n')[0] ?? '') && !unlinked.includes('Measurements'),
+      unlinked.slice(0, 120).replace(/\n/g, ' | '),
+    )
+
     await page.locator('.side-row:has-text("All Notes")').first().click()
     await page.waitForTimeout(300)
   }

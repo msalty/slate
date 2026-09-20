@@ -15,6 +15,8 @@
 import { signal } from '@preact/signals'
 import { EditorSelection, type EditorState, type TransactionSpec } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
+import { ensureSyntaxTree, syntaxTree } from '@codemirror/language'
+import type { SyntaxNode } from '@lezer/common'
 import { bareUriAt, linkAt } from './links'
 import { tableAt, type Align } from './table'
 
@@ -142,13 +144,31 @@ export interface InlineSpan {
  * then the two-character marks before the one-character one so `**bold**` is
  * never read as an empty italic wrapping `*bold*`.
  */
-const INLINE_RULES: Array<{ mark: InlineMark; re: RegExp }> = [
+const INLINE_RULES: Array<{ mark: InlineMark; re: RegExp; wordBreak?: true }> = [
   { mark: 'code', re: /^(`+)([^`]+?)\1(?!`)/ },
   { mark: 'underline', re: /^<u>(.+?)<\/u>/ },
   { mark: 'bold', re: /^\*\*(?!\s)(.+?)(?<!\s)\*\*/ },
   { mark: 'strike', re: /^~~(?!\s)(.+?)(?<!\s)~~/ },
   { mark: 'highlight', re: /^==(?!\s)(.+?)(?<!\s)==/ },
   { mark: 'italic', re: /^\*(?!\s|\*)(.+?)(?<!\s)\*(?!\*)/ },
+  /*
+   * The underscore spellings, which the editor draws exactly like the asterisk
+   * ones — `__bold__` is StrongEmphasis to the parser and `_italic_` is
+   * Emphasis — and which this scanner did not know at all. So the toolbar
+   * never lit up inside them and, worse, a cut of the visible word left `____`
+   * behind: everything that repairs orphaned delimiters asks this list what a
+   * construct is.
+   *
+   * `wordBreak` is the difference between the two families. CommonMark reads
+   * `*` inside a word as emphasis and `_` inside one as a literal underscore,
+   * so `foo_bar_baz` is one plain word — and widening a selection over an
+   * emphasis the editor never drew would be worse than not widening at all.
+   * The check is deliberately stricter than CommonMark's flanking rules:
+   * under-reaching leaves this bug in a rare case, over-reaching invents
+   * markup in a common one.
+   */
+  { mark: 'bold', re: /^__(?!\s)(.+?)(?<!\s)__(?![\p{L}\p{N}])/u, wordBreak: true },
+  { mark: 'italic', re: /^_(?!\s|_)(.+?)(?<!\s)_(?![\p{L}\p{N}_])/u, wordBreak: true },
 ]
 
 /**
@@ -165,7 +185,11 @@ export function scanInline(text: string, offset = 0, depth = 0): InlineSpan[] {
 
   for (let i = 0; i < text.length; ) {
     let hit: { mark: InlineMark; m: RegExpExecArray } | undefined
+    // What sits in front of this position, for the rules that care: `_` opens
+    // emphasis only where a word does not already have hold of it.
+    const after = i > 0 ? text[i - 1] : ''
     for (const rule of INLINE_RULES) {
+      if (rule.wordBreak && after && /[\p{L}\p{N}_]/u.test(after)) continue
       const m = rule.re.exec(text.slice(i))
       if (m) {
         hit = { mark: rule.mark, m }
@@ -435,6 +459,43 @@ export function toggleInline(state: EditorState, mark: InlineMark): TransactionS
   })
 }
 
+/** Long enough that a note has to be enormous to outrun it, short enough to be free. */
+const PARSE_BUDGET_MS = 100
+
+/**
+ * Whether a position is inside a code block, where nothing on the line is markup.
+ *
+ * Asked of the parser rather than answered here, and that is the point. In a
+ * code block the asterisks *are* the text — a sample showing `**literal**`
+ * means those ten characters — so widening over them meant selecting `literal`
+ * and pasting replaced the markers too, deleting characters nobody had
+ * selected in the one place in a note where markup is not markup. The same for
+ * the `# ` of a shell comment, which is not a heading marker.
+ *
+ * This first read three backticks in column one, which is one spelling of a
+ * code block out of three: an indented block lost its indentation as well as
+ * its asterisks, and a fenced block inside a blockquote lost its `> `. Every
+ * rule written here to catch the rest — four spaces means code, a fence may
+ * have a `>` in front — is a markdown parser being written badly a second
+ * time, and gets the ordinary things wrong: a nested list after a blank line
+ * is indented past four spaces and is not code at all. The editor is already
+ * running the real one, over this exact document, and it is what live preview
+ * draws from, so it is the thing to ask.
+ *
+ * `side` faces the selection inward: an edge that merely touches a block from
+ * the prose outside it is not inside it. A note long enough for the parse not
+ * to have reached the caret yet is a note whose tree is worth waiting the few
+ * milliseconds for — and if it still has not, the partial tree answers "not
+ * code" and the widening is the one it always was.
+ */
+function inCodeBlock(state: EditorState, pos: number, side: -1 | 1): boolean {
+  const tree = ensureSyntaxTree(state, pos, PARSE_BUDGET_MS) ?? syntaxTree(state)
+  for (let n: SyntaxNode | null = tree.resolveInner(pos, side); n; n = n.parent) {
+    if (n.name === 'FencedCode' || n.name === 'CodeBlock') return true
+  }
+  return false
+}
+
 /**
  * Grow a range outward over the markup it covers the whole of but cannot see.
  *
@@ -446,15 +507,24 @@ export function toggleInline(state: EditorState, mark: InlineMark): TransactionS
  * merely against. Both then leave on the clipboard as plain text, and a cut
  * leaves the orphaned `## ` or `====` behind in the note.
  *
- * Two widenings, in that order: inline delimiters the selection sits exactly
- * inside — one layer at a time, so `**==word==**` comes back whole — and then
- * the markers at the head of the line, when the selection covers all of that
- * line's text.
+ * Two widenings, in that order: inline delimiters whose visible text the
+ * selection has taken in full — one layer at a time, so `**==word==**` comes
+ * back whole — and then the markers at the head of the line, when the selection
+ * covers all of that line's text.
  *
- * Deliberately exact: a selection covering only part of a construct is left
- * alone, because there is no honest way to widen it — the user picked those
- * characters, and quietly adding markup around them would be worse than losing
- * it.
+ * **Every span it swallows whole, not only the one it sits exactly inside.**
+ * The test is whether the selection covers all of a construct's *inner* text
+ * while leaving a delimiter outside: those delimiters are the ones a cut would
+ * orphan. Requiring both edges to match one span meant that cutting the
+ * visible text of `**bold** and *italic*` left `***` behind — the opener of
+ * the first and the closer of the second, each orphaned by a selection that
+ * had taken everything they wrapped.
+ *
+ * Still deliberately exact at the other end: a selection covering only *part*
+ * of a construct is left alone, because there is no honest way to widen it.
+ * Cutting `old` out of `**bold**` leaves `**b**`, which is still bold — the
+ * delimiters are not orphaned and nothing needs repairing. Widening an edge on
+ * its own would have produced `**b`, turning a correct cut into a broken one.
  */
 export function expandToMarkup(
   state: EditorState,
@@ -462,16 +532,32 @@ export function expandToMarkup(
   to: number,
 ): { from: number; to: number } {
   if (from === to) return { from, to }
+
+  // Either edge in code is enough, since the edges are what this widens.
+  if (inCodeBlock(state, from, 1) || inCodeBlock(state, to, -1)) return { from, to }
+
   const line = state.doc.lineAt(from)
 
-  if (to <= line.to) {
-    const spans = scanInline(line.text, line.from)
-    for (;;) {
-      const hit = spans.find((s) => s.innerFrom === from && s.innerTo === to)
-      if (!hit) break
-      from = hit.from
-      to = hit.to
-    }
+  /*
+   * The first line and the last, and no line between them.
+   *
+   * A construct wholly inside the selection goes with it, delimiters and all,
+   * so it can orphan nothing; one wholly outside is untouched. Only the two
+   * edges can cut a construct in half, which is why a selection running over a
+   * thousand lines costs two scans — and why a closer on the *last* line used
+   * to be missed entirely, the scan having only ever looked at the first.
+   */
+  const last = state.doc.lineAt(to)
+  const spans = scanInline(line.text, line.from)
+  if (last.from !== line.from) spans.push(...scanInline(last.text, last.from))
+
+  for (;;) {
+    const hit = spans.find(
+      (s) => s.innerFrom >= from && s.innerTo <= to && (s.from < from || s.to > to),
+    )
+    if (!hit) break
+    from = Math.min(from, hit.from)
+    to = Math.max(to, hit.to)
   }
 
   // `to >= line.to` rather than `===`: a selection running on into the lines

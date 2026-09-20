@@ -19,8 +19,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 1036 unit, two-device sync and folder round-trip tests
-node scripts/smoke.mjs # 751-check browser smoke test against dist/
+npm test               # 1189 unit, two-device sync and folder round-trip tests
+node scripts/smoke.mjs # 806-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -65,7 +65,28 @@ so nothing is ever silently rewritten:
   holds: Enter at the end of a highlighted phrase lands after the highlight
   rather than through it. And what you copy carries what you cannot see with it:
   a highlighted word arrives somewhere else still highlighted, a heading still a
-  heading, and cutting one leaves an empty line rather than a stray `## `.
+  heading, and cutting one leaves an empty line rather than a stray `## `. A
+  selection running across several of them takes all their markers, so cutting
+  the visible words out of `**bold** and *italic*` leaves nothing behind rather
+  than a stray `***`.
+
+  **Pasting replaces the same thing copying would have taken**, which is what
+  makes copying a highlighted word and pasting it straight back over itself do
+  nothing at all. The trade is worth stating: paste plain text over a
+  highlighted word and the highlight goes with it, rather than the text landing
+  inside it. That is already what cutting there does, and the alternative was a
+  clipboard whose three operations disagreed about what the selection was. All
+  three read every range of a multi-cursor selection and not just the one you
+  made last, so pasting over two selected words rewrites both, and a bare
+  cursor put down beside a selection is somewhere to paste rather than a reason
+  to stop. **Inside a code block none of this happens**: there the asterisks
+  are the sample, not markup hiding from you, so selecting `literal` out of
+  `**literal**` and pasting replaces exactly `literal`. Any code block —
+  fenced, indented, or fenced inside a blockquote — because the question is put
+  to the markdown parser the editor is already running rather than to a rule
+  about backticks in the first column. A rule of that kind protects the one
+  spelling it knows and gets the ordinary things wrong: a nested list is
+  indented too, and its markup is markup.
 
   The bar also inserts the two things markdown makes tedious by hand: a
   **link**, through a dialog with the words and the address as separate fields,
@@ -238,6 +259,19 @@ from a shared vault is untrusted input.
 autocomplete over every note; picking one that doesn't exist yet offers to create
 it. Clicking a broken link creates the note on the spot. Renaming a note rewrites
 every link that pointed at it.
+
+**And `#` points inside one.** Type `[[Trip#` and the list stops being about
+notes and becomes that note's headings, in the order they appear, each saying
+which section it sits under. The `#` is the same statement the `|` is — the note
+has been named, and what is being named now is a place in it — so it is answered
+the same way. `[[#` with no note in front of it is *this* note, read off the
+buffer rather than the vault, so a heading you typed a moment ago can be linked
+to before it has been saved.
+
+Both write a link that goes there: `[[Trip#Costs]]` opens Trip at Costs, and
+`[[#Costs]]` moves within the note it is written in without opening anything. A
+link into the note you are already in is not a link *between* notes, so it earns
+no backlink, and it never turns up in Unlinked as a link with no name.
 
 **Linked mentions.** What points at a note is listed at the end of the note, past
 the last line and inside the same scroll: a hairline, a *Linked mentions* header
@@ -486,6 +520,78 @@ anywhere else, so a permanently hidden fence would be a block you could not
 label and could not find the ends of. Everything else about a code block stays
 hidden in rich text; this is a fence, a link's URL and a callout's `[!type]`
 being the same kind of thing.
+
+A fence longer than three characters closes only on one at least as long, and a
+closing fence carries no language — which is how a ` ````markdown ` block holds
+a ` ``` ` example, and the reason writing about markdown in markdown does not
+end the block at the first line of the sample and read the rest of it as
+headings. A fence quoted inside a `>` opens one too, so a code sample pasted
+into a quote does not hand the note the `#tags` written in it — and *closes*
+where the quote does, at a blank line or an unquoted one, because a block ends
+with the thing holding it. An unclosed fence in the body of a note is the other
+case and runs to the end of the note, which is what somebody halfway through
+typing a code block should see; reading a quoted one that way let a single
+`> ``` ` hide every heading, tag and link below it from the index while the
+editor went on rendering them, so the note looked perfectly normal and was not
+there.
+
+**A closing fence closes the block it is in**, which is the rule two different
+lines of code used to get past. It has to be quoted exactly as deeply as the
+fence it closes, so a `> ``` ` written as a *sample* inside an ordinary block
+is a line of code and not the end of one — it used to be both the end of the
+block, which let the sample's headings and tags into the index as real ones,
+and the start of another, which hid the prose after it. And it may be indented
+up to three columns further in than the block it is closing sits in.
+
+**From the block, which is the whole difficulty.** Measured from the *opener*,
+the three columns become as many as six, because an opener is allowed three of
+its own — so a block opened at one space was closed by a four-space line that
+is a line of code and nothing else. Measured from the *margin*, a fence written
+inside a list never closes at all, because it begins at the item's column and
+its closer is written to match. Both of those are the same mistake, which is
+taking a measurement from the wrong place, and they fail in opposite
+directions: the first spills a code sample into search, the second hides the
+rest of the note. So the index tracks which list item a fence is written in,
+and measures from there — which also tells it where an unclosed one ends, since
+a list item holds a block exactly as a blockquote does. A blank line is the
+only difference between the two: a blockquote ends at one, and a list item
+carries on through it. Those items belong to their blockquote as well, so a
+list written inside a quote is forgotten when the quote ends rather than left
+standing for the next fence in the note to be measured against.
+
+A fence may also be written on the marker's own line — `- ``` `, which is where
+it goes when the whole item is the code sample — and the block it opens belongs
+to that item, closing at the item's column like any other. One line can open
+more than one container that way: `- - ``` ` is two items deep and `- > ``` `
+is an item holding a quote, so the containers a line opens are walked in order
+rather than counted, each one moving where the content after it begins.
+
+The vault index reads all this off the lines, because it runs over every note
+you have and there is no editor to ask. An **indented** code block is the one
+thing it does not try to recognise: four spaces is also a nested list and a
+wrapped list paragraph, and calling those code would lose the tags and links
+people write inside lists to catch the few written in an indented sample. The
+editor has no such problem — it asks its own parser, so an indented block is a
+code block to everything the editor does.
+
+It does know one thing about them, though: an opener four columns past the
+block it sits in is *not a fence*, so it opens nothing. That allowance is
+measured from the container like everything else here, which is what keeps a
+fence written in a list — four columns from the margin, none from its own item
+— working. Without it, a sample indented one column too far opened a block
+nothing could close, and the block ran to the end of the note and took every
+heading, tag and link below it out of the index.
+
+That leaves the gap pointing one way only, which is the point of stating it.
+The contents of an indented block are read as prose, so a `#tag` written in
+one is indexed as the note's own. Nothing the editor shows as prose is hidden
+from search — and that is checked rather than asserted: every opener
+indentation against every closer indentation, at the top level, inside a list
+and after a quoted list, along with every way up to three containers can be
+stacked in front of a fence and every width of gap between a marker and one,
+all compared position by position against the parser the editor runs. Of those
+313 shapes, 215 agree exactly, 98 read an indented block as prose, and none
+hides anything.
 
 **A note names itself, if you let it.** A note made with *New note here* — and
 every note started from a template — is called `Untitled`, so typing a heading
@@ -744,8 +850,10 @@ So the roll-ups — the note list, its count, tasks, tag counts, the calendar,
 Tag Folder matches, backlinks and broken links — read your notes without the
 templates. Everything that looks at one named thing still sees them: browsing
 `Templates/` (which is the only way a template gets edited, so hiding the
-folder the way `backstage/` is hidden was never an option), search, wikilink
-targets, version history and sync. Two of those are not preferences but
+folder the way `backstage/` is hidden was never an option), searching for
+words, wikilink targets, version history and sync. A rule in the search box is
+a Tag Folder match rather than a word, so `#work` there leaves them out — with
+or without words typed beside it. Two of those are not preferences but
 correctness — **the orphan scan** has to see templates or a picture used only
 by one is reported unused and invited to be deleted, and **rename repointing**
 has to, or a template's links break when a note it mentions is renamed.
@@ -1357,12 +1465,24 @@ somewhere to keep what you use rather than an index of everything you own:
 | `#work` | tags only |
 | `/Work` | folders only |
 | `>sync` | commands only |
-| `#`, `/` or `>` alone | every tag, every folder, or **every command** |
+| `@costs` | headings in the note that is open |
+| `#`, `/`, `>` or `@` alone | every tag, every folder, **every command**, or the whole outline |
 
 A prefixed list shows at most 40 collections and says so when there are more
 (*Showing 40 of 63 tags — type to narrow*), rather than implying the first
 forty are all you have. The arrow keys scroll the list as they move through it,
 so the selection is always the row you can see.
+
+**A note's row gives its title the whole width**, with the line that matched
+underneath it rather than beside it. A note is the one row whose subtitle is
+not a fixed caption but a line lifted out of the note itself, as long as it
+happens to be, and sharing a line with it cut the title to a few characters —
+so two chapters of the same book, or a conversation and the note it was about,
+were both truncated to exactly the words they have in common and the row could
+not answer the only question being asked of it. A command and a collection keep
+theirs beside them: a shortcut and *Folder in Clients · 12 notes* are short and
+fixed, and belong in a column at the right-hand end where the eye can run down
+them.
 
 A collection sits above the note hits, because with a folder called Work and
 thirty notes that mention work, the folder is nearly always what was meant —
@@ -1378,6 +1498,47 @@ way to find out what the app can do without already knowing the name of the
 thing you are looking for. Unprefixed, the palette still leads with a handful
 of commands and then the notes, because that is the box you came to to find a
 note. *All commands…* in the list's **⋯** menu opens it on `>` for you.
+
+**`@` is the note you have open, read as a table of contents** — its headings,
+in the order they appear, indented by level, and ⌘⇧O is the same list with a
+key on it. Type to narrow it (`@costs`, or `@cost fl` for "Flight costs" —
+every word has to land, the rule the rest of the app follows), and Enter takes
+you there.
+
+It is the palette rather than a panel for the reason every prefix here is the
+palette: this is the box you already open to get somewhere, and a second place
+to look would be a second thing to remember. It costs no space on screen, it
+works on a phone where there is no room for a panel at all, and it reaches the
+editor the same way ⌘K does.
+
+**The heading goes to the top of the pane, not the middle**, because what it
+names is *below* it — centring one spends half the screen on the section you
+just left and starts the section you asked for halfway down. Getting that right
+is most of the work: a long note's line heights are estimated until they have
+been measured, so the first scroll lands against an estimate that is corrected a
+frame later, and a heading put at the top has no slack to absorb the
+correction. It used to arrive one line high, which puts the heading off the top
+of the screen with its section showing underneath — so the scroll is re-asserted
+while the layout settles, and gives up the moment an edit or a click says you
+have moved on.
+
+Jumping never takes the caret. Being shown a line is not editing it, and a note
+you were reading stays a note you are reading — the same rule a task tapped in
+the Tasks list already followed, and the same brief highlight marks where you
+landed.
+
+**And `[[Note#Heading]]` goes to that heading.** The anchor has been parsed
+since wikilinks were written and carried carefully through every rename since,
+and until now nothing ever did anything with it: the link opened the note at the
+top, exactly like a link without one. It is matched on the words as they read
+rather than as they are written, so `[[Trip#Costs]]` finds `## **Costs**`, and
+case is ignored. A heading that has since been renamed away says so rather than
+quietly behaving like a plain link.
+
+`[[#Costs]]` — an anchor with no note in front of it — is a heading in the note
+it is written in, and moves within it rather than opening anything. Brackets
+round nothing at all (`[[]]`, `[[|alias]]`) name neither a note nor a place in
+one, and stay the inert text they always were.
 
 Folders inside those sections keep their own shape. A folder is unfolded
 because you unfolded it, so unfolding a section — or a folder — never unfolds
@@ -1421,6 +1582,55 @@ a note's opening line usually says nothing about it. A word that appears only
 in the title keeps its ordinary excerpt: there is nothing in the body to point
 at, and the marked title has already said why the note is there.
 
+**The search box also speaks the Tag Folder rule language.** A rule answers the
+question substring matching cannot — *which* notes, rather than which words —
+and it is a language the app already has. So `#work`, `folder:Clients`,
+`has:tasks`, `due:overdue`, `-` to negate, `OR` and parentheses to group all
+work in the box, mixed into a line with the words you are looking for:
+
+```
+#work budget                  notes tagged #work, searched for "budget"
+folder:Clients -#done invoice
+#home OR #errands             a rule on its own, nothing to search for
+```
+
+**The rule filters and the words still search**, in that order. Nothing about
+the text half changes — the same scorer ranks it, the same snippets come back,
+the same words are marked in the rows — so a query with no rule terms in it
+behaves exactly as it always has, which is nearly all of them. A rule with no
+words beside it has nothing to rank by, so those notes come back in the order
+the list was already in. A rule is about the same notes either way: a Tag
+Folder has never contained the template that describes it, so neither does a
+rule in the box, and adding a word to `#work` narrows the answer rather than
+letting templates into it. The words on their own still reach a template —
+looking for `#meeting` and not finding the template that defines it would be
+worse than finding it.
+
+A term is a rule term only when it says so out loud: a leading `#`, or one of
+the language's own keys with a colon and a value. Everything else is prose, so
+`re-open`, `budget (2024)` and `ratio 3:1` are searched for rather than parsed
+at. It follows the same rule everything else about search follows — it applies
+where the list is showing notes or tasks, and a rule has nothing to say about a
+file or a deleted note, so in Files and Deleted `#work` is five characters to
+look for.
+
+**What the box is doing is written under it**, in the same plain English the
+Tag Folder dialog uses — `Notes #work and not #done · searching for "roof"` —
+because a filter you cannot see is the one thing this must not become. Beside
+it is **Save rule…**, which opens the Tag Folder dialog with the rule already
+in it: a search worth running twice is a Tag Folder, and this is the shortest
+road between the two. The words are a search rather than part of the rule, so
+they are not what gets saved, and the dialog shows exactly what it is about to
+keep before anything is written.
+
+A rule that doesn't parse — `#a OR` is what `#a OR #b` looks like a keystroke
+earlier — filters by nothing at all and says what is wrong where the gloss
+would have been. The list falls back to the plain text search it was before,
+so nothing is quietly filtered by half a rule and nothing is quietly not
+filtered either. A trailing `AND` or `OR` is the one thing forgiven silently:
+directly behind a rule it is punctuation waiting for its other half, not a word
+to go looking for.
+
 **A folder is made from the + on the Folders header**, or from *New
 subfolder…* on any folder, and renamed from its own menu — each of them a
 one-field dialog in the app rather than a browser `prompt()`, which on a phone
@@ -1454,6 +1664,7 @@ bar above the list carries an **Edit** next to the **Close**.
 |---|---|
 | ⌘K | Command palette — a note, a folder, a tag, or a command; from anywhere, the editor included |
 | ⌘K then `>` | Every command, with its shortcut beside it |
+| ⌘⇧O | Outline — jump to a heading in this note |
 | ⌘N | New note |
 | ⌘S | Sync now |
 | ⌘F | Find in note |
@@ -2036,11 +2247,19 @@ src/
 │  ├─ merge.ts        three-way merge (diff3), and the two-way diff a rewrite
 │  │                  is shown as
 │  ├─ rebase.ts       folding a synced change into the buffer being typed in
-│  ├─ markdown.ts     frontmatter, links, tags, tasks, due dates
+│  ├─ markdown.ts     frontmatter, links, tags, tasks, due dates, headings —
+│  │                  and the three things that look like a heading and are
+│  │                  not: a `#tag`, a `#` in a code fence, a YAML comment
 │  ├─ properties.ts   the same frontmatter as an ordered, editable list
 │  ├─ tagquery.ts     the rule language behind Tag Folders, over notes or tasks
 │  ├─ folders.ts      nested folders + the Tag Folder tree and inheritance
 │  ├─ searchindex.ts  what stops a search from reading every note
+│  ├─ related.ts      NOT WIRED UP — the related-notes prototype: which notes
+│  │                  look like this one, and why each one is on the list.
+│  │                  See "Ideas worth considering next"
+│  ├─ searchquery.ts the search box's two halves: which of the words you
+│  │                 typed are a rule and which are prose, and why the split
+│  │                 is on shape rather than on meaning
 │  ├─ templates.ts    folder templates: the fields, and which folder uses what
 │  ├─ starters.ts     the seven templates `Templates/` is created with
 │  ├─ snippets.ts     `Snippets.md`, parsed into triggers and what they expand to
@@ -2071,6 +2290,9 @@ src/
 │  │                 Enter, Backspace and Delete do on each of them
 │  ├─ links.ts      external URI recognition, opening and editing
 │  ├─ linkClicks.ts following a link from the text — clicks and taps alike
+│  ├─ navTarget.ts  being taken to a line from outside the note: a task from
+│  │                 a list, a heading from the outline — where each one
+│  │                 lands, and why the scroll has to be asked for twice
 │  ├─ table.ts      the pipe-table grid: parse, edit rows/columns, print
 │  ├─ tableChrome.ts the handles on a rendered table: press to pick a row or
 │  │                 column out, press again for its menu, drag to reorder
@@ -2108,7 +2330,10 @@ src/
    ├─ VaultSwitcher.tsx  the sidebar head: which vault this is, and the menu
    │                 that changes it
    ├─ VaultsCard.tsx Settings › Vaults — rename, recolour, remove
-   └─ Mobile.tsx     phone tab bar and full-screen tab views
+   ├─ Mobile.tsx     phone tab bar and full-screen tab views
+   └─ RelatedProbe.tsx  a lab bench for core/related.ts, at `?probe=related`
+                     and nowhere else — lazily loaded, so neither it nor the
+                     scoring is in the bundle an ordinary load fetches
 ```
 
 Two rules keep it comprehensible:
@@ -2242,6 +2467,53 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
   installed again. Nothing short of that does it — see the long note in
   `vite.config.ts`, which was written the hard way.
 
+- **The outline reads `#` headings and nothing else.** A `#` at the start of a
+  line with a space after it, which is what the editor has always drawn as a
+  heading and what everything here writes. Setext headings (`Title` over
+  `=====`) are not listed, and neither is one indented under a list item —
+  CommonMark allows three spaces of indent, this app has never rendered one, and
+  an outline that offers to take you somewhere the editor does not agree is a
+  heading would be worse than one that leaves it out.
+
+- **`![[Note#Heading]]` still embeds nothing.** Section *embeds* are a different
+  feature from section *links* — one transcludes, the other navigates — and only
+  the link half is built. An embed with an anchor on it does not resolve, which
+  it did not before either; it shows as a broken embed rather than quietly
+  embedding the whole note. The heading completion stays out of `![[` for the
+  same reason: offering them there would be completing somebody into an embed
+  that resolves to nothing.
+
+- **A heading with a `|` or a `]` in it cannot be linked to.** `[[Note#Anchor]]`
+  ends its anchor at a `]` and splits it at a `|`, and the syntax has no escape
+  for either: `[[#Revenue | costs]]` reads as the anchor "Revenue" with the
+  alias "costs", and `[[#Status [draft]]]` truncates to "Status [draft". So the
+  completion leaves those headings out rather than offering a link that could
+  never resolve. The outline still reaches them — ⌘⇧O navigates rather than
+  writing a link — so what is missing is linking to them, which was never
+  possible.
+
+- **A heading completion is over one note, not over the vault.** `[[#` and
+  `[[Trip#` both need the note named first — there is no "find me the section
+  about costs, wherever it is". Searching every note's headings at once is a
+  different feature with a different shape, and the palette's `@` is the same
+  shape as this one: a note, then a place in it.
+
+- **A popped-out window has no outline.** ⌘K is not there either: a window
+  holding one note has no list to jump around and no palette in it, so `@` and
+  ⌘⇧O are both absent. A `[[Note#Heading]]` link clicked in one still lands on
+  the heading, because that goes through the link handler rather than the
+  palette.
+
+- **A half-typed tag in the search box matches nothing, briefly.** `#wo` on the
+  way to `#work` is a rule about a tag called `wo`, and tags match whole or
+  hierarchically — `#work` matches `#work/active`, but nothing matches `#wo`.
+  So the list empties for a keystroke or two and fills again on the `k`. The
+  alternative is a tag term that means something different in the search box
+  than it means in a Tag Folder, which is a worse trade than a flicker: the
+  whole point is that it is one language. The line under the box says which
+  tag it is currently filtering on throughout, so the empty list is at least
+  never unexplained.
+
 - **Quick capture writes where the setting says, not where you are looking.** A
   task captured from a note about something else still goes to the daily note or
   the Inbox; the sheet names the file, and changing it is a tap, but there is no
@@ -2293,22 +2565,68 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 
 ## Ideas worth considering next
 
-- **A graph or "related notes" view**, built on the backlink map that already
-  exists.
+- **Related notes** — prototyped, not shipped. The scoring is in
+  `core/related.ts` and nothing in the app imports it; `?probe=related` opens a
+  lab bench over your own vault, and `npx vite-node scripts/related.ts <folder>`
+  asks the same question of a folder of markdown.
+
+  It offers the notes you *didn't* link — what points at a note is already
+  answered by Linked mentions — scored on shared tags and shared citations,
+  each weighted by how rare it is. Reading its output over a vault found the
+  same mistake twice, and both are written into the constants: **filing is not
+  subject matter.** One shared bookkeeping tag related Reading list to Car
+  insurance to Roof survey; demanding corroboration left "Q1 budget is related
+  to Gift ideas, because both cite Working Agreements and both are tagged
+  #work". So a signal must be worth `log 8` — on at most one note in eight — to
+  count at all, and `log 20` to stand alone without a second opinion.
+
+  What is left to decide is whether the answers are *good*, which no test can
+  say. The number to look at is **how many notes get nothing**: it should be
+  most of them.
 - **Publish a note** as a read-only shared link, straight from the adapter.
 - **Encrypted vaults**, as above — a clean fit behind `RemoteAdapter`.
 - **Tag Folder rules over dates** — `created:<2026-01-01`, `due:overdue` — which
   the parser is already shaped to accept.
+
+**And one idea deliberately not taken.** The outline was going to live in the
+right rail, which would have become a switcher between *Today* (the calendar
+and tasks, as now) and *This note* (the outline and related notes). It was a
+good shape — two views on a real axis, your time or the note in front of you,
+so a view replaces a view and nothing gets denser. The palette was built first
+precisely to find out whether the rail was needed, and it wasn't: `@` and ⌘⇧O
+cost nothing on screen, work on a phone where a panel would not fit, and answer
+the same question. What the rail would have added is the outline *ambient*
+rather than summoned, which turned out to be a much smaller thing than it
+looked.
+
+It is written down rather than forgotten because the reasoning survives a
+change of mind: if related notes proves worth shipping, it will need a home,
+and that is a better argument for the rail than the outline ever was.
 
 ---
 
 ## Testing
 
 ```bash
-npm test                # 1036 unit + two-device sync + folder round-trip tests
-node scripts/smoke.mjs  # 751 checks in headless Chromium against dist/
+npm test                # 1189 unit + two-device sync + folder round-trip tests
+node scripts/smoke.mjs  # 806 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
+
+One thing here is deliberately not a test. The related-notes scoring can be
+checked for everything that would make a good ranking *impossible* — and is,
+in `core/related.test.ts` — but whether its answers are ones you would have
+given is not something an assertion can say. That question is asked by reading
+the output, either over your own vault at `?probe=related` or over a folder of
+markdown:
+
+```bash
+npx vite-node scripts/related.ts ~/Notes
+npx vite-node scripts/related.ts ~/Notes --note "Roof repairs"
+```
+
+Both print *why* each answer is on the list, which is the part that makes a bad
+one a bug report rather than a feeling.
 
 The smoke test covers what unit tests can't reach: live-preview rendering,
 autocomplete, clipboard paste with real image re-encoding, IndexedDB persistence

@@ -39,6 +39,7 @@ import {
   scopeLabel,
   searchKind,
   searchLabel,
+  searchQuery,
   searchSnippets,
   searching,
   sections,
@@ -53,6 +54,8 @@ import {
   smartFolderById,
   tasksForSmartFolder,
 } from '../core/folders'
+import { describeQuery } from '../core/tagquery'
+import { openTagFolderDialog } from './TagFolderDialog'
 import { TasksPanel } from './RightRail'
 import { canSummarise, openSummary } from './SummaryDialog'
 import { openAsk } from './AskDialog'
@@ -310,6 +313,63 @@ function DailyNoteRow({ day }: { day: number }) {
   )
 }
 
+/**
+ * What the rule half of the query is doing, and the offer to keep it.
+ *
+ * Present only when there is a rule in the box, which means it is invisible to
+ * every search that is only words — the overwhelming majority — and appears
+ * the moment somebody types a `#`. It says the rule back in the same plain
+ * English the Tag Folder dialog uses, because a rule you cannot read is a
+ * filter you have to take on trust, and it names the words separately so the
+ * two halves of the line are visibly two halves.
+ *
+ * A rule that does not parse says so here instead. Nothing is filtered by it
+ * in the meantime — the list is the plain text search it always was — so this
+ * line is the only thing that tells you the `#` you typed has not landed yet.
+ */
+function SearchRule() {
+  const { rule, node, text, error } = searchQuery.value
+  if (!rule) return null
+  const kind = searchKind.value
+
+  return (
+    <div class="search-rule" data-error={error ? '1' : '0'}>
+      <span class="search-rule-text">
+        {error ? (
+          error
+        ) : (
+          <>
+            {kind === 'tasks' ? 'Tasks ' : 'Notes '}
+            <strong>{describeQuery(node!)}</strong>
+            {text && <> · searching for “{text}”</>}
+          </>
+        )}
+      </span>
+      {node && (
+        /*
+         * A Tag Folder holds a rule and nothing else, so the words are not
+         * part of what gets saved. The button says "rule" rather than "search"
+         * for that reason, and the dialog it opens shows exactly what it is
+         * about to keep before anything is written.
+         */
+        <button
+          class="search-rule-save"
+          title={
+            text
+              ? `Save “${rule}” as a Tag Folder. The words “${text}” are a search, not part of the rule.`
+              : `Save “${rule}” as a Tag Folder`
+          }
+          onClick={() =>
+            openTagFolderDialog({ query: rule, shows: kind === 'tasks' ? 'tasks' : 'notes' })
+          }
+        >
+          Save rule…
+        </button>
+      )}
+    </div>
+  )
+}
+
 export function NoteList({ children }: { children?: preact.ComponentChildren }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const s = scope.value
@@ -409,6 +469,7 @@ export function NoteList({ children }: { children?: preact.ComponentChildren }) 
             </button>
           )}
         </div>
+        <SearchRule />
       </div>
 
       {compact && <MobileScopeBar />}

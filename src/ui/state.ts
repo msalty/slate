@@ -4,6 +4,8 @@ import { computed, signal } from '@preact/signals'
 import {
   contentNotes,
   getEntry,
+  getText,
+  isTemplatePath,
   notes,
   notesByDay,
   search,
@@ -14,7 +16,17 @@ import {
   type SearchHit,
 } from '../core/vault'
 import { dailyNotePath } from '../core/daily'
-import { notesForSmartFolder, showsTasks, smartFolderById } from '../core/folders'
+import { findHeading } from '../core/markdown'
+import {
+  contextFor,
+  notesForSmartFolder,
+  notesMatching,
+  showsTasks,
+  smartFolderById,
+  taskContextFor,
+} from '../core/folders'
+import { parseSearch, type SearchQuery } from '../core/searchquery'
+import { evaluateQuery } from '../core/tagquery'
 import { settings } from '../core/settings'
 import type { AppSettings, NoteIndexEntry, TaskItem } from '../core/types'
 import { matchesAll, searchTerms, startOfDay } from '../core/util'
@@ -193,8 +205,20 @@ let openForWriting: string | undefined
 let openCaret: number | undefined
 let takenCaret: number | undefined
 
-/** A fresh object also retriggers navigation within the already-open note. */
-export const taskNavigation = signal<{ path: string; line: number } | undefined>(undefined)
+/**
+ * "Open this note, and take me to this line in it."
+ *
+ * Two things ask: a task tapped in a list, and a heading picked from the
+ * outline. `align` is the only thing that differs between them — see
+ * `editor/navTarget.ts` for why a heading goes to the top and a task to the
+ * middle — so they share one message rather than having one signal each.
+ *
+ * A fresh object also retriggers navigation within the already-open note,
+ * which is the common case for an outline and never the case for a task.
+ */
+export const noteNavigation = signal<
+  { path: string; line: number; align: 'center' | 'start' } | undefined
+>(undefined)
 
 /**
  * Open a note from anywhere. On a phone this also pushes the editor over the
@@ -202,14 +226,51 @@ export const taskNavigation = signal<{ path: string; line: number } | undefined>
  * note rather than silently changing something off-screen.
  *
  * `editing` is for a note that was just created to be typed into: it opens with
- * the caret in it, because there is nothing in it to read yet.
+ * the caret in it, because there is nothing in it to read yet. `line` is the
+ * opposite request — somewhere to be shown, with the caret left where it was.
  */
-export function openNote(path: string, opts?: { editing?: boolean; caret?: number; taskLine?: number }) {
-  taskNavigation.value = opts?.taskLine === undefined ? undefined : { path, line: opts.taskLine }
+export function openNote(
+  path: string,
+  opts?: {
+    editing?: boolean
+    caret?: number
+    /** Zero-based line to be taken to, once the note is open. */
+    line?: number
+    align?: 'center' | 'start'
+  },
+) {
+  noteNavigation.value =
+    opts?.line === undefined ? undefined : { path, line: opts.line, align: opts.align ?? 'center' }
   openForWriting = opts?.editing ? path : undefined
   openCaret = opts?.editing ? opts.caret : undefined
   activePath.value = path
   if (layoutMode.value === 'compact') mobileEditorOpen.value = true
+}
+
+/**
+ * Where `[[Note#Costs]]` should land, as options for `openNote`.
+ *
+ * The anchor has been parsed and carried through renames since wikilinks were
+ * written, and until now nothing ever did anything with it: the link opened
+ * the note at the top, which is the same thing a link without an anchor does.
+ * A link that looks like it goes somewhere and doesn't is worse than one you
+ * could not write, so a heading that has gone says so rather than quietly
+ * behaving like a plain link.
+ *
+ * Nothing is said when there is no anchor at all, which is almost every link.
+ */
+export function anchorTarget(
+  path: string,
+  anchor: string | undefined,
+): { line: number; align: 'start' } | undefined {
+  if (!anchor) return undefined
+  const text = getText(path)
+  const heading = text ? findHeading(text, anchor) : undefined
+  if (!heading) {
+    notify(`No heading called “${anchor}” in that note`)
+    return undefined
+  }
+  return { line: heading.line, align: 'start' }
 }
 
 /** True once, for a note that was opened to be written in rather than read. */
@@ -377,17 +438,36 @@ export function searchLabel(k: SearchKind): string {
 }
 
 /**
+ * The query, split into the rule half and the words half.
+ *
+ * Only where a rule could mean something. The rule language asks questions
+ * about notes and about tasks — what they are tagged, which folder they are
+ * in, whether they are done — and has nothing to say about a file, a deleted
+ * note or an unresolved link. So in those three lists `#work` is five
+ * characters to look for, exactly as it was before the box learned any of
+ * this, and the same sentence covers both halves: search filters the kind of
+ * thing the list is showing.
+ */
+export const searchQuery = computed<SearchQuery>(() => {
+  const k = searchKind.value
+  if (k !== 'notes' && k !== 'tasks') return { text: query.value.trim(), rule: '' }
+  return parseSearch(query.value)
+})
+
+/**
  * The terms a list has to match, empty when nothing is being searched.
  *
  * Exported because the rows mark them: a result row shows the words you typed
- * where they appear, in the title and in the snippet.
+ * where they appear, in the title and in the snippet. The rule half is not
+ * among them — marking `#work` in a note body would be underlining the reason
+ * the note is in the list rather than the thing you were looking for.
  */
-export const queryTerms = computed(() => searchTerms(query.value))
+export const queryTerms = computed(() => searchTerms(searchQuery.value.text))
 
 const terms = queryTerms
 
-/** True while the search box has something in it. */
-export const searching = computed(() => terms.value.length > 0)
+/** True while the search box has something in it that narrows the list. */
+export const searching = computed(() => terms.value.length > 0 || !!searchQuery.value.node)
 
 /**
  * The ranked note hits for the current query, scored once.
@@ -397,9 +477,28 @@ export const searching = computed(() => terms.value.length > 0)
  * note body, which is cheap enough to do on a keystroke and not cheap enough
  * to do twice.
  */
-const noteHits = computed<SearchHit[]>(() =>
-  searchKind.value === 'notes' && searching.value ? search(query.value) : [],
-)
+/**
+ * How many notes the list is handed at once.
+ *
+ * Named because two things have to agree about it: the ranked search that
+ * produces the hits, and the rule that filters them afterwards. They did not.
+ */
+const LIST_LIMIT = 200
+
+const noteHits = computed<SearchHit[]>(() => {
+  if (searchKind.value !== 'notes' || !terms.value.length) return []
+  /*
+   * Uncapped when a rule is going to filter these, because the cut has to
+   * come *after* the filter and not before it. Ranking is what decides which
+   * two hundred you see, and a rule is not a ranking: a note matching both
+   * halves was invisible for the sole reason that two hundred notes matched
+   * the words better, which is an empty answer that looks like a confident one.
+   *
+   * It costs nothing to ask for. The scorer already reads and ranks every
+   * candidate; the limit only decides where the array is sliced.
+   */
+  return search(searchQuery.value.text, searchQuery.value.node ? Infinity : LIST_LIMIT)
+})
 
 /**
  * Path -> the bit of the note the query matched.
@@ -468,12 +567,52 @@ export function scopeLabel(s: Scope): string {
   }
 }
 
+/** How the list is ordered, for every path through it that isn't a ranking. */
+function comparator(
+  sort: AppSettings['sortBy'],
+): (a: NoteIndexEntry, b: NoteIndexEntry) => number {
+  return sort === 'title'
+    ? (a, b) => a.title.localeCompare(b.title)
+    : sort === 'ctime'
+      ? (a, b) => b.ctime - a.ctime
+      : (a, b) => b.mtime - a.mtime
+}
+
 /** The notes shown in the middle column, after scope and search are applied. */
 export const visibleNotes = computed<NoteIndexEntry[]>(() => {
   // A scope showing files, tasks or deleted things has its own list below and
   // no notes to contribute, searching or not.
   if (searchKind.value !== 'notes') return []
-  if (searching.value) return noteHits.value.map((h) => h.entry)
+  if (searching.value) {
+    const node = searchQuery.value.node
+    /*
+     * Words and a rule are two different jobs, in this order: the words rank,
+     * the rule filters what they ranked. A rule on its own has nothing to rank
+     * by, so those notes come back in the order the list was already in —
+     * which is also the order they go back to the moment the words are deleted.
+     */
+    if (!terms.value.length) {
+      return [...notesMatching(node!)].sort(comparator(settings.value.sortBy))
+    }
+    const hits = noteHits.value.map((h) => h.entry)
+    /*
+     * Cut here rather than in the search, so the cap is over what survived the
+     * rule rather than over what it was about to be applied to.
+     *
+     * And over the same notes the rule alone is about, which is the whole
+     * point of `notesMatching` above: a Tag Folder has never contained the
+     * template that describes it. The ranked text search deliberately reads
+     * templates — looking for `#meeting` and not finding the template that
+     * defines it would be worse than finding it — so without this the corpus
+     * changed underneath the rule, and typing a word after `#work` to narrow
+     * the answer widened it with templates `#work` had correctly left out.
+     */
+    return node
+      ? hits
+          .filter((n) => !isTemplatePath(n.path) && evaluateQuery(node, contextFor(n)))
+          .slice(0, LIST_LIMIT)
+      : hits
+  }
 
   const s = scope.value
   const sort = settings.value.sortBy
@@ -520,12 +659,7 @@ export const visibleNotes = computed<NoteIndexEntry[]>(() => {
       list = contentNotes.value
   }
 
-  const cmp =
-    sort === 'title'
-      ? (a: NoteIndexEntry, b: NoteIndexEntry) => a.title.localeCompare(b.title)
-      : sort === 'ctime'
-        ? (a: NoteIndexEntry, b: NoteIndexEntry) => b.ctime - a.ctime
-        : (a: NoteIndexEntry, b: NoteIndexEntry) => b.mtime - a.mtime
+  const cmp = comparator(sort)
 
   // Pinned notes float to the top, exactly like Apple Notes.
   return [...list].sort((a, b) => (a.pinned === b.pinned ? cmp(a, b) : a.pinned ? -1 : 1))
@@ -555,11 +689,20 @@ export const unlinkedList = computed(() =>
   ),
 )
 
-/** Tasks for the Tasks row, filtered the same way. */
+/**
+ * Tasks for the Tasks row, filtered the same way — plus the rule, which over
+ * tasks reaches `is:` and `due:` as well as the tags and folders it reaches
+ * over notes. A task carries its note's tags too, so `#home due:overdue` in
+ * the box is the same question a Tag Folder over tasks would have asked.
+ */
 export function matchingTasks(list: TaskItem[]): TaskItem[] {
-  if (!terms.value.length) return list
-  return list.filter((t) =>
-    matchesAll(`${t.text} ${getEntry(t.path)?.title ?? t.noteTitle}`, terms.value),
+  const node = searchQuery.value.node
+  const today = startOfDay(Date.now())
+  if (!terms.value.length && !node) return list
+  return list.filter(
+    (t) =>
+      matchesAll(`${t.text} ${getEntry(t.path)?.title ?? t.noteTitle}`, terms.value) &&
+      (!node || evaluateQuery(node, taskContextFor(t, today))),
   )
 }
 
