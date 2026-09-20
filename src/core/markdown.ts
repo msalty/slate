@@ -263,37 +263,81 @@ export function codeRegions(text: string): Array<[number, number]> {
  */
 function fencedRegions(text: string): Array<[number, number]> {
   const out: Array<[number, number]> = []
-  /*
-   * The whole run of fence characters, not the first three of it, because how
-   * long a fence is decides what can close it — and after any blockquote
-   * markers, because a fenced block quoted out of somewhere else is still a
-   * fenced block and its `#tag` is still a code sample.
-   */
-  const fence = /^([ \t>]*)(`{3,}|~{3,})([^\n]*)$/gm
-  let m: RegExpExecArray | null
   let openAt: number | null = null
   let openMark = ''
-  while ((m = fence.exec(text))) {
-    if (openAt === null) {
-      openAt = m.index
-      openMark = m[2]
-      continue
-    }
+  let openDepth = 0
+  let pos = 0
+
+  for (const line of text.split('\n')) {
+    const m = FENCE.exec(line)
+    const depth = quoteDepth(line)
+
     /*
-     * A fence closes one only if it is the same character, *at least as long*,
-     * and carries no language after it — all three of them CommonMark, and all
-     * three of them the reason a four-backtick block can quote a three-backtick
-     * one. Without the length, writing about markdown in markdown ended the
-     * block at the inner example, and everything below it — `# Not a heading`
-     * included — came back out as prose.
+     * A block ends where the thing holding it ends. An unclosed fence in the
+     * body of a note runs to the end of the note, which is CommonMark and is
+     * what somebody halfway through typing a code block should see; a fence
+     * inside a blockquote is held by the quote, and ends where the quote does
+     * — at a blank line, at an unquoted line, or at one quoted less deeply.
+     * Reading the second as the first is how one `> ```` with no closer hid
+     * every heading, tag and link below it from the index while the editor
+     * went on rendering them: the note looked fine and was not there.
+     *
+     * At the top level the depth is zero and nothing is ever below it, so the
+     * same comparison leaves that case exactly as it was.
      */
-    if (m[2][0] === openMark[0] && m[2].length >= openMark.length && !m[3].trim()) {
-      out.push([openAt, m.index + m[0].length])
+    if (openAt !== null && depth < openDepth) {
+      out.push([openAt, pos])
       openAt = null
     }
+
+    if (openAt === null) {
+      // The line that ended a quote can be the one that opens the next block.
+      if (m) {
+        openAt = pos
+        openMark = m[2]
+        openDepth = depth
+      }
+    } else if (m && closes(m, openMark)) {
+      out.push([openAt, pos + line.length])
+      openAt = null
+    }
+
+    pos += line.length + 1
   }
+
   if (openAt !== null) out.push([openAt, text.length])
   return out
+}
+
+/**
+ * The whole run of fence characters, not the first three of it, because how
+ * long a fence is decides what can close it — and after any blockquote
+ * markers, because a fenced block quoted out of somewhere else is still a
+ * fenced block and its `#tag` is still a code sample.
+ */
+const FENCE = /^([ \t>]*)(`{3,}|~{3,})(.*)$/
+
+/**
+ * Whether this fence line closes one opened with `openMark`.
+ *
+ * The same character, *at least as long*, and no language after it — all three
+ * of them CommonMark, and all three of them the reason a four-backtick block
+ * can quote a three-backtick one. Without the length, writing about markdown in
+ * markdown ended the block at the inner example, and everything below it —
+ * `# Not a heading` included — came back out as prose.
+ */
+function closes(m: RegExpExecArray, openMark: string): boolean {
+  return m[2][0] === openMark[0] && m[2].length >= openMark.length && !m[3].trim()
+}
+
+/** How many blockquotes deep a line is, counted off its own markers. */
+function quoteDepth(line: string): number {
+  let n = 0
+  for (const c of line) {
+    if (c === '>') n++
+    else if (c !== ' ' && c !== '\t') break
+  }
+  return n
 }
 
 export function inRegions(regions: Array<[number, number]>, i: number): boolean {

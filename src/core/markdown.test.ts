@@ -502,6 +502,51 @@ describe('headings', () => {
     expect(codeRegions(doc)).toHaveLength(1)
   })
 
+  /*
+   * And closes it when the quote does, which is a thing an unclosed fence at
+   * the top of a note does *not* do: that one runs to the end of the document
+   * on purpose. Once fences could be opened from inside a quote, an unclosed
+   * one there took the same road and swallowed the rest of the note — the
+   * editor still drew the heading and the prose below it, while the index
+   * returned no headings, no tags and no links for any of it. A quoted block
+   * lives in the quote and ends with it.
+   */
+  it('and closes it where the blockquote ends, not at the end of the note', () => {
+    const doc = ['> ```', '> sample', '', '# Real heading', '', '#work [[Other]]', ''].join('\n')
+    expect(scanHeadings(doc).map((h) => h.text)).toEqual(['Real heading'])
+    expect(scanTags(doc)).toEqual(['work'])
+    expect(scanWikiLinks(doc).map((l) => l.target)).toEqual(['Other'])
+  })
+
+  it('and where the quote stops being quoted at all', () => {
+    // No blank line to end it — the next line simply is not quoted, and a code
+    // block is the one thing a blockquote will not carry on into lazily.
+    const doc = ['> ```', '> sample', 'back to prose #work', ''].join('\n')
+    expect(scanTags(doc)).toEqual(['work'])
+  })
+
+  /*
+   * Looks wrong and is not, which is why it is written down. The quote ends at
+   * the unquoted line, taking its code block with it — and that line is itself
+   * a fence with no closer, so it opens a top-level block that runs to the end
+   * of the note. Checked against the parser the editor runs: it reads the same
+   * two blocks, so the note that gets indexed is the note that gets drawn.
+   */
+  it('lets an unquoted fence end the quote and open a block of its own', () => {
+    const doc = ['> ```', '> x', '```', 'after #tag', ''].join('\n')
+    expect(scanTags(doc)).toEqual([])
+    expect(codeRegions(doc)).toEqual([
+      [0, '> ```\n> x\n'.length],
+      ['> ```\n> x\n'.length, doc.length],
+    ])
+  })
+
+  it('but an unclosed fence at the top level still runs to the end', () => {
+    const doc = ['```', 'sample', '', '# Not a heading', '#nottag', ''].join('\n')
+    expect(scanHeadings(doc)).toEqual([])
+    expect(scanTags(doc)).toEqual([])
+  })
+
   it('leaves out the four things that look like headings and are not', () => {
     const text = scanHeadings(note).map((h) => h.text)
     // A YAML comment, a fenced `# install`, a `#tag` on its own line, and a

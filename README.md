@@ -19,7 +19,7 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 1169 unit, two-device sync and folder round-trip tests
+npm test               # 1173 unit, two-device sync and folder round-trip tests
 node scripts/smoke.mjs # 806-check browser smoke test against dist/
 ```
 
@@ -526,7 +526,14 @@ closing fence carries no language — which is how a ` ````markdown ` block hold
 a ` ``` ` example, and the reason writing about markdown in markdown does not
 end the block at the first line of the sample and read the rest of it as
 headings. A fence quoted inside a `>` opens one too, so a code sample pasted
-into a quote does not hand the note the `#tags` written in it.
+into a quote does not hand the note the `#tags` written in it — and *closes*
+where the quote does, at a blank line or an unquoted one, because a block ends
+with the thing holding it. An unclosed fence in the body of a note is the other
+case and runs to the end of the note, which is what somebody halfway through
+typing a code block should see; reading a quoted one that way let a single
+`> ``` ` hide every heading, tag and link below it from the index while the
+editor went on rendering them, so the note looked perfectly normal and was not
+there.
 
 The vault index reads all this off the lines, because it runs over every note
 you have and there is no editor to ask. An **indented** code block is the one
@@ -2551,7 +2558,7 @@ and that is a better argument for the rail than the outline ever was.
 ## Testing
 
 ```bash
-npm test                # 1169 unit + two-device sync + folder round-trip tests
+npm test                # 1173 unit + two-device sync + folder round-trip tests
 node scripts/smoke.mjs  # 806 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
