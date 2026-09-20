@@ -346,6 +346,22 @@ function buildEntry(f: VaultFile): NoteIndexEntry | undefined {
   if (Array.isArray(fmTags)) for (const t of fmTags) tags.add(String(t).replace(/^#/, ''))
   else if (typeof fmTags === 'string' && fmTags) tags.add(fmTags.replace(/^#/, ''))
 
+  /*
+   * Other names this note answers to. Read the same way tags are — a bare
+   * string is one alias, a list is several — because frontmatter somebody
+   * typed by hand is written both ways and neither is wrong.
+   */
+  const aliases: string[] = []
+  const fmAliases = fm.data.aliases
+  if (Array.isArray(fmAliases)) {
+    for (const a of fmAliases) {
+      const s = String(a).trim()
+      if (s) aliases.push(s)
+    }
+  } else if (typeof fmAliases === 'string' && fmAliases.trim()) {
+    aliases.push(fmAliases.trim())
+  }
+
   const links: string[] = []
   const embeds: string[] = []
   for (const l of scanWikiLinks(text)) {
@@ -390,6 +406,7 @@ function buildEntry(f: VaultFile): NoteIndexEntry | undefined {
     links,
     embeds,
     pinned: fm.data.pinned === true,
+    aliases,
     hasTasks: raw.length > 0,
     tasks: raw.map((t) => ({
       id: `${f.path}:${t.line}`,
@@ -573,6 +590,22 @@ export const titleIndex = computed(() => {
     const k = e.title.toLowerCase()
     // First writer wins so link targets stay stable when titles collide.
     if (!m.has(k)) m.set(k, e.path)
+  }
+  /*
+   * Aliases afterwards, in a pass of their own, so that every note's real name
+   * is already claimed before any of them are offered.
+   *
+   * One pass would let a note whose `aliases:` happens to name *another* note
+   * take that name, purely by being the one the walk reached first — and the
+   * note it stole it from is the one with it written on the file. A name on
+   * disk beats a name in a list, always; among aliases the same first-writer
+   * rule applies as above.
+   */
+  for (const e of notes.value) {
+    for (const a of e.aliases) {
+      const k = a.trim().toLowerCase()
+      if (k && !m.has(k)) m.set(k, e.path)
+    }
   }
   return m
 })

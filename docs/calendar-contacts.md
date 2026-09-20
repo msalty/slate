@@ -226,7 +226,7 @@ parsed there — no second pass over the text:
 event?: { start: number; end: number; allDay: boolean; tz?: string }
 /** The provider slug from `source:`, if any. Externally owned when set. */
 source?: string
-/** Extra link targets from `aliases:`, lowercased. */
+/** Other names this note answers to, from `aliases:`, as written. */
 aliases: string[]
 ```
 
