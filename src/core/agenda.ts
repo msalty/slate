@@ -78,6 +78,26 @@ export function eventZoneLabel(ev: NoteEvent): string {
   })} ${city}`
 }
 
+const STAMP_RE = /^\d{4}-\d{2}-\d{2}(?:[ T]\d{4})?\s+/
+
+/**
+ * What an event is called, on a list that already knows the day.
+ *
+ * The date and time live in the *filename* because a note's title is its
+ * filename and two standups on one day would otherwise be one linkable note
+ * and one unreachable one. None of that is worth reading twice: the agenda
+ * sits under a heading naming the day and puts the clock in its own column, so
+ * a row reading "2026-09-21 0930 Standup" at 09:30 on the 21st is saying the
+ * same thing three times.
+ *
+ * Only the stamp comes off, and only when something is left after it — a note
+ * genuinely called `2026-09-21` keeps its name rather than losing it.
+ */
+export function eventTitle(title: string): string {
+  const stripped = title.replace(STAMP_RE, '')
+  return stripped || title
+}
+
 /** Whether an event has already finished, for dimming a row you have done. */
 export function eventIsPast(ev: NoteEvent, now = Date.now()): boolean {
   return !ev.allDay && ev.end < now

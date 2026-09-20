@@ -16,7 +16,7 @@ import {
   tasks,
   toggleTask,
 } from '../core/vault'
-import { eventIsPast, eventTimeLabel, eventZoneLabel } from '../core/agenda'
+import { eventIsPast, eventTimeLabel, eventTitle, eventZoneLabel } from '../core/agenda'
 import type { TaskItem } from '../core/types'
 import { Fragment } from 'preact'
 import { dueByToday, groupTasks, tasksDueOn } from '../core/taskgroups'
@@ -40,6 +40,7 @@ import {
 } from './state'
 import { DueChip } from './DueChip'
 import { openQuickAdd } from './QuickAdd'
+import { openNewEvent } from './newEvent'
 import { Highlight } from './Highlight'
 import {
   IconCalendar,
@@ -220,6 +221,14 @@ export function AgendaPanel({ big = false }: { big?: boolean } = {}) {
         Agenda
         <span class="spacer" />
         {events.length > 0 && <span>{events.length}</span>}
+        <button
+          class="rail-group-btn"
+          onClick={() => openNewEvent(day)}
+          aria-label="New event"
+          title="New event on this day"
+        >
+          <IconPlus size={14} />
+        </button>
       </h3>
       {events.length === 0 ? (
         <p class="rail-empty">Nothing scheduled.</p>
@@ -235,10 +244,8 @@ export function AgendaPanel({ big = false }: { big?: boolean } = {}) {
               onClick={() => openNote(e.path)}
             >
               <span class="agenda-when">{eventTimeLabel(ev, day)}</span>
-              <span class="agenda-what">
-                {e.title}
-                {zone && <em class="agenda-zone">{zone}</em>}
-              </span>
+              <span class="agenda-what">{eventTitle(e.title)}</span>
+              {zone && <em class="agenda-zone">{zone}</em>}
             </button>
           )
         })

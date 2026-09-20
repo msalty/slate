@@ -89,3 +89,22 @@ describe('what is already over', () => {
     expect(eventIsPast(e, e.end + 86_400_000)).toBe(false)
   })
 })
+
+describe('what a row is called', () => {
+  it('drops the date and time the filename carries for uniqueness', async () => {
+    const { eventTitle } = await import('./agenda')
+    expect(eventTitle('2026-09-21 0930 Standup')).toBe('Standup')
+    expect(eventTitle('2026-09-21 Office closed')).toBe('Office closed')
+  })
+
+  it('leaves a name alone when there is no stamp on it', async () => {
+    const { eventTitle } = await import('./agenda')
+    expect(eventTitle('Standup')).toBe('Standup')
+    expect(eventTitle('Q3 2026 planning')).toBe('Q3 2026 planning')
+  })
+
+  it('keeps a note that is genuinely called nothing but a date', async () => {
+    const { eventTitle } = await import('./agenda')
+    expect(eventTitle('2026-09-21')).toBe('2026-09-21')
+  })
+})

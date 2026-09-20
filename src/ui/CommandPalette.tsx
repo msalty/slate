@@ -53,6 +53,7 @@ import { matchesAll, relativeTime, searchTerms, startOfDay } from '../core/util'
 import { newNoteInFolder } from './EditorPane'
 import { canShareFiles, shareNote } from './shareNote'
 import { openQuickAdd } from './QuickAdd'
+import { openNewEvent } from './newEvent'
 import { canTransform, openTransform } from './TransformDialog'
 import { canSummarise, openSummary } from './SummaryDialog'
 import { askAboutNote, openAsk } from './AskDialog'
@@ -252,6 +253,17 @@ export function CommandPalette() {
             },
           ] satisfies Cmd[])
         : []),
+      {
+        id: 'new-event',
+        label:
+          day !== undefined && day !== startOfDay(Date.now())
+            ? `New event on ${new Date(day).toLocaleDateString(undefined, {
+                month: 'long',
+                day: 'numeric',
+              })}…`
+            : 'New event…',
+        run: () => openNewEvent(),
+      },
       {
         id: 'daily',
         label: "Open today's note",

@@ -6690,6 +6690,11 @@ try {
     rows.join(' | '),
   )
   check(
+    'reading as its name, without the date stamp its filename carries',
+    !rows.join(' | ').includes(isoDay(1)),
+    rows.join(' | '),
+  )
+  check(
     'and the whole-day one is read first, before anything with a clock on it',
     rows.length === 2 && rows[0].includes('Office closed'),
     rows.join(' | '),
@@ -6743,6 +6748,48 @@ try {
     (await dayList().count()) > 0,
     (await dayList().allInnerTexts()).join(' | '),
   )
+
+  /*
+   * Making one. The `+` on the agenda asks for a name and nothing else — the
+   * day is the one on screen and the time is the next half hour, both of them
+   * easier to change in the note than to get right in a dialog before the
+   * thing is even called anything.
+   */
+  const madeOn = await showDay(2)
+  await madeOn.click()
+  await page.waitForTimeout(400)
+  await page.locator('.rail .agenda [aria-label="New event"]').click()
+  await page.waitForTimeout(350)
+  await page.locator('.prompt-input').fill('Budget call')
+  await page.keyboard.press('Enter')
+  await page.waitForTimeout(800)
+  check(
+    'the new event opens ready to be written in',
+    (await page.locator('.editor-title-input').inputValue()).includes('Budget call'),
+    await page.locator('.editor-title-input').inputValue(),
+  )
+  check(
+    'named for the day and the time, so two on one day are two notes',
+    /^\d{4}-\d{2}-\d{2} \d{4} Budget call$/.test(
+      await page.locator('.editor-title-input').inputValue(),
+    ),
+    await page.locator('.editor-title-input').inputValue(),
+  )
+  check(
+    'with a start and an end already in it',
+    (await page.locator('.cm-content').innerText()).includes(`start: ${isoDay(2)}T`),
+    (await page.locator('.cm-content').innerText()).split('\n').slice(0, 3).join(' / '),
+  )
+  check(
+    'and it is on the agenda it was made from',
+    (await agenda.locator('.agenda-row').allInnerTexts()).join(' | ').includes('Budget call'),
+    (await agenda.locator('.agenda-row').allInnerTexts()).join(' | '),
+  )
+
+  // Back to the whole vault: clicking a day filtered the list, and what comes
+  // after this looks for a note by name.
+  await page.locator('.side-row:has-text("All Notes")').first().click()
+  await page.waitForTimeout(400)
 
   /* ---- copying a table back out -----------------------------------------
    * The return trip. Only the HTML flavour is added: spreadsheets read it in

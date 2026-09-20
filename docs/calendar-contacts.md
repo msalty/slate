@@ -109,7 +109,9 @@ Short description, if any.
 | `uid` | string | The source system's identity key. Helper-owned; Slate only round-trips it. |
 
 **Filenames.** `Calendar/2026/09/2026-09-21 0930 Design review.md`; all-day
-events omit the time. Year/month subfolders keep any one directory browsable.
+events omit the time. Year/month subfolders keep any one directory browsable,
+and a template assigned to `Calendar/` reaches them — the walk goes up within
+the calendar tree, because `Calendar/2026/09` is not a folder anybody chose.
 
 The time is in the filename because `titleIndex` is first-writer-wins on
 collision (`src/core/vault.ts:574`) — two notes both titled "Standup" on the
@@ -327,6 +329,9 @@ shape:
 - Timed events in a list, `09:30` in a fixed-width gutter, title beside it.
   **Not** a time grid: a grid needs vertical space the rail has not got, and
   this is a surface for reading a day, not for scheduling one.
+- A row reads as the event's *name*: the leading `2026-09-21 0930` the filename
+  carries for uniqueness is stripped, since the panel is under a heading naming
+  the day and puts the clock in its own column already.
 - Zoned events annotate with their own zone.
 - A small provider mark on external events; nothing on your own.
 - Empty state: "Nothing scheduled.", matching `rail-empty` elsewhere.

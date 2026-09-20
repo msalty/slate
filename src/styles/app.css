@@ -1876,11 +1876,16 @@ button.property-kind:hover {
 .agenda-row[data-past='1'] {
   opacity: 0.5;
 }
+/*
+ * Wide enough for "07:00 AM" on one line. A time that wraps takes the row with
+ * it and the column stops being a column, which is the whole reason it is one.
+ */
 .agenda-when {
   flex: none;
-  width: 52px;
+  width: 64px;
   font-variant-numeric: tabular-nums;
   font-size: 12px;
+  white-space: nowrap;
   color: var(--text-faint);
 }
 .agenda-what {
@@ -1890,11 +1895,17 @@ button.property-kind:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* The meeting's own clock, where it disagrees with the reader's. */
+/*
+ * The meeting's own clock, where it disagrees with the reader's — beside the
+ * title rather than inside it, so a long name ellipsises against the zone
+ * instead of swallowing it. It is the half of the row you cannot infer.
+ */
 .agenda-zone {
+  flex: none;
   margin-left: 6px;
   font-size: 11.5px;
   font-style: normal;
+  white-space: nowrap;
   color: var(--text-faint);
 }
 .agenda-big .agenda-row {
@@ -1902,7 +1913,7 @@ button.property-kind:hover {
   padding: 8px 6px;
 }
 .agenda-big .agenda-when {
-  width: 64px;
+  width: 76px;
   font-size: 13.5px;
 }
 
