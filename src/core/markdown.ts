@@ -279,8 +279,11 @@ function fencedRegions(text: string): Array<[number, number]> {
 
   for (const line of text.split('\n')) {
     let m = FENCE.exec(line)
-    let fenceAt = pos
+    // At the backticks, not at the line: the markers before them belong to the
+    // quote or the list that holds the block, not to the block.
+    let fenceAt = m ? pos + m[1].length : pos
     const depth = quoteDepth(line)
+    let fenceDepth = depth
     const indent = indentColumns(INDENT.exec(line)![0])
 
     /*
@@ -311,7 +314,8 @@ function fencedRegions(text: string): Array<[number, number]> {
        * Which list item this line is in, kept only while no fence is open —
        * inside one the lines are code and say nothing about the note's shape.
        * A line steps back out of every item whose content starts further in
-       * than the line does, and a marker opens one that starts after it.
+       * than the line does, and each marker on it opens one that starts after
+       * that marker.
        */
       if (line.trim()) {
         /*
@@ -327,25 +331,44 @@ function fencedRegions(text: string): Array<[number, number]> {
           items.pop()
         }
 
-        const li = LIST_ITEM.exec(line)
-        if (li) {
-          items.push({ depth, column: contentColumn(li) })
-          /*
-           * `- ``` ` — a fence as the item's first content, which is where
-           * people put one when the whole item is a code sample. The line does
-           * not start with a fence, it starts with a marker, so the scan saw
-           * no block at all and handed the sample's tags and links to the
-           * index as the note's own.
-           *
-           * The region starts at the fence rather than at the marker, since
-           * the marker is the list's and not the block's.
-           */
-          if (!m) {
-            const after = FENCE.exec(line.slice(li[0].length))
-            if (after) {
-              m = after
-              fenceAt = pos + li[0].length
-            }
+        /*
+         * Every container the line opens for itself, in the order it opens
+         * them. One line can open several — `- - ``` ` is two list items and
+         * `- > ``` ` is an item holding a quote — and each moves where the
+         * content after it begins, so they have to be walked rather than
+         * counted. Reading one and stopping left the rest of the line looking
+         * like prose, which for a fence meant no block at all: the sample's
+         * tags and links went into the index as the note's own.
+         */
+        let at = 0
+        let held = 0
+        let column = 0
+        for (;;) {
+          const li = LIST_ITEM.exec(line.slice(at))
+          if (!li) break
+          // A quote opened here restarts the column inside itself; without one
+          // the marker is measured from the content it was written in.
+          const quotes = quoteDepth(line.slice(at))
+          held += quotes
+          column = contentColumn(li, quotes ? 0 : column)
+          items.push({ depth: held, column })
+          at += li[0].length
+        }
+
+        /*
+         * `- ``` ` — a fence as the item's first content, which is where
+         * people put one when the whole item is a code sample. The region
+         * starts at the fence rather than at the marker, since the marker is
+         * the list's and not the block's.
+         */
+        if (!m && at) {
+          const after = FENCE.exec(line.slice(at))
+          if (after) {
+            m = after
+            // Past the markers to the backticks: a `>` between them belongs to
+            // the quote, the same way the `- ` belongs to the list.
+            fenceAt = pos + at + after[1].length
+            fenceDepth = held + quoteDepth(line.slice(at))
           }
         }
       }
@@ -354,9 +377,9 @@ function fencedRegions(text: string): Array<[number, number]> {
       if (m) {
         openAt = fenceAt
         openMark = m[2]
-        openDepth = depth
-        const held = items[items.length - 1]
-        openContainer = held && held.depth === depth ? held.column : 0
+        openDepth = fenceDepth
+        const inner = items[items.length - 1]
+        openContainer = inner && inner.depth === fenceDepth ? inner.column : 0
       }
     } else if (
       /*
@@ -430,9 +453,13 @@ const LIST_ITEM = /^([ \t>]*)([-*+]|\d{1,9}[.)])([ \t]+|$)/
  * The marker, then the gap after it — except that a gap of five columns or
  * more is indented code inside the item rather than a wider marker, and the
  * content begins one column after the marker instead.
+ *
+ * `base` is the column the marker itself was written at, for the second and
+ * later markers on one line: `- - x` is an item inside an item, and the inner
+ * one starts where the outer one's content does rather than at the margin.
  */
-function contentColumn(li: RegExpExecArray): number {
-  const afterMark = indentColumns(li[1]) + li[2].length
+function contentColumn(li: RegExpExecArray, base = 0): number {
+  const afterMark = base + indentColumns(li[1]) + li[2].length
   const gap = advance(afterMark, li[3])
   return gap - afterMark >= 5 || !li[3] ? afterMark + 1 : gap
 }

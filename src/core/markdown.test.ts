@@ -535,8 +535,10 @@ describe('headings', () => {
   it('lets an unquoted fence end the quote and open a block of its own', () => {
     const doc = ['> ```', '> x', '```', 'after #tag', ''].join('\n')
     expect(scanTags(doc)).toEqual([])
+    // Each region starts at its fence rather than at the line, since the `> `
+    // in front of the first one belongs to the quote and not to the block.
     expect(codeRegions(doc)).toEqual([
-      [0, '> ```\n> x\n'.length],
+      ['> '.length, '> ```\n> x\n'.length],
       ['> ```\n> x\n'.length, doc.length],
     ])
   })
@@ -653,6 +655,39 @@ describe('headings', () => {
   })
 
   /*
+   * One line can open more than one container — `- - ``` ` is two items deep
+   * and `- > ``` ` is an item holding a quote — and each moves where the
+   * content after it begins. Reading one and stopping left the rest of the
+   * line looking like prose, so the fence after it opened nothing and the
+   * sample's tags and links were indexed as the note's own.
+   *
+   * Every one of these is checked against the editor's parser as well, for
+   * each of the ways two and three containers can be stacked.
+   */
+  it('walks every container the line opens, not only the first', () => {
+    const cases: Array<[string, string]> = [
+      ['- - ```', '    '],
+      ['- - - ```', '      '],
+      ['- 1. ```', '     '],
+      ['* > ```', '  > '],
+      ['> - - ```', '>     '],
+    ]
+    for (const [open, carry] of cases) {
+      const doc = [open, `${carry}#nottag [[NotLink]]`, `${carry}\`\`\``, '', '#real', ''].join('\n')
+      expect(scanTags(doc)).toEqual(['real'])
+      expect(scanWikiLinks(doc)).toEqual([])
+    }
+  })
+
+  it('and takes the depth of a quote opened on that same line', () => {
+    // `- > ``` ` is quoted, so the block ends where the quote does — at the
+    // unquoted line — rather than carrying on to the end of the note.
+    const doc = ['- > ```', '  > #nottag', '', '#real [[Other]]', ''].join('\n')
+    expect(scanTags(doc)).toEqual(['real'])
+    expect(scanWikiLinks(doc).map((l) => l.target)).toEqual(['Other'])
+  })
+
+  /*
    * Lists live inside their blockquote. One written in a quote used to leave
    * its column standing after the quote ended, so the next fence in the note —
    * quoted by nobody — was measured against a list it was not in, and closed
@@ -663,7 +698,7 @@ describe('headings', () => {
     expect(scanTags(doc)).toEqual([])
     // Unclosed and at the top level, so it runs on — which is the answer for a
     // fence at the margin, and was not the answer while it inherited column 2.
-    expect(codeRegions(doc)).toEqual([['> - quoted item\n\n'.length, doc.length]])
+    expect(codeRegions(doc)).toEqual([['> - quoted item\n\n  '.length, doc.length]])
   })
 
   it('but keeps one written inside a quote while the quote lasts', () => {
