@@ -577,6 +577,55 @@ describe('headings', () => {
   })
 
   /*
+   * An opener gets the same three columns its closer does, and for the same
+   * reason: four columns past the block it sits in is not a fence at all, it
+   * is a line of indented code that happens to be backticks. Opening one there
+   * left a block nothing could close, which ran to the end of the note and
+   * took every heading, tag and link below it out of the index — a sample
+   * indented one column too far, and the note was gone.
+   */
+  it('does not open a fence four columns past the block it is in', () => {
+    for (const open of ['    ```', '\t```', '        ```']) {
+      const doc = ['text', '', open, `${open.replace(/`+$/, '')}sample`, '', '# Real', '', '#work [[Other]]', ''].join('\n')
+      expect(scanHeadings(doc).map((h) => h.text)).toEqual(['Real'])
+      expect(scanTags(doc)).toEqual(['work'])
+      expect(scanWikiLinks(doc).map((l) => l.target)).toEqual(['Other'])
+    }
+  })
+
+  /*
+   * And the columns are counted to where the backticks actually are, which a
+   * wide gap after a marker moves without moving the item's content: five
+   * columns or more of it is indented code inside the item, so `-     ``` `
+   * is a line of code and not a fence. Measuring from the item's column
+   * instead opened a block there and hid what came after it.
+   */
+  it('nor one a wide gap after the marker has pushed too far in', () => {
+    for (const gap of ['     ', '      ']) {
+      /*
+       * Nothing opens, so what follows is read as prose and its `#insample` is
+       * indexed — the gap this scan documents, and the direction it is meant
+       * to fail in. What it must not do is open a block, which swallowed that
+       * line instead.
+       */
+      const doc = [`-${gap}\`\`\``, `${' '.repeat(gap.length + 1)}#insample`, '', '#work', ''].join('\n')
+      expect(scanTags(doc)).toEqual(['insample', 'work'])
+    }
+    // Four columns of gap is still the item's content, and still a fence.
+    const ok = ['-    ```', '     #nottag', '     ```', '', '#real', ''].join('\n')
+    expect(scanTags(ok)).toEqual(['real'])
+  })
+
+  it('but three columns is still a fence, and so is one at its list’s column', () => {
+    const indented = ['text', '', '   ```', '   #nottag', '   ```', '', '#real', ''].join('\n')
+    expect(scanTags(indented)).toEqual(['real'])
+    // Four columns from the margin and none from its own item, which is the
+    // case an allowance measured from the margin would have refused.
+    const nested = ['- a', '  - b', '    ```', '    #nottag', '    ```', '', '#real', ''].join('\n')
+    expect(scanTags(nested)).toEqual(['real'])
+  })
+
+  /*
    * A closing fence may be indented up to three columns past its opener, and a
    * line indented further is a line of the code. Relative to the opener, never
    * from the margin: a fence inside a nested list starts four columns in or

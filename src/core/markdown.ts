@@ -284,6 +284,7 @@ function fencedRegions(text: string): Array<[number, number]> {
     let fenceAt = m ? pos + m[1].length : pos
     const depth = quoteDepth(line)
     let fenceDepth = depth
+    let fenceColumn = m ? indentColumns(m[1]) : 0
     const indent = indentColumns(INDENT.exec(line)![0])
 
     /*
@@ -343,6 +344,7 @@ function fencedRegions(text: string): Array<[number, number]> {
         let at = 0
         let held = 0
         let column = 0
+        let cursor = 0
         for (;;) {
           const li = LIST_ITEM.exec(line.slice(at))
           if (!li) break
@@ -350,7 +352,17 @@ function fencedRegions(text: string): Array<[number, number]> {
           // the marker is measured from the content it was written in.
           const quotes = quoteDepth(line.slice(at))
           held += quotes
-          column = contentColumn(li, quotes ? 0 : column)
+          const base = quotes ? 0 : cursor
+          column = contentColumn(li, base)
+          /*
+           * Where the line's text carries on, which is not always where the
+           * item's content begins: a gap of five columns or more puts the
+           * item's content one column after the marker and leaves the rest of
+           * the gap as indented code inside it. Measuring a fence from the
+           * item's column rather than from here opened a block on `-     ``` `,
+           * which the parser reads as indented code, and hid what followed.
+           */
+          cursor = advance(base + indentColumns(li[1]) + li[2].length, li[3])
           items.push({ depth: held, column })
           at += li[0].length
         }
@@ -368,18 +380,34 @@ function fencedRegions(text: string): Array<[number, number]> {
             // Past the markers to the backticks: a `>` between them belongs to
             // the quote, the same way the `- ` belongs to the list.
             fenceAt = pos + at + after[1].length
-            fenceDepth = held + quoteDepth(line.slice(at))
+            const quotes = quoteDepth(line.slice(at))
+            fenceDepth = held + quotes
+            fenceColumn = (quotes ? 0 : cursor) + indentColumns(after[1])
           }
         }
       }
 
       // The line that ended a quote can be the one that opens the next block.
-      if (m) {
+      const inner = items[items.length - 1]
+      const container = inner && inner.depth === fenceDepth ? inner.column : 0
+      /*
+       * Three columns past the block it sits in and no further, the same
+       * allowance its closer gets — because four columns in is not a fence at
+       * all, it is a line of indented code that happens to be backticks. The
+       * scan opened one there and, finding nothing able to close it, ran to the
+       * end of the note: a sample indented one column too far took every
+       * heading, tag and link below it out of the index.
+       *
+       * What is left is the indented block itself, whose contents this still
+       * reads as prose — the gap this scan documents, and the mild half of it.
+       * A tag written in such a sample is indexed as the note's own, where
+       * before the whole rest of the note went missing.
+       */
+      if (m && fenceColumn - container <= 3) {
         openAt = fenceAt
         openMark = m[2]
         openDepth = fenceDepth
-        const inner = items[items.length - 1]
-        openContainer = inner && inner.depth === fenceDepth ? inner.column : 0
+        openContainer = container
       }
     } else if (
       /*

@@ -19,7 +19,7 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 1186 unit, two-device sync and folder round-trip tests
+npm test               # 1189 unit, two-device sync and folder round-trip tests
 node scripts/smoke.mjs # 806-check browser smoke test against dist/
 ```
 
@@ -574,12 +574,24 @@ people write inside lists to catch the few written in an indented sample. The
 editor has no such problem — it asks its own parser, so an indented block is a
 code block to everything the editor does.
 
-Everything else it gets right, and that is checked rather than asserted: every
-opener indentation against every closer indentation — at the top level, inside
-a list, and after a quoted list — along with every way up to three containers
-can be stacked in front of a fence, all compared position by position against
-the parser the editor runs. The only shapes the two read differently are the
-indented blocks above.
+It does know one thing about them, though: an opener four columns past the
+block it sits in is *not a fence*, so it opens nothing. That allowance is
+measured from the container like everything else here, which is what keeps a
+fence written in a list — four columns from the margin, none from its own item
+— working. Without it, a sample indented one column too far opened a block
+nothing could close, and the block ran to the end of the note and took every
+heading, tag and link below it out of the index.
+
+That leaves the gap pointing one way only, which is the point of stating it.
+The contents of an indented block are read as prose, so a `#tag` written in
+one is indexed as the note's own. Nothing the editor shows as prose is hidden
+from search — and that is checked rather than asserted: every opener
+indentation against every closer indentation, at the top level, inside a list
+and after a quoted list, along with every way up to three containers can be
+stacked in front of a fence and every width of gap between a marker and one,
+all compared position by position against the parser the editor runs. Of those
+313 shapes, 215 agree exactly, 98 read an indented block as prose, and none
+hides anything.
 
 **A note names itself, if you let it.** A note made with *New note here* — and
 every note started from a template — is called `Untitled`, so typing a heading
@@ -2596,7 +2608,7 @@ and that is a better argument for the rail than the outline ever was.
 ## Testing
 
 ```bash
-npm test                # 1186 unit + two-device sync + folder round-trip tests
+npm test                # 1189 unit + two-device sync + folder round-trip tests
 node scripts/smoke.mjs  # 806 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
