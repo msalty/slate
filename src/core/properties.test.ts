@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { parseFrontmatter } from './markdown'
+import { eventFor, parseFrontmatter } from './markdown'
 import {
   addProperty,
   coerceValue,
+  hasSeconds,
   readProperties,
   removeProperty,
   renameProperty,
@@ -186,5 +187,78 @@ describe('keys', () => {
 
   it('splits a typed list', () => {
     expect(splitList(' a , ,b ')).toEqual(['a', 'b'])
+  })
+})
+
+/**
+ * Times in the properties form.
+ *
+ * `start:` and `end:` are written in a format nobody should have to remember,
+ * so the form hands over a picker. The rules worth pinning are the two that
+ * protect the file from the widget: a value the field cannot hold is left as
+ * text rather than blanked, and switching kinds keeps the day.
+ */
+describe('date and time properties', () => {
+  const kindOfKey = (text: string, key: string) =>
+    readProperties(text).find((p) => p.key === key)?.kind
+
+  it('reads a written-out time as a time', () => {
+    expect(kindOfKey('---\nstart: 2026-09-21T09:30\n---\n', 'start')).toBe('datetime')
+    expect(kindOfKey('---\nstart: 2026-09-21T09:30:15\n---\n', 'start')).toBe('datetime')
+  })
+
+  it('still reads a bare date as a date, which is what an all-day event is', () => {
+    expect(kindOfKey('---\nstart: 2026-09-21\n---\n', 'start')).toBe('date')
+  })
+
+  it('offers a time for an empty start or end, which has nothing to go on', () => {
+    expect(kindOfKey('---\nstart:\n---\n', 'start')).toBe('datetime')
+    expect(kindOfKey('---\nend:\n---\n', 'end')).toBe('datetime')
+    expect(kindOfKey('---\ndate:\n---\n', 'date')).toBe('date')
+  })
+
+  it('but the value always wins once there is one', () => {
+    // Somebody's novel. `start: chapter three` is prose, not a broken date.
+    expect(kindOfKey('---\nstart: chapter three\n---\n', 'start')).toBe('text')
+    expect(kindOfKey('---\nstart: 12\n---\n', 'start')).toBe('number')
+  })
+
+  it('leaves a key the app knows nothing about alone', () => {
+    expect(kindOfKey('---\nnotes:\n---\n', 'notes')).toBe('text')
+  })
+
+  it('keeps a space-separated time as text, rather than blanking the field', () => {
+    // A `datetime-local` field cannot hold "2026-09-21 09:30" and would show
+    // the row as empty, which reads as the value having been lost.
+    expect(kindOfKey('---\nstart: 2026-09-21 09:30\n---\n', 'start')).toBe('text')
+  })
+
+  it('converts that space form when the kind is asked for explicitly', () => {
+    const p = readProperties('---\nstart: 2026-09-21 09:30\n---\n')[0]
+    expect(coerceValue(p, 'datetime')).toBe('2026-09-21T09:30')
+  })
+
+  it('adds a time to a date rather than discarding the day', () => {
+    const p = readProperties('---\nstart: 2026-09-21\n---\n')[0]
+    expect(coerceValue(p, 'datetime')).toMatch(/^2026-09-21T\d{2}:\d{2}$/)
+  })
+
+  it('and takes the time off without losing the day either', () => {
+    const p = readProperties('---\nstart: 2026-09-21T09:30\n---\n')[0]
+    expect(coerceValue(p, 'date')).toBe('2026-09-21')
+  })
+
+  it('writes a time back unquoted, so the agenda can still read it', () => {
+    const next = setPropertyValue('---\nstart:\n---\n\nBody.\n', 'start', '2026-09-21T09:30')
+    expect(next).toContain('start: 2026-09-21T09:30')
+    expect(eventFor(parseFrontmatter(next).data)?.start).toBe(
+      new Date(2026, 8, 21, 9, 30).getTime(),
+    )
+  })
+
+  it('says when a value carries seconds, so the field can be told to show them', () => {
+    expect(hasSeconds('2026-09-21T09:30:15')).toBe(true)
+    expect(hasSeconds('2026-09-21T09:30')).toBe(false)
+    expect(hasSeconds('2026-09-21')).toBe(false)
   })
 })

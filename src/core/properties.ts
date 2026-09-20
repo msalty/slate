@@ -26,8 +26,11 @@ import { ymd } from './util'
  * the value itself rather than stored anywhere: there is no schema in a
  * markdown file, and a type that lived only in the app would be a promise the
  * file could not keep.
+ *
+ * With one exception, for the one case a value cannot answer: a property that
+ * has just been added and is still empty. See `TIME_KEYS`.
  */
-export type PropertyKind = 'text' | 'list' | 'number' | 'checkbox' | 'date'
+export type PropertyKind = 'text' | 'list' | 'number' | 'checkbox' | 'date' | 'datetime'
 
 export interface Property {
   key: string
@@ -42,7 +45,37 @@ const FM_RE = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/
 const KEY_RE = /^([A-Za-z0-9_.-]+)\s*:\s*(.*)$/
 const ITEM_RE = /^\s*-\s+(.*)$/
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+/*
+ * Only the `T` spelling. `eventFor` also reads `2026-09-21 09:30`, but a
+ * `datetime-local` field cannot hold that string — it would show the row as
+ * blank, which reads as the value having been lost. So the space form stays
+ * text until somebody asks for it to be a time, and `coerceValue` converts it
+ * then; the file is never quietly rewritten to suit the widget.
+ */
+const DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/
+const LOOSE_DATETIME_RE = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(:\d{2})?$/
 const NUMBER_RE = /^-?\d+(\.\d+)?$/
+
+/**
+ * Keys the app itself gives a time to, for the one case the value cannot
+ * answer: a property that has just been added and is still empty.
+ *
+ * This is the single place a key is allowed to suggest a kind, and it is
+ * narrow on purpose. An empty value is not a promise about anything, so
+ * guessing at one costs nothing — and the moment there *is* a value, the value
+ * decides again, which is what keeps a `start: chapter three` in somebody's
+ * novel a piece of text rather than a broken date field.
+ *
+ * `start` and `end` guess at a time rather than a day because most events have
+ * one; an all-day event writes a bare date, and a bare date reads as a date
+ * without anything here being consulted.
+ */
+const TIME_KEYS: Record<string, PropertyKind> = {
+  start: 'datetime',
+  end: 'datetime',
+  date: 'date',
+  due: 'date',
+}
 
 /** One `key:` and everything written under it. */
 interface Entry {
@@ -161,11 +194,13 @@ function serialize(b: Block): string {
   return `---\n${lines.join('\n')}\n---\n${b.exists ? b.body : `\n${b.body}`}`
 }
 
-function kindOf(value: string, items: string[] | null): PropertyKind {
+function kindOf(key: string, value: string, items: string[] | null): PropertyKind {
   if (items) return 'list'
   if (value === 'true' || value === 'false') return 'checkbox'
+  if (DATETIME_RE.test(value)) return 'datetime'
   if (DATE_RE.test(value)) return 'date'
   if (value !== '' && NUMBER_RE.test(value)) return 'number'
+  if (value === '') return TIME_KEYS[key.toLowerCase()] ?? 'text'
   return 'text'
 }
 
@@ -175,7 +210,7 @@ export function readProperties(text: string): Property[] {
     key: e.key,
     value: e.items ? e.items.join(', ') : e.value,
     items: e.items,
-    kind: kindOf(e.value, e.items),
+    kind: kindOf(e.key, e.value, e.items),
   }))
 }
 
@@ -261,11 +296,43 @@ export function coerceValue(p: Property, kind: PropertyKind): string | string[] 
       return /^(true|yes|on|1)$/i.test(v) ? 'true' : 'false'
     case 'number':
       return NUMBER_RE.test(v) ? v : '0'
-    case 'date':
-      return DATE_RE.test(v) ? v : ymd(Date.now())
+    /*
+     * Both directions keep the day somebody already chose. Switching a time to
+     * a date used to throw the whole value away and hand back today, which is
+     * a date picker losing the date — the one thing it is there to hold.
+     */
+    case 'date': {
+      if (DATE_RE.test(v)) return v
+      const loose = LOOSE_DATETIME_RE.exec(v)
+      return loose ? loose[1] : ymd(Date.now())
+    }
+    case 'datetime': {
+      const loose = LOOSE_DATETIME_RE.exec(v)
+      if (loose) return `${loose[1]}T${loose[2]}${loose[3] ?? ''}`
+      const day = DATE_RE.test(v) ? v : ymd(Date.now())
+      return `${day}T${nextHalfHour()}`
+    }
     default:
       return p.items ? p.items.join(', ') : p.value
   }
+}
+
+/**
+ * The next round half hour, for a time field that has to start somewhere.
+ *
+ * The same answer `eventnote.ts` gives when it makes an event, and for the
+ * same reason: nobody schedules anything for 14:07, and rounding up is never a
+ * time that has already gone.
+ */
+function nextHalfHour(now = Date.now()): string {
+  const d = new Date(now)
+  d.setMinutes(d.getMinutes() > 30 ? 60 : 30, 0, 0)
+  return `${`${d.getHours()}`.padStart(2, '0')}:${`${d.getMinutes()}`.padStart(2, '0')}`
+}
+
+/** True when a value carries seconds, which a time field has to be told to show. */
+export function hasSeconds(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(value)
 }
 
 /**

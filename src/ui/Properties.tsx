@@ -23,6 +23,7 @@ import type { EditorView } from '@codemirror/view'
 import {
   addProperty,
   coerceValue,
+  hasSeconds,
   hasProperty,
   readProperties,
   removeProperty,
@@ -38,15 +39,31 @@ import { saveNote } from '../core/vault'
 import { syncSoon } from '../core/sync'
 import { notify } from './state'
 import { openMenu } from './Menu'
-import { IconCalendar, IconCheckbox, IconClose, IconHash, IconListBullet, IconPlus, IconText } from './Icons'
+import {
+  IconCalendar,
+  IconCheckbox,
+  IconClock,
+  IconClose,
+  IconHash,
+  IconListBullet,
+  IconPlus,
+  IconText,
+} from './Icons'
 
 const KINDS: Array<{ id: PropertyKind; label: string }> = [
   { id: 'text', label: 'Text' },
   { id: 'list', label: 'List' },
   { id: 'number', label: 'Number' },
   { id: 'date', label: 'Date' },
+  { id: 'datetime', label: 'Date & time' },
   { id: 'checkbox', label: 'Checkbox' },
 ]
+
+/** What kind of `<input>` each kind is edited with. Text where it isn't said. */
+const FIELD_TYPE: Partial<Record<PropertyKind, string>> = {
+  date: 'date',
+  datetime: 'datetime-local',
+}
 
 function kindLabel(kind: PropertyKind): string {
   return KINDS.find((k) => k.id === kind)?.label ?? 'Text'
@@ -60,6 +77,8 @@ function KindIcon({ kind }: { kind: PropertyKind }) {
       return <IconHash size={14} />
     case 'date':
       return <IconCalendar size={14} />
+    case 'datetime':
+      return <IconClock size={14} />
     case 'checkbox':
       return <IconCheckbox size={14} />
     default:
@@ -266,7 +285,14 @@ function PropertyRow({
         <input
           ref={valueRef}
           class="property-value"
-          type={p.kind === 'date' ? 'date' : 'text'}
+          type={FIELD_TYPE[p.kind] ?? 'text'}
+          /*
+           * A time field shows seconds only when the value has them. Told to
+           * always, every event picks up a `:00` it never asked for; told
+           * never, a value that *does* carry seconds is rejected by the field
+           * and the row reads as empty.
+           */
+          step={p.kind === 'datetime' && hasSeconds(p.value) ? 1 : undefined}
           inputMode={p.kind === 'number' ? 'decimal' : undefined}
           value={shown}
           aria-label={`${p.key} value`}

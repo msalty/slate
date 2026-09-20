@@ -6786,6 +6786,54 @@ try {
     (await agenda.locator('.agenda-row').allInnerTexts()).join(' | '),
   )
 
+  /*
+   * And the two keys nobody should have to spell from memory get a picker.
+   * `start:` and `end:` are written `2026-09-21T09:30`, which is a format to
+   * be remembered rather than typed — so the properties form offers the
+   * platform's own date-and-time field, and what it writes back is the format
+   * the agenda reads.
+   */
+  let modeHops = 0
+  for (; modeHops < 3 && (await page.locator('.editor-date-button').count()) === 0; modeHops++) {
+    await page.keyboard.press('Control+Shift+m')
+    await page.waitForTimeout(400)
+  }
+  await page.locator('.editor-date-button').click()
+  await page.waitForTimeout(600)
+  check(
+    'a start is edited with a date and time picker, not a text field',
+    (await page.locator('[aria-label="start value"]').getAttribute('type')) === 'datetime-local',
+    (await page.locator('[aria-label="start value"]').getAttribute('type')) ?? 'missing',
+  )
+  check(
+    'and so is an end',
+    (await page.locator('[aria-label="end value"]').getAttribute('type')) === 'datetime-local',
+  )
+  check(
+    'while a property the app knows nothing about is still text',
+    (await page.locator('[aria-label="location value"]').count()) === 0 ||
+      (await page.locator('[aria-label="location value"]').getAttribute('type')) === 'text',
+  )
+  await page.locator('[aria-label="start value"]').fill(`${isoDay(2)}T16:45`)
+  await page.waitForTimeout(900)
+  await page.locator('[aria-label="start value"]').blur()
+  await page.waitForTimeout(900)
+  check(
+    'and what the picker writes is what the agenda reads',
+    (await agenda.locator('.agenda-row').allInnerTexts()).join(' | ').includes('Budget call'),
+    (await agenda.locator('.agenda-row').allInnerTexts()).join(' | '),
+  )
+  check(
+    'landing in the file as a bare value, not a quoted one',
+    (await page.locator('[aria-label="start value"]').inputValue()) === `${isoDay(2)}T16:45`,
+    await page.locator('[aria-label="start value"]').inputValue(),
+  )
+  // Leave the editor in the mode this section found it in.
+  for (let i = modeHops; i > 0 && i < 3; i++) {
+    await page.keyboard.press('Control+Shift+m')
+    await page.waitForTimeout(300)
+  }
+
   // Back to the whole vault: clicking a day filtered the list, and what comes
   // after this looks for a note by name.
   await page.locator('.side-row:has-text("All Notes")').first().click()
