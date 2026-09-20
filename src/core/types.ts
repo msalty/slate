@@ -9,6 +9,7 @@
  */
 
 import type { AiSettings } from './llm'
+import type { NoteEvent } from './markdown'
 
 export type FileKind = 'note' | 'attachment'
 
@@ -130,6 +131,14 @@ export interface NoteIndexEntry {
   /** Relative paths of attachments embedded in this note. */
   embeds: string[]
   pinned: boolean
+  /**
+   * When this note happens, if it says it happens at all.
+   *
+   * Parsed here at index time rather than read by the agenda, for the same
+   * reason tasks are: the agenda is recomputed on any change to the vault, and
+   * re-reading every note's frontmatter each time is the expensive shape.
+   */
+  event?: NoteEvent
   /**
    * Other names this note answers to, from `aliases:` in its frontmatter.
    *

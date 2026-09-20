@@ -38,6 +38,7 @@ import {
 } from './db'
 import {
   calendarDateFor,
+  eventFor,
   codeRegions,
   excerptOf,
   isLocked,
@@ -70,12 +71,12 @@ import {
   startSearchIndex,
 } from './searchindex'
 import {
+  addDays,
   basename,
   dirname,
   extname,
   hashBlob,
   hashText,
-
   joinPath,
   mimeForPath,
   normPath,
@@ -406,6 +407,7 @@ function buildEntry(f: VaultFile): NoteIndexEntry | undefined {
     links,
     embeds,
     pinned: fm.data.pinned === true,
+    event: eventFor(fm.data),
     aliases,
     hasTasks: raw.length > 0,
     tasks: raw.map((t) => ({
@@ -542,31 +544,41 @@ export const notes = computed<NoteIndexEntry[]>(() => {
 })
 
 /**
- * The notes that are your own material — `notes` without the templates.
+ * Every note that stands for itself — `notes` without the templates.
  *
  * A template is boilerplate for a note that does not exist yet, so counting it
  * as one makes the app answer questions about your work with data from a form:
  * a `- [ ]` waiting to be filled in becomes a task you owe somebody, a `#work`
  * describing future notes inflates the tag it is written in, and a Tag Folder
- * of everything tagged `#work` contains the template that says so.
+ * of everything tagged `#work` contains the template that says so. A `start:`
+ * in one would put a meeting that is not happening on the agenda.
  *
- * This is what every *roll-up* reads: tasks, tag counts, the calendar, Tag
- * Folder matches, backlinks, and the note list outside the Templates folder
- * itself. Things that look at one named thing keep using `notes` — searching
- * for `#meeting` and not finding the template that defines it would be worse
- * than finding it, browsing `Templates/` has to show them, wikilink
- * autocomplete may legitimately target one, and the orphan scan and rename
- * repointing MUST see them or an image only a template uses is reported
- * unused and a template's links break on a rename.
+ * Things that look at one named thing keep using `notes` — searching for
+ * `#meeting` and not finding the template that defines it would be worse than
+ * finding it, browsing `Templates/` has to show them, wikilink autocomplete may
+ * legitimately target one, and the orphan scan and rename repointing MUST see
+ * them or an image only a template uses is reported unused and a template's
+ * links break on a rename.
  *
  * The same array comes back when there are no templates, so a vault that never
  * made the folder pays nothing and every downstream memo keeps its identity.
  */
-export const contentNotes = computed<NoteIndexEntry[]>(() => {
+export const linkableNotes = computed<NoteIndexEntry[]>(() => {
   const all = notes.value
   const out = all.filter((e) => !isTemplatePath(e.path))
   return out.length === all.length ? all : out
 })
+
+/**
+ * The notes that are *your own material*.
+ *
+ * Every roll-up reads this. Today it is `linkableNotes` exactly — the only
+ * thing excluded is the templates, for the reasons above — and it is a separate
+ * memo rather than the same one because the two answer different questions and
+ * are going to stop agreeing: a note a program keeps up to date on your behalf
+ * is a note you can link to and search for, and is not work you did.
+ */
+export const contentNotes = computed<NoteIndexEntry[]>(() => linkableNotes.value)
 
 /** Non-note files the user can link to: images, PDFs, video, audio, etc. */
 export const attachments = computed(() => {
@@ -648,6 +660,54 @@ export const notesByDay = computed(() => {
 })
 
 /**
+ * How many days an event is allowed to cover.
+ *
+ * A guard on the walk below rather than a rule about calendars. An `end:` typed
+ * with the wrong year is one file asking for four hundred thousand map entries,
+ * and a rail that never paints again; past this the event is filed on the day
+ * it starts and left alone.
+ */
+const MAX_EVENT_DAYS = 400
+
+/**
+ * date (local midnight ms) -> the events on that day, in the order they read.
+ *
+ * An event is on every day it covers, so a conference files under all four of
+ * its days rather than only the morning it opened. A timed event that ends
+ * exactly at midnight stops the night before: 21:00 to 00:00 is an evening, and
+ * putting it on tomorrow as well would be a meeting nobody is at.
+ *
+ * All-day first and then by start, which is the order a day is read in — the
+ * things that are true of the whole day, and then the day itself.
+ */
+export const eventsByDay = computed(() => {
+  const m = new Map<number, NoteIndexEntry[]>()
+  for (const e of linkableNotes.value) {
+    const ev = e.event
+    if (!ev) continue
+    const first = startOfDay(ev.start)
+    let last = startOfDay(ev.end)
+    // Midnight closes the day before it, unless that is the day it opened.
+    if (!ev.allDay && ev.end === last && last > first) last = addDays(last, -1)
+    for (let day = first, n = 0; day <= last && n < MAX_EVENT_DAYS; day = addDays(day, 1), n++) {
+      const arr = m.get(day)
+      if (arr) arr.push(e)
+      else m.set(day, [e])
+    }
+  }
+  for (const arr of m.values()) {
+    arr.sort((a, b) => {
+      const x = a.event!
+      const y = b.event!
+      if (x.allDay !== y.allDay) return x.allDay ? -1 : 1
+      if (x.start !== y.start) return x.start - y.start
+      return a.title.localeCompare(b.title)
+    })
+  }
+  return m
+})
+
+/**
  * date (local midnight ms) -> how many *open* tasks are due that day.
  *
  * What the calendar draws its second signal from. Open only, whatever the
@@ -663,12 +723,20 @@ export const openTasksByDueDay = computed(() => {
   return m
 })
 
-/** Reverse link map: path -> paths that link to it. */
+/**
+ * Reverse link map: path -> paths that link to it.
+ *
+ * Sources are `linkableNotes` rather than `contentNotes`, which is the one
+ * roll-up where that distinction matters. A note kept up to date by a program
+ * is not your material and has no business in a tag count or a task list — but
+ * the links *written in* it are still links, and dropping them would empty the
+ * mentions panel of exactly the note you wanted them on.
+ */
 export const backlinkMap = computed(() => {
   const titles = titleIndex.value
   const paths = pathSet.value
   const m = new Map<string, string[]>()
-  for (const e of contentNotes.value) {
+  for (const e of linkableNotes.value) {
     for (const target of e.links) {
       const resolved = resolveTarget(target, titles, paths)
       if (!resolved || resolved === e.path) continue

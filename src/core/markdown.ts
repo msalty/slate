@@ -917,6 +917,173 @@ export function findHeading(text: string, anchor: string): Heading | undefined {
  *   2. a YYYY-MM-DD prefix or suffix in the filename (daily notes)
  *   3. the file's creation time
  */
+/* ------------------------------------------------------------------ events */
+
+/**
+ * When a note says it happens.
+ *
+ * `start:` is what makes a note an event — nothing else has to be written, and
+ * a note without it is an ordinary note. The three shapes it can take are
+ * iCalendar's three, transliterated rather than invented, because that is what
+ * the data arriving from a calendar actually is:
+ *
+ *   start: 2026-09-21              all day, no time to be wrong about
+ *   start: 2026-09-21T09:30        a wall-clock time, wherever you are
+ *   start: 2026-09-21T14:00        the same, read in the zone `tz:` names
+ *   tz: America/New_York
+ *
+ * `start` and `end` are always written in the zone `tz` names, and in the
+ * device's own zone when there isn't one — so the file reads as the time the
+ * meeting was described to you in, "two o'clock in New York", and the zone is
+ * there for the app to convert rather than for you to have done the sum first.
+ *
+ * `end` is **inclusive** for an all-day event, which is the one place this
+ * deliberately parts with iCalendar: `DTEND` there is exclusive, so a one-day
+ * event is written as ending the next morning. Copy that through and every
+ * single-day event draws itself two days long.
+ */
+export interface NoteEvent {
+  /** Instant the event starts, ms epoch. Local midnight when all-day. */
+  start: number
+  /** Instant it ends, ms epoch. The last day's midnight when all-day. */
+  end: number
+  allDay: boolean
+  /** The IANA zone `start` and `end` were written in, when one was named. */
+  tz?: string
+}
+
+const EVENT_TIME_RE = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?$/
+
+/**
+ * What a zone's clocks were offset by at a given instant, in milliseconds.
+ *
+ * `Intl` will format an instant in any zone but will not do the sum backwards,
+ * so this asks it to format one and reads the answer as though it were UTC. The
+ * difference between that and the instant is the offset.
+ */
+function zoneOffsetAt(at: number, tz: string): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).formatToParts(at)
+  const get = (t: string) => Number(parts.find((p) => p.type === t)?.value)
+  // `hour12: false` still says 24 for midnight in some engines; 24:00 today is
+  // 00:00 today as far as the arithmetic below is concerned.
+  const h = get('hour') % 24
+  return Date.UTC(get('year'), get('month') - 1, get('day'), h, get('minute'), get('second')) - at
+}
+
+/**
+ * The instant a wall-clock time names in a given zone.
+ *
+ * Two rounds rather than one. The first guess is the wall time read as UTC,
+ * corrected by the zone's offset *at that guess* — which is the wrong offset
+ * whenever the guess falls on the far side of a DST change from the answer. A
+ * second round re-reads the offset at the corrected instant and lands, because
+ * an hour's error cannot cross a second boundary.
+ *
+ * Times a zone skips over (the hour a spring-forward deletes) have no instant
+ * to be; this lands on the moment the clocks moved, which is what everything
+ * else that has to answer does.
+ */
+function instantInZone(
+  y: number,
+  mo: number,
+  d: number,
+  h: number,
+  mi: number,
+  sec: number,
+  tz: string,
+): number {
+  const wall = Date.UTC(y, mo - 1, d, h, mi, sec)
+  let at = wall - zoneOffsetAt(wall, tz)
+  at = wall - zoneOffsetAt(at, tz)
+  return at
+}
+
+/** One `start:`/`end:` value. Undefined for anything that is not a date. */
+function parseEventTime(
+  raw: FrontmatterValue | undefined,
+  tz: string | undefined,
+): { at: number; allDay: boolean } | undefined {
+  if (typeof raw !== 'string') return undefined
+  const m = EVENT_TIME_RE.exec(raw.trim())
+  if (!m) return undefined
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])]
+  /*
+   * A date that does not exist is not a date. `Date` would take the 13th month
+   * and hand back next January without complaining, and the 31st of September
+   * lands on the 1st of October — so an event whose year was mistyped by one
+   * digit would not fail, it would quietly happen on the wrong day. Building
+   * it and checking the parts come back out is the whole test.
+   */
+  const probe = new Date(y, mo - 1, d)
+  if (probe.getFullYear() !== y || probe.getMonth() !== mo - 1 || probe.getDate() !== d)
+    return undefined
+  if (m[4] === undefined) {
+    /*
+     * A day has no time to put a zone on: "the 21st" is the 21st wherever the
+     * calendar came from, and converting it would slide it onto the 20th for
+     * anybody far enough west. So an all-day event ignores `tz` entirely.
+     */
+    return { at: probe.getTime(), allDay: true }
+  }
+  const [h, mi, sec] = [Number(m[4]), Number(m[5]), Number(m[6] ?? 0)]
+  if (h > 23 || mi > 59 || sec > 59) return undefined
+  const at = tz
+    ? instantInZone(y, mo, d, h, mi, sec, tz)
+    : new Date(y, mo - 1, d, h, mi, sec).getTime()
+  return { at, allDay: false }
+}
+
+/** A zone name only if this engine will accept one; a typo is not a zone. */
+function usableZone(raw: FrontmatterValue | undefined): string | undefined {
+  if (typeof raw !== 'string' || !raw.trim()) return undefined
+  const tz = raw.trim()
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz })
+    return tz
+  } catch {
+    return undefined
+  }
+}
+
+/** An hour, which is what an event with no end is assumed to take. */
+const DEFAULT_DURATION = 60 * 60 * 1000
+
+/**
+ * The event a note describes, or undefined when it does not describe one.
+ *
+ * Lenient in the same way the rest of this file is lenient: a `start:` nobody
+ * can parse makes an ordinary note rather than a broken event, and an `end:`
+ * that is missing, unreadable or before its start is replaced rather than
+ * refused. A note is a text file somebody may have typed by hand.
+ */
+export function eventFor(fm: Record<string, FrontmatterValue>): NoteEvent | undefined {
+  const tz = usableZone(fm.tz)
+  const start = parseEventTime(fm.start, tz)
+  if (!start) return undefined
+  const end = parseEventTime(fm.end, tz)
+  /*
+   * An end written in the other shape is not an end this can use: a day cannot
+   * say when an appointment finished, and a time cannot close an event filed as
+   * a whole day. Fall back rather than mix the two.
+   */
+  const usable = end && end.allDay === start.allDay && end.at >= start.at ? end.at : undefined
+  return {
+    start: start.at,
+    end: usable ?? (start.allDay ? start.at : start.at + DEFAULT_DURATION),
+    allDay: start.allDay,
+    ...(start.allDay ? {} : tz ? { tz } : {}),
+  }
+}
+
 export function calendarDateFor(
   path: string,
   fm: Record<string, unknown>,
