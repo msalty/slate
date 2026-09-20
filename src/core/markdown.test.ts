@@ -627,6 +627,51 @@ describe('headings', () => {
   })
 
   /*
+   * A fence can be the first thing in a list item, written on the marker's own
+   * line, which is where it goes when the whole item is a code sample. The
+   * scan read the marker and stopped, so the line did not look like a fence at
+   * all and the sample's tags and links were handed to the index as the note's
+   * own.
+   */
+  it('opens a fence written on the list marker’s line', () => {
+    for (const marker of ['- ', '* ', '1. ', '10) ']) {
+      const pad = ' '.repeat(marker.length)
+      const doc = [`${marker}\`\`\`js`, `${pad}#nottag [[NotLink]]`, `${pad}\`\`\``, '', '#real', ''].join(
+        '\n',
+      )
+      expect(scanTags(doc)).toEqual(['real'])
+      expect(scanWikiLinks(doc)).toEqual([])
+    }
+  })
+
+  it('and measures it from the item, not from the marker', () => {
+    // The block belongs to the item, so its closer gets the item's column —
+    // and the region starts at the fence, the marker being the list's.
+    const doc = ['- ```', '  #nottag', '  ```', '  #real', ''].join('\n')
+    expect(scanTags(doc)).toEqual(['real'])
+    expect(codeRegions(doc)[0][0]).toBe('- '.length)
+  })
+
+  /*
+   * Lists live inside their blockquote. One written in a quote used to leave
+   * its column standing after the quote ended, so the next fence in the note —
+   * quoted by nobody — was measured against a list it was not in, and closed
+   * or ended in the wrong place.
+   */
+  it('forgets a quoted list once the quote is over', () => {
+    const doc = ['> - quoted item', '', '  ```', '  #nottag', '', '#real', ''].join('\n')
+    expect(scanTags(doc)).toEqual([])
+    // Unclosed and at the top level, so it runs on — which is the answer for a
+    // fence at the margin, and was not the answer while it inherited column 2.
+    expect(codeRegions(doc)).toEqual([['> - quoted item\n\n'.length, doc.length]])
+  })
+
+  it('but keeps one written inside a quote while the quote lasts', () => {
+    const doc = ['> - quoted item', '>   ```', '>   #nottag', '>   ```', '', '#real', ''].join('\n')
+    expect(scanTags(doc)).toEqual(['real'])
+  })
+
+  /*
    * And a list item holds a block the way a blockquote does, so an unclosed
    * fence inside one ends with the item rather than running to the end of the
    * note. A blank line is the difference between the two containers: a

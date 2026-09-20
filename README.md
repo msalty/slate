@@ -19,7 +19,7 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 1180 unit, two-device sync and folder round-trip tests
+npm test               # 1184 unit, two-device sync and folder round-trip tests
 node scripts/smoke.mjs # 806-check browser smoke test against dist/
 ```
 
@@ -555,7 +555,13 @@ rest of the note. So the index tracks which list item a fence is written in,
 and measures from there — which also tells it where an unclosed one ends, since
 a list item holds a block exactly as a blockquote does. A blank line is the
 only difference between the two: a blockquote ends at one, and a list item
-carries on through it.
+carries on through it. Those items belong to their blockquote as well, so a
+list written inside a quote is forgotten when the quote ends rather than left
+standing for the next fence in the note to be measured against.
+
+A fence may also be written on the marker's own line — `- ``` `, which is where
+it goes when the whole item is the code sample — and the block it opens belongs
+to that item, closing at the item's column like any other.
 
 The vault index reads all this off the lines, because it runs over every note
 you have and there is no editor to ask. An **indented** code block is the one
@@ -566,9 +572,10 @@ editor has no such problem — it asks its own parser, so an indented block is a
 code block to everything the editor does.
 
 Everything else it gets right, and that is checked rather than asserted: every
-opener indentation against every closer indentation, at the top level and
-inside a list, is compared position by position against the parser the editor
-runs. The only shapes the two read differently are the indented blocks above.
+opener indentation against every closer indentation — at the top level, inside
+a list, and after a quoted list — along with a fence on each kind of marker
+line, compared position by position against the parser the editor runs. The
+only shapes the two read differently are the indented blocks above.
 
 **A note names itself, if you let it.** A note made with *New note here* — and
 every note started from a template — is called `Untitled`, so typing a heading
@@ -2585,7 +2592,7 @@ and that is a better argument for the rail than the outline ever was.
 ## Testing
 
 ```bash
-npm test                # 1180 unit + two-device sync + folder round-trip tests
+npm test                # 1184 unit + two-device sync + folder round-trip tests
 node scripts/smoke.mjs  # 806 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```

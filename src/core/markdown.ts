@@ -275,10 +275,11 @@ function fencedRegions(text: string): Array<[number, number]> {
   let openDepth = 0
   let openContainer = 0
   let pos = 0
-  const items: number[] = []
+  const items: Array<{ depth: number; column: number }> = []
 
   for (const line of text.split('\n')) {
-    const m = FENCE.exec(line)
+    let m = FENCE.exec(line)
+    let fenceAt = pos
     const depth = quoteDepth(line)
     const indent = indentColumns(INDENT.exec(line)![0])
 
@@ -313,17 +314,49 @@ function fencedRegions(text: string): Array<[number, number]> {
        * than the line does, and a marker opens one that starts after it.
        */
       if (line.trim()) {
-        while (items.length && indent < items[items.length - 1]) items.pop()
+        /*
+         * Leaving a blockquote ends the lists written inside it, the same way
+         * it ends everything else in there — without that, a `> - item` left
+         * its column standing and the next fence in the note, quoted by
+         * nobody, was measured against a list it was not in.
+         */
+        while (items.length) {
+          const held = items[items.length - 1]
+          const gone = held.depth > depth || (held.depth === depth && indent < held.column)
+          if (!gone) break
+          items.pop()
+        }
+
         const li = LIST_ITEM.exec(line)
-        if (li) items.push(contentColumn(li))
+        if (li) {
+          items.push({ depth, column: contentColumn(li) })
+          /*
+           * `- ``` ` — a fence as the item's first content, which is where
+           * people put one when the whole item is a code sample. The line does
+           * not start with a fence, it starts with a marker, so the scan saw
+           * no block at all and handed the sample's tags and links to the
+           * index as the note's own.
+           *
+           * The region starts at the fence rather than at the marker, since
+           * the marker is the list's and not the block's.
+           */
+          if (!m) {
+            const after = FENCE.exec(line.slice(li[0].length))
+            if (after) {
+              m = after
+              fenceAt = pos + li[0].length
+            }
+          }
+        }
       }
 
       // The line that ended a quote can be the one that opens the next block.
       if (m) {
-        openAt = pos
+        openAt = fenceAt
         openMark = m[2]
         openDepth = depth
-        openContainer = items[items.length - 1] ?? 0
+        const held = items[items.length - 1]
+        openContainer = held && held.depth === depth ? held.column : 0
       }
     } else if (
       /*
