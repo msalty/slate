@@ -19,7 +19,7 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 1173 unit, two-device sync and folder round-trip tests
+npm test               # 1177 unit, two-device sync and folder round-trip tests
 node scripts/smoke.mjs # 806-check browser smoke test against dist/
 ```
 
@@ -534,6 +534,18 @@ typing a code block should see; reading a quoted one that way let a single
 `> ``` ` hide every heading, tag and link below it from the index while the
 editor went on rendering them, so the note looked perfectly normal and was not
 there.
+
+**A closing fence closes the block it is in**, which is the rule two different
+lines of code used to get past. It has to be quoted exactly as deeply as the
+fence it closes, so a `> ``` ` written as a *sample* inside an ordinary block
+is a line of code and not the end of one — it used to be both the end of the
+block, which let the sample's headings and tags into the index as real ones,
+and the start of another, which hid the prose after it. And it may be indented
+up to three columns further in than its opener and no further. That allowance
+is measured from the opener rather than from the margin, because a fence
+written inside a nested list starts four columns in or more and closes at the
+same indentation: measured from the margin, none of those blocks would ever
+close.
 
 The vault index reads all this off the lines, because it runs over every note
 you have and there is no editor to ask. An **indented** code block is the one
@@ -2558,7 +2570,7 @@ and that is a better argument for the rail than the outline ever was.
 ## Testing
 
 ```bash
-npm test                # 1173 unit + two-device sync + folder round-trip tests
+npm test                # 1177 unit + two-device sync + folder round-trip tests
 node scripts/smoke.mjs  # 806 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```

@@ -541,6 +541,61 @@ describe('headings', () => {
     ])
   })
 
+  /*
+   * A closing fence has to be in the same container as the one it closes, and
+   * a line of code that *looks* like one is not. Writing about quoted markdown
+   * — a `> ``` ` sample inside an ordinary block — closed the block at the
+   * sample, so the example heading and tag below it were indexed as real ones
+   * and the fence that actually closed the block opened another region that
+   * ran on and hid the prose after it. Two wrong answers from one line.
+   */
+  it('is not closed by a line of code that looks like a quoted fence', () => {
+    const doc = [
+      '```markdown',
+      '> ```',
+      '> # Example heading',
+      '> #exampletag',
+      '```',
+      '',
+      '# Real heading',
+      '',
+      '#work [[Other]]',
+      '',
+    ].join('\n')
+    expect(scanHeadings(doc).map((h) => h.text)).toEqual(['Real heading'])
+    expect(scanTags(doc)).toEqual(['work'])
+    expect(scanWikiLinks(doc).map((l) => l.target)).toEqual(['Other'])
+    expect(codeRegions(doc)).toHaveLength(1)
+  })
+
+  it('nor a quoted one by a line quoted more deeply than it', () => {
+    const doc = ['> ```', '> >> ```', '> #nottag', '> ```', '', '#real', ''].join('\n')
+    expect(scanTags(doc)).toEqual(['real'])
+    expect(codeRegions(doc)).toHaveLength(1)
+  })
+
+  /*
+   * A closing fence may be indented up to three columns past its opener, and a
+   * line indented further is a line of the code. Relative to the opener, never
+   * from the margin: a fence inside a nested list starts four columns in or
+   * more and closes at the same indentation, so an absolute limit would have
+   * left all of those open to the end of the note. Both halves checked against
+   * the parser the editor runs.
+   */
+  it('is not closed by a line indented further than a closing fence may be', () => {
+    for (const closer of ['\t```', '    ```']) {
+      const doc = ['```', 'x', closer, '', '#real', ''].join('\n')
+      expect(scanTags(doc)).toEqual([])
+    }
+    // Three columns is still a closing fence, and still closes.
+    expect(scanTags(['```', 'x', '   ```', '', '#real', ''].join('\n'))).toEqual(['real'])
+  })
+
+  it('and a fence nested in a list closes at its own indentation', () => {
+    const doc = ['- a', '  - b', '    ```', '    #nottag', '    ```', '', '#real', ''].join('\n')
+    expect(scanTags(doc)).toEqual(['real'])
+  })
+
   it('but an unclosed fence at the top level still runs to the end', () => {
     const doc = ['```', 'sample', '', '# Not a heading', '#nottag', ''].join('\n')
     expect(scanHeadings(doc)).toEqual([])

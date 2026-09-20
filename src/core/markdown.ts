@@ -266,6 +266,7 @@ function fencedRegions(text: string): Array<[number, number]> {
   let openAt: number | null = null
   let openMark = ''
   let openDepth = 0
+  let openIndent = 0
   let pos = 0
 
   for (const line of text.split('\n')) {
@@ -296,8 +297,15 @@ function fencedRegions(text: string): Array<[number, number]> {
         openAt = pos
         openMark = m[2]
         openDepth = depth
+        openIndent = indentColumns(m[1])
       }
-    } else if (m && closes(m, openMark)) {
+    } else if (
+      // In the same container as the fence it closes, and then the mark itself.
+      m &&
+      depth === openDepth &&
+      indentColumns(m[1]) <= openIndent + 3 &&
+      closes(m, openMark)
+    ) {
       out.push([openAt, pos + line.length])
       openAt = null
     }
@@ -325,9 +333,37 @@ const FENCE = /^([ \t>]*)(`{3,}|~{3,})(.*)$/
  * can quote a three-backtick one. Without the length, writing about markdown in
  * markdown ended the block at the inner example, and everything below it —
  * `# Not a heading` included — came back out as prose.
+ *
+ * The caller adds the fourth: the same container, which here means the same
+ * quote depth. A closing fence closes the block it is *in*, so a `> ``` ` in
+ * the middle of an ordinary block is a line of a sample about quoted markdown
+ * and not the end of anything — while it counted, that one line both released
+ * the example's headings and tags into the index as real ones and left the
+ * fence that really closed the block to open a region that hid the prose after
+ * it.
  */
 function closes(m: RegExpExecArray, openMark: string): boolean {
   return m[2][0] === openMark[0] && m[2].length >= openMark.length && !m[3].trim()
+}
+
+/**
+ * How far a fence is indented inside whatever holds it, in columns.
+ *
+ * Relative, never absolute, and that is the whole of it: a closing fence may
+ * sit up to three columns further in than its opener and no further, which is
+ * CommonMark and is also the only reading that survives a list. A fence
+ * written inside a nested list item is indented four columns or more and its
+ * closer is indented to match, so an absolute limit of three would have left
+ * every one of those blocks open to the end of the note. Measured from after
+ * the quote markers, past the single space each one is allowed, with a tab
+ * going to the next stop of four the way a tab does.
+ */
+function indentColumns(prefix: string): number {
+  const quoted = prefix.lastIndexOf('>')
+  const ws = quoted < 0 ? prefix : prefix.slice(quoted + 1).replace(/^ /, '')
+  let col = 0
+  for (const c of ws) col += c === '\t' ? 4 - (col % 4) : 1
+  return col
 }
 
 /** How many blockquotes deep a line is, counted off its own markers. */
