@@ -260,18 +260,27 @@ export function codeRegions(text: string): Array<[number, number]> {
  * deliberately not one of them: calling those code would lose the tags and
  * links people actually write inside lists to catch the few written in an
  * indented sample.
+ *
+ * What it does have to know is which *container* a fence is in, because both
+ * of the questions asked about a fence are asked relative to one: how far its
+ * closer may be indented, and where the block ends if no closer comes. Quote
+ * markers answer the first container and the list markers walked here answer
+ * the second; between them the regions this returns agree with the editor's
+ * parser everywhere except the indented blocks above.
  */
 function fencedRegions(text: string): Array<[number, number]> {
   const out: Array<[number, number]> = []
   let openAt: number | null = null
   let openMark = ''
   let openDepth = 0
-  let openIndent = 0
+  let openContainer = 0
   let pos = 0
+  const items: number[] = []
 
   for (const line of text.split('\n')) {
     const m = FENCE.exec(line)
     const depth = quoteDepth(line)
+    const indent = indentColumns(INDENT.exec(line)![0])
 
     /*
      * A block ends where the thing holding it ends. An unclosed fence in the
@@ -285,25 +294,54 @@ function fencedRegions(text: string): Array<[number, number]> {
      *
      * At the top level the depth is zero and nothing is ever below it, so the
      * same comparison leaves that case exactly as it was.
+     *
+     * A list item holds a block the same way, and ends it the same way: at a
+     * line that steps back out of the item. Not at a blank line, though, which
+     * a list item carries on through where a blockquote does not — the one
+     * place these two containers part company.
      */
-    if (openAt !== null && depth < openDepth) {
+    if (openAt !== null && (depth < openDepth || (line.trim() !== '' && indent < openContainer))) {
       out.push([openAt, pos])
       openAt = null
     }
 
     if (openAt === null) {
+      /*
+       * Which list item this line is in, kept only while no fence is open —
+       * inside one the lines are code and say nothing about the note's shape.
+       * A line steps back out of every item whose content starts further in
+       * than the line does, and a marker opens one that starts after it.
+       */
+      if (line.trim()) {
+        while (items.length && indent < items[items.length - 1]) items.pop()
+        const li = LIST_ITEM.exec(line)
+        if (li) items.push(contentColumn(li))
+      }
+
       // The line that ended a quote can be the one that opens the next block.
       if (m) {
         openAt = pos
         openMark = m[2]
         openDepth = depth
-        openIndent = indentColumns(m[1])
+        openContainer = items[items.length - 1] ?? 0
       }
     } else if (
-      // In the same container as the fence it closes, and then the mark itself.
+      /*
+       * In the same container as the fence it closes, and then the mark itself.
+       *
+       * Three columns of leeway, counted from where the container's own content
+       * begins — from the *container*, which is the whole difficulty. An opener
+       * is allowed three columns of its own, so counting the closer's allowance
+       * from the opener handed it as many as six, and a block opened at one
+       * space was closed by a four-space line that is a line of code and
+       * nothing else. Counting from the margin instead is no better the other
+       * way round: a fence written in a list begins at the item's column, and
+       * measuring its closer from column zero leaves every one of those blocks
+       * open to the end of the note.
+       */
       m &&
       depth === openDepth &&
-      indentColumns(m[1]) <= openIndent + 3 &&
+      indentColumns(m[1]) <= openContainer + 3 &&
       closes(m, openMark)
     ) {
       out.push([openAt, pos + line.length])
@@ -334,8 +372,8 @@ const FENCE = /^([ \t>]*)(`{3,}|~{3,})(.*)$/
  * markdown ended the block at the inner example, and everything below it —
  * `# Not a heading` included — came back out as prose.
  *
- * The caller adds the fourth: the same container, which here means the same
- * quote depth. A closing fence closes the block it is *in*, so a `> ``` ` in
+ * The caller adds the container — the same quote depth, and close enough to
+ * the same column. A closing fence closes the block it is *in*, so a `> ``` ` in
  * the middle of an ordinary block is a line of a sample about quoted markdown
  * and not the end of anything — while it counted, that one line both released
  * the example's headings and tags into the index as real ones and left the
@@ -346,23 +384,40 @@ function closes(m: RegExpExecArray, openMark: string): boolean {
   return m[2][0] === openMark[0] && m[2].length >= openMark.length && !m[3].trim()
 }
 
+/** The whitespace and quote markers a line opens with. */
+const INDENT = /^[ \t>]*/
+
+/** A list marker and the gap after it, which together say where the item's content begins. */
+const LIST_ITEM = /^([ \t>]*)([-*+]|\d{1,9}[.)])([ \t]+|$)/
+
 /**
- * How far a fence is indented inside whatever holds it, in columns.
+ * The column a list item's content starts at, which is the column anything
+ * inside it is measured from.
  *
- * Relative, never absolute, and that is the whole of it: a closing fence may
- * sit up to three columns further in than its opener and no further, which is
- * CommonMark and is also the only reading that survives a list. A fence
- * written inside a nested list item is indented four columns or more and its
- * closer is indented to match, so an absolute limit of three would have left
- * every one of those blocks open to the end of the note. Measured from after
- * the quote markers, past the single space each one is allowed, with a tab
- * going to the next stop of four the way a tab does.
+ * The marker, then the gap after it — except that a gap of five columns or
+ * more is indented code inside the item rather than a wider marker, and the
+ * content begins one column after the marker instead.
+ */
+function contentColumn(li: RegExpExecArray): number {
+  const afterMark = indentColumns(li[1]) + li[2].length
+  const gap = advance(afterMark, li[3])
+  return gap - afterMark >= 5 || !li[3] ? afterMark + 1 : gap
+}
+
+/**
+ * How far a line is indented inside whatever holds it, in columns.
+ *
+ * Measured from after the quote markers, past the single space each one is
+ * allowed, with a tab going to the next stop of four the way a tab does.
  */
 function indentColumns(prefix: string): number {
   const quoted = prefix.lastIndexOf('>')
-  const ws = quoted < 0 ? prefix : prefix.slice(quoted + 1).replace(/^ /, '')
-  let col = 0
-  for (const c of ws) col += c === '\t' ? 4 - (col % 4) : 1
+  return advance(0, quoted < 0 ? prefix : prefix.slice(quoted + 1).replace(/^ /, ''))
+}
+
+/** That same walk, carried on from a column already reached. */
+function advance(col: number, text: string): number {
+  for (const c of text) col += c === '\t' ? 4 - (col % 4) : 1
   return col
 }
 

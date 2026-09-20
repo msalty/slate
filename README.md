@@ -19,7 +19,7 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 1177 unit, two-device sync and folder round-trip tests
+npm test               # 1180 unit, two-device sync and folder round-trip tests
 node scripts/smoke.mjs # 806-check browser smoke test against dist/
 ```
 
@@ -541,11 +541,21 @@ fence it closes, so a `> ``` ` written as a *sample* inside an ordinary block
 is a line of code and not the end of one — it used to be both the end of the
 block, which let the sample's headings and tags into the index as real ones,
 and the start of another, which hid the prose after it. And it may be indented
-up to three columns further in than its opener and no further. That allowance
-is measured from the opener rather than from the margin, because a fence
-written inside a nested list starts four columns in or more and closes at the
-same indentation: measured from the margin, none of those blocks would ever
-close.
+up to three columns further in than the block it is closing sits in.
+
+**From the block, which is the whole difficulty.** Measured from the *opener*,
+the three columns become as many as six, because an opener is allowed three of
+its own — so a block opened at one space was closed by a four-space line that
+is a line of code and nothing else. Measured from the *margin*, a fence written
+inside a list never closes at all, because it begins at the item's column and
+its closer is written to match. Both of those are the same mistake, which is
+taking a measurement from the wrong place, and they fail in opposite
+directions: the first spills a code sample into search, the second hides the
+rest of the note. So the index tracks which list item a fence is written in,
+and measures from there — which also tells it where an unclosed one ends, since
+a list item holds a block exactly as a blockquote does. A blank line is the
+only difference between the two: a blockquote ends at one, and a list item
+carries on through it.
 
 The vault index reads all this off the lines, because it runs over every note
 you have and there is no editor to ask. An **indented** code block is the one
@@ -554,6 +564,11 @@ wrapped list paragraph, and calling those code would lose the tags and links
 people write inside lists to catch the few written in an indented sample. The
 editor has no such problem — it asks its own parser, so an indented block is a
 code block to everything the editor does.
+
+Everything else it gets right, and that is checked rather than asserted: every
+opener indentation against every closer indentation, at the top level and
+inside a list, is compared position by position against the parser the editor
+runs. The only shapes the two read differently are the indented blocks above.
 
 **A note names itself, if you let it.** A note made with *New note here* — and
 every note started from a template — is called `Untitled`, so typing a heading
@@ -2570,7 +2585,7 @@ and that is a better argument for the rail than the outline ever was.
 ## Testing
 
 ```bash
-npm test                # 1177 unit + two-device sync + folder round-trip tests
+npm test                # 1180 unit + two-device sync + folder round-trip tests
 node scripts/smoke.mjs  # 806 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```

@@ -591,8 +591,51 @@ describe('headings', () => {
     expect(scanTags(['```', 'x', '   ```', '', '#real', ''].join('\n'))).toEqual(['real'])
   })
 
+  /*
+   * And the three columns are counted from the block the fence is in, not from
+   * the fence itself. An opener may be indented up to three columns of its own,
+   * and measuring the closer's allowance from *there* handed it as many as six
+   * — so a block opened at one space was closed by a four-space line that the
+   * editor rightly reads as code, and everything in the sample below it came
+   * out as headings and tags.
+   */
+  it('counts those columns from the margin, not from an indented opener', () => {
+    for (const open of [' ```', '  ```', '   ```']) {
+      const doc = [open, 'x', '    ```', '', '#real', ''].join('\n')
+      expect(scanTags(doc)).toEqual([])
+    }
+    // Three is still three, wherever the opener sits within them.
+    expect(scanTags(['   ```', 'x', '   ```', '', '#real', ''].join('\n'))).toEqual(['real'])
+    expect(scanTags([' ```', 'x', '```', '', '#real', ''].join('\n'))).toEqual(['real'])
+  })
+
   it('and a fence nested in a list closes at its own indentation', () => {
     const doc = ['- a', '  - b', '    ```', '    #nottag', '    ```', '', '#real', ''].join('\n')
+    expect(scanTags(doc)).toEqual(['real'])
+  })
+
+  /*
+   * Those columns are counted from the list item's content, which is the other
+   * half of the same rule: a fence written in a list begins where the item's
+   * text begins, so a closer three columns past *that* still closes it.
+   */
+  it('and gives a fence in a list the same leeway from its item', () => {
+    // The tag after the closer is inside the item too, so only the closer
+    // being *accepted* can free it — nothing else here ends the block.
+    const doc = ['- item', '  ```', '  #nottag', '     ```', '  #real', ''].join('\n')
+    expect(scanTags(doc)).toEqual(['real'])
+  })
+
+  /*
+   * And a list item holds a block the way a blockquote does, so an unclosed
+   * fence inside one ends with the item rather than running to the end of the
+   * note. A blank line is the difference between the two containers: a
+   * blockquote ends at one and a list item carries on through it.
+   */
+  it('ends an unclosed fence where the list item ends', () => {
+    const doc = ['- item', '  ```', '  #nottag', '', '  still the item #alsonot', 'out #real', ''].join(
+      '\n',
+    )
     expect(scanTags(doc)).toEqual(['real'])
   })
 
