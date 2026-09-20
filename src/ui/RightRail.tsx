@@ -7,6 +7,7 @@
  */
 
 import {
+  eventsByDay,
   getEntry,
   notesByDay,
   notesOnDay,
@@ -15,6 +16,7 @@ import {
   tasks,
   toggleTask,
 } from '../core/vault'
+import { eventIsPast, eventTimeLabel, eventZoneLabel } from '../core/agenda'
 import type { TaskItem } from '../core/types'
 import { Fragment } from 'preact'
 import { dueByToday, groupTasks, tasksDueOn } from '../core/taskgroups'
@@ -27,6 +29,7 @@ import { openConfirm } from './ConfirmDialog'
 import {
   calendarDayIntent,
   calendarMonth,
+  dayNotesDuplicated,
   matchingTasks,
   notify,
   openDailyNote,
@@ -43,6 +46,7 @@ import {
   IconCheck,
   IconChevronLeft,
   IconChevronRight,
+  IconClock,
   IconDots,
   IconPlus,
 } from './Icons'
@@ -190,9 +194,72 @@ export function CalendarPanel({ big = false }: { big?: boolean }) {
   )
 }
 
-export function DayNotesPanel({ omitOwed = false }: { omitOwed?: boolean } = {}) {
+/**
+ * The selected day, as a list of what is on it.
+ *
+ * Deliberately not a grid. A time grid needs vertical space the rail has not
+ * got, and it spends most of that space drawing the hours nothing happens in;
+ * this is a surface for reading a day rather than for scheduling one, so it
+ * lists what is there and says when.
+ *
+ * All-day rows come first without a time against them — they are true of the
+ * whole day, and a column of "all day" repeated down the top of the panel is
+ * furniture. A row that has already finished is dimmed rather than dropped:
+ * what you did this morning is part of what the day was.
+ */
+export function AgendaPanel({ big = false }: { big?: boolean } = {}) {
   const day = scope.value.kind === 'day' ? startOfDay(scope.value.date) : selectedDay.value
-  const list = notesOnDay(day)
+  const events = eventsByDay.value.get(day) ?? []
+  // Read once per render rather than per row, so a list cannot disagree with
+  // itself about what time it is.
+  const now = Date.now()
+  return (
+    <div class={big ? 'rail-section agenda agenda-big' : 'rail-section agenda'}>
+      <h3>
+        <IconClock size={12} />
+        Agenda
+        <span class="spacer" />
+        {events.length > 0 && <span>{events.length}</span>}
+      </h3>
+      {events.length === 0 ? (
+        <p class="rail-empty">Nothing scheduled.</p>
+      ) : (
+        events.map((e) => {
+          const ev = e.event!
+          const zone = eventZoneLabel(ev)
+          return (
+            <button
+              key={e.path}
+              class="agenda-row"
+              data-past={eventIsPast(ev, now) ? '1' : '0'}
+              onClick={() => openNote(e.path)}
+            >
+              <span class="agenda-when">{eventTimeLabel(ev, day)}</span>
+              <span class="agenda-what">
+                {e.title}
+                {zone && <em class="agenda-zone">{zone}</em>}
+              </span>
+            </button>
+          )
+        })
+      )}
+    </div>
+  )
+}
+
+export function DayNotesPanel({
+  omitOwed = false,
+  omitScoped = false,
+}: { omitOwed?: boolean; omitScoped?: boolean } = {}) {
+  const day = scope.value.kind === 'day' ? startOfDay(scope.value.date) : selectedDay.value
+  /*
+   * `omitScoped` drops the notes — and only the notes — when the column beside
+   * this one is already showing them; the rule itself is in state.ts. The
+   * phone passes nothing, its calendar tab being a screen of its own with no
+   * second column to agree with.
+   */
+  const showNotes = !(omitScoped && dayNotesDuplicated(scope.value, day))
+  const list = showNotes ? notesOnDay(day) : []
   /*
    * What this day asks of you, under what is filed on it — the calendar read
    * the other way round. No heading over them: a row with a checkbox and a
@@ -215,22 +282,23 @@ export function DayNotesPanel({ omitOwed = false }: { omitOwed?: boolean } = {})
    */
   const hasDaily = dailyNoteFor(day) !== undefined
   return (
-    <div class="rail-section">
+    <div class="rail-section day-panel">
       <h3>
         <IconCalendar size={12} />
         {new Date(day).toLocaleDateString(undefined, { month: 'long', day: 'numeric' })}
         <span class="spacer" />
-        {list.length > 0 && <span>{list.length}</span>}
+        {showNotes && list.length > 0 && <span>{list.length}</span>}
       </h3>
-      {list.length === 0 ? (
-        <p class="rail-empty">No notes on this day.</p>
-      ) : (
-        list.map((n) => (
-          <button key={n.path} class="day-note-row" onClick={() => openNote(n.path)}>
-            {n.title}
-          </button>
-        ))
-      )}
+      {showNotes &&
+        (list.length === 0 ? (
+          <p class="rail-empty">No notes on this day.</p>
+        ) : (
+          list.map((n) => (
+            <button key={n.path} class="day-note-row" onClick={() => openNote(n.path)}>
+              {n.title}
+            </button>
+          ))
+        ))}
       {!hasDaily && (
         <button
           class="day-create-row"
@@ -519,7 +587,8 @@ export function RightRail() {
     <div class="pane rail">
       <div class="rail-scroll">
         <CalendarPanel />
-        <DayNotesPanel omitOwed />
+        <AgendaPanel />
+        <DayNotesPanel omitOwed omitScoped />
         <DueTasksPanel />
       </div>
     </div>

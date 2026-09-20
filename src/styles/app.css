@@ -1712,6 +1712,7 @@ button.property-kind:hover {
 .day-note-row + .task-row,
 .day-create-row + .task-row,
 .day-add-row + .task-row,
+.agenda-row + .task-row,
 .rail-empty + .task-row {
   margin-top: 6px;
 }
@@ -1851,6 +1852,58 @@ button.property-kind:hover {
 }
 .shell[data-mode='compact'] .due-chip[data-set='0'] {
   opacity: 0.6;
+}
+
+/*
+ * A day's events. Two columns rather than a grid: the time is scanned down and
+ * the title is read across, and a fixed gutter is what lets the first of those
+ * happen without the eye hunting for where each row starts.
+ */
+.agenda-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  width: 100%;
+  text-align: left;
+  padding: 5px 6px;
+  border-radius: 7px;
+  font-size: 13px;
+}
+.agenda-row:hover {
+  background: var(--row-hover);
+}
+/* What has already happened is still part of the day, just behind it. */
+.agenda-row[data-past='1'] {
+  opacity: 0.5;
+}
+.agenda-when {
+  flex: none;
+  width: 52px;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.agenda-what {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The meeting's own clock, where it disagrees with the reader's. */
+.agenda-zone {
+  margin-left: 6px;
+  font-size: 11.5px;
+  font-style: normal;
+  color: var(--text-faint);
+}
+.agenda-big .agenda-row {
+  font-size: 15px;
+  padding: 8px 6px;
+}
+.agenda-big .agenda-when {
+  width: 64px;
+  font-size: 13.5px;
 }
 
 .day-note-row {

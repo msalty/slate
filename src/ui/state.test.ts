@@ -10,7 +10,14 @@
  */
 
 import { beforeEach, describe, expect, it } from 'vitest'
-import { activePath, calendarDayIntent, openNote, opensForWriting } from './state'
+import {
+  activePath,
+  calendarDayIntent,
+  dayNotesDuplicated,
+  openNote,
+  opensForWriting,
+} from './state'
+import { parseYmd } from '../core/util'
 
 const NOTE = 'Notes/Lisbon.md'
 const OTHER = 'Notes/Packing.md'
@@ -102,5 +109,38 @@ describe('calendarDayIntent', () => {
     // only the filtering mode has something to toggle off.
     expect(calendarDayIntent('daily', { hasDaily: true, isSelected: true })).toBe('open')
     expect(calendarDayIntent('daily', { hasDaily: false, isSelected: true })).toBe('offer')
+  })
+})
+
+/**
+ * The rail's day notes, and when they are a second copy of the middle column.
+ *
+ * The panel is not redundant — it carries the day's heading, the offer to make
+ * a daily note, and that day's tasks. Only its *list* can be a duplicate, and
+ * only in the mode where clicking a day filters the column beside it.
+ */
+describe('the day panel’s notes', () => {
+  it('are a duplicate when the list is scoped to the same day', () => {
+    const day = parseYmd('2026-09-21')!
+    expect(dayNotesDuplicated({ kind: 'day', date: day }, day)).toBe(true)
+  })
+
+  it('are not a duplicate when the list is scoped to a different day', () => {
+    expect(
+      dayNotesDuplicated({ kind: 'day', date: parseYmd('2026-09-20')! }, parseYmd('2026-09-21')!),
+    ).toBe(false)
+  })
+
+  it('are not a duplicate when the column is showing anything else', () => {
+    const day = parseYmd('2026-09-21')!
+    expect(dayNotesDuplicated({ kind: 'all' }, day)).toBe(false)
+    expect(dayNotesDuplicated({ kind: 'folder', path: 'Work' }, day)).toBe(false)
+    expect(dayNotesDuplicated({ kind: 'tag', tag: 'work' }, day)).toBe(false)
+    expect(dayNotesDuplicated({ kind: 'tasks' }, day)).toBe(false)
+  })
+
+  it('compares days rather than instants, so a time of day cannot split them', () => {
+    const day = parseYmd('2026-09-21')!
+    expect(dayNotesDuplicated({ kind: 'day', date: day + 13 * 3600_000 }, day)).toBe(true)
   })
 })

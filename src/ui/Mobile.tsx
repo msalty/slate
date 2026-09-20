@@ -32,7 +32,7 @@ import {
   type MobileTab,
   type Scope,
 } from './state'
-import { CalendarPanel, DayNotesPanel, TasksPanel } from './RightRail'
+import { AgendaPanel, CalendarPanel, DayNotesPanel, TasksPanel } from './RightRail'
 import { openTagFolderDialog } from './TagFolderDialog'
 import { openQuickAdd } from './QuickAdd'
 import { openMenu, useLongPress } from './Menu'
@@ -204,6 +204,7 @@ export function MobileCalendar() {
       </div>
       <div class="rail-scroll">
         <CalendarPanel big />
+        <AgendaPanel big />
         <DayNotesPanel />
       </div>
     </div>

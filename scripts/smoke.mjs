@@ -6586,7 +6586,9 @@ try {
   const laterDay = await showDay(1)
   await laterDay.click()
   await page.waitForTimeout(500)
-  const dayPanel = page.locator('.rail .rail-section').nth(0)
+  // Named rather than counted: the rail grows sections, and the day panel is
+  // not "the first one" so much as the one about the day.
+  const dayPanel = page.locator('.rail .day-panel')
   check(
     'clicking a day shows what it asks of you, under what is filed on it',
     (await dayPanel.locator('.task-row').allInnerTexts()).join(' | ').includes('Renew passport'),
@@ -6623,8 +6625,124 @@ try {
     `${await dayPanel.locator('.task-row').count()} rows in the day panel`,
   )
 
+  /* ---- the agenda ---------------------------------------------------------
+   * A day is not only what is filed on it and what it owes you; it is also
+   * what is *happening*. An event is an ordinary note with a `start:` on it, so
+   * this writes two of them by hand — which is the whole feature at this point,
+   * and the format the importer will later have to match.
+   */
   await page.locator('.side-row:has-text("All Notes")').first().click()
   await page.waitForTimeout(400)
+
+  /*
+   * Written into the database rather than typed, the way the kitchen sink is —
+   * and for a second reason here: an event file is going to arrive from
+   * *outside* the editor when there is an importer, so a note that was never
+   * opened is the case worth proving.
+   */
+  await page.evaluate(async (days) => {
+    const db = await new Promise((res, rej) => {
+      const r = indexedDB.open('slate')
+      r.onsuccess = () => res(r.result)
+      r.onerror = () => rej(r.error)
+    })
+    const tx = db.transaction('files', 'readwrite')
+    for (const [path, text] of days) {
+      tx.objectStore('files').put({
+        path,
+        kind: 'note',
+        text,
+        mime: 'text/markdown',
+        size: text.length,
+        hash: path,
+        mtime: Date.now(),
+        ctime: Date.now(),
+        dirty: true,
+        dirtyFlag: 1,
+        sync: {},
+      })
+    }
+    await new Promise((res) => {
+      tx.oncomplete = res
+    })
+  }, [
+    ['Design review.md', `---\nstart: ${isoDay(1)}T14:30\nend: ${isoDay(1)}T15:30\n---\n\nThe quarterly one.\n`],
+    ['Office closed.md', `---\nstart: ${isoDay(1)}\n---\n\nBank holiday.\n`],
+  ])
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForSelector('.note-row')
+
+  await page.locator('.cal-today').click()
+  await page.waitForTimeout(400)
+  const agenda = page.locator('.rail .agenda')
+  check(
+    'a day with nothing on it says so rather than showing an empty panel',
+    (await agenda.locator('.rail-empty').innerText()).includes('Nothing scheduled'),
+  )
+
+  const eventDay = await showDay(1)
+  await eventDay.click()
+  await page.waitForTimeout(500)
+  const rows = await agenda.locator('.agenda-row').allInnerTexts()
+  check(
+    'an event written by hand turns up on that day’s agenda',
+    rows.join(' | ').includes('Design review'),
+    rows.join(' | '),
+  )
+  check(
+    'and the whole-day one is read first, before anything with a clock on it',
+    rows.length === 2 && rows[0].includes('Office closed'),
+    rows.join(' | '),
+  )
+  check(
+    'the all-day row carries no time, because the heading already names the day',
+    (await agenda.locator('.agenda-row').nth(0).locator('.agenda-when').innerText()).trim() === '',
+  )
+  check(
+    'while the timed one says when',
+    /\d{1,2}.\d{2}/.test(
+      await agenda.locator('.agenda-row').nth(1).locator('.agenda-when').innerText(),
+    ),
+    await agenda.locator('.agenda-row').nth(1).locator('.agenda-when').innerText(),
+  )
+  check(
+    'an event opens its note like anything else in the rail',
+    await (async () => {
+      await agenda.locator('.agenda-row').nth(1).click()
+      await page.waitForTimeout(500)
+      return (await page.locator('.editor-title-input').inputValue()) === 'Design review'
+    })(),
+  )
+
+  /*
+   * And the rail stops repeating the column beside it. Clicking a day filters
+   * the middle column to that day, so the day panel's copy of the same list is
+   * the one thing in the rail that was saying nothing new.
+   */
+  /*
+   * Rows *or* the line that says there are none: either one is the list being
+   * there. Counting only rows would call an empty day a hidden list and pass
+   * for the wrong reason.
+   */
+  const dayList = () =>
+    page.locator('.rail .day-panel .day-note-row, .rail .day-panel .rail-empty')
+  check(
+    'a day the list is already filtered to keeps its heading in the rail',
+    (await page.locator('.rail .day-panel h3').count()) === 1,
+  )
+  check(
+    'but hands the list of notes to the column that is already showing it',
+    (await dayList().count()) === 0,
+    (await dayList().allInnerTexts()).join(' | '),
+  )
+
+  await page.locator('.side-row:has-text("All Notes")').first().click()
+  await page.waitForTimeout(400)
+  check(
+    'and takes it back as soon as the column is showing something else',
+    (await dayList().count()) > 0,
+    (await dayList().allInnerTexts()).join(' | '),
+  )
 
   /* ---- copying a table back out -----------------------------------------
    * The return trip. Only the HTML flavour is added: spreadsheets read it in
