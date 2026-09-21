@@ -18,8 +18,8 @@ const ev = (...lines: string[]) => eventFor(Object.fromEntries(lines.map((l) => 
 })))!
 
 describe('the time on a row', () => {
-  it('says nothing for an all-day event', () => {
-    expect(eventTimeLabel(ev('start: 2026-09-21'), DAY)).toBe('')
+  it('says so for an all-day event rather than leaving the column empty', () => {
+    expect(eventTimeLabel(ev('start: 2026-09-21'), DAY)).toBe('all day')
   })
 
   it('gives the start time for an event that begins today', () => {

@@ -1807,7 +1807,16 @@ try {
   await otherDay.click()
   await page.waitForTimeout(300)
   check('an empty day offers a daily note', (await page.locator('.list-pane .daily-row').count()) === 1, otherLabel)
-  check('the rail offers it too', (await page.locator('.rail .day-create-row').count()) === 1)
+  /*
+   * And exactly once. Clicking a day scopes the list to it, which is the case
+   * where the rail hands its whole notes section — the list and the offer under
+   * it — to the column already showing them. The offer is on screen either way;
+   * what it must not be is on screen twice, side by side.
+   */
+  check(
+    'and the rail leaves it to that list rather than making the same offer twice',
+    (await page.locator('.rail .day-create-row').count()) === 0,
+  )
   const dailyName = await page.locator('.list-pane .daily-row-name').innerText()
   await page.locator('.list-pane .daily-row').click()
   await page.waitForTimeout(500)
@@ -6586,9 +6595,9 @@ try {
   const laterDay = await showDay(1)
   await laterDay.click()
   await page.waitForTimeout(500)
-  // Named rather than counted: the rail grows sections, and the day panel is
-  // not "the first one" so much as the one about the day.
-  const dayPanel = page.locator('.rail .day-panel')
+  // Named rather than counted: the rail grows sections, and the day's tasks are
+  // not "the first one" so much as the one about what the day asks of you.
+  const dayPanel = page.locator('.rail .day-tasks')
   check(
     'clicking a day shows what it asks of you, under what is filed on it',
     (await dayPanel.locator('.task-row').allInnerTexts()).join(' | ').includes('Renew passport'),
@@ -6700,8 +6709,10 @@ try {
     rows.join(' | '),
   )
   check(
-    'the all-day row carries no time, because the heading already names the day',
-    (await agenda.locator('.agenda-row').nth(0).locator('.agenda-when').innerText()).trim() === '',
+    'the all-day row says so rather than leaving the column empty',
+    (await agenda.locator('.agenda-row').nth(0).locator('.agenda-when').innerText()).trim() ===
+      'all day',
+    await agenda.locator('.agenda-row').nth(0).locator('.agenda-when').innerText(),
   )
   check(
     'while the timed one says when',
@@ -6729,14 +6740,20 @@ try {
    * there. Counting only rows would call an empty day a hidden list and pass
    * for the wrong reason.
    */
-  const dayList = () =>
-    page.locator('.rail .day-panel .day-note-row, .rail .day-panel .rail-empty')
+  const dayList = () => page.locator('.rail .day-notes')
   check(
-    'a day the list is already filtered to keeps its heading in the rail',
-    (await page.locator('.rail .day-panel h3').count()) === 1,
+    'the day is named once, over everything that is about it',
+    (await page.locator('.rail .rail-day-head').innerText()).includes('September') ||
+      /\d/.test(await page.locator('.rail .rail-day-head').innerText()),
+    await page.locator('.rail .rail-day-head').innerText(),
   )
   check(
-    'but hands the list of notes to the column that is already showing it',
+    'and its agenda and tasks keep their own headings under it',
+    (await page.locator('.rail .rail-day .agenda h3').count()) === 1 &&
+      (await page.locator('.rail .rail-day .day-tasks h3').count()) === 1,
+  )
+  check(
+    'but the notes go entirely, handed to the column already showing them',
     (await dayList().count()) === 0,
     (await dayList().allInnerTexts()).join(' | '),
   )
@@ -6745,8 +6762,19 @@ try {
   await page.waitForTimeout(400)
   check(
     'and takes it back as soon as the column is showing something else',
-    (await dayList().count()) > 0,
+    (await dayList().count()) === 1,
     (await dayList().allInnerTexts()).join(' | '),
+  )
+  check(
+    'bringing the offer of a daily note back with it',
+    (await page.locator('.rail .day-notes .day-create-row').count()) === 1,
+  )
+  check(
+    'and an event is not in that list, being on the agenda directly above it',
+    !(await page.locator('.rail .day-notes .day-note-row').allInnerTexts())
+      .join(' | ')
+      .includes('Design review'),
+    (await page.locator('.rail .day-notes .day-note-row').allInnerTexts()).join(' | '),
   )
 
   /*
@@ -6769,10 +6797,8 @@ try {
     await page.locator('.editor-title-input').inputValue(),
   )
   check(
-    'named for the day, and not for the time — a filename cannot follow a picker',
-    /^\d{4}-\d{2}-\d{2} Budget call$/.test(
-      await page.locator('.editor-title-input').inputValue(),
-    ),
+    'called exactly what was typed — a filename cannot follow a picker',
+    (await page.locator('.editor-title-input').inputValue()) === 'Budget call',
     await page.locator('.editor-title-input').inputValue(),
   )
   check(
@@ -6826,9 +6852,7 @@ try {
   )
   check(
     'while the name it was given stays as it was, so no link to it breaks',
-    /^\d{4}-\d{2}-\d{2} Budget call$/.test(
-      await page.locator('.editor-title-input').inputValue(),
-    ),
+    (await page.locator('.editor-title-input').inputValue()) === 'Budget call',
     await page.locator('.editor-title-input').inputValue(),
   )
   check(

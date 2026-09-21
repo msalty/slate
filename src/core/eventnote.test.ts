@@ -35,11 +35,11 @@ describe('where an event goes and what it is called', () => {
     expect(eventFolderFor(DAY)).toBe('Calendar/2026/09')
   })
 
-  it('puts the date in the name, and only the date', () => {
-    // Not the time: a filename does not follow the frontmatter, so a meeting
-    // moved to the afternoon would keep a name saying 0930 forever.
-    expect(eventNoteName('Design review', DAY)).toBe('2026-09-21 Design review')
-    expect(eventNoteName('Office closed', DAY)).toBe('2026-09-21 Office closed')
+  it('is called what you called it, with nothing stamped on the front', () => {
+    // A filename does not follow the frontmatter, so anything about *when* in
+    // the name is a claim that stops being true the moment the event moves.
+    expect(eventNoteName('Design review')).toBe('Design review')
+    expect(eventNoteName('  Office closed  ')).toBe('Office closed')
   })
 
   it('suggests the next round half hour, never one that has gone', () => {
@@ -55,10 +55,10 @@ describe('where an event goes and what it is called', () => {
 })
 
 describe('the note it writes', () => {
-  it('lands in the calendar folder, named for its day', async () => {
+  it('lands in the calendar folder under the year and month, named for itself', async () => {
     const { ev } = await fresh()
     const { path } = await ev.newEventNote('Design review', DAY, '09:30')
-    expect(path).toBe('Calendar/2026/09/2026-09-21 Design review.md')
+    expect(path).toBe('Calendar/2026/09/Design review.md')
   })
 
   it('opens with a start and an end already written', async () => {
@@ -75,37 +75,32 @@ describe('the note it writes', () => {
     expect(vault.eventsByDay.value.get(DAY)?.map((e) => e.path)).toEqual([path])
   })
 
-  it('gives two meetings on one day two names, both of them linkable', async () => {
+  it('gives two of one name on one day the `2` every collision in the vault gets', async () => {
     const { vault, ev } = await fresh()
     const a = await ev.newEventNote('Standup', DAY, '09:30')
     const b = await ev.newEventNote('Standup', DAY, '14:00')
-    expect(a.path).not.toBe(b.path)
-    // The same `2` every other name collision in the vault gets — and unlike a
-    // time, a `2` cannot go on to be wrong about anything.
-    expect(vault.resolveLink('2026-09-21 Standup')).toBe(a.path)
-    expect(vault.resolveLink('2026-09-21 Standup 2')).toBe(b.path)
+    expect(a.path).toBe('Calendar/2026/09/Standup.md')
+    expect(b.path).toBe('Calendar/2026/09/Standup 2.md')
+    expect(vault.resolveLink('Standup')).toBe(a.path)
+    expect(vault.resolveLink('Standup 2')).toBe(b.path)
   })
 
-  it('and the same meeting on two days keeps two names without help', async () => {
-    const { vault, ev } = await fresh()
-    const a = await ev.newEventNote('Standup', DAY, '09:30')
-    const b = await ev.newEventNote('Standup', DAY + 86_400_000, '09:30')
-    expect(vault.resolveLink('2026-09-21 Standup')).toBe(a.path)
-    expect(vault.resolveLink('2026-09-22 Standup')).toBe(b.path)
-  })
-
-  it('keeps the name it was given when the time is changed afterwards', async () => {
+  it('keeps the name it was given when the day or time is changed afterwards', async () => {
     const { vault, ev } = await fresh()
     const { path } = await ev.newEventNote('Design review', DAY, '09:30')
     await vault.saveNote(
       path,
-      '---\nstart: 2026-09-21T14:00\nend: 2026-09-21T15:00\n---\n\n# Design review\n',
+      '---\nstart: 2026-10-05T14:00\nend: 2026-10-05T15:00\n---\n\n# Design review\n',
     )
-    // The file does not rename itself, which is the point: a rename would
-    // break every `[[link]]` pointing at it. The agenda reads the clock off
-    // `start:`, so the moved meeting shows at 14:00 regardless.
-    expect(vault.getEntry(path)?.event?.start).toBe(new Date(2026, 8, 21, 14, 0).getTime())
-    expect(vault.resolveLink('2026-09-21 Design review')).toBe(path)
+    /*
+     * The file does not rename itself — a rename would break every `[[link]]`
+     * pointing at it — and it does not need to, because nothing about when it
+     * happens was ever written into the name. It simply moves.
+     */
+    expect(vault.resolveLink('Design review')).toBe(path)
+    expect(vault.eventsByDay.value.get(DAY)).toBeUndefined()
+    expect(vault.eventsByDay.value.get(parseYmd('2026-10-05')!)?.length).toBe(1)
+    expect(vault.getEntry(path)?.calendarDate).toBe(parseYmd('2026-10-05'))
   })
 
   it('takes a template from Calendar/, not only from the month it landed in', async () => {

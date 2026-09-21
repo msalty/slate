@@ -32,7 +32,14 @@ import {
   type MobileTab,
   type Scope,
 } from './state'
-import { AgendaPanel, CalendarPanel, DayNotesPanel, TasksPanel } from './RightRail'
+import {
+  AgendaPanel,
+  CalendarPanel,
+  DayNotesPanel,
+  DayTasksPanel,
+  RailDayHead,
+  TasksPanel,
+} from './RightRail'
 import { openTagFolderDialog } from './TagFolderDialog'
 import { openQuickAdd } from './QuickAdd'
 import { openMenu, useLongPress } from './Menu'
@@ -204,8 +211,17 @@ export function MobileCalendar() {
       </div>
       <div class="rail-scroll">
         <CalendarPanel big />
-        <AgendaPanel big />
-        <DayNotesPanel />
+        {/*
+          The same two tiers as the rail, and for the same reason. No Due list
+          under it here — this tab is one screen about one day — so the day
+          keeps its own tasks rather than handing the late ones downward.
+        */}
+        <div class="rail-day">
+          <RailDayHead big />
+          <AgendaPanel big />
+          <DayNotesPanel />
+          <DayTasksPanel />
+        </div>
       </div>
     </div>
   )

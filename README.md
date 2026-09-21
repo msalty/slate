@@ -19,8 +19,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 1272 unit, two-device sync and folder round-trip tests
-node scripts/smoke.mjs # 826-check browser smoke test against dist/
+npm test               # 1271 unit, two-device sync and folder round-trip tests
+node scripts/smoke.mjs # 829-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -904,12 +904,32 @@ than for today — so Thursday's note, started on Saturday, still says Thursday.
 **Calendar, agenda and tasks.** An optional right column (⌘⇧R) shows a month
 calendar with a dot per note, filed by an event's `start:`, then frontmatter
 `date:`, a `YYYY-MM-DD` filename, or creation time. Click a day to filter the
-list. Under the month, **Agenda**: what is happening on the selected day. Under
-that, the day's notes and the offer to make one — **Create daily note**, at the
-top of that day's list and under the day in the rail — which writes
-`Daily/YYYY-MM-DD.md` and opens it, so Thursday's note can be started on
-Saturday and still lands on Thursday. Below it, **Due**: the tasks that are due
-today and the ones already late. Ticking a box there edits the source note.
+list.
+
+Under the month the column has **two tiers rather than four sections in a row**.
+The selected day is named once — `September 21`, with *Today* beside it when it
+is — and under that name sit the three things there are to say about that day:
+**Agenda**, what is happening; **Notes**, what you wrote; and **Tasks**, what it
+asks of you. Each carries its count, and the two that can be added to carry a
+**+** in the same place. Hairlines mark only the two structural joins, under the
+month and before Due; inside the group the small-caps headings and the space
+around them do the separating.
+
+**Due** sits outside that group, because it is the one list here that is not
+about the selected day at all: what is late and what is owed today, whichever
+day you are looking at. Ticking a box there edits the source note.
+
+An **event is not in the Notes list**, being in the Agenda directly above it — a
+meeting said twice in one column is the thing this arrangement exists to stop.
+It keeps its dot on the month and it is still in the middle column when the list
+is scoped to a day, because those two answer *what is filed here*, which an
+event is. Notes answers *what did you write*, which it is not.
+
+Any day without a daily note offers to make one — **Create daily note**, which
+writes `Daily/YYYY-MM-DD.md` and opens it, so Thursday's note can be started on
+Saturday and still lands on Thursday. It is offered once: at the top of that
+day's list when the list is scoped to that day, and in the rail's Notes section
+when it is not.
 
 **An event is a note that says when it happens.** One key does it: `start:` in
 the frontmatter, and the note is on that day's agenda. There is no event format,
@@ -945,8 +965,10 @@ the wrong day.
 **The agenda is a list, not a grid.** A time grid needs vertical space the rail
 has not got and spends most of it drawing the hours nothing happens in; this is
 a surface for reading a day rather than scheduling one. All-day rows come first
-with no time against them — they are true of the whole day, and a column of "all
-day" repeated down the top of the panel is furniture. A row that has already
+and say *all day* rather than leaving the column empty: saying nothing was the
+first answer, since the heading already names the day, but on screen an empty
+cell does not read as "no time" — it reads as a title come loose from the column
+beside it. A row that has already
 finished is dimmed rather than dropped, because what you did this morning is
 part of what the day was. An event's own zone is named only where it disagrees
 with the clock you are reading, and compared by offset rather than by name: a
@@ -964,15 +986,20 @@ right in a dialog before the thing is even called anything. The note lands in
 that fills up on its own, and a directory with hundreds of files in it is one
 nobody opens twice.
 
-It is named for its **day** and not for its time. A filename does not follow the
-frontmatter, so a meeting moved to the afternoon would keep a name saying `0930`
-for as long as it existed — and the stale time would be invisible exactly where
-it was right, since the agenda reads the clock off `start:` and strips the stamp
-from the row. It would show in the note list, the editor's header, search and
-every `[[link]]`, which are all the places it could be wrong. The date stays,
-because twelve notes titled "Standup" would leave eleven of them unlinkable, and
-two events sharing a name on one day get the same `2` every other name collision
-in the vault gets — a `2` at least never goes on to claim something false.
+It is called **what you called it**, with nothing stamped on the front — not the
+time, and not the date either. A filename does not follow the frontmatter, so
+anything about *when* written into the name is a claim that stops being true the
+moment the event moves, and moving one is a two-second job now the properties
+form has a picker on it. Worse, it would be wrong in all the places a name shows
+— the note list, the editor's header, search, every `[[link]]` — and invisible
+in the one place it was right, since the agenda reads both the clock and the day
+off `start:`.
+
+What that costs is worth saying plainly: a weekly standup is twelve notes called
+Standup, and `[[Standup]]` can only mean one of them. Two in one month get the
+`2` every name collision in the vault gets; two in different months are two
+files with one name. `aliases:` or a rename is the way out for an occurrence
+worth linking to on its own.
 
 A template on `Calendar/` is picked up the way one on `Daily/` is, and the walk
 goes up: a template assigned to `Calendar/` reaches `Calendar/2026/09`, which is
@@ -2503,15 +2530,17 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
   honest version is that they are absent rather than half-present: to move a
   note, open it, copy it, switch, paste — or use Export, which is two clicks
   and keeps the file.
-- **An event is listed twice in the rail.** It is on the agenda, and it is also
-  among the day's notes underneath, and it puts a dot on the month. All three
-  are defensible on their own — a note you wrote is a note you wrote — but one
-  meeting written down once appears twice in one column, which is the same
-  redundancy the day panel's notes list was just taught to avoid. The fix is a
-  decision rather than a patch: either an event leaves the day's notes (and then
-  what marks the month?), or events get a mark of their own beside the dots that
-  already mean two things. Neither is written yet, so for now a day with three
-  meetings on it reads as six rows.
+- **The month's dots do not say which are events.** An event is out of the
+  rail's Notes list, since it is on the Agenda above — but its dot on the month
+  is the same dot a note gets, so a day with four meetings and nothing written
+  on it looks, from the grid alone, like a day somebody wrote four notes. A mark
+  of its own is the answer and the dots already carry one meaning each, so it is
+  a third channel rather than a tweak; the pips that say *work is due here*
+  took one, and a third would need to earn its space against both.
+- **An event is still among the day's notes in the middle column.** Scoping the
+  list to a day lists everything filed on it, meetings included, which is right
+  for a list whose job is "what is filed here" and repetitive next to an agenda
+  that just said the same thing in a narrower column.
 - **Vaults share one browser storage allowance.** The figure under About is the
   origin's total, not the vault's, and a browser low on space evicts by origin —
   so a large vault is a risk to a small one beside it. Settings › Vaults says
@@ -2750,8 +2779,8 @@ and that is a better argument for the rail than the outline ever was.
 ## Testing
 
 ```bash
-npm test                # 1272 unit + two-device sync + folder round-trip tests
-node scripts/smoke.mjs  # 826 checks in headless Chromium against dist/
+npm test                # 1271 unit + two-device sync + folder round-trip tests
+node scripts/smoke.mjs  # 829 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

@@ -34,26 +34,25 @@ export function eventFolderFor(day: number): string {
 }
 
 /**
- * `2026-09-21 Design review`.
+ * An event is called what you called it.
  *
- * The **date** is in the name because a note's title is its filename, and
- * `titleIndex` gives a contested name to one note and leaves the other
- * unreachable by it — so a weekly standup needs twelve distinguishable names
- * or eleven of its notes cannot be linked to.
+ * Nothing is stamped onto the front of it — not the time, and not the date
+ * either. A filename does not follow the frontmatter, so anything about *when*
+ * written into the name is a claim that stops being true the moment the event
+ * moves, and moving one is a two-second job now the properties form has a
+ * picker on it. Worse, it was wrong in all the places the name shows — the note
+ * list, the editor's header, search, every `[[link]]` — and invisible in the
+ * one place it was right, since the agenda reads the clock and the day off
+ * `start:`.
  *
- * The **time** is deliberately not, though it was at first. A filename does not
- * follow the frontmatter, so a meeting moved from the morning to the afternoon
- * keeps a name that says 0930 for as long as the note exists — and moving one
- * is a two-second job now that the properties form has a picker on it. Worse,
- * the stale time is invisible exactly where it would be right: the agenda
- * strips the stamp and reads the clock off `start:`. So it was hidden where it
- * was true and shown in the note list, the editor's header, search results and
- * every `[[link]]`, where it could be wrong. Two events with one name on one
- * day get the `2` that every other name collision in the vault gets, and a `2`
- * at least never claims something false.
+ * What that costs is real and worth saying: a weekly standup is twelve notes
+ * called Standup, and `[[Standup]]` can only mean one of them. Two in one month
+ * get the `2` that every name collision in the vault gets; two in different
+ * months are two files with one name. `aliases:` or a rename is the way out for
+ * an occurrence worth linking to on its own.
  */
-export function eventNoteName(title: string, day: number): string {
-  return `${ymd(day)} ${title}`.trim()
+export function eventNoteName(title: string): string {
+  return title.trim()
 }
 
 /**
@@ -158,7 +157,7 @@ export async function newEventNote(
   start = nextHalfHour(),
 ): Promise<NewEvent> {
   const folder = eventFolderFor(day)
-  const name = eventNoteName(title, day)
+  const name = eventNoteName(title)
   const date = ymd(startOfDay(day))
   /*
    * The template is given the moment the event *starts*, not the midnight it

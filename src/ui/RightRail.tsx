@@ -43,12 +43,12 @@ import { openQuickAdd } from './QuickAdd'
 import { openNewEvent } from './newEvent'
 import { Highlight } from './Highlight'
 import {
-  IconCalendar,
   IconCheck,
   IconChevronLeft,
   IconChevronRight,
   IconClock,
   IconDots,
+  IconNotes,
   IconPlus,
 } from './Icons'
 
@@ -208,8 +208,38 @@ export function CalendarPanel({ big = false }: { big?: boolean }) {
  * furniture. A row that has already finished is dimmed rather than dropped:
  * what you did this morning is part of what the day was.
  */
+/** The day every panel under the calendar is about. */
+function railDay(): number {
+  return scope.value.kind === 'day' ? startOfDay(scope.value.date) : selectedDay.value
+}
+
+/**
+ * The selected day, named once, over everything that is about it.
+ *
+ * It used to be the heading of the notes panel, which made the date look like a
+ * property of that one list rather than the subject of the whole column — three
+ * sections of equal weight, one of them wearing the day's name. Lifting it out
+ * gives the rail two tiers instead of four peers: this day, and then the three
+ * things there are to say about it.
+ *
+ * Plain case and a size up from the section headings, because it is the only
+ * line here that is a *name* rather than a label. "Today" replaces the weekday
+ * when it is today: the one fact worth more than which day of the week it is.
+ */
+export function RailDayHead({ big = false }: { big?: boolean } = {}) {
+  const day = railDay()
+  const isToday = day === startOfDay(Date.now())
+  const d = new Date(day)
+  return (
+    <div class={big ? 'rail-day-head rail-day-head-big' : 'rail-day-head'}>
+      <strong>{d.toLocaleDateString(undefined, { month: 'long', day: 'numeric' })}</strong>
+      <span>{isToday ? 'Today' : d.toLocaleDateString(undefined, { weekday: 'long' })}</span>
+    </div>
+  )
+}
+
 export function AgendaPanel({ big = false }: { big?: boolean } = {}) {
-  const day = scope.value.kind === 'day' ? startOfDay(scope.value.date) : selectedDay.value
+  const day = railDay()
   const events = eventsByDay.value.get(day) ?? []
   // Read once per render rather than per row, so a list cannot disagree with
   // itself about what time it is.
@@ -254,34 +284,28 @@ export function AgendaPanel({ big = false }: { big?: boolean } = {}) {
   )
 }
 
-export function DayNotesPanel({
-  omitOwed = false,
-  omitScoped = false,
-}: { omitOwed?: boolean; omitScoped?: boolean } = {}) {
-  const day = scope.value.kind === 'day' ? startOfDay(scope.value.date) : selectedDay.value
+export function DayNotesPanel({ omitScoped = false }: { omitScoped?: boolean } = {}) {
+  const day = railDay()
   /*
-   * `omitScoped` drops the notes — and only the notes — when the column beside
-   * this one is already showing them; the rule itself is in state.ts. The
-   * phone passes nothing, its calendar tab being a screen of its own with no
-   * second column to agree with.
+   * `omitScoped` drops the section — header, list and the offer under it — when
+   * the column beside this one is already showing the same notes; the rule
+   * itself is in state.ts. Nothing is lost with it: a day the list is scoped to
+   * carries its own *Create daily note* row at the top of that list, so the
+   * offer is on screen either way. The phone passes nothing, its calendar tab
+   * being a screen of its own with no second column to agree with.
    */
-  const showNotes = !(omitScoped && dayNotesDuplicated(scope.value, day))
-  const list = showNotes ? notesOnDay(day) : []
+  if (omitScoped && dayNotesDuplicated(scope.value, day)) return null
   /*
-   * What this day asks of you, under what is filed on it — the calendar read
-   * the other way round. No heading over them: a row with a checkbox and a
-   * date on it is not going to be mistaken for a note.
-   *
-   * `omitOwed` is for the rail, where the Due list sits directly below and
-   * already holds everything overdue and everything due today: without it,
-   * selecting a day with late work on it shows the same task twice in one
-   * column. The phone's calendar tab has no such list under it, so there it
-   * stays off and the day keeps its own tasks.
+   * Events are not in this list, because they are in the one directly above it.
+   * A note that says when it happens is *shown as* the thing that happens — and
+   * the column used to say a meeting twice, once under a clock and once under a
+   * heading, which is the same redundancy the scoped-day rule above exists to
+   * avoid. They keep their dot on the month and they are still in the middle
+   * column when the list is scoped to a day: those two answer "what is filed
+   * here", which an event is. This one answers "what did you write", which an
+   * event is not.
    */
-  const owed = omitOwed ? new Set(dueByToday(tasks.value).map((t) => t.id)) : new Set<string>()
-  const due = tasksDueOn(tasks.value, day, settings.value.showDoneTasks).filter(
-    (t) => !owed.has(t.id),
-  )
+  const list = notesOnDay(day).filter((n) => !n.event)
   /*
    * The offer is only made when the day hasn't got one. Once it has, the note
    * is already sitting in the list above, and a second way in from the same
@@ -289,23 +313,22 @@ export function DayNotesPanel({
    */
   const hasDaily = dailyNoteFor(day) !== undefined
   return (
-    <div class="rail-section day-panel">
+    <div class="rail-section day-notes">
       <h3>
-        <IconCalendar size={12} />
-        {new Date(day).toLocaleDateString(undefined, { month: 'long', day: 'numeric' })}
+        <IconNotes size={12} />
+        Notes
         <span class="spacer" />
-        {showNotes && list.length > 0 && <span>{list.length}</span>}
+        {list.length > 0 && <span>{list.length}</span>}
       </h3>
-      {showNotes &&
-        (list.length === 0 ? (
-          <p class="rail-empty">No notes on this day.</p>
-        ) : (
-          list.map((n) => (
-            <button key={n.path} class="day-note-row" onClick={() => openNote(n.path)}>
-              {n.title}
-            </button>
-          ))
-        ))}
+      {list.length === 0 ? (
+        <p class="rail-empty">Nothing written on this day.</p>
+      ) : (
+        list.map((n) => (
+          <button key={n.path} class="day-note-row" onClick={() => openNote(n.path)}>
+            {n.title}
+          </button>
+        ))
+      )}
       {!hasDaily && (
         <button
           class="day-create-row"
@@ -316,15 +339,59 @@ export function DayNotesPanel({
           Create daily note
         </button>
       )}
-      {due.map((t) => (
-        <TaskRow key={t.id} task={t} />
-      ))}
-      {/*
-        Adding from a day is about that day: the task is filed in that day's
-        note and carries its date, so it appears in the list directly above
-        rather than somewhere you have to go and look for it.
-      */}
-      <AddTaskRow day={day} due={day} label="Add task for this day" />
+    </div>
+  )
+}
+
+/**
+ * What the day asks of you — the calendar read the other way round.
+ *
+ * Its own section now rather than a run of checkboxes under the notes. Sharing
+ * a panel with them meant the day's work had no heading of its own to be
+ * counted in, and the only thing separating a task from a note was that one of
+ * them had a checkbox on it.
+ *
+ * `omitOwed` is for the rail, where the Due list sits below and already holds
+ * everything overdue and everything due today: without it, selecting a day with
+ * late work on it shows the same task twice in one column. The phone's calendar
+ * tab has no such list under it, so there it stays off and the day keeps its
+ * own tasks.
+ */
+export function DayTasksPanel({ omitOwed = false }: { omitOwed?: boolean } = {}) {
+  const day = railDay()
+  const owed = omitOwed ? new Set(dueByToday(tasks.value).map((t) => t.id)) : new Set<string>()
+  const due = tasksDueOn(tasks.value, day, settings.value.showDoneTasks).filter(
+    (t) => !owed.has(t.id),
+  )
+  return (
+    <div class="rail-section day-tasks">
+      <h3>
+        <IconCheck size={12} />
+        Tasks
+        <span class="spacer" />
+        {due.length > 0 && <span>{due.length}</span>}
+        {/*
+          Adding from a day is about that day: the task is filed in that day's
+          note and carries its date, so it appears in the list below rather than
+          somewhere you have to go and look for it. On the header beside the
+          count, where the agenda keeps its own +, so the two sections offer the
+          same thing in the same place instead of one of them hiding it at the
+          bottom of a list.
+        */}
+        <button
+          class="rail-group-btn"
+          onClick={() => openQuickAdd({ mode: 'task', day, due: day })}
+          aria-label="Add task for this day"
+          title="Add task for this day"
+        >
+          <IconPlus size={14} />
+        </button>
+      </h3>
+      {due.length === 0 ? (
+        <p class="rail-empty">Nothing due on this day.</p>
+      ) : (
+        due.map((t) => <TaskRow key={t.id} task={t} />)
+      )}
     </div>
   )
 }
@@ -447,11 +514,14 @@ export function TasksPanel({
   title = 'Tasks',
   empty,
   query,
+  class: cls,
 }: {
   items?: TaskItem[]
   title?: string
   empty?: preact.ComponentChildren
   query?: string
+  /** An extra class, for the one place this panel is a peer of a group. */
+  class?: string
 }) {
   const searching = !!query?.trim()
   /*
@@ -510,7 +580,7 @@ export function TasksPanel({
     )
 
   return (
-    <div class="rail-section">
+    <div class={cls ? `rail-section ${cls}` : 'rail-section'}>
       <h3>
         <IconCheck size={12} />
         {title}
@@ -583,19 +653,32 @@ function DueTasksPanel() {
     <TasksPanel
       items={dueByToday(tasks.value)}
       title="Due"
+      class="rail-due"
       empty={<>Nothing due today. The Tasks list in the sidebar has everything else.</>}
     />
   )
 }
 
-/** The wide-screen right column. */
+/**
+ * The wide-screen right column.
+ *
+ * Two tiers rather than four sections in a row. The calendar picks a day; the
+ * group under it is everything about that day, named once at the top; and Due
+ * sits outside that group because it is the one list here that is not about the
+ * selected day at all — it is what is late and what is owed today, whichever
+ * day you happen to be looking at.
+ */
 export function RightRail() {
   return (
     <div class="pane rail">
       <div class="rail-scroll">
         <CalendarPanel />
-        <AgendaPanel />
-        <DayNotesPanel omitOwed omitScoped />
+        <div class="rail-day">
+          <RailDayHead />
+          <AgendaPanel />
+          <DayNotesPanel omitScoped />
+          <DayTasksPanel omitOwed />
+        </div>
         <DueTasksPanel />
       </div>
     </div>

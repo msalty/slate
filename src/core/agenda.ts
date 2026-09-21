@@ -22,11 +22,14 @@ function clock(at: number): string {
 /**
  * The time to put in front of an event, read on a particular day.
  *
- * Empty for an all-day event: the row is under a heading that already names
- * the day, and a column of "all day" repeated down the top of it is furniture.
+ * An all-day event says so rather than leaving the column empty. Saying nothing
+ * was the first answer — the row is under a heading that already names the day,
+ * so the words look redundant — but on screen an empty cell does not read as
+ * "no time", it reads as a title that has come loose from the column beside it.
+ * A label costs two faint words and keeps the column a column.
  */
 export function eventTimeLabel(ev: NoteEvent, day: number): string {
-  if (ev.allDay) return ''
+  if (ev.allDay) return 'all day'
   const today = startOfDay(day)
   const tomorrow = addDays(today, 1)
   // Midnight closes the day before it, the same rule `eventsByDay` files by,

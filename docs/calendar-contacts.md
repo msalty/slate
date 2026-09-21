@@ -130,28 +130,30 @@ the mechanism for "I always want these four fields", and the `Meeting` starter
 is one — it opens with `start:`, so a meeting note lands on the agenda for the
 day it happened.
 
-**Filenames.** `Calendar/2026/09/2026-09-21 Design review.md`. Year/month
-subfolders keep any one directory browsable, and a template assigned to
-`Calendar/` reaches them — the walk goes up within the calendar tree, because
-`Calendar/2026/09` is not a folder anybody chose.
+**Filenames.** `Calendar/2026/09/Design review.md`. Year/month subfolders keep
+any one directory browsable, and a template assigned to `Calendar/` reaches them
+— the walk goes up within the calendar tree, because `Calendar/2026/09` is not a
+folder anybody chose.
 
-The **date** is in the filename because `titleIndex` is first-writer-wins on
-collision (`src/core/vault.ts:574`) — twelve notes all titled "Standup" would
-leave eleven of them unlinkable.
+**Nothing about *when* goes in the name.** Not the time, and not the date. A
+filename does not follow the frontmatter, so either one is a claim that stops
+being true the moment the event moves — and it would be wrong in all the places
+a name shows (the note list, the editor header, search, every `[[link]]`) while
+being invisible in the one place it was right, since the agenda reads both the
+clock and the day off `start:`.
 
-The **time** is not, and this is worth stating because the first cut had it.
-A filename does not follow the frontmatter, so a meeting moved to the afternoon
-keeps a name saying `0930` for as long as it exists — and the stale time is
-invisible exactly where it would have been right, since the agenda strips the
-stamp and reads the clock off `start:`. It was hidden where it was true and
-shown in the note list, the editor header, search and every `[[link]]`, where
-it could be wrong.
+This costs something real and the app accepts it: `titleIndex` is
+first-writer-wins on collision (`src/core/vault.ts:574`), so twelve notes called
+Standup leave eleven unreachable by `[[Standup]]`. For a hand-made event that is
+a fair trade — there are few of them and `aliases:` or a rename is available.
 
-**So the importer must not put a time in a filename either**, and for a
-stronger reason: it would have to *rename* the file every time a meeting moved,
-breaking every link pointing at it. Two same-titled events on one day are
-disambiguated by a short stable suffix derived from the `uid` — stable being
-the requirement, since "whatever name was free" changes between runs.
+**The importer cannot make that trade**, because it writes hundreds and needs
+every one linkable. It disambiguates with a short stable suffix derived from the
+`uid` — `Standup (a41b).md` — rather than with a date or a time. Stable is the
+requirement: "whatever name was free" changes between runs, and anything
+describing *when* would force a rename every time a meeting moved, breaking
+every link pointing at it. This is the one place the two sides deliberately
+differ, and the reason is volume rather than taste.
 
 **Bodies stay short.** The description is truncated to roughly 500 characters,
 conference boilerplate is stripped, and the join link goes in `url` rather than
