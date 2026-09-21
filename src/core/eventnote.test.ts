@@ -327,3 +327,77 @@ describe('the time a new event opens on', () => {
     expect(defaultEventTimes(new Date(2026, 11, 31).getTime(), nye).start).toBe('2027-01-01T00:00')
   })
 })
+
+/**
+ * The zone the dialog collected, and the one a template happens to carry.
+ *
+ * The dialog's fields are a local wall clock, so a zone arriving from anywhere
+ * else reinterprets what was just typed. Choosing the first of October at half
+ * past midnight in New York, with a Tokyo template on the folder, used to make
+ * an event on the thirtieth of September at half eleven in the morning — filed
+ * in a folder that still said October.
+ */
+describe('the zone on a new event', () => {
+  const tokyoTemplate = async (v: Awaited<ReturnType<typeof fresh>>) => {
+    await v.vault.createNote('Templates', 'M', '---\ntz: Asia/Tokyo\n---\n\n# {{title}}\n')
+    await v.templates.setFolderTemplate('Calendar', 'Templates/M.md')
+  }
+
+  it('writes none at all by default, which is a floating time', async () => {
+    const { vault, ev } = await fresh()
+    const { path } = await ev.newEventNote('Standup', '2026-09-21T09:30', '2026-09-21T10:00')
+    expect(vault.getRaw(path)?.text).not.toContain('tz:')
+    expect(vault.getEntry(path)?.event?.tz).toBeUndefined()
+  })
+
+  it('writes the one it was given', async () => {
+    const { vault, ev } = await fresh()
+    const { path } = await ev.newEventNote(
+      'Call',
+      '2026-09-21T09:30',
+      '2026-09-21T10:00',
+      'Asia/Tokyo',
+    )
+    expect(vault.getRaw(path)?.text).toContain('tz: Asia/Tokyo')
+    expect(vault.getEntry(path)?.event?.tz).toBe('Asia/Tokyo')
+  })
+
+  it('takes a template’s zone off when the dialog did not ask for one', async () => {
+    const v = await fresh()
+    await tokyoTemplate(v)
+    const { path } = await v.ev.newEventNote('Kickoff', '2026-10-01T00:30', '2026-10-01T01:30')
+    expect(v.vault.getRaw(path)?.text).not.toContain('tz:')
+    // The day the dialog said, in the month the dialog said.
+    expect(path).toBe('Calendar/2026/10/Kickoff.md')
+    expect(v.vault.getEntry(path)?.calendarDate).toBe(parseYmd('2026-10-01'))
+  })
+
+  it('and the folder agrees with the index when it does ask for one', async () => {
+    const v = await fresh()
+    const { path } = await v.ev.newEventNote(
+      'Kickoff',
+      '2026-10-01T00:30',
+      '2026-10-01T01:30',
+      'Asia/Tokyo',
+    )
+    const filed = v.vault.getEntry(path)!.calendarDate
+    // Whatever day that lands on locally, the folder and the calendar say the
+    // same one — they used to disagree, the folder reading it as local time.
+    expect(v.ev.eventFolderFor(filed)).toBe(dirnameOf(path))
+  })
+
+  it('offers a template’s zone to the dialog rather than applying it', async () => {
+    const v = await fresh()
+    await tokyoTemplate(v)
+    expect(v.ev.templateZoneFor(DAY)).toBe('Asia/Tokyo')
+  })
+
+  it('and offers nothing when the template has no opinion', async () => {
+    const v = await fresh()
+    await v.vault.createNote('Templates', 'M', '# {{title}}\n')
+    await v.templates.setFolderTemplate('Calendar', 'Templates/M.md')
+    expect(v.ev.templateZoneFor(DAY)).toBeUndefined()
+  })
+})
+
+const dirnameOf = (p: string) => p.slice(0, p.lastIndexOf('/'))

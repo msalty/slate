@@ -16,7 +16,13 @@ import {
   tasks,
   toggleTask,
 } from '../core/vault'
-import { eventIsPast, eventTimeLabel, eventTitle, eventZoneLabel } from '../core/agenda'
+import {
+  eventIsPast,
+  eventTimeLabel,
+  eventTitle,
+  eventZoneLabel,
+  eventZoneProblem,
+} from '../core/agenda'
 import type { TaskItem } from '../core/types'
 import { Fragment } from 'preact'
 import { dueBeyond, groupTasks, tasksDueOn } from '../core/taskgroups'
@@ -266,6 +272,9 @@ export function AgendaPanel({ big = false }: { big?: boolean } = {}) {
         events.map((e) => {
           const ev = e.event!
           const zone = eventZoneLabel(ev)
+          // A `tz:` nothing can read is shown rather than swallowed: the row
+          // would otherwise look like any other and be silently hours out.
+          const broken = eventZoneProblem(ev)
           return (
             <button
               key={e.path}
@@ -275,7 +284,13 @@ export function AgendaPanel({ big = false }: { big?: boolean } = {}) {
             >
               <span class="agenda-when">{eventTimeLabel(ev, day)}</span>
               <span class="agenda-what">{eventTitle(e.title)}</span>
-              {zone && <em class="agenda-zone">{zone}</em>}
+              {broken ? (
+                <em class="agenda-zone" data-invalid="1" title={`${broken} is not a time zone this browser knows, so it is being ignored`}>
+                  {broken}?
+                </em>
+              ) : (
+                zone && <em class="agenda-zone">{zone}</em>
+              )}
             </button>
           )
         })

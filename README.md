@@ -19,8 +19,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 1284 unit, two-device sync and folder round-trip tests
-node scripts/smoke.mjs # 837-check browser smoke test against dist/
+npm test               # 1301 unit, two-device sync and folder round-trip tests
+node scripts/smoke.mjs # 839-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -955,6 +955,28 @@ with `tz:` is that zone's wall clock, so the file reads as the meeting was
 described to you, "two o'clock in New York", and the app does the conversion
 rather than you doing it before typing. Zones are resolved through the browser's
 own `Intl`, so there is no timezone library here and nothing to keep up to date.
+
+**A time with no zone floats, and that is the default.** `09:30` with nothing on
+it means half nine wherever it is being read — which is what you want for a run
+or a haircut, and not for a call with somebody in another country. Naming a zone
+pins it to an instant instead. Both are useful and only one can be the default,
+so the default is the one that adds no line to the file; the New Event dialog
+has a zone list for when you want the other, and a template on `Calendar/`
+carrying a `tz:` has it *offered* in that list rather than applied behind the
+times you just typed.
+
+**Twice a year a wall clock names no instant, or two.** An hour is skipped in
+spring and repeated in autumn, and both need a rule: a skipped time moves
+forward by the gap, a repeated one means the first of the two. That is what
+every calendar settles on, and it is what makes naming the zone you are already
+in a statement that changes nothing — which it has to be, since it says nothing
+new.
+
+**A `tz:` the browser cannot read is shown as broken** rather than quietly
+ignored. A mistyped zone resolves to exactly the same instant as no zone at all,
+so without this a typo and a correct file look identical on screen while the
+event is hours out. The agenda row says the name it could not use, and the
+properties form underlines it and offers the real ones as you type.
 
 Two places part with iCalendar deliberately. **An all-day `end:` is inclusive**,
 where `DTEND` is exclusive — copy that through literally and every one-day event
@@ -2793,8 +2815,8 @@ and that is a better argument for the rail than the outline ever was.
 ## Testing
 
 ```bash
-npm test                # 1284 unit + two-device sync + folder round-trip tests
-node scripts/smoke.mjs  # 837 checks in headless Chromium against dist/
+npm test                # 1301 unit + two-device sync + folder round-trip tests
+node scripts/smoke.mjs  # 839 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

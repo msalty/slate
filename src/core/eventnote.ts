@@ -12,7 +12,7 @@
  */
 
 import { eventFor } from './markdown'
-import { setPropertyValue } from './properties'
+import { readProperties, removeProperty, setPropertyValue } from './properties'
 import { templateBodyFor } from './templates'
 import { createNote } from './vault'
 import { dirname, roundUpToHalfHour, startOfDay, ymd } from './util'
@@ -156,6 +156,42 @@ function templateForEvent(folder: string, title: string, day: number): TemplateB
   return undefined
 }
 
+/**
+ * The zone a folder's template asks for, if it asks for one.
+ *
+ * Read so the dialog can *show* it rather than have it applied behind the
+ * times you just typed. Somebody whose work calendar lives in another zone can
+ * legitimately put one on their `Calendar/` template; what they cannot have is
+ * it arriving silently.
+ */
+export function templateZoneFor(day: number): string | undefined {
+  const t = templateForEvent(eventFolderFor(day), '', day)
+  if (!t) return undefined
+  const tz = readProperties(t.text).find((p) => p.key === 'tz')?.value.trim()
+  return tz || undefined
+}
+
+/**
+ * Every zone this engine knows, for a control that cannot be typo'd.
+ *
+ * `supportedValuesOf` is ES2022 and not everywhere yet, so a browser without it
+ * gets the one zone it is certainly in rather than an empty list — the point is
+ * to make a valid choice easy, and "where you are" is the valid choice that
+ * matters most.
+ */
+export function knownZones(): string[] {
+  const here = Intl.DateTimeFormat().resolvedOptions().timeZone
+  try {
+    const all = (Intl as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf?.(
+      'timeZone',
+    )
+    if (all?.length) return all.includes(here) ? all : [here, ...all]
+  } catch {
+    /* fall through */
+  }
+  return [here]
+}
+
 export interface NewEvent {
   path: string
   /** Where a template asked the caret to go, if it did. */
@@ -180,19 +216,35 @@ export interface NewEvent {
  * `end:` are written over it, because those two are what was just asked for and
  * a template cannot know the answer.
  */
-export async function newEventNote(title: string, start: string, end: string): Promise<NewEvent> {
+export async function newEventNote(
+  title: string,
+  start: string,
+  end: string,
+  tz?: string,
+): Promise<NewEvent> {
   /*
    * Read back through `eventFor` rather than parsed again here, so the day this
    * is filed under is the same day the agenda will list it on — one parser, one
    * answer, including for a pair the dialog could not have produced.
    */
-  const ev = eventFor({ start, end })
+  const ev = eventFor({ start, end, ...(tz ? { tz } : {}) })
   const at = ev?.start ?? Date.now()
   const folder = eventFolderFor(at)
   const t = templateForEvent(folder, title, at)
   const body = t?.text ?? `# ${title}\n\n`
   let text = setPropertyValue(body, 'start', start)
   text = setPropertyValue(text, 'end', end)
+  /*
+   * Written *or removed*, never left to whatever a template happened to say.
+   *
+   * A template carrying `tz: Asia/Tokyo` used to survive into the note beside
+   * the times the dialog had just collected — and those times are a local wall
+   * clock, so choosing the first of October at half past midnight in New York
+   * produced an event on the thirtieth of September at half eleven in the
+   * morning, filed in a folder that still said October. The dialog asked, so
+   * the dialog's answer stands; a template cannot know it.
+   */
+  text = tz ? setPropertyValue(text, 'tz', tz) : removeProperty(text, 'tz')
   return {
     path: await createNote(folder, eventNoteName(title), text),
     caret: t?.caret === undefined ? undefined : t.caret + (text.length - body.length),

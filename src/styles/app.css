@@ -1674,6 +1674,19 @@ button.property-kind:hover {
   flex: 1;
   min-width: 0;
 }
+/*
+ * A value that is doing nothing. Used by `tz:`, where a name the browser cannot
+ * read resolves to the same instant as no zone at all — the one case in the
+ * form where being wrong and being right look identical.
+ */
+.property-value[data-invalid='1'],
+.agenda-zone[data-invalid='1'] {
+  color: var(--danger);
+}
+.property-value[data-invalid='1'] {
+  border-bottom: 1px dashed var(--danger);
+}
+
 .event-lands {
   display: block;
   margin-top: 12px;

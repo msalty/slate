@@ -6831,6 +6831,14 @@ try {
     await endField.inputValue(),
   )
 
+  check(
+    'a zone can be chosen, and none at all is the default',
+    (await page.locator('.dialog select').count()) === 1 &&
+      (await page.locator('.dialog select').inputValue()) === '' &&
+      (await page.locator('.dialog select option').count()) > 50,
+    `${await page.locator('.dialog select option').count()} zones offered`,
+  )
+
   /* All day swaps both fields for plain dates, and unticking puts them back. */
   await page.locator('.event-allday input').check()
   await page.waitForTimeout(250)
@@ -6840,6 +6848,10 @@ try {
       (await startField.inputValue()) === isoDay(2) &&
       (await endField.inputValue()) === isoDay(2),
     `${await startField.inputValue()} → ${await endField.inputValue()}`,
+  )
+  check(
+    'and takes the zone away with the clock, a whole day having none to move',
+    (await page.locator('.dialog select').count()) === 0,
   )
   await page.locator('.event-allday input').uncheck()
   await page.waitForTimeout(250)

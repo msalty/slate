@@ -75,6 +75,18 @@ export function eventZoneLabel(ev: NoteEvent): string {
   }
 }
 
+/**
+ * A `tz:` the browser cannot read, for the row to show as broken.
+ *
+ * It is not enough to fall back to local time and carry on. A zone that does
+ * nothing looks exactly like a zone that works, and the event it is attached to
+ * is quietly an hour or eight out — so the row says the name it could not use
+ * and lets you fix it.
+ */
+export function eventZoneProblem(ev: NoteEvent): string {
+  return ev.badZone ?? ''
+}
+
 const STAMP_RE = /^\d{4}-\d{2}-\d{2}(?:[ T]\d{4})?\s+/
 
 /**

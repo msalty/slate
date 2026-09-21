@@ -39,6 +39,8 @@ import { saveNote } from '../core/vault'
 import { syncSoon } from '../core/sync'
 import { notify } from './state'
 import { openMenu } from './Menu'
+import { isKnownZone } from '../core/markdown'
+import { knownZones } from '../core/eventnote'
 import {
   IconCalendar,
   IconCheckbox,
@@ -138,6 +140,12 @@ export function Properties({ path, getText, getView }: PanelProps) {
 
   return (
     <div class="properties">
+      {/* One list for the panel; every `tz` row points at it by name. */}
+      <datalist id="slate-zones">
+        {knownZones().map((z) => (
+          <option key={z} value={z} />
+        ))}
+      </datalist>
       <div class="properties-inner">
         {props.length === 0 && !adding && (
           <p class="properties-empty">
@@ -231,6 +239,12 @@ function PropertyRow({
   }
 
   const shown = draft ?? p.value
+  /*
+   * Only once it has been typed into — a half-finished `Europ` is not a mistake
+   * yet, and underlining it while somebody is still typing is nagging.
+   */
+  const badZone =
+    p.key.toLowerCase() === 'tz' && draft === null && !!p.value.trim() && !isKnownZone(p.value)
 
   return (
     <div class="property-row">
@@ -285,6 +299,15 @@ function PropertyRow({
         <input
           ref={valueRef}
           class="property-value"
+          /*
+           * `tz` is the one key where a free-typed value fails silently: a zone
+           * the browser cannot read resolves to exactly the same instant as no
+           * zone at all. A list of the real ones makes the typo hard to make,
+           * and the mark below says so when one has been made anyway.
+           */
+          list={p.key.toLowerCase() === 'tz' ? 'slate-zones' : undefined}
+          data-invalid={badZone ? '1' : undefined}
+          title={badZone ? `${p.value} is not a time zone this browser knows` : undefined}
           type={FIELD_TYPE[p.kind] ?? 'text'}
           /*
            * A time field shows seconds only when the value has them. Told to

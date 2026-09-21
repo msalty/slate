@@ -113,7 +113,23 @@ describe('reading an event off the frontmatter', () => {
 
   it('ignores a zone it cannot use rather than refusing the event', () => {
     const e = eventFor({ start: '2026-09-21T09:30', tz: 'Mars/Olympus' })!
-    expect(e).toEqual({ start: at(9, 30), end: at(10, 30), allDay: false })
+    expect(e.start).toBe(at(9, 30))
+    expect(e.tz).toBeUndefined()
+  })
+
+  it('but keeps the name it could not use, so the line is not silently dead', () => {
+    /*
+     * The worst shape of wrong: `Amercia/New_York` resolves to exactly the same
+     * instant as no zone at all, so a typo and a correct file are identical on
+     * screen while the event is hours out. Held on to for the row to show.
+     */
+    const typo = eventFor({ start: '2026-09-21T09:30', tz: 'Amercia/New_York' })!
+    const none = eventFor({ start: '2026-09-21T09:30' })!
+    expect(typo.start).toBe(none.start)
+    expect(typo.badZone).toBe('Amercia/New_York')
+    expect(none.badZone).toBeUndefined()
+    // And a zone that works leaves no complaint behind.
+    expect(eventFor({ start: '2026-09-21T09:30', tz: 'Asia/Tokyo' })!.badZone).toBeUndefined()
   })
 })
 

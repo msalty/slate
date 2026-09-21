@@ -950,6 +950,15 @@ export interface NoteEvent {
   allDay: boolean
   /** The IANA zone `start` and `end` were written in, when one was named. */
   tz?: string
+  /**
+   * A `tz:` this engine cannot use, kept as written.
+   *
+   * Dropping it was silent and therefore the worst shape of wrong: a mistyped
+   * `Amercia/New_York` resolved to exactly the same instant as no zone at all,
+   * with nothing anywhere to say the line had been ignored. Held on to so the
+   * agenda and the properties form can show that it is not doing anything.
+   */
+  badZone?: string
 }
 
 const EVENT_TIME_RE = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?$/
@@ -1060,16 +1069,21 @@ function parseEventTime(
   return { at, allDay: false }
 }
 
-/** A zone name only if this engine will accept one; a typo is not a zone. */
-function usableZone(raw: FrontmatterValue | undefined): string | undefined {
-  if (typeof raw !== 'string' || !raw.trim()) return undefined
-  const tz = raw.trim()
+/** True for a zone name this engine will accept; a typo is not a zone. */
+export function isKnownZone(tz: string): boolean {
   try {
-    new Intl.DateTimeFormat('en-US', { timeZone: tz })
-    return tz
+    new Intl.DateTimeFormat('en-US', { timeZone: tz.trim() })
+    return true
   } catch {
-    return undefined
+    return false
   }
+}
+
+/** The `tz:` as written, and whether anything can be done with it. */
+function readZone(raw: FrontmatterValue | undefined): { tz?: string; badZone?: string } {
+  if (typeof raw !== 'string' || !raw.trim()) return {}
+  const tz = raw.trim()
+  return isKnownZone(tz) ? { tz } : { badZone: tz }
 }
 
 /** An hour, which is what an event with no end is assumed to take. */
@@ -1084,7 +1098,7 @@ const DEFAULT_DURATION = 60 * 60 * 1000
  * refused. A note is a text file somebody may have typed by hand.
  */
 export function eventFor(fm: Record<string, FrontmatterValue>): NoteEvent | undefined {
-  const tz = usableZone(fm.tz)
+  const { tz, badZone } = readZone(fm.tz)
   const start = parseEventTime(fm.start, tz)
   if (!start) return undefined
   const end = parseEventTime(fm.end, tz)
@@ -1099,6 +1113,9 @@ export function eventFor(fm: Record<string, FrontmatterValue>): NoteEvent | unde
     end: usable ?? (start.allDay ? start.at : start.at + DEFAULT_DURATION),
     allDay: start.allDay,
     ...(start.allDay ? {} : tz ? { tz } : {}),
+    // Reported whatever the shape: a zone nobody can read is worth saying on an
+    // all-day event too, since it means a line of the file is doing nothing.
+    ...(badZone ? { badZone } : {}),
   }
 }
 

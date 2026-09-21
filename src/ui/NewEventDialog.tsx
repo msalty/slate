@@ -21,8 +21,10 @@ import {
   defaultEventTimes,
   eventFolderFor,
   keepDuration,
+  knownZones,
   newEventNote,
   parseLocal,
+  templateZoneFor,
 } from '../core/eventnote'
 import { notify, openNote } from './state'
 import { IconClose } from './Icons'
@@ -42,6 +44,15 @@ export function NewEventDialog() {
   const [allDay, setAllDay] = useState(false)
   const [start, setStart] = useState('')
   const [end, setEnd] = useState('')
+  /*
+   * Empty means "no zone at all", which is the default and is not the same as
+   * naming the zone you are in. A time with nothing on it is a *floating* time
+   * — half nine wherever you are reading it — which is what you want for a run
+   * or a haircut and not for a call with somebody in another country. Naming a
+   * zone pins it to an instant. Both are useful and only one can be the
+   * default, so the default is the one that adds no line to the file.
+   */
+  const [zone, setZone] = useState('')
   const titleRef = useRef<HTMLInputElement>(null)
   /*
    * What the times were before *all day* was ticked, so unticking it puts them
@@ -57,6 +68,13 @@ export function NewEventDialog() {
     setAllDay(false)
     setStart(d.start)
     setEnd(d.end)
+    /*
+     * A template's zone is *shown*, not applied behind your back. Read once,
+     * from the folder the chosen day lands in; changing the date afterwards
+     * leaves whatever is selected alone, because by then it is your answer
+     * rather than the template's suggestion.
+     */
+    setZone(templateZoneFor(req.day) ?? '')
     timed.current = null
     requestAnimationFrame(() => titleRef.current?.focus())
   }, [req])
@@ -117,7 +135,8 @@ export function NewEventDialog() {
     const fixed =
       to !== undefined && to >= from ? end : allDay ? dateOf(start) : keepDuration(start, '', start)
     close()
-    const { path, caret } = await newEventNote(name, start, fixed)
+    // An all-day event has no clock for a zone to move, so it never carries one.
+    const { path, caret } = await newEventNote(name, start, fixed, allDay ? undefined : zone || undefined)
     openNote(path, { editing: true, caret })
     notify(`Created ${path}`)
   }
@@ -187,6 +206,20 @@ export function NewEventDialog() {
               />
             </label>
           </div>
+
+          {!allDay && (
+            <label class="field">
+              <span>Time zone</span>
+              <select value={zone} onChange={(e) => setZone((e.target as HTMLSelectElement).value)}>
+                <option value="">Local time — wherever this is read</option>
+                {knownZones().map((z) => (
+                  <option key={z} value={z}>
+                    {z.replace(/_/g, ' ')}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
 
           <label class="check event-allday">
             <input
