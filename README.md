@@ -19,8 +19,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 1189 unit, two-device sync and folder round-trip tests
-node scripts/smoke.mjs # 806-check browser smoke test against dist/
+npm test               # 1272 unit, two-device sync and folder round-trip tests
+node scripts/smoke.mjs # 826-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -122,10 +122,29 @@ else.
 top of a file — the `date:`, `tags:` and `pinned:` the rest of the app reads —
 is hidden in rich text, and the date under the title is what opens it: click
 that and the block becomes one row per property, with its name, its value, and
-an icon saying what kind of value it is. Text, list, number, date or checkbox —
-pick a different one from that icon and the value in the file is rewritten to
-match, so a date gets a date field and a checkbox gets a checkbox. **Add
-property** adds one, the name is edited in place, and the **×** takes it away.
+an icon saying what kind of value it is. Text, list, number, date, date and
+time, or checkbox — pick a different one from that icon and the value in the
+file is rewritten to match, so a date gets a date field and a checkbox gets a
+checkbox. **Add property** adds one, the name is edited in place, and the **×**
+takes it away.
+
+**The kind is read off the value, not off a schema**, because there is no schema
+in a markdown file and a type that lived only in the app would be a promise the
+file could not keep. `2026-09-21` is a date, `2026-09-21T09:30` is a date and a
+time, `true` is a checkbox. Which leaves one case a value cannot answer — a
+property just added and still empty — and there, and only there, four names are
+allowed to guess: `start` and `end` offer a time, `date` and `due` a day. An
+empty value is not a promise about anything, and the moment something is written
+the value decides again, so `start: chapter three` in somebody's novel stays a
+piece of text rather than becoming a broken date field.
+
+Two rules keep the widget from rewriting the file behind you. A value a picker
+cannot hold — `2026-09-21 09:30`, with a space where the `T` goes, which the
+calendar reads perfectly well — stays a text field rather than showing as blank,
+and converts only when you pick the kind by name. And seconds appear in the
+field only when the value has them: always, and every event collects a `:00` it
+never asked for; never, and a value that has them is rejected and the row reads
+as empty.
 Live preview and source still show the block exactly as it is written; they are
 the modes for looking at the file.
 
@@ -259,6 +278,20 @@ from a shared vault is untrusted input.
 autocomplete over every note; picking one that doesn't exist yet offers to create
 it. Clicking a broken link creates the note on the spot. Renaming a note rewrites
 every link that pointed at it.
+
+**And a note can answer to more than the name on the file.** `aliases:` in the
+frontmatter — one name or a list of them — files the note under those names too,
+so `[[Jane Smith]]` reaches `Jane Doe.md` and shows up in her linked mentions
+like any other link. A maiden name, an acronym, what somebody is called rather
+than what they are filed as: without this, every one of them is a link that
+looks right, saves fine, and quietly points at nothing.
+
+A name written on a file always beats the same name written in somebody else's
+alias list. Aliases are claimed in a pass of their own, after every real name,
+because doing it in one pass lets a note whose alias list happens to name
+*another* note take that name — decided by whichever the walk reached first,
+which is to say by modified time, which is to say at random. The note that loses
+a contested alias still answers to the rest of its own.
 
 **And `#` points inside one.** Type `[[Trip#` and the list stops being about
 notes and becomes that note's headings, in the order they appear, each saying
@@ -751,7 +784,7 @@ Templates/
 | template | for | what it carries |
 | --- | --- | --- |
 | **Daily Note** | `Daily/`, and the calendar's *Create daily note* | the day's date in `date:` and in the heading, today's tasks, a timestamped log, habits, tomorrow |
-| **Meeting** | the folder your meetings live in | date, time, client, project, attendees, location; agenda, notes, a decisions callout, actions |
+| **Meeting** | the folder your meetings live in | `start` and `end`, so the note is an event and lands on that day's agenda; client, project, attendees, location; agenda, notes, a decisions callout, actions |
 | **Person** | a folder of people, or the vault root, so a `[[Ana Ruiz]]` fills one in | the fields a vCard carries — name, nickname, org, department, role, emails, phones, website, the address split the way `ADR` is, timezone, birthday, anniversary, social, assistant, partner |
 | **Project** | the note a folder of notes hangs off | status, owner, client, started, due, stakeholders; outcome, a milestone table, tasks, risks, a log |
 | **Decision** | anywhere a choice is worth outliving the room it was made in | status, owner, supersedes; the question, the options with their fors and againsts, what was chosen, what it costs |
@@ -766,7 +799,9 @@ anybody owes: none of them arrives ticked, and none of them arrives with a due
 date, so a new note adds nothing to Due until you put it there. And the
 frontmatter carries what the note *is* while the body carries what happened —
 `attendees: []` is typed as "Ana, Bo" in the properties form, so an empty list
-is an invitation rather than a puzzle.
+is an invitation rather than a puzzle. A `[[Ana Ruiz]]` among those names is a
+real link and puts the meeting in her linked mentions: wikilinks are read from
+the whole file, and frontmatter is part of the file.
 
 The fields a template can fill in are deliberately few: `{{title}}`, `{{date}}`,
 `{{time}}`, `{{year}}`, `{{month}}`, `{{day}}`, `{{weekday}}`, and `{{cursor}}`
@@ -866,14 +901,84 @@ The **daily note** is the case this was built for. Point `Daily/` at a template
 and every day's note starts from it, dated for *the day it is filed under* rather
 than for today — so Thursday's note, started on Saturday, still says Thursday.
 
-**Calendar and tasks.** An optional right column (⌘⇧R) shows a month calendar
-with a dot per note, filed by frontmatter `date:`, a `YYYY-MM-DD` filename, or
-creation time. Click a day to filter the list. Any day without a daily note
-offers to make one — **Create daily note**, at the top of that day's list and
-under the day in the rail — which writes `Daily/YYYY-MM-DD.md` and opens it, so
-Thursday's note can be started on Saturday and still lands on Thursday. Below
-it, **Due**: the tasks that are due today and the ones already late. Ticking a
-box there edits the source note.
+**Calendar, agenda and tasks.** An optional right column (⌘⇧R) shows a month
+calendar with a dot per note, filed by an event's `start:`, then frontmatter
+`date:`, a `YYYY-MM-DD` filename, or creation time. Click a day to filter the
+list. Under the month, **Agenda**: what is happening on the selected day. Under
+that, the day's notes and the offer to make one — **Create daily note**, at the
+top of that day's list and under the day in the rail — which writes
+`Daily/YYYY-MM-DD.md` and opens it, so Thursday's note can be started on
+Saturday and still lands on Thursday. Below it, **Due**: the tasks that are due
+today and the ones already late. Ticking a box there edits the source note.
+
+**An event is a note that says when it happens.** One key does it: `start:` in
+the frontmatter, and the note is on that day's agenda. There is no event format,
+no event editor and nothing to import — a note with a `start:` is an event and a
+note without one is a note, which is the same bargain templates and tags already
+make.
+
+```yaml
+---
+start: 2026-09-21T09:30    # a bare date instead, and it is an all-day event
+end: 2026-09-21T10:00      # optional; an hour is assumed
+tz: America/New_York       # optional; start and end are written in this zone
+---
+```
+
+The three shapes `start:` takes are iCalendar's three rather than three of our
+own, because that is what a calendar's data already is. A bare date is a whole
+day. A time with no zone is a wall clock — half nine wherever you are. A time
+with `tz:` is that zone's wall clock, so the file reads as the meeting was
+described to you, "two o'clock in New York", and the app does the conversion
+rather than you doing it before typing. Zones are resolved through the browser's
+own `Intl`, so there is no timezone library here and nothing to keep up to date.
+
+Two places part with iCalendar deliberately. **An all-day `end:` is inclusive**,
+where `DTEND` is exclusive — copy that through literally and every one-day event
+draws itself two days long. And **an all-day event ignores `tz:`**: the 21st is
+the 21st wherever the calendar came from, and converting it would slide it onto
+the 20th for anybody far enough west. A date that does not exist is refused
+rather than rolled over, because `Date` takes the 31st of September and hands
+back the 1st of October — so a mistyped day would not be an error, it would be
+the wrong day.
+
+**The agenda is a list, not a grid.** A time grid needs vertical space the rail
+has not got and spends most of it drawing the hours nothing happens in; this is
+a surface for reading a day rather than scheduling one. All-day rows come first
+with no time against them — they are true of the whole day, and a column of "all
+day" repeated down the top of the panel is furniture. A row that has already
+finished is dimmed rather than dropped, because what you did this morning is
+part of what the day was. An event's own zone is named only where it disagrees
+with the clock you are reading, and compared by offset rather than by name: a
+meeting written `tz: Europe/London`, read in London, is just a meeting, and
+Dublin is the same afternoon. An event that covers several days is on all of
+them, and an evening that ends at midnight ends on the evening.
+
+**Making one.** `>New event` in the palette, or the **+** on the agenda's
+header, asks for a name and nothing else: the day is the one on screen and the
+time is the next round half hour, because nobody schedules anything for 14:07
+and rounding up is never a time that has already gone. Both are easier to change
+in the note that opens — the properties form has a picker for each — than to get
+right in a dialog before the thing is even called anything. The note lands in
+`Calendar/`, under its year and month — nested because this is the one folder
+that fills up on its own, and a directory with hundreds of files in it is one
+nobody opens twice.
+
+It is named for its **day** and not for its time. A filename does not follow the
+frontmatter, so a meeting moved to the afternoon would keep a name saying `0930`
+for as long as it existed — and the stale time would be invisible exactly where
+it was right, since the agenda reads the clock off `start:` and strips the stamp
+from the row. It would show in the note list, the editor's header, search and
+every `[[link]]`, which are all the places it could be wrong. The date stays,
+because twelve notes titled "Standup" would leave eleven of them unlinkable, and
+two events sharing a name on one day get the same `2` every other name collision
+in the vault gets — a `2` at least never goes on to claim something false.
+
+A template on `Calendar/` is picked up the way one on `Daily/` is, and the walk
+goes up: a template assigned to `Calendar/` reaches `Calendar/2026/09`, which is
+not a folder anybody chose. A template that writes its own `start:` keeps it —
+what it does not write is supplied, and a key it left deliberately empty counts
+as written.
 
 **A calendar you can write in.** Settings → Editor → **Clicking a day in the
 calendar** switches the click from *shows what is filed on that day* to *opens
@@ -883,10 +988,22 @@ with nothing on it is usually starting to write about it, not looking for what
 isn't there. So on an empty day the click asks — one dialog naming the file it
 would write, `Daily/YYYY-MM-DD.md` — rather than creating it, because a note
 written on a guess is a note somebody has to go and delete. The day is selected
-and its notes are listed either way, in both modes, so the setting changes what
-a click *adds* and never what it takes away; the difference is that only the
-filtering mode lets a second click on the same day take the filter back off,
-since where a click means "open this day's note" a second one means it again.
+either way, so the setting changes what a click *adds* and never what it takes
+away; the difference is that only the filtering mode lets a second click on the
+same day take the filter back off, since where a click means "open this day's
+note" a second one means it again.
+
+**And the rail stops repeating the column beside it.** In the filtering mode a
+click scopes the middle column to that day, off the same map the rail's day
+panel reads — so the two were the identical list, side by side, saying nothing
+new. The panel keeps its heading, its offer of a daily note and that day's
+tasks, and hands over only the list of notes, and only in the mode that causes
+the duplication. In the daily-note mode nothing is scoped and the panel is the
+only place those notes appear, so it keeps them; browsing a folder with today
+still selected, the middle column is showing the folder, so it keeps them there
+too. What is dropped is the coincidence, not the panel. The phone's calendar tab
+is a screen of its own with no second column to agree with, and keeps
+everything.
 
 The rail's list is narrowed on purpose. Every `- [ ]` in the vault is rolled up
 under **Tasks** in the sidebar, and repeating that list under a calendar made
@@ -2074,6 +2191,9 @@ Vault/
 ├─ Work/
 │  ├─ Call with TAC.md
 │  └─ Highway 9.md
+├─ Calendar/                  ← where a new event lands, by year and month
+│  └─ 2026/09/
+│     └─ 2026-09-21 Design review.md
 ├─ attachments/
 │  └─ 2026/08/pasted-a3f9.webp
 └─ backstage/                 ← app's own files, hidden in the UI
@@ -2251,6 +2371,11 @@ src/
 │  │                  and the three things that look like a heading and are
 │  │                  not: a `#tag`, a `#` in a code fence, a YAML comment
 │  ├─ properties.ts   the same frontmatter as an ordered, editable list
+│  ├─ agenda.ts       how an event reads on a day: the time to put in front of
+│  │                  it, and the zone worth naming only where it disagrees
+│  ├─ eventnote.ts    making an event by hand — where it goes, what it is
+│  │                  called, and how a template's frontmatter and its own
+│  │                  meet without writing `start:` twice
 │  ├─ tagquery.ts     the rule language behind Tag Folders, over notes or tasks
 │  ├─ folders.ts      nested folders + the Tag Folder tree and inheritance
 │  ├─ searchindex.ts  what stops a search from reading every note
@@ -2378,6 +2503,15 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
   honest version is that they are absent rather than half-present: to move a
   note, open it, copy it, switch, paste — or use Export, which is two clicks
   and keeps the file.
+- **An event is listed twice in the rail.** It is on the agenda, and it is also
+  among the day's notes underneath, and it puts a dot on the month. All three
+  are defensible on their own — a note you wrote is a note you wrote — but one
+  meeting written down once appears twice in one column, which is the same
+  redundancy the day panel's notes list was just taught to avoid. The fix is a
+  decision rather than a patch: either an event leaves the day's notes (and then
+  what marks the month?), or events get a mark of their own beside the dots that
+  already mean two things. Neither is written yet, so for now a day with three
+  meetings on it reads as six rows.
 - **Vaults share one browser storage allowance.** The figure under About is the
   origin's total, not the vault's, and a browser low on space evicts by origin —
   so a large vault is a risk to a small one beside it. Settings › Vaults says
@@ -2587,6 +2721,14 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 - **Encrypted vaults**, as above — a clean fit behind `RemoteAdapter`.
 - **Tag Folder rules over dates** — `created:<2026-01-01`, `due:overdue` — which
   the parser is already shaped to accept.
+- **Calendar and contacts from the systems that already own them.** Events are
+  half of it and they are here; the other half is a helper *outside this
+  repository* that projects CalDAV and CardDAV into markdown Slate reads, so
+  `[[Jane Doe]]` resolves and her note shows every meeting she was in — with no
+  CalDAV in this codebase and no second address book to maintain. The format, the
+  argument for keeping it out of `backstage/`, and what the helper has to
+  guarantee about deletion and idempotence are written up in
+  [`docs/calendar-contacts.md`](docs/calendar-contacts.md).
 
 **And one idea deliberately not taken.** The outline was going to live in the
 right rail, which would have become a switcher between *Today* (the calendar
@@ -2608,8 +2750,8 @@ and that is a better argument for the rail than the outline ever was.
 ## Testing
 
 ```bash
-npm test                # 1189 unit + two-device sync + folder round-trip tests
-node scripts/smoke.mjs  # 806 checks in headless Chromium against dist/
+npm test                # 1272 unit + two-device sync + folder round-trip tests
+node scripts/smoke.mjs  # 826 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 
