@@ -70,6 +70,29 @@ export function dueByToday(items: TaskItem[], today = startOfDay(Date.now())): T
 }
 
 /**
+ * What is owed, apart from the day that has already been listed above it.
+ *
+ * The rail says two things about tasks: what the *selected day* asks of you,
+ * and what is owed generally — late work, and today's. When the day you are
+ * looking at is today, the second contains the first entirely, and the same row
+ * would be drawn twice in one column a few hundred pixels apart.
+ *
+ * So the general list yields to the specific one, rather than the other way
+ * round. It used to be the other way round, and the cost of that was not a
+ * duplicate but a falsehood: the day's own section, having handed everything
+ * upward, printed "Nothing due on this day" on the most common day of all.
+ * A section that is about the day you have chosen should be the one that keeps
+ * its contents.
+ */
+export function dueBeyond(
+  items: TaskItem[],
+  day: number,
+  today = startOfDay(Date.now()),
+): TaskItem[] {
+  return dueByToday(items, today).filter((t) => t.due !== day)
+}
+
+/**
  * Tasks due on one particular day.
  *
  * What the calendar is for, read the other way round: click a day and see what

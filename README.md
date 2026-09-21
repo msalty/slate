@@ -19,8 +19,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 1271 unit, two-device sync and folder round-trip tests
-node scripts/smoke.mjs # 829-check browser smoke test against dist/
+npm test               # 1276 unit, two-device sync and folder round-trip tests
+node scripts/smoke.mjs # 830-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -917,7 +917,10 @@ around them do the separating.
 
 **Due** sits outside that group, because it is the one list here that is not
 about the selected day at all: what is late and what is owed today, whichever
-day you are looking at. Ticking a box there edits the source note.
+day you are looking at — minus whatever the day above has already said. The two
+lists overlap whenever you are looking at today, which is most of the time, and
+the specific one wins: the day keeps what is due on it and Due shows the rest.
+Ticking a box either place edits the source note.
 
 An **event is not in the Notes list**, being in the Agenda directly above it — a
 meeting said twice in one column is the thing this arrangement exists to stop.
@@ -2779,8 +2782,8 @@ and that is a better argument for the rail than the outline ever was.
 ## Testing
 
 ```bash
-npm test                # 1271 unit + two-device sync + folder round-trip tests
-node scripts/smoke.mjs  # 829 checks in headless Chromium against dist/
+npm test                # 1276 unit + two-device sync + folder round-trip tests
+node scripts/smoke.mjs  # 830 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

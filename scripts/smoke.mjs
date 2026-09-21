@@ -6604,34 +6604,46 @@ try {
     (await dayPanel.locator('.task-row').allInnerTexts()).join(' | '),
   )
   check(
-    'with no heading over them — a checkbox already says which rows are tasks',
+    'ungrouped, because one day is not long enough to need bands inside it',
     (await dayPanel.locator('.task-group').count()) === 0,
   )
 
   /*
-   * And never the same task twice in one column. The Due list below already
-   * holds everything overdue and everything due today, so a day the list has
-   * covered keeps its notes and hands the tasks to it.
+   * And never the same task twice in one column, with the *day* keeping what is
+   * due on it and the Due list showing the rest.
+   *
+   * These used to assert the other direction and passed, which is how the bug
+   * shipped: they were written against the behaviour rather than against the
+   * rule it was for. So each one now says both halves — which section has the
+   * row, and that the other does not — because "once, not twice" is satisfied
+   * just as well by the wrong section keeping it and the right one lying.
    */
+  const railRow = (text) => page.locator('.rail .task-row', { hasText: text })
   const overdueAgain = await showDay(-2)
   await overdueAgain.click()
   await page.waitForTimeout(500)
   check(
-    'a day whose work is already late leaves it to the Due list below',
-    (await dayPanel.locator('.task-row').count()) === 0,
+    'a day with late work on it keeps that work under its own heading',
+    (await dayPanel.locator('.task-row').allInnerTexts()).join(' | ').includes('Order the tiles'),
     (await dayPanel.locator('.task-row').allInnerTexts()).join(' | '),
   )
   check(
-    'so the task is in the rail once, not twice',
-    (await page.locator('.rail .task-row', { hasText: 'Order the tiles' }).count()) === 1,
+    'and it is in the rail once, not twice',
+    (await railRow('Order the tiles').count()) === 1,
   )
 
   await page.locator('.cal-today').click()
   await page.waitForTimeout(500)
   check(
-    'and today says it once too, in the Due list rather than in both',
-    (await dayPanel.locator('.task-row').count()) === 0,
-    `${await dayPanel.locator('.task-row').count()} rows in the day panel`,
+    'today keeps its own work too, rather than reporting it has none',
+    !(await page.locator('.rail .day-tasks .rail-empty').count()) ||
+      (await dayPanel.locator('.task-row').count()) > 0,
+    (await page.locator('.rail .day-tasks').innerText()).replace(/\n/g, ' / '),
+  )
+  check(
+    'and Due below it shows what is left rather than repeating the day',
+    (await railRow('Book the tram tickets').count()) === 1,
+    (await page.locator('.rail .rail-due').innerText()).replace(/\n/g, ' / '),
   )
 
   /* ---- the agenda ---------------------------------------------------------

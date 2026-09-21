@@ -19,7 +19,7 @@ import {
 import { eventIsPast, eventTimeLabel, eventTitle, eventZoneLabel } from '../core/agenda'
 import type { TaskItem } from '../core/types'
 import { Fragment } from 'preact'
-import { dueByToday, groupTasks, tasksDueOn } from '../core/taskgroups'
+import { dueBeyond, groupTasks, tasksDueOn } from '../core/taskgroups'
 import { settings, update } from '../core/settings'
 import { openMenu } from './Menu'
 import { DAILY_FOLDER, dailyNoteFor } from '../core/daily'
@@ -351,18 +351,14 @@ export function DayNotesPanel({ omitScoped = false }: { omitScoped?: boolean } =
  * counted in, and the only thing separating a task from a note was that one of
  * them had a checkbox on it.
  *
- * `omitOwed` is for the rail, where the Due list sits below and already holds
- * everything overdue and everything due today: without it, selecting a day with
- * late work on it shows the same task twice in one column. The phone's calendar
- * tab has no such list under it, so there it stays off and the day keeps its
- * own tasks.
+ * It keeps everything due on its day, and the Due list below drops whatever
+ * this one has already shown — see `dueBeyond`. The yielding used to go the
+ * other way, which cost nothing on a day you were not looking at and printed
+ * "Nothing due on this day" on the day you almost always are.
  */
-export function DayTasksPanel({ omitOwed = false }: { omitOwed?: boolean } = {}) {
+export function DayTasksPanel() {
   const day = railDay()
-  const owed = omitOwed ? new Set(dueByToday(tasks.value).map((t) => t.id)) : new Set<string>()
-  const due = tasksDueOn(tasks.value, day, settings.value.showDoneTasks).filter(
-    (t) => !owed.has(t.id),
-  )
+  const due = tasksDueOn(tasks.value, day, settings.value.showDoneTasks)
   return (
     <div class="rail-section day-tasks">
       <h3>
@@ -641,20 +637,22 @@ export function TasksPanel({
 }
 
 /**
- * The rail's own task list: what is due today, and what is already late.
+ * The rail's own task list: what is due today, and what is already late —
+ * apart from whatever the selected day's own section has just shown.
  *
- * Narrowed on purpose. The sidebar's Tasks row holds every task in the vault,
- * and repeating that list under a calendar made the two columns compete —
- * whereas dates are what the column beside it is about, so a list scoped to
- * them is the one thing the rail can say that the sidebar cannot.
+ * Narrowed twice, for two different reasons. By date, on purpose: the sidebar's
+ * Tasks row holds every task in the vault, and repeating that list under a
+ * calendar made the two columns compete, whereas dates are what the column
+ * beside it is about. And by the day above it, so that looking at today — which
+ * is most of the time — does not draw the same row twice in one column.
  */
 function DueTasksPanel() {
   return (
     <TasksPanel
-      items={dueByToday(tasks.value)}
+      items={dueBeyond(tasks.value, railDay())}
       title="Due"
       class="rail-due"
-      empty={<>Nothing due today. The Tasks list in the sidebar has everything else.</>}
+      empty={<>Nothing else is due or late. The sidebar’s Tasks list has the rest.</>}
     />
   )
 }
@@ -666,7 +664,7 @@ function DueTasksPanel() {
  * group under it is everything about that day, named once at the top; and Due
  * sits outside that group because it is the one list here that is not about the
  * selected day at all — it is what is late and what is owed today, whichever
- * day you happen to be looking at.
+ * day you happen to be looking at, minus whatever that day has already said.
  */
 export function RightRail() {
   return (
@@ -677,7 +675,7 @@ export function RightRail() {
           <RailDayHead />
           <AgendaPanel />
           <DayNotesPanel omitScoped />
-          <DayTasksPanel omitOwed />
+          <DayTasksPanel />
         </div>
         <DueTasksPanel />
       </div>
