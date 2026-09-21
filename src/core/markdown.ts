@@ -989,6 +989,25 @@ export function zoneOffsetAt(at: number, tz: string): number {
 }
 
 /**
+ * An instant written back out as a wall clock, in a zone or where you are.
+ *
+ * The other direction from `instantInZone`, and needed for the same reason: a
+ * field holding `14:30` holds it *in the zone that was chosen*, so anything
+ * that works in instants and then has to put a value back in that field has to
+ * be told which clock to read it by. Serialising in the device's zone instead
+ * is how a dialog ends up disagreeing with the note it is about to write.
+ */
+export function wallClockIn(at: number, tz?: string): string {
+  const p = (n: number) => `${n}`.padStart(2, '0')
+  if (!tz) {
+    const d = new Date(at)
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`
+  }
+  const d = new Date(at + zoneOffsetAt(at, tz))
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}T${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`
+}
+
+/**
  * The instant a wall-clock time names in a given zone.
  *
  * Twice a year a wall clock does not name one instant. An hour is *skipped* in

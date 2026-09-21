@@ -19,7 +19,7 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 1301 unit, two-device sync and folder round-trip tests
+npm test               # 1307 unit, two-device sync and folder round-trip tests
 node scripts/smoke.mjs # 839-check browser smoke test against dist/
 ```
 
@@ -975,8 +975,17 @@ new.
 **A `tz:` the browser cannot read is shown as broken** rather than quietly
 ignored. A mistyped zone resolves to exactly the same instant as no zone at all,
 so without this a typo and a correct file look identical on screen while the
-event is hours out. The agenda row says the name it could not use, and the
-properties form underlines it and offers the real ones as you type.
+event is hours out. The agenda row says the name it could not use, the
+properties form underlines it and offers the real ones as you type, and the New
+Event dialog says which zone its template asked for and why it was left off.
+
+**And the dialog does all its arithmetic in the zone you picked.** Whether the
+end comes after the start, how long the event stays when you move it, and which
+folder the note will land in are all answered through the same parser the note
+itself is read by. Answered device-locally instead, they disagree with the file
+being written: 02:30 to 03:00 in Tokyo looked like an end before its start on a
+New York morning the clocks went forward, and a Tokyo midnight previewed
+October while saving into September.
 
 Two places part with iCalendar deliberately. **An all-day `end:` is inclusive**,
 where `DTEND` is exclusive — copy that through literally and every one-day event
@@ -2815,7 +2824,7 @@ and that is a better argument for the rail than the outline ever was.
 ## Testing
 
 ```bash
-npm test                # 1301 unit + two-device sync + folder round-trip tests
+npm test                # 1307 unit + two-device sync + folder round-trip tests
 node scripts/smoke.mjs  # 839 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```

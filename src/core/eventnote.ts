@@ -11,7 +11,7 @@
  * the parsing end is imported *by* the vault to read one.
  */
 
-import { eventFor } from './markdown'
+import { eventFor, isKnownZone, wallClockIn } from './markdown'
 import { readProperties, removeProperty, setPropertyValue } from './properties'
 import { templateBodyFor } from './templates'
 import { createNote } from './vault'
@@ -70,18 +70,28 @@ export function localDateTime(at: number): string {
   return `${ymd(d)}T${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
-/** The instant a `datetime-local` or `date` value names, read as local time. */
-export function parseLocal(value: string): number | undefined {
-  const m = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?$/.exec(value.trim())
-  if (!m) return undefined
-  const at = new Date(
-    Number(m[1]),
-    Number(m[2]) - 1,
-    Number(m[3]),
-    Number(m[4] ?? 0),
-    Number(m[5] ?? 0),
-  )
-  return Number.isNaN(at.getTime()) ? undefined : at.getTime()
+/**
+ * The instant a field value names, in the zone that was chosen for it.
+ *
+ * Put through `eventFor` rather than parsed here, which is the whole point: a
+ * field holds a wall clock, and a wall clock only becomes a moment once you say
+ * *whose* clock. Asking the same parser the note will be read by means the
+ * dialog's idea of "is the end after the start" and the file's idea of when the
+ * event is cannot come apart — and it means the two days a year a wall clock is
+ * skipped or repeated are handled once, in one place, rather than differently
+ * in every caller.
+ */
+export function instantOf(value: string, tz?: string): number | undefined {
+  return eventFor({ start: value, ...(tz ? { tz } : {}) })?.start
+}
+
+/** An hour later on the clock face — arithmetic no zone takes part in. */
+export function wallPlusHour(wall: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(wall.trim())
+  if (!m) return wall
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4] + 1, +m[5]))
+  const p = (n: number) => `${n}`.padStart(2, '0')
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}T${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`
 }
 
 /**
@@ -109,9 +119,28 @@ export function defaultEventTimes(day: number, now = Date.now()): { start: strin
     at = new Date(startOfDay(day))
     at.setHours(rounded.getHours(), rounded.getMinutes(), 0, 0)
   }
-  const end = new Date(at)
-  end.setHours(end.getHours() + 1)
-  return { start: localDateTime(at.getTime()), end: localDateTime(end.getTime()) }
+  /*
+   * And then read back the way it will be stored.
+   *
+   * What goes in the field is a wall clock, and on the morning the clocks go
+   * back a wall clock is ambiguous: an instant that is correctly the *second*
+   * 01:30 writes out as "01:30" and reads back as the first, forty-five minutes
+   * before we started. The rounding above cannot fix that, because the loss
+   * happens when the instant becomes a string. So the string itself is checked,
+   * and stepped on by half an hour until it names a moment still to come.
+   */
+  let wall = localDateTime(at.getTime())
+  for (let i = 0; i < 4 && (instantOf(wall) ?? 0) < now; i++) wall = wallPlusHalfHour(wall)
+  return { start: wall, end: wallPlusHour(wall) }
+}
+
+/** Half an hour later on the clock face. See `wallPlusHour`. */
+function wallPlusHalfHour(wall: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(wall)
+  if (!m) return wall
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5] + 30))
+  const p = (n: number) => `${n}`.padStart(2, '0')
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}T${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`
 }
 
 /**
@@ -122,17 +151,22 @@ export function defaultEventTimes(day: number, now = Date.now()): { start: strin
  * finishes. An end that was before its start had no length worth keeping, so it
  * comes back as an hour.
  */
-export function keepDuration(prevStart: string, prevEnd: string, nextStart: string): string {
-  const a = parseLocal(prevStart)
-  const b = parseLocal(prevEnd)
-  const c = parseLocal(nextStart)
+export function keepDuration(
+  prevStart: string,
+  prevEnd: string,
+  nextStart: string,
+  tz?: string,
+): string {
+  const a = instantOf(prevStart, tz)
+  const b = instantOf(prevEnd, tz)
+  const c = instantOf(nextStart, tz)
   if (a === undefined || c === undefined) return prevEnd
-  if (b === undefined || b <= a) {
-    const end = new Date(c)
-    end.setHours(end.getHours() + 1)
-    return localDateTime(end.getTime())
-  }
-  return localDateTime(c + (b - a))
+  // An hour on the clock rather than an hour of elapsed time, because that is
+  // what "an hour long" means to the person who has to read it back.
+  if (b === undefined || b <= a) return wallPlusHour(nextStart)
+  // And written back in the chosen zone, since that is the clock the field is
+  // showing; in the device's zone it would be a different time on the face.
+  return wallClockIn(c + (b - a), tz)
 }
 
 /**
@@ -179,17 +213,28 @@ export function templateZoneFor(day: number): string | undefined {
  * to make a valid choice easy, and "where you are" is the valid choice that
  * matters most.
  */
-export function knownZones(): string[] {
+export function knownZones(...also: Array<string | undefined>): string[] {
   const here = Intl.DateTimeFormat().resolvedOptions().timeZone
+  let all: string[] = []
   try {
-    const all = (Intl as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf?.(
-      'timeZone',
-    )
-    if (all?.length) return all.includes(here) ? all : [here, ...all]
+    all =
+      (Intl as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf?.('timeZone') ??
+      []
   } catch {
-    /* fall through */
+    /* fall through to the one zone we are certain of */
   }
-  return [here]
+  const out = all.length ? [...all] : []
+  /*
+   * `supportedValuesOf` lists the *canonical* zones, and a zone can be valid
+   * without being on it — `UTC` is not there at all, and every alias a tzdata
+   * rename leaves behind (`Asia/Calcutta`, `US/Eastern`) may or may not be.
+   * A list that silently omits a name the app itself may be holding is a select
+   * with nothing selected and a value that saves anyway.
+   */
+  for (const z of [here, 'UTC', ...also]) {
+    if (z && isKnownZone(z) && !out.includes(z)) out.unshift(z)
+  }
+  return out
 }
 
 export interface NewEvent {

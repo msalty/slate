@@ -12,11 +12,13 @@ import {
   defaultEventTimes,
   eventFolderFor,
   eventNoteName,
+  instantOf,
   keepDuration,
+  knownZones,
   localDateTime,
-  parseLocal,
+  wallPlusHour,
 } from './eventnote'
-import { parseYmd } from './util'
+import { parseYmd, roundUpToHalfHour } from './util'
 import { STARTER_TEMPLATES } from './starters'
 import { expandTemplate } from './templates'
 
@@ -57,10 +59,13 @@ describe('where an event goes and what it is called', () => {
     })
   })
 
-  it('reads its own field values back as instants', () => {
-    expect(parseLocal('2026-09-21T14:30')).toBe(new Date(2026, 8, 21, 14, 30).getTime())
-    expect(parseLocal('2026-09-21')).toBe(DAY)
-    expect(parseLocal('not a date')).toBeUndefined()
+  it('reads its own field values back as instants, in the zone chosen', () => {
+    expect(instantOf('2026-09-21T14:30')).toBe(new Date(2026, 8, 21, 14, 30).getTime())
+    expect(instantOf('2026-09-21')).toBe(DAY)
+    expect(instantOf('not a date')).toBeUndefined()
+    expect(new Date(instantOf('2026-09-21T14:00', 'America/New_York')!).toISOString()).toBe(
+      '2026-09-21T18:00:00.000Z',
+    )
     expect(localDateTime(new Date(2026, 8, 21, 9, 5).getTime())).toBe('2026-09-21T09:05')
   })
 })
@@ -401,3 +406,70 @@ describe('the zone on a new event', () => {
 })
 
 const dirnameOf = (p: string) => p.slice(0, p.lastIndexOf('/'))
+
+/**
+ * A field holds a wall clock, and a wall clock is only a moment once you say
+ * whose. Everything the dialog does with one — is the end after the start, how
+ * long is it, which folder does it land in — has to ask in the zone that was
+ * chosen, or it answers about a different event than the one being saved.
+ */
+describe('the zone the dialog is working in', () => {
+  it('judges an end by the chosen clock, not the device’s', () => {
+    /*
+     * 02:30 to 03:00 in Tokyo is an ordinary half hour. Read as New York on the
+     * morning its clocks go forward, the start moves to 03:30 and the end looks
+     * like it comes first — so a valid pair was being replaced by an hour
+     * nobody asked for.
+     */
+    const from = instantOf('2026-03-08T02:30', 'Asia/Tokyo')!
+    const to = instantOf('2026-03-08T03:00', 'Asia/Tokyo')!
+    expect(to).toBeGreaterThan(from)
+    expect(to - from).toBe(30 * 60 * 1000)
+  })
+
+  it('keeps a duration on the chosen clock face, not the device’s', () => {
+    expect(keepDuration('2026-06-01T09:00', '2026-06-01T10:30', '2026-06-01T14:00', 'Asia/Tokyo')).toBe(
+      '2026-06-01T15:30',
+    )
+  })
+
+  it('gives an hour on the clock to an end with no length worth keeping', () => {
+    expect(wallPlusHour('2026-03-08T02:30')).toBe('2026-03-08T03:30')
+    expect(wallPlusHour('2026-09-21T23:30')).toBe('2026-09-22T00:30')
+  })
+
+  it('files where it said it would, whatever zone was picked', async () => {
+    const { ev } = await fresh()
+    // Midnight-and-a-half on 1 October in Tokyo is 30 September almost
+    // everywhere west of it. The preview and the folder must agree, and both
+    // must agree with what the calendar files it under.
+    const at = instantOf('2026-10-01T00:30', 'Asia/Tokyo')!
+    const { path } = await ev.newEventNote('Kickoff', '2026-10-01T00:30', '2026-10-01T01:30', 'Asia/Tokyo')
+    expect(path.startsWith(`${ev.eventFolderFor(at)}/`)).toBe(true)
+  })
+
+  it('offers a zone list that holds every zone it might have to show', () => {
+    // `supportedValuesOf` lists the canonical zones, and a name can be valid
+    // without being on it — a select that cannot show its own value is a
+    // control with nothing selected saving something anyway.
+    expect(knownZones()).toContain('UTC')
+    expect(knownZones('Asia/Calcutta')).toContain('Asia/Calcutta')
+    expect(knownZones(Intl.DateTimeFormat().resolvedOptions().timeZone)).toContain(
+      Intl.DateTimeFormat().resolvedOptions().timeZone,
+    )
+    // And a name that is not a zone is not smuggled in by asking for it.
+    expect(knownZones('Mars/Olympus')).not.toContain('Mars/Olympus')
+  })
+})
+
+/** The suggestion has to be a moment still to come once it is a string. */
+describe('the suggested time on a fall-back morning', () => {
+  it('never names an instant that has already gone', () => {
+    // The second 01:15 in New York. Its wall clock rounds to "01:30", which
+    // reads back as the *first* 01:30 — forty-five minutes earlier.
+    const secondOhOneFifteen = Date.UTC(2026, 10, 1, 6, 15)
+    expect(roundUpToHalfHour(secondOhOneFifteen)).toBeGreaterThanOrEqual(secondOhOneFifteen)
+    const { start } = defaultEventTimes(parseYmd('2026-11-01')!, secondOhOneFifteen)
+    expect(instantOf(start)!).toBeGreaterThanOrEqual(secondOhOneFifteen)
+  })
+})

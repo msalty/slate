@@ -1680,7 +1680,8 @@ button.property-kind:hover {
  * form where being wrong and being right look identical.
  */
 .property-value[data-invalid='1'],
-.agenda-zone[data-invalid='1'] {
+.agenda-zone[data-invalid='1'],
+.field small[data-invalid='1'] {
   color: var(--danger);
 }
 .property-value[data-invalid='1'] {
