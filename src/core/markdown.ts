@@ -961,7 +961,7 @@ const EVENT_TIME_RE = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})
  * so this asks it to format one and reads the answer as though it were UTC. The
  * difference between that and the instant is the offset.
  */
-function zoneOffsetAt(at: number, tz: string): number {
+export function zoneOffsetAt(at: number, tz: string): number {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: tz,
     hour12: false,
@@ -982,16 +982,27 @@ function zoneOffsetAt(at: number, tz: string): number {
 /**
  * The instant a wall-clock time names in a given zone.
  *
- * Two rounds rather than one. The first guess is the wall time read as UTC,
- * corrected by the zone's offset *at that guess* — which is the wrong offset
- * whenever the guess falls on the far side of a DST change from the answer. A
- * second round re-reads the offset at the corrected instant and lands, because
- * an hour's error cannot cross a second boundary.
+ * Twice a year a wall clock does not name one instant. An hour is *skipped* in
+ * spring, so 02:30 never happens; an hour is *repeated* in autumn, so 01:30
+ * happens twice. A rule is needed for both, and the rule here is the one
+ * `Temporal` calls `compatible` and every calendar has settled on: a time that
+ * was skipped moves forward by the gap, and a time that happened twice means
+ * the first of them.
  *
- * Times a zone skips over (the hour a spring-forward deletes) have no instant
- * to be; this lands on the moment the clocks moved, which is what everything
- * else that has to answer does.
+ * Two candidates, built from the offsets a day either side — far enough to be
+ * on opposite sides of any transition, close enough that no zone has two. When
+ * they agree there was no transition and either will do. When only one of them
+ * reads back as the wall time asked for, that is the answer. When *both* do,
+ * the hour happened twice and the earlier wins. When *neither* does, the hour
+ * did not happen at all, and the later of the two is that time plus the gap.
+ *
+ * The previous version guessed twice and hoped the second guess converged. It
+ * did for the repeated hour and not for the skipped one: 02:30 in New York came
+ * back as 01:30 — an hour *before* what was asked for, and an hour and a half
+ * from what the same time with no zone on it resolves to.
  */
+const A_DAY = 86_400_000
+
 function instantInZone(
   y: number,
   mo: number,
@@ -1002,9 +1013,16 @@ function instantInZone(
   tz: string,
 ): number {
   const wall = Date.UTC(y, mo - 1, d, h, mi, sec)
-  let at = wall - zoneOffsetAt(wall, tz)
-  at = wall - zoneOffsetAt(at, tz)
-  return at
+  const a = wall - zoneOffsetAt(wall - A_DAY, tz)
+  const b = wall - zoneOffsetAt(wall + A_DAY, tz)
+  if (a === b) return a
+  const holds = (at: number) => at + zoneOffsetAt(at, tz) === wall
+  const okA = holds(a)
+  const okB = holds(b)
+  if (okA && okB) return Math.min(a, b)
+  if (okA) return a
+  if (okB) return b
+  return Math.max(a, b)
 }
 
 /** One `start:`/`end:` value. Undefined for anything that is not a date. */

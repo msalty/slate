@@ -19,7 +19,7 @@
  * the only safe way to hold one.
  */
 
-import { ymd } from './util'
+import { roundUpToHalfHour, ymd } from './util'
 
 /**
  * How a value is written, and so how the form offers to edit it. Inferred from
@@ -309,25 +309,19 @@ export function coerceValue(p: Property, kind: PropertyKind): string | string[] 
     case 'datetime': {
       const loose = LOOSE_DATETIME_RE.exec(v)
       if (loose) return `${loose[1]}T${loose[2]}${loose[3] ?? ''}`
-      const day = DATE_RE.test(v) ? v : ymd(Date.now())
-      return `${day}T${nextHalfHour()}`
+      /*
+       * The same suggestion the New Event dialog opens with, off the same
+       * helper — two answers to "what time, then?" that drifted apart would be
+       * two answers to the same question.
+       */
+      const at = new Date(roundUpToHalfHour())
+      const p = (n: number) => `${n}`.padStart(2, '0')
+      const day = DATE_RE.test(v) ? v : ymd(at)
+      return `${day}T${p(at.getHours())}:${p(at.getMinutes())}`
     }
     default:
       return p.items ? p.items.join(', ') : p.value
   }
-}
-
-/**
- * The next round half hour, for a time field that has to start somewhere.
- *
- * The same answer `eventnote.ts` gives when it makes an event, and for the
- * same reason: nobody schedules anything for 14:07, and rounding up is never a
- * time that has already gone.
- */
-function nextHalfHour(now = Date.now()): string {
-  const d = new Date(now)
-  d.setMinutes(d.getMinutes() > 30 ? 60 : 30, 0, 0)
-  return `${`${d.getHours()}`.padStart(2, '0')}:${`${d.getMinutes()}`.padStart(2, '0')}`
 }
 
 /** True when a value carries seconds, which a time field has to be told to show. */

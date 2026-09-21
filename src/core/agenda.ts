@@ -11,7 +11,7 @@
  * only way two surfaces agree about what a time means is to ask one function.
  */
 
-import type { NoteEvent } from './markdown'
+import { zoneOffsetAt, type NoteEvent } from './markdown'
 import { addDays, startOfDay } from './util'
 
 /** A clock, in whatever form the reader's locale writes one. */
@@ -44,48 +44,37 @@ export function eventTimeLabel(ev: NoteEvent, day: number): string {
 /**
  * What an event's own zone adds, when it has one worth saying.
  *
+ * The clock is read straight off the instant, in the event's own zone, rather
+ * than by shifting the instant and reading it here. Shifting was wrong twice a
+ * year and silently: a London event at 03:30 on the morning the *device's*
+ * clocks change landed, once moved, on the far side of New York's own
+ * transition, so it was formatted with an offset that had nothing to do with
+ * either — and came out an hour late.
+ *
  * A zone is only worth naming when it disagrees with the clock the reader is
- * looking at: a meeting written `tz: Europe/London`, read in London, is just a
- * meeting. Compared by the offset in force at the time rather than by the name,
- * because `Europe/London` and `Europe/Dublin` are the same afternoon.
+ * looking at, and that is compared by the offset in force at the moment itself
+ * rather than by the name, because `Europe/London` and `Europe/Dublin` are the
+ * same afternoon.
  */
 export function eventZoneLabel(ev: NoteEvent): string {
   if (!ev.tz || ev.allDay) return ''
-  const here = new Date(ev.start)
-  const offsetHere = -here.getTimezoneOffset() * 60_000
-  let offsetThere: number
   try {
-    const parts = new Intl.DateTimeFormat('en-US', {
+    if (zoneOffsetAt(ev.start, ev.tz) === -new Date(ev.start).getTimezoneOffset() * 60_000) {
+      return ''
+    }
+    const at = new Intl.DateTimeFormat(undefined, {
       timeZone: ev.tz,
-      hour12: false,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
       hour: '2-digit',
       minute: '2-digit',
-    }).formatToParts(ev.start)
-    const get = (t: string) => Number(parts.find((p) => p.type === t)?.value)
-    offsetThere =
-      Date.UTC(get('year'), get('month') - 1, get('day'), get('hour') % 24, get('minute')) -
-      ev.start
+    }).format(ev.start)
+    // The city rather than the region: "New York" is where the meeting is, and
+    // "America/New_York" is how a computer writes it down.
+    return `${at} ${ev.tz.slice(ev.tz.lastIndexOf('/') + 1).replace(/_/g, ' ')}`
   } catch {
     return ''
   }
-  if (offsetThere === offsetHere) return ''
-  // The city rather than the region: "New York" is where the meeting is, and
-  // "America/New_York" is how a computer writes it down.
-  const city = ev.tz.slice(ev.tz.lastIndexOf('/') + 1).replace(/_/g, ' ')
-  return `${new Date(ev.start + offsetThere - offsetHere).toLocaleTimeString(undefined, {
-    hour: '2-digit',
-    minute: '2-digit',
-  })} ${city}`
 }
 
-/*
- * The optional time is for files that still carry one: anything named by an
- * earlier version of this, and anything an importer chooses to name that way.
- * Nothing here writes one any more — see `eventNoteName`.
- */
 const STAMP_RE = /^\d{4}-\d{2}-\d{2}(?:[ T]\d{4})?\s+/
 
 /**

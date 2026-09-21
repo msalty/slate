@@ -189,3 +189,59 @@ describe('the agenda', () => {
     expect(day).toBe(startOfDay(new Date('2026-09-22T00:00:00.000Z').getTime()))
   })
 })
+
+/**
+ * The two days a year a wall clock does not name one instant.
+ *
+ * An hour is skipped in spring, so 02:30 never happens; an hour is repeated in
+ * autumn, so 01:30 happens twice. The rule for both is the one every calendar
+ * has settled on — a skipped time moves forward by the gap, a repeated one
+ * means the first — and the test that matters is that naming your *own* zone
+ * cannot change an event, since it is the same statement either way.
+ */
+describe('daylight saving', () => {
+  const NY = 'America/New_York'
+  const here = Intl.DateTimeFormat().resolvedOptions().timeZone
+
+  it('moves a time the clocks skipped forward by the gap', () => {
+    // 02:30 on 2026-03-08 does not exist in New York: 02:00 EST became 03:00 EDT.
+    const e = eventFor({ start: '2026-03-08T02:30', tz: NY })!
+    expect(new Date(e.start).toISOString()).toBe('2026-03-08T07:30:00.000Z')
+  })
+
+  it('takes the first of an hour the clocks repeated', () => {
+    // 01:30 on 2026-11-01 happens twice; the earlier one is still EDT.
+    const e = eventFor({ start: '2026-11-01T01:30', tz: NY })!
+    expect(new Date(e.start).toISOString()).toBe('2026-11-01T05:30:00.000Z')
+  })
+
+  it('answers the same whether or not the reader’s own zone is named', () => {
+    /*
+     * The case this is really for. Writing `tz:` with the zone you are already
+     * in says nothing new, so it must not move anything — and an earlier
+     * version moved a skipped hour by ninety minutes when you did.
+     */
+    for (const t of [
+      '2026-03-08T01:30',
+      '2026-03-08T02:30',
+      '2026-03-08T03:30',
+      '2026-11-01T00:30',
+      '2026-11-01T01:30',
+      '2026-11-01T02:30',
+      '2026-06-01T09:00',
+    ]) {
+      expect(eventFor({ start: t, tz: here })!.start).toBe(eventFor({ start: t })!.start)
+    }
+  })
+
+  it('keeps a whole hour a whole hour across the transition', () => {
+    const e = eventFor({ start: '2026-03-08T01:30', end: '2026-03-08T03:30', tz: NY })!
+    // 01:30 EST to 03:30 EDT is one hour of clock time either side of the gap.
+    expect(e.end - e.start).toBe(60 * 60 * 1000)
+  })
+
+  it('and gets an ordinary day right, which is the other 363', () => {
+    const e = eventFor({ start: '2026-06-01T09:00', tz: NY })!
+    expect(new Date(e.start).toISOString()).toBe('2026-06-01T13:00:00.000Z')
+  })
+})

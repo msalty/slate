@@ -72,6 +72,29 @@ describe('the zone on a row', () => {
     expect(label).toMatch(/\d{1,2}.\d{2}/)
   })
 
+  it('reads the clock in the event’s own zone, not by moving the instant', () => {
+    /*
+     * A London event at 03:30 on the morning New York's clocks change. Shifting
+     * the instant and formatting it locally landed on the far side of the
+     * *device's* transition and came out an hour late; asking Intl for the time
+     * in London cannot.
+     */
+    const e = ev('start: 2026-03-08T03:30', 'tz: Europe/London')
+    const truth = new Intl.DateTimeFormat(undefined, {
+      timeZone: 'Europe/London',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(e.start)
+    const label = eventZoneLabel(e)
+    expect(label === '' || label.startsWith(truth)).toBe(true)
+  })
+
+  it('says nothing for an event carrying seconds in the reader’s own zone', () => {
+    // The offset is compared at the instant itself, so :30 past the minute is
+    // not mistaken for a different zone.
+    expect(eventZoneLabel(ev('start: 2026-06-01T14:00:30', `tz: ${HERE}`))).toBe('')
+  })
+
   it('says nothing for an all-day event, which has no clock to disagree with', () => {
     expect(eventZoneLabel(ev('start: 2026-09-21', `tz: ${ELSEWHERE}`))).toBe('')
   })

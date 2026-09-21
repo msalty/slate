@@ -14,7 +14,6 @@ import {
   eventNoteName,
   keepDuration,
   localDateTime,
-  nextHalfHour,
   parseLocal,
 } from './eventnote'
 import { parseYmd } from './util'
@@ -48,12 +47,6 @@ describe('where an event goes and what it is called', () => {
     // the name is a claim that stops being true the moment the event moves.
     expect(eventNoteName('Design review')).toBe('Design review')
     expect(eventNoteName('  Office closed  ')).toBe('Office closed')
-  })
-
-  it('suggests the next round half hour, never one that has gone', () => {
-    expect(nextHalfHour(new Date(2026, 8, 21, 14, 7).getTime())).toBe('14:30')
-    expect(nextHalfHour(new Date(2026, 8, 21, 14, 31).getTime())).toBe('15:00')
-    expect(nextHalfHour(new Date(2026, 8, 21, 14, 30).getTime())).toBe('14:30')
   })
 
   it('opens on the chosen day at that half hour, for an hour', () => {
@@ -294,5 +287,43 @@ describe('the times the dialog chose', () => {
     expect(text).toContain('start: 2026-09-21T14:30')
     expect(text).toContain('end: 2026-09-21T16:00')
     expect(text).toContain('tags: [meeting]')
+  })
+})
+
+/**
+ * What time a new event opens on.
+ *
+ * The suggestion is the next round half hour, and the rollover is the whole
+ * reason it is carried as an instant: at 23:45 the next half hour is midnight
+ * *tomorrow*, and rounding to "00:00" and hanging it on today opened every
+ * late-night event twenty-four hours in the past.
+ */
+describe('the time a new event opens on', () => {
+  const at = (h: number, mi: number, s = 0) => new Date(2026, 8, 21, h, mi, s).getTime()
+
+  it('rolls into tomorrow rather than back to this morning', () => {
+    expect(defaultEventTimes(DAY, at(23, 45))).toEqual({
+      start: '2026-09-22T00:00',
+      end: '2026-09-22T01:00',
+    })
+  })
+
+  it('counts the seconds, so half past already gone rounds to the hour', () => {
+    expect(defaultEventTimes(DAY, at(14, 30, 15)).start).toBe('2026-09-21T15:00')
+    // And exactly on the half hour is not already gone.
+    expect(defaultEventTimes(DAY, at(14, 30)).start).toBe('2026-09-21T14:30')
+  })
+
+  it('keeps a day you chose, and only puts the clock time on it', () => {
+    // The rollover is about "now". A day picked out of the calendar is not now.
+    expect(defaultEventTimes(parseYmd('2026-10-05')!, at(23, 45))).toEqual({
+      start: '2026-10-05T00:00',
+      end: '2026-10-05T01:00',
+    })
+  })
+
+  it('crosses a month, and a year, without landing in the wrong one', () => {
+    const nye = new Date(2026, 11, 31, 23, 45).getTime()
+    expect(defaultEventTimes(new Date(2026, 11, 31).getTime(), nye).start).toBe('2027-01-01T00:00')
   })
 })

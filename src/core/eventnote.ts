@@ -15,7 +15,7 @@ import { eventFor } from './markdown'
 import { setPropertyValue } from './properties'
 import { templateBodyFor } from './templates'
 import { createNote } from './vault'
-import { dirname, startOfDay, ymd } from './util'
+import { dirname, roundUpToHalfHour, startOfDay, ymd } from './util'
 import type { TemplateBody } from './templates'
 
 /** Where an event is created when nothing says otherwise. */
@@ -85,29 +85,30 @@ export function parseLocal(value: string): number | undefined {
 }
 
 /**
- * The next round half hour, which is when a meeting made now is going to be.
- *
- * Nobody schedules anything for 14:07. Rounding up rather than to the nearest
- * also means the suggestion is never a time that has already gone.
- */
-export function nextHalfHour(now = Date.now()): string {
-  const d = new Date(now)
-  d.setMinutes(d.getMinutes() > 30 ? 60 : 30, 0, 0)
-  const p = (n: number) => `${n}`.padStart(2, '0')
-  return `${p(d.getHours())}:${p(d.getMinutes())}`
-}
-
-/**
  * What the dialog opens with: the chosen day, at the next half hour, for an
  * hour.
  *
- * An hour by the *clock* rather than by the millisecond, so a meeting made on
- * the morning the clocks go forward is still an hour long rather than two.
+ * The rollover is the whole reason this takes an instant from
+ * `roundUpToHalfHour` rather than a clock face. At 23:45 the next half hour is
+ * midnight *tomorrow*, and rounding to "00:00" and then hanging that on today
+ * opened every late-night event twenty-four hours in the past.
+ *
+ * It only rolls when the day being offered is today. A day picked out of the
+ * calendar keeps its own date and takes the suggested clock time onto it: the
+ * point of the suggestion is "a time you might plausibly want", not "now".
+ *
+ * An hour long by the *clock* rather than by the millisecond, so a meeting made
+ * on the morning the clocks go forward is an hour rather than two.
  */
 export function defaultEventTimes(day: number, now = Date.now()): { start: string; end: string } {
-  const [h, m] = nextHalfHour(now).split(':').map(Number)
-  const at = new Date(startOfDay(day))
-  at.setHours(h, m, 0, 0)
+  const rounded = new Date(roundUpToHalfHour(now))
+  let at: Date
+  if (startOfDay(day) === startOfDay(now)) {
+    at = rounded
+  } else {
+    at = new Date(startOfDay(day))
+    at.setHours(rounded.getHours(), rounded.getMinutes(), 0, 0)
+  }
   const end = new Date(at)
   end.setHours(end.getHours() + 1)
   return { start: localDateTime(at.getTime()), end: localDateTime(end.getTime()) }
