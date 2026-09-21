@@ -85,13 +85,33 @@ export function instantOf(value: string, tz?: string): number | undefined {
   return eventFor({ start: value, ...(tz ? { tz } : {}) })?.start
 }
 
-/** An hour later on the clock face — arithmetic no zone takes part in. */
-export function wallPlusHour(wall: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(wall.trim())
+const WALL_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/
+
+/**
+ * Later on the clock face, by so many minutes — arithmetic no zone takes part
+ * in, and the only kind that always produces a value this format can hold.
+ */
+export function wallPlus(wall: string, minutes: number): string {
+  const m = WALL_RE.exec(wall.trim())
   if (!m) return wall
-  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4] + 1, +m[5]))
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5] + minutes))
   const p = (n: number) => `${n}`.padStart(2, '0')
   return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}T${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`
+}
+
+/** An hour later on the clock face. */
+export function wallPlusHour(wall: string): string {
+  return wallPlus(wall, 60)
+}
+
+/** How far apart two clock faces are, in minutes, whatever either one means. */
+function wallMinutes(from: string, to: string): number {
+  const a = WALL_RE.exec(from.trim())
+  const b = WALL_RE.exec(to.trim())
+  if (!a || !b) return 0
+  const ms =
+    Date.UTC(+b[1], +b[2] - 1, +b[3], +b[4], +b[5]) - Date.UTC(+a[1], +a[2] - 1, +a[3], +a[4], +a[5])
+  return ms / 60_000
 }
 
 /**
@@ -120,28 +140,30 @@ export function defaultEventTimes(day: number, now = Date.now()): { start: strin
     at.setHours(rounded.getHours(), rounded.getMinutes(), 0, 0)
   }
   /*
-   * And then read back the way it will be stored.
+   * And then read back the way it will be stored — but only when the day being
+   * offered is today.
    *
    * What goes in the field is a wall clock, and on the morning the clocks go
    * back a wall clock is ambiguous: an instant that is correctly the *second*
    * 01:30 writes out as "01:30" and reads back as the first, forty-five minutes
    * before we started. The rounding above cannot fix that, because the loss
-   * happens when the instant becomes a string. So the string itself is checked,
-   * and stepped on by half an hour until it names a moment still to come.
+   * happens when the instant becomes a string, so the string is stepped on
+   * until it names a moment still to come.
+   *
+   * On a day you picked out of the calendar there is nothing to fix. A past day
+   * is *supposed* to be in the past, and checking it against now walked the
+   * suggestion off the day you asked for and onto the next one — twenty to
+   * midnight on the twentieth became half one in the morning on the twenty
+   * first, which is neither the time nor the day.
    */
   let wall = localDateTime(at.getTime())
-  for (let i = 0; i < 4 && (instantOf(wall) ?? 0) < now; i++) wall = wallPlusHalfHour(wall)
+  if (startOfDay(day) === startOfDay(now)) {
+    for (let i = 0; i < 4 && (instantOf(wall) ?? 0) < now; i++) wall = wallPlus(wall, 30)
+  }
   return { start: wall, end: wallPlusHour(wall) }
 }
 
-/** Half an hour later on the clock face. See `wallPlusHour`. */
-function wallPlusHalfHour(wall: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(wall)
-  if (!m) return wall
-  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5] + 30))
-  const p = (n: number) => `${n}`.padStart(2, '0')
-  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}T${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`
-}
+
 
 /**
  * An end moved to keep the length it had, for when the start is changed.
@@ -164,9 +186,27 @@ export function keepDuration(
   // An hour on the clock rather than an hour of elapsed time, because that is
   // what "an hour long" means to the person who has to read it back.
   if (b === undefined || b <= a) return wallPlusHour(nextStart)
-  // And written back in the chosen zone, since that is the clock the field is
-  // showing; in the device's zone it would be a different time on the face.
-  return wallClockIn(c + (b - a), tz)
+  /*
+   * Written back in the chosen zone, since that is the clock the field shows;
+   * in the device's zone it would be a different time on the face.
+   */
+  const proposed = wallClockIn(c + (b - a), tz)
+  /*
+   * And only if the clock face can still name it.
+   *
+   * One hour a year happens twice, and this format has one spelling for both.
+   * An hour-long event moved to 01:30 on the morning the clocks go back ends at
+   * the *second* 01:30 — which writes out as "01:30", reads back as the first,
+   * and leaves an event that starts and finishes at the same moment. Zero
+   * minutes long, silently, from a move that had nothing wrong with it.
+   *
+   * So the answer is read back before it is accepted, and when the spelling has
+   * lost which of the two it meant, the length is kept on the clock face
+   * instead: 01:30 to 02:30 is an hour to anybody reading it, and is a thing
+   * the file can actually say.
+   */
+  if (instantOf(proposed, tz) === c + (b - a)) return proposed
+  return wallPlus(nextStart, Math.max(wallMinutes(prevStart, prevEnd), 1))
 }
 
 /**

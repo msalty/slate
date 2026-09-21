@@ -19,7 +19,7 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 1307 unit, two-device sync and folder round-trip tests
+npm test               # 1311 unit, two-device sync and folder round-trip tests
 node scripts/smoke.mjs # 839-check browser smoke test against dist/
 ```
 
@@ -971,6 +971,15 @@ forward by the gap, a repeated one means the first of the two. That is what
 every calendar settles on, and it is what makes naming the zone you are already
 in a statement that changes nothing — which it has to be, since it says nothing
 new.
+
+The repeated hour is the one place the format gives something up, and it is
+worth saying where. `01:30` is one spelling for two moments, so a file cannot
+name the second of them — which means an hour-long event moved onto that
+morning is written **01:30 to 02:30** rather than 01:30 to the other 01:30. An
+hour on the clock face, which is what it reads as and what the file can say,
+rather than an hour of elapsed time that would have to be stored as a moment
+the format has no words for. Everywhere the spelling *can* name the exact
+instant — the skipped hour included — it is kept.
 
 **A `tz:` the browser cannot read is shown as broken** rather than quietly
 ignored. A mistyped zone resolves to exactly the same instant as no zone at all,
@@ -2824,7 +2833,7 @@ and that is a better argument for the rail than the outline ever was.
 ## Testing
 
 ```bash
-npm test                # 1307 unit + two-device sync + folder round-trip tests
+npm test                # 1311 unit + two-device sync + folder round-trip tests
 node scripts/smoke.mjs  # 839 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```

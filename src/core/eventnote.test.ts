@@ -473,3 +473,59 @@ describe('the suggested time on a fall-back morning', () => {
     expect(instantOf(start)!).toBeGreaterThanOrEqual(secondOhOneFifteen)
   })
 })
+
+/**
+ * Two ways a correction can be worse than the thing it corrects.
+ *
+ * Both of these were introduced by earlier fixes in this file, which is the
+ * shape worth remembering: a rule written for one case ("never suggest a time
+ * that has gone", "keep the length") applied without asking whether the case
+ * was in front of it.
+ */
+describe('corrections that must know when to stop', () => {
+  it('leaves a day you picked on the day you picked', () => {
+    /*
+     * At ten past eleven at night on the twenty-first, asking for the twentieth
+     * is asking for a day that is *supposed* to be in the past. Checking it
+     * against now walked the suggestion off that day and onto the next one.
+     */
+    const now = new Date(2026, 8, 21, 23, 10).getTime()
+    expect(defaultEventTimes(parseYmd('2026-09-20')!, now).start).toBe('2026-09-20T23:30')
+    expect(defaultEventTimes(parseYmd('2026-09-25')!, now).start).toBe('2026-09-25T23:30')
+    // Today still rolls past midnight, which is what the check was for.
+    expect(defaultEventTimes(parseYmd('2026-09-21')!, now).start).toBe('2026-09-21T23:30')
+  })
+
+  it('and still will not suggest a moment gone, on today', () => {
+    const second = Date.UTC(2026, 10, 1, 6, 15)
+    const { start } = defaultEventTimes(parseYmd('2026-11-01')!, second)
+    expect(instantOf(start)!).toBeGreaterThanOrEqual(second)
+  })
+
+  it('never lets an event collapse to nothing when it is moved', () => {
+    /*
+     * An hour a year happens twice and this format has one spelling for both.
+     * An hour-long event moved to 01:30 on that morning ends at the *second*
+     * 01:30 — which writes out as "01:30", reads back as the first, and leaves
+     * an event starting and finishing at the same moment.
+     */
+    const NY = 'America/New_York'
+    const end = keepDuration('2026-10-31T01:30', '2026-10-31T02:30', '2026-11-01T01:30', NY)
+    expect(end).not.toBe('2026-11-01T01:30')
+    expect(instantOf(end, NY)!).toBeGreaterThan(instantOf('2026-11-01T01:30', NY)!)
+    // The length is kept on the clock face, which the file can always say.
+    expect(end).toBe('2026-11-01T02:30')
+  })
+
+  it('keeps the exact instant wherever the clock face can still name it', () => {
+    // Into the skipped hour, where the representable spelling is the later one.
+    const NY = 'America/New_York'
+    expect(keepDuration('2026-06-01T01:00', '2026-06-01T02:00', '2026-03-08T01:30', NY)).toBe(
+      '2026-03-08T03:30',
+    )
+    // And an ordinary move, which is every other day of the year.
+    expect(keepDuration('2026-06-01T09:00', '2026-06-01T10:30', '2026-06-02T14:00', NY)).toBe(
+      '2026-06-02T15:30',
+    )
+  })
+})
