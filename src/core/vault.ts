@@ -385,6 +385,7 @@ function buildEntry(f: VaultFile): NoteIndexEntry | undefined {
 
   const title = titleFromPath(f.path)
   const folder = dirname(f.path)
+  const event = eventFor(fm.data)
   const raw = scanTasks(text)
   /*
    * What the note says about itself, which every task on it inherits.
@@ -402,12 +403,24 @@ function buildEntry(f: VaultFile): NoteIndexEntry | undefined {
     excerpt: excerptOf(text, fm.bodyStart, fm.data),
     mtime: f.mtime,
     ctime: f.ctime,
-    calendarDate: calendarDateFor(f.path, fm.data, f.ctime),
+    /*
+     * An event is filed on the day it happens, whatever its name or when the
+     * file was made. `calendarDateFor` reads the name and the `date:` key and
+     * falls back to the file's own age, which is right for an ordinary note and
+     * wrong for a meeting: one written up on Saturday about Thursday belongs to
+     * Thursday, and its `start:` is the only thing that knows that.
+     *
+     * Taken off the parsed event rather than off the text, so the day the
+     * calendar marks is the same day the agenda lists it under — including for
+     * a zoned event, where the wall clock in its own zone and the day it lands
+     * on here are not always the same date.
+     */
+    calendarDate: event ? startOfDay(event.start) : calendarDateFor(f.path, fm.data, f.ctime),
     tags: [...tags],
     links,
     embeds,
     pinned: fm.data.pinned === true,
-    event: eventFor(fm.data),
+    event,
     aliases,
     hasTasks: raw.length > 0,
     tasks: raw.map((t) => ({

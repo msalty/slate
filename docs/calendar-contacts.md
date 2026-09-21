@@ -103,10 +103,32 @@ Short description, if any.
 | `end` | date or datetime | Optional. **Inclusive** for all-day. Defaults to `start` + 1h (timed) or `start` (all-day). |
 | `tz` | IANA zone name | Optional. When present, `start` and `end` are written in it. |
 | `location` | string | Optional. |
-| `url` | string | Optional. The join link, lifted out of the description. |
+| `url` | string | Optional. The join link, lifted out of the description. Kept apart from `location` because on a video meeting the "where" is a link: you click one and read the other. |
 | `attendees` | list | Wikilinks where a contact matched, plain strings otherwise. |
+| `calendar` | string | Optional. Which source calendar it came from — Work, Personal, Family. Nothing reads it yet; reserved because colouring the agenda by it is the obvious next thing, and vdir stores a `displayname` per collection so the importer gets it free. |
 | `source` | string | Provider slug. **Its presence means the file is externally owned.** |
 | `uid` | string | The source system's identity key. Helper-owned; Slate only round-trips it. |
+
+**Only the first three are read by code.** `start` (with `end` and `tz`) is the
+whole of what Slate parses, plus `source` and `uid` from §2.3 onward. Everything
+else in the table is a *blessed name* — frontmatter is open, so any key already
+works and shows in the properties form; naming these buys nothing but the
+guarantee that a hand-written event and an imported one use the same words.
+The list of keys code depends on should stay closed and small.
+
+**Rejected on purpose.** `duration:` (a second spelling of `end`, which is
+ambiguity bought for nothing), `allday:` (the absence of a time already says
+it), `organizer:` (one of the attendees), `status:` (cancelled events are
+deleted, and `TENTATIVE` is not worth a key nothing reads), and reminders or
+alarms of any kind — Slate has no notification story, and a field nothing acts
+on is a promise the file cannot keep.
+
+**A new event pre-fills `start` and `end` and nothing else.** Every pre-filled
+empty key is a row of chrome in the properties panel and a line of noise in the
+file, and for most events it would be wrong. A folder template on `Calendar/` is
+the mechanism for "I always want these four fields", and the `Meeting` starter
+is one — it opens with `start:`, so a meeting note lands on the agenda for the
+day it happened.
 
 **Filenames.** `Calendar/2026/09/2026-09-21 Design review.md`. Year/month
 subfolders keep any one directory browsable, and a template assigned to

@@ -69,6 +69,34 @@ export function eventFrontmatter(day: number, start: string, end: string): strin
   return `---\nstart: ${date}T${start}\nend: ${date}T${end}\n---\n\n`
 }
 
+const FENCE_RE = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/
+
+/**
+ * Put the keys a template did not write above the ones it did.
+ *
+ * The rule is the template's: whatever it says stands, and this only supplies
+ * what is missing. A template is free to write its own `start:` — the Meeting
+ * one does — and getting a second copy of it from here would be one block with
+ * the same key in it twice, which is a file that reads as though somebody lost
+ * an argument with their editor.
+ *
+ * A key counts as written even when it is left empty. `end:` with nothing after
+ * it is a template saying "fill this in", not a template forgetting to.
+ */
+export function withFrontmatter(body: string, keys: Array<[string, string]>): string {
+  const m = FENCE_RE.exec(body)
+  if (!m) return `---\n${keys.map(([k, v]) => `${k}: ${v}`).join('\n')}\n---\n\n${body}`
+  const missing = keys.filter(([k]) => !new RegExp(`^${k}\\s*:`, 'm').test(m[1]))
+  if (missing.length === 0) return body
+  return `---\n${missing.map(([k, v]) => `${k}: ${v}`).join('\n')}\n${body.slice(4)}`
+}
+
+/** `09:30` as minutes past midnight, for placing a wall clock on a day. */
+function minutesOf(hhmm: string): number {
+  const [h, m] = hhmm.split(':').map(Number)
+  return h * 60 + m
+}
+
 /** An hour later, as a wall clock, rolling over midnight rather than past it. */
 export function anHourAfter(hhmm: string): string {
   const [h, m] = hhmm.split(':').map(Number)
@@ -131,18 +159,19 @@ export async function newEventNote(
 ): Promise<NewEvent> {
   const folder = eventFolderFor(day)
   const name = eventNoteName(title, day)
-  const front = eventFrontmatter(day, start, anHourAfter(start))
-  const t = templateForEvent(folder, title, startOfDay(day))
-  const body = t?.text ?? `# ${title}\n\n`
+  const date = ymd(startOfDay(day))
   /*
-   * A template that already opens with its own frontmatter would otherwise get
-   * a second block above it, and two `---` fences at the top of a file is one
-   * block with the second one's keys read as text. The template wins the shape
-   * and the `start:` is folded into it.
+   * The template is given the moment the event *starts*, not the midnight it
+   * falls after. `{{date}}` is the same either way and `{{time}}` is not: it
+   * came out as `00:00` on every event ever made, which is a field that looks
+   * filled in and says nothing.
    */
-  const text = body.startsWith('---\n')
-    ? body.replace('---\n', `---\n${front.slice(4, front.indexOf('\n---\n') + 1)}`)
-    : front + body
+  const t = templateForEvent(folder, title, startOfDay(day) + minutesOf(start) * 60_000)
+  const body = t?.text ?? `# ${title}\n\n`
+  const text = withFrontmatter(body, [
+    ['start', `${date}T${start}`],
+    ['end', `${date}T${anHourAfter(start)}`],
+  ])
   return {
     path: await createNote(folder, name, text),
     caret: t?.caret === undefined ? undefined : t.caret + (text.length - body.length),

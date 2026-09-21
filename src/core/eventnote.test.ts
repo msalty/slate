@@ -10,6 +10,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { anHourAfter, eventFolderFor, eventNoteName, nextHalfHour } from './eventnote'
 import { parseYmd } from './util'
+import { STARTER_TEMPLATES } from './starters'
+import { expandTemplate } from './templates'
 
 type Vault = typeof import('./vault')
 type EventNote = typeof import('./eventnote')
@@ -26,6 +28,7 @@ async function fresh(): Promise<{ vault: Vault; ev: EventNote; templates: Templa
 }
 
 const DAY = parseYmd('2026-09-21')!
+const DAY_AT_0930 = new Date(2026, 8, 21, 9, 30).getTime()
 
 describe('where an event goes and what it is called', () => {
   it('files it under the year and month', () => {
@@ -133,6 +136,41 @@ describe('the note it writes', () => {
     expect(vault.getEntry(path)?.event?.start).toBe(new Date(2026, 8, 21, 9, 30).getTime())
   })
 
+  it('fills {{time}} with the time the event starts, not with midnight', async () => {
+    const { vault, ev, templates } = await fresh()
+    await vault.createNote('Templates', 'Meeting', '# {{title}}\n\nAt {{time}} on {{date}}\n')
+    await templates.setFolderTemplate('Calendar', 'Templates/Meeting.md')
+    const { path } = await ev.newEventNote('Design review', DAY, '14:30')
+    expect(vault.getRaw(path)?.text).toContain('At 14:30 on 2026-09-21')
+  })
+
+  it('leaves a template’s own start alone rather than writing a second one', async () => {
+    const { vault, ev, templates } = await fresh()
+    await vault.createNote(
+      'Templates',
+      'Meeting',
+      '---\nstart: {{date}}T{{time}}\nend:\ntags: [meeting]\n---\n\n# {{title}}\n',
+    )
+    await templates.setFolderTemplate('Calendar', 'Templates/Meeting.md')
+    const { path } = await ev.newEventNote('Design review', DAY, '14:30')
+    const text = vault.getRaw(path)?.text ?? ''
+    expect(text.match(/^start:/gm)?.length).toBe(1)
+    // An empty `end:` is the template saying "fill this in", not forgetting to.
+    expect(text.match(/^end:/gm)?.length).toBe(1)
+    expect(text).toContain('start: 2026-09-21T14:30')
+    const e = vault.getEntry(path)?.event
+    expect(e?.start).toBe(new Date(2026, 8, 21, 14, 30).getTime())
+    expect(e!.end - e!.start).toBe(60 * 60 * 1000)
+  })
+
+  it('still supplies an end when the template wrote only a start', async () => {
+    const { vault, ev, templates } = await fresh()
+    await vault.createNote('Templates', 'M', '---\nstart: {{date}}T{{time}}\n---\n\n# {{title}}\n')
+    await templates.setFolderTemplate('Calendar', 'Templates/M.md')
+    const { path } = await ev.newEventNote('Design review', DAY, '14:30')
+    expect(vault.getRaw(path)?.text).toContain('end: 2026-09-21T15:30')
+  })
+
   it('lands the caret where the template asked, past the frontmatter', async () => {
     const { vault, ev, templates } = await fresh()
     await vault.createNote('Templates', 'Meeting', '# {{title}}\n\n{{cursor}}\n')
@@ -140,5 +178,33 @@ describe('the note it writes', () => {
     const { path, caret } = await ev.newEventNote('Design review', DAY, '09:30')
     const text = vault.getRaw(path)?.text ?? ''
     expect(caret).toBeGreaterThan(text.indexOf('# Design review'))
+  })
+})
+
+/**
+ * A meeting note is an event now, so it has to behave like one wherever it is
+ * written — including outside `Calendar/`, where nothing in the filename says
+ * which day it belongs to.
+ */
+describe('a note made from the Meeting starter', () => {
+  it('lands on the agenda for the day it happened, not the day it was typed', async () => {
+    const { vault } = await fresh()
+    const meeting = STARTER_TEMPLATES.find((t) => t.name === 'Meeting')!
+    const { text } = expandTemplate(meeting.text, { title: 'Kickoff', when: DAY_AT_0930 })
+    const path = await vault.createNote('Work', 'Kickoff', text)
+    expect(vault.eventsByDay.value.get(DAY)?.map((e) => e.path)).toEqual([path])
+    // And the calendar marks the same day, off the event rather than the file.
+    expect(vault.getEntry(path)?.calendarDate).toBe(DAY)
+  })
+
+  it('wires an attendee written as a link into that person’s backlinks', async () => {
+    const { vault } = await fresh()
+    await vault.createNote('', 'Ana Ruiz', '# Ana\n')
+    await vault.createNote(
+      'Work',
+      'Kickoff',
+      '---\nstart: 2026-09-21T09:30\nattendees: ["[[Ana Ruiz]]", Bo]\n---\n\n# Kickoff\n',
+    )
+    expect(vault.backlinkMap.value.get('Ana Ruiz.md')).toEqual(['Work/Kickoff.md'])
   })
 })
