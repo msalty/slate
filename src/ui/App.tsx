@@ -14,6 +14,7 @@ import { FilePicker } from './FilePicker'
 import { NotePicker } from './NotePicker'
 import { PromptDialog } from './PromptDialog'
 import { ConfirmDialog } from './ConfirmDialog'
+import { NewEventDialog } from './NewEventDialog'
 import { TranscribeDialog } from './TranscribeDialog'
 import { TransformDialog, canTransform, openTransform } from './TransformDialog'
 import { SummaryDialog } from './SummaryDialog'
@@ -599,6 +600,7 @@ export function App() {
       <NotePicker />
       <PromptDialog />
       <ConfirmDialog />
+      <NewEventDialog />
       <Lightbox />
       <TranscribeDialog />
       <TransformDialog />

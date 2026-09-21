@@ -19,8 +19,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 1276 unit, two-device sync and folder round-trip tests
-node scripts/smoke.mjs # 830-check browser smoke test against dist/
+npm test               # 1284 unit, two-device sync and folder round-trip tests
+node scripts/smoke.mjs # 837-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -980,14 +980,25 @@ Dublin is the same afternoon. An event that covers several days is on all of
 them, and an evening that ends at midnight ends on the evening.
 
 **Making one.** `>New event` in the palette, or the **+** on the agenda's
-header, asks for a name and nothing else: the day is the one on screen and the
-time is the next round half hour, because nobody schedules anything for 14:07
-and rounding up is never a time that has already gone. Both are easier to change
-in the note that opens — the properties form has a picker for each — than to get
-right in a dialog before the thing is even called anything. The note lands in
-`Calendar/`, under its year and month — nested because this is the one folder
-that fills up on its own, and a directory with hundreds of files in it is one
-nobody opens twice.
+header, asks for a name and when it is. The day comes from the calendar you are
+looking at and the time from the next round half hour — nobody schedules
+anything for 14:07, and rounding up is never a time that has already gone — and
+both are on the dialog rather than only in the hint under it, because an event
+is by definition at a time that is *not now*. "The next half hour" is the right
+guess for something you are starting this minute, which a daily note is and a
+meeting is not, so it is wrong most times it is offered.
+
+It costs nothing when the guess happens to be right: **Enter in the name still
+makes the event and closes**. Moving the start takes the end with it, keeping
+the length it had, and **All day** swaps both fields for plain dates — unticking
+it gives back the times that were there rather than guessing again. An end
+before its start is corrected to an hour rather than refused, which is what the
+file would have done with it anyway.
+
+The note lands in `Calendar/`, under the year and month **of the start you
+chose** — so making next month's meeting no longer means clicking the calendar
+into next month first. Nested because this is the one folder that fills up on
+its own, and a directory with hundreds of files in it is one nobody opens twice.
 
 It is called **what you called it**, with nothing stamped on the front — not the
 time, and not the date either. A filename does not follow the frontmatter, so
@@ -2782,8 +2793,8 @@ and that is a better argument for the rail than the outline ever was.
 ## Testing
 
 ```bash
-npm test                # 1276 unit + two-device sync + folder round-trip tests
-node scripts/smoke.mjs  # 830 checks in headless Chromium against dist/
+npm test                # 1284 unit + two-device sync + folder round-trip tests
+node scripts/smoke.mjs  # 837 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

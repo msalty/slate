@@ -6790,19 +6790,73 @@ try {
   )
 
   /*
-   * Making one. The `+` on the agenda asks for a name and nothing else — the
-   * day is the one on screen and the time is the next half hour, both of them
-   * easier to change in the note than to get right in a dialog before the
-   * thing is even called anything.
+   * Making one. The `+` on the agenda asks for a name and when it is: the day
+   * comes from the calendar and the time from the next half hour, and both are
+   * on the dialog because an event is at a time that is not now, so the guess is
+   * usually wrong. Naming it and pressing Enter still makes it, so the fields
+   * cost nothing when the guess happens to be right.
    */
   const madeOn = await showDay(2)
   await madeOn.click()
   await page.waitForTimeout(400)
   await page.locator('.rail .agenda [aria-label="New event"]').click()
   await page.waitForTimeout(350)
-  await page.locator('.prompt-input').fill('Budget call')
+  const titleField = page.locator('.dialog .field:has(> span:text-is("What is it?")) .prompt-input')
+  const startField = page.locator('.dialog [aria-label="Starts"]')
+  const endField = page.locator('.dialog [aria-label="Ends"]')
+  check(
+    'the dialog offers a start and an end, not just a name',
+    (await startField.getAttribute('type')) === 'datetime-local' &&
+      (await endField.getAttribute('type')) === 'datetime-local',
+  )
+  check(
+    'filled in for the day on screen, at the next half hour',
+    (await startField.inputValue()).startsWith(`${isoDay(2)}T`) &&
+      /:(00|30)$/.test(await startField.inputValue()),
+    await startField.inputValue(),
+  )
+  check(
+    'and an hour long, so the common case needs nothing typed into it',
+    (new Date(await endField.inputValue()) - new Date(await startField.inputValue())) / 60000 ===
+      60,
+    `${await startField.inputValue()} → ${await endField.inputValue()}`,
+  )
+
+  /* Moving the start takes the end with it, keeping the length it had. */
+  await startField.fill(`${isoDay(2)}T14:00`)
+  await page.waitForTimeout(250)
+  check(
+    'moving the start carries the end along at the same length',
+    (await endField.inputValue()) === `${isoDay(2)}T15:00`,
+    await endField.inputValue(),
+  )
+
+  /* All day swaps both fields for plain dates, and unticking puts them back. */
+  await page.locator('.event-allday input').check()
+  await page.waitForTimeout(250)
+  check(
+    'all day turns both into dates, one day long',
+    (await startField.getAttribute('type')) === 'date' &&
+      (await startField.inputValue()) === isoDay(2) &&
+      (await endField.inputValue()) === isoDay(2),
+    `${await startField.inputValue()} → ${await endField.inputValue()}`,
+  )
+  await page.locator('.event-allday input').uncheck()
+  await page.waitForTimeout(250)
+  check(
+    'and unticking it gives back the times that were there, not a fresh guess',
+    (await startField.inputValue()) === `${isoDay(2)}T14:00` &&
+      (await endField.inputValue()) === `${isoDay(2)}T15:00`,
+    `${await startField.inputValue()} → ${await endField.inputValue()}`,
+  )
+
+  await titleField.fill('Budget call')
   await page.keyboard.press('Enter')
   await page.waitForTimeout(800)
+  check(
+    'and Enter in the name is still the whole of making one',
+    (await page.locator('.dialog').count()) === 0,
+  )
   check(
     'the new event opens ready to be written in',
     (await page.locator('.editor-title-input').inputValue()).includes('Budget call'),
@@ -6814,9 +6868,10 @@ try {
     await page.locator('.editor-title-input').inputValue(),
   )
   check(
-    'with a start and an end already in it',
-    (await page.locator('.cm-content').innerText()).includes(`start: ${isoDay(2)}T`),
-    (await page.locator('.cm-content').innerText()).split('\n').slice(0, 3).join(' / '),
+    'carrying the times the dialog was given, not the ones it guessed',
+    (await page.locator('.cm-content').innerText()).includes(`start: ${isoDay(2)}T14:00`) &&
+      (await page.locator('.cm-content').innerText()).includes(`end: ${isoDay(2)}T15:00`),
+    (await page.locator('.cm-content').innerText()).split('\n').slice(0, 4).join(' / '),
   )
   check(
     'and it is on the agenda it was made from',

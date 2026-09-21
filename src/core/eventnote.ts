@@ -11,6 +11,8 @@
  * the parsing end is imported *by* the vault to read one.
  */
 
+import { eventFor } from './markdown'
+import { setPropertyValue } from './properties'
 import { templateBodyFor } from './templates'
 import { createNote } from './vault'
 import { dirname, startOfDay, ymd } from './util'
@@ -55,51 +57,31 @@ export function eventNoteName(title: string): string {
   return title.trim()
 }
 
-/**
- * The frontmatter a new event opens with.
- *
- * `end:` is written out rather than left to the hour `eventFor` would assume,
- * because the first thing anybody does to a new meeting is say how long it is,
- * and a key that is already there is easier to change than one you have to
- * know the name of.
- */
-export function eventFrontmatter(day: number, start: string, end: string): string {
-  const date = ymd(startOfDay(day))
-  return `---\nstart: ${date}T${start}\nend: ${date}T${end}\n---\n\n`
-}
-
-const FENCE_RE = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/
+/* ------------------------------------------------- the values a field holds */
 
 /**
- * Put the keys a template did not write above the ones it did.
- *
- * The rule is the template's: whatever it says stands, and this only supplies
- * what is missing. A template is free to write its own `start:` — the Meeting
- * one does — and getting a second copy of it from here would be one block with
- * the same key in it twice, which is a file that reads as though somebody lost
- * an argument with their editor.
- *
- * A key counts as written even when it is left empty. `end:` with nothing after
- * it is a template saying "fill this in", not a template forgetting to.
+ * `2026-09-21T14:30` — what a `datetime-local` field holds, and what `start:`
+ * is written as. The same string in both places, so nothing is converted on the
+ * way from the dialog into the file.
  */
-export function withFrontmatter(body: string, keys: Array<[string, string]>): string {
-  const m = FENCE_RE.exec(body)
-  if (!m) return `---\n${keys.map(([k, v]) => `${k}: ${v}`).join('\n')}\n---\n\n${body}`
-  const missing = keys.filter(([k]) => !new RegExp(`^${k}\\s*:`, 'm').test(m[1]))
-  if (missing.length === 0) return body
-  return `---\n${missing.map(([k, v]) => `${k}: ${v}`).join('\n')}\n${body.slice(4)}`
+export function localDateTime(at: number): string {
+  const d = new Date(at)
+  const p = (n: number) => `${n}`.padStart(2, '0')
+  return `${ymd(d)}T${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
-/** `09:30` as minutes past midnight, for placing a wall clock on a day. */
-function minutesOf(hhmm: string): number {
-  const [h, m] = hhmm.split(':').map(Number)
-  return h * 60 + m
-}
-
-/** An hour later, as a wall clock, rolling over midnight rather than past it. */
-export function anHourAfter(hhmm: string): string {
-  const [h, m] = hhmm.split(':').map(Number)
-  return `${`${(h + 1) % 24}`.padStart(2, '0')}:${`${m}`.padStart(2, '0')}`
+/** The instant a `datetime-local` or `date` value names, read as local time. */
+export function parseLocal(value: string): number | undefined {
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?$/.exec(value.trim())
+  if (!m) return undefined
+  const at = new Date(
+    Number(m[1]),
+    Number(m[2]) - 1,
+    Number(m[3]),
+    Number(m[4] ?? 0),
+    Number(m[5] ?? 0),
+  )
+  return Number.isNaN(at.getTime()) ? undefined : at.getTime()
 }
 
 /**
@@ -111,7 +93,45 @@ export function anHourAfter(hhmm: string): string {
 export function nextHalfHour(now = Date.now()): string {
   const d = new Date(now)
   d.setMinutes(d.getMinutes() > 30 ? 60 : 30, 0, 0)
-  return `${`${d.getHours()}`.padStart(2, '0')}:${`${d.getMinutes()}`.padStart(2, '0')}`
+  const p = (n: number) => `${n}`.padStart(2, '0')
+  return `${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+/**
+ * What the dialog opens with: the chosen day, at the next half hour, for an
+ * hour.
+ *
+ * An hour by the *clock* rather than by the millisecond, so a meeting made on
+ * the morning the clocks go forward is still an hour long rather than two.
+ */
+export function defaultEventTimes(day: number, now = Date.now()): { start: string; end: string } {
+  const [h, m] = nextHalfHour(now).split(':').map(Number)
+  const at = new Date(startOfDay(day))
+  at.setHours(h, m, 0, 0)
+  const end = new Date(at)
+  end.setHours(end.getHours() + 1)
+  return { start: localDateTime(at.getTime()), end: localDateTime(end.getTime()) }
+}
+
+/**
+ * An end moved to keep the length it had, for when the start is changed.
+ *
+ * What every calendar does, and its absence is what makes a two-field form
+ * tedious: nudging a meeting an hour later should not mean re-typing when it
+ * finishes. An end that was before its start had no length worth keeping, so it
+ * comes back as an hour.
+ */
+export function keepDuration(prevStart: string, prevEnd: string, nextStart: string): string {
+  const a = parseLocal(prevStart)
+  const b = parseLocal(prevEnd)
+  const c = parseLocal(nextStart)
+  if (a === undefined || c === undefined) return prevEnd
+  if (b === undefined || b <= a) {
+    const end = new Date(c)
+    end.setHours(end.getHours() + 1)
+    return localDateTime(end.getTime())
+  }
+  return localDateTime(c + (b - a))
 }
 
 /**
@@ -142,37 +162,38 @@ export interface NewEvent {
 }
 
 /**
- * Write a new event for a day and say where it landed.
+ * Write a new event and say where it landed.
+ *
+ * `start` and `end` arrive as the dialog's own field values — `2026-09-21T14:30`
+ * for a time, `2026-09-21` for a whole day — and go into the file unchanged,
+ * because they are already what `start:` is written as. Nothing is converted on
+ * the way, so there is no format to get wrong between the control and the note.
+ *
+ * The *folder* comes from the start rather than from whatever day the calendar
+ * was showing, so changing the date in the dialog files the note in that month.
  *
  * A template on `Calendar/` is picked up the way one on `Daily/` is, and is
- * given the *event's* day rather than today — a meeting written up on Saturday
- * for Thursday is Thursday's, and its `{{date}}` has to agree with the name on
- * the file. What the template does not carry, the frontmatter above supplies:
- * an event with no `start:` is not an event, so it is never left to boilerplate
- * to remember.
+ * given the moment the event starts — a meeting written up on Saturday for
+ * Thursday is Thursday's, and `{{date}}` and `{{time}}` both have to agree with
+ * what the dialog was told. Whatever the template carries is kept; `start:` and
+ * `end:` are written over it, because those two are what was just asked for and
+ * a template cannot know the answer.
  */
-export async function newEventNote(
-  title: string,
-  day: number,
-  start = nextHalfHour(),
-): Promise<NewEvent> {
-  const folder = eventFolderFor(day)
-  const name = eventNoteName(title)
-  const date = ymd(startOfDay(day))
+export async function newEventNote(title: string, start: string, end: string): Promise<NewEvent> {
   /*
-   * The template is given the moment the event *starts*, not the midnight it
-   * falls after. `{{date}}` is the same either way and `{{time}}` is not: it
-   * came out as `00:00` on every event ever made, which is a field that looks
-   * filled in and says nothing.
+   * Read back through `eventFor` rather than parsed again here, so the day this
+   * is filed under is the same day the agenda will list it on — one parser, one
+   * answer, including for a pair the dialog could not have produced.
    */
-  const t = templateForEvent(folder, title, startOfDay(day) + minutesOf(start) * 60_000)
+  const ev = eventFor({ start, end })
+  const at = ev?.start ?? Date.now()
+  const folder = eventFolderFor(at)
+  const t = templateForEvent(folder, title, at)
   const body = t?.text ?? `# ${title}\n\n`
-  const text = withFrontmatter(body, [
-    ['start', `${date}T${start}`],
-    ['end', `${date}T${anHourAfter(start)}`],
-  ])
+  let text = setPropertyValue(body, 'start', start)
+  text = setPropertyValue(text, 'end', end)
   return {
-    path: await createNote(folder, name, text),
+    path: await createNote(folder, eventNoteName(title), text),
     caret: t?.caret === undefined ? undefined : t.caret + (text.length - body.length),
   }
 }
