@@ -32,11 +32,10 @@ describe('where an event goes and what it is called', () => {
     expect(eventFolderFor(DAY)).toBe('Calendar/2026/09')
   })
 
-  it('puts the date and the time in the name', () => {
-    expect(eventNoteName('Design review', DAY, '09:30')).toBe('2026-09-21 0930 Design review')
-  })
-
-  it('leaves the time off a name that has no time', () => {
+  it('puts the date in the name, and only the date', () => {
+    // Not the time: a filename does not follow the frontmatter, so a meeting
+    // moved to the afternoon would keep a name saying 0930 forever.
+    expect(eventNoteName('Design review', DAY)).toBe('2026-09-21 Design review')
     expect(eventNoteName('Office closed', DAY)).toBe('2026-09-21 Office closed')
   })
 
@@ -53,10 +52,10 @@ describe('where an event goes and what it is called', () => {
 })
 
 describe('the note it writes', () => {
-  it('lands in the calendar folder, named for its day and time', async () => {
+  it('lands in the calendar folder, named for its day', async () => {
     const { ev } = await fresh()
     const { path } = await ev.newEventNote('Design review', DAY, '09:30')
-    expect(path).toBe('Calendar/2026/09/2026-09-21 0930 Design review.md')
+    expect(path).toBe('Calendar/2026/09/2026-09-21 Design review.md')
   })
 
   it('opens with a start and an end already written', async () => {
@@ -78,8 +77,32 @@ describe('the note it writes', () => {
     const a = await ev.newEventNote('Standup', DAY, '09:30')
     const b = await ev.newEventNote('Standup', DAY, '14:00')
     expect(a.path).not.toBe(b.path)
-    expect(vault.resolveLink('2026-09-21 0930 Standup')).toBe(a.path)
-    expect(vault.resolveLink('2026-09-21 1400 Standup')).toBe(b.path)
+    // The same `2` every other name collision in the vault gets — and unlike a
+    // time, a `2` cannot go on to be wrong about anything.
+    expect(vault.resolveLink('2026-09-21 Standup')).toBe(a.path)
+    expect(vault.resolveLink('2026-09-21 Standup 2')).toBe(b.path)
+  })
+
+  it('and the same meeting on two days keeps two names without help', async () => {
+    const { vault, ev } = await fresh()
+    const a = await ev.newEventNote('Standup', DAY, '09:30')
+    const b = await ev.newEventNote('Standup', DAY + 86_400_000, '09:30')
+    expect(vault.resolveLink('2026-09-21 Standup')).toBe(a.path)
+    expect(vault.resolveLink('2026-09-22 Standup')).toBe(b.path)
+  })
+
+  it('keeps the name it was given when the time is changed afterwards', async () => {
+    const { vault, ev } = await fresh()
+    const { path } = await ev.newEventNote('Design review', DAY, '09:30')
+    await vault.saveNote(
+      path,
+      '---\nstart: 2026-09-21T14:00\nend: 2026-09-21T15:00\n---\n\n# Design review\n',
+    )
+    // The file does not rename itself, which is the point: a rename would
+    // break every `[[link]]` pointing at it. The agenda reads the clock off
+    // `start:`, so the moved meeting shows at 14:00 regardless.
+    expect(vault.getEntry(path)?.event?.start).toBe(new Date(2026, 8, 21, 14, 0).getTime())
+    expect(vault.resolveLink('2026-09-21 Design review')).toBe(path)
   })
 
   it('takes a template from Calendar/, not only from the month it landed in', async () => {

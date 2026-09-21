@@ -6769,8 +6769,8 @@ try {
     await page.locator('.editor-title-input').inputValue(),
   )
   check(
-    'named for the day and the time, so two on one day are two notes',
-    /^\d{4}-\d{2}-\d{2} \d{4} Budget call$/.test(
+    'named for the day, and not for the time — a filename cannot follow a picker',
+    /^\d{4}-\d{2}-\d{2} Budget call$/.test(
       await page.locator('.editor-title-input').inputValue(),
     ),
     await page.locator('.editor-title-input').inputValue(),
@@ -6820,8 +6820,16 @@ try {
   await page.waitForTimeout(900)
   check(
     'and what the picker writes is what the agenda reads',
-    (await agenda.locator('.agenda-row').allInnerTexts()).join(' | ').includes('Budget call'),
+    (await agenda.locator('.agenda-row').allInnerTexts()).join(' | ').includes('16:45') ||
+      (await agenda.locator('.agenda-row').allInnerTexts()).join(' | ').includes('4:45'),
     (await agenda.locator('.agenda-row').allInnerTexts()).join(' | '),
+  )
+  check(
+    'while the name it was given stays as it was, so no link to it breaks',
+    /^\d{4}-\d{2}-\d{2} Budget call$/.test(
+      await page.locator('.editor-title-input').inputValue(),
+    ),
+    await page.locator('.editor-title-input').inputValue(),
   )
   check(
     'landing in the file as a bare value, not a quoted one',

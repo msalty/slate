@@ -34,16 +34,26 @@ export function eventFolderFor(day: number): string {
 }
 
 /**
- * `2026-09-21 0930 Design review`, or `2026-09-21 Office closed` for a day.
+ * `2026-09-21 Design review`.
  *
- * The time is in the name and not only in the frontmatter because a note's
- * title *is* its filename, and `titleIndex` gives a contested name to one note
- * and leaves the other unreachable by it. Two standups on one day is not an
- * unusual vault, it is a Tuesday.
+ * The **date** is in the name because a note's title is its filename, and
+ * `titleIndex` gives a contested name to one note and leaves the other
+ * unreachable by it — so a weekly standup needs twelve distinguishable names
+ * or eleven of its notes cannot be linked to.
+ *
+ * The **time** is deliberately not, though it was at first. A filename does not
+ * follow the frontmatter, so a meeting moved from the morning to the afternoon
+ * keeps a name that says 0930 for as long as the note exists — and moving one
+ * is a two-second job now that the properties form has a picker on it. Worse,
+ * the stale time is invisible exactly where it would be right: the agenda
+ * strips the stamp and reads the clock off `start:`. So it was hidden where it
+ * was true and shown in the note list, the editor's header, search results and
+ * every `[[link]]`, where it could be wrong. Two events with one name on one
+ * day get the `2` that every other name collision in the vault gets, and a `2`
+ * at least never claims something false.
  */
-export function eventNoteName(title: string, day: number, time?: string): string {
-  const stamp = time ? `${ymd(day)} ${time.replace(':', '')}` : ymd(day)
-  return `${stamp} ${title}`.trim()
+export function eventNoteName(title: string, day: number): string {
+  return `${ymd(day)} ${title}`.trim()
 }
 
 /**
@@ -120,7 +130,7 @@ export async function newEventNote(
   start = nextHalfHour(),
 ): Promise<NewEvent> {
   const folder = eventFolderFor(day)
-  const name = eventNoteName(title, day, start)
+  const name = eventNoteName(title, day)
   const front = eventFrontmatter(day, start, anHourAfter(start))
   const t = templateForEvent(folder, title, startOfDay(day))
   const body = t?.text ?? `# ${title}\n\n`

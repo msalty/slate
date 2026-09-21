@@ -108,14 +108,28 @@ Short description, if any.
 | `source` | string | Provider slug. **Its presence means the file is externally owned.** |
 | `uid` | string | The source system's identity key. Helper-owned; Slate only round-trips it. |
 
-**Filenames.** `Calendar/2026/09/2026-09-21 0930 Design review.md`; all-day
-events omit the time. Year/month subfolders keep any one directory browsable,
-and a template assigned to `Calendar/` reaches them — the walk goes up within
-the calendar tree, because `Calendar/2026/09` is not a folder anybody chose.
+**Filenames.** `Calendar/2026/09/2026-09-21 Design review.md`. Year/month
+subfolders keep any one directory browsable, and a template assigned to
+`Calendar/` reaches them — the walk goes up within the calendar tree, because
+`Calendar/2026/09` is not a folder anybody chose.
 
-The time is in the filename because `titleIndex` is first-writer-wins on
-collision (`src/core/vault.ts:574`) — two notes both titled "Standup" on the
-same day would silently make one of them unlinkable.
+The **date** is in the filename because `titleIndex` is first-writer-wins on
+collision (`src/core/vault.ts:574`) — twelve notes all titled "Standup" would
+leave eleven of them unlinkable.
+
+The **time** is not, and this is worth stating because the first cut had it.
+A filename does not follow the frontmatter, so a meeting moved to the afternoon
+keeps a name saying `0930` for as long as it exists — and the stale time is
+invisible exactly where it would have been right, since the agenda strips the
+stamp and reads the clock off `start:`. It was hidden where it was true and
+shown in the note list, the editor header, search and every `[[link]]`, where
+it could be wrong.
+
+**So the importer must not put a time in a filename either**, and for a
+stronger reason: it would have to *rename* the file every time a meeting moved,
+breaking every link pointing at it. Two same-titled events on one day are
+disambiguated by a short stable suffix derived from the `uid` — stable being
+the requirement, since "whatever name was free" changes between runs.
 
 **Bodies stay short.** The description is truncated to roughly 500 characters,
 conference boilerplate is stripped, and the join link goes in `url` rather than

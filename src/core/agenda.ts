@@ -78,6 +78,11 @@ export function eventZoneLabel(ev: NoteEvent): string {
   })} ${city}`
 }
 
+/*
+ * The optional time is for files that still carry one: anything named by an
+ * earlier version of this, and anything an importer chooses to name that way.
+ * Nothing here writes one any more — see `eventNoteName`.
+ */
 const STAMP_RE = /^\d{4}-\d{2}-\d{2}(?:[ T]\d{4})?\s+/
 
 /**
