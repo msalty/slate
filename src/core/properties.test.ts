@@ -218,6 +218,17 @@ describe('date and time properties', () => {
     expect(kindOfKey('---\ndate:\n---\n', 'date')).toBe('date')
   })
 
+  it('and spells them the way the app reads them, which is exactly', () => {
+    /*
+     * Frontmatter is case-sensitive and so is every reader of it: `eventFor`
+     * looks for `start`, never for `Start`. Offering a time field for `Start:`
+     * was offering a picker for a key nothing in the app will ever read.
+     */
+    expect(kindOfKey('---\nStart:\n---\n', 'Start')).toBe('text')
+    expect(kindOfKey('---\nDUE:\n---\n', 'DUE')).toBe('text')
+    expect(eventFor({ Start: '2026-09-21T09:00' })).toBeUndefined()
+  })
+
   it('but the value always wins once there is one', () => {
     // Somebody's novel. `start: chapter three` is prose, not a broken date.
     expect(kindOfKey('---\nstart: chapter three\n---\n', 'start')).toBe('text')

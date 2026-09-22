@@ -75,6 +75,20 @@ export function NewEventDialog() {
    */
   const [saving, setSaving] = useState(false)
   const [failed, setFailed] = useState('')
+  /*
+   * The same flag, where a listener can read it.
+   *
+   * The Escape handler is bound once per opening and would close over whatever
+   * `saving` was then — which is always `false`, since a dialog does not open
+   * mid-save. So it went round the guard, and Escape during a write dismissed
+   * the form: if the write then failed there was nothing left to show the error
+   * on, and nothing left of what had been typed.
+   */
+  const savingRef = useRef(false)
+  const setBusy = (on: boolean) => {
+    savingRef.current = on
+    setSaving(on)
+  }
   const titleRef = useRef<HTMLInputElement>(null)
   /*
    * What the times were before *all day* was ticked, so unticking it puts them
@@ -101,15 +115,16 @@ export function NewEventDialog() {
     const usable = fromTemplate && isKnownZone(fromTemplate)
     setZone(usable ? fromTemplate : '')
     setZoneProblem(fromTemplate && !usable ? fromTemplate : '')
-    setSaving(false)
+    setBusy(false)
     setFailed('')
     timed.current = null
     requestAnimationFrame(() => titleRef.current?.focus())
   }, [req])
 
   useEffect(() => {
+    // Through the same guard the scrim and Cancel go through, not around it.
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') open.value = null
+      if (e.key === 'Escape' && !savingRef.current) open.value = null
     }
     if (req) addEventListener('keydown', onKey)
     return () => removeEventListener('keydown', onKey)
@@ -124,7 +139,7 @@ export function NewEventDialog() {
    * error on.
    */
   const close = () => {
-    if (!saving) open.value = null
+    if (!savingRef.current) open.value = null
   }
 
   /** The zone in force. An all-day event never has one: it has no clock. */
@@ -179,8 +194,8 @@ export function NewEventDialog() {
     const fixed =
       to !== undefined && to >= from ? end : allDay ? dateOf(start) : wallPlusHour(start)
     // Pressing Enter twice is one event, not two half-written ones.
-    if (saving) return
-    setSaving(true)
+    if (savingRef.current) return
+    setBusy(true)
     setFailed('')
     const mine = req.ticket
     try {
@@ -194,7 +209,13 @@ export function NewEventDialog() {
     } catch (err) {
       if (open.value?.ticket === mine) setFailed(err instanceof Error ? err.message : String(err))
     } finally {
-      setSaving(false)
+      /*
+       * And only this dialog's. A submission finishing after its own form has
+       * been closed and reopened would otherwise clear the *new* one's busy
+       * flag, unlocking a form that is in the middle of its own write.
+       */
+      if (open.value?.ticket === mine) setBusy(false)
+      else savingRef.current = false
     }
   }
 

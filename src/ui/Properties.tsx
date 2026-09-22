@@ -219,7 +219,14 @@ function PropertyRow({
      * an hour, so a two-hour meeting dragged to the afternoon quietly became a
      * one-hour one. See `setEventStart`.
      */
-    if (p.key.toLowerCase() === 'start' && p.kind !== 'list') {
+    /*
+     * `start`, exactly. Matching case-insensitively meant editing a `Start:`
+     * ran the event path, which writes the key it knows — so the note came back
+     * with `Start:` *and* `start:`, two keys where there was one, and an
+     * ordinary property quietly turned into an event beside itself.
+     * Frontmatter is case-sensitive and every reader of it agrees.
+     */
+    if (p.key === 'start' && p.kind !== 'list') {
       write(setEventStart(text, v))
       return
     }
@@ -257,7 +264,7 @@ function PropertyRow({
    * yet, and underlining it while somebody is still typing is nagging.
    */
   const badZone =
-    p.key.toLowerCase() === 'tz' && draft === null && !!p.value.trim() && !isKnownZone(p.value)
+    p.key === 'tz' && draft === null && !!p.value.trim() && !isKnownZone(p.value)
   /*
    * A value shaped like a date that is not one. It stays a *text* field — a
    * date field handed `2026-13-01` shows nothing at all, so the row would read
@@ -326,7 +333,7 @@ function PropertyRow({
            * zone at all. A list of the real ones makes the typo hard to make,
            * and the mark below says so when one has been made anyway.
            */
-          list={p.key.toLowerCase() === 'tz' ? 'slate-zones' : undefined}
+          list={p.key === 'tz' ? 'slate-zones' : undefined}
           data-invalid={badZone || badDate ? '1' : undefined}
           title={
             badZone

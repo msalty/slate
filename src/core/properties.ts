@@ -71,6 +71,8 @@ const NUMBER_RE = /^-?\d+(\.\d+)?$/
  * without anything here being consulted.
  */
 const TIME_KEYS: Record<string, PropertyKind> = {
+  // Spelled the way the app reads them, and matched that way.
+
   start: 'datetime',
   end: 'datetime',
   date: 'date',
@@ -239,7 +241,12 @@ function kindOf(key: string, value: string, items: string[] | null): PropertyKin
   if (DATETIME_RE.test(value)) return 'datetime'
   if (DATE_RE.test(value)) return 'date'
   if (value !== '' && NUMBER_RE.test(value)) return 'number'
-  if (value === '') return TIME_KEYS[key.toLowerCase()] ?? 'text'
+  /*
+   * The key exactly as written. Frontmatter is case-sensitive and so is every
+   * reader of it — `eventFor` looks for `start`, not for `Start` — so offering
+   * a time field for `Start:` was offering a picker for a key nothing reads.
+   */
+  if (value === '') return TIME_KEYS[key] ?? 'text'
   return 'text'
 }
 

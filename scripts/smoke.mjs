@@ -6961,6 +6961,81 @@ try {
     await page.waitForTimeout(300)
   }
 
+  /*
+   * And a key that only looks like one the app knows.
+   *
+   * `Start:` is not `start:` — frontmatter is case-sensitive and so is every
+   * reader of it. Matching the event path case-insensitively meant editing that
+   * field wrote the key it knew, leaving the note with both: two keys where
+   * there was one, and an ordinary property turned into an event beside itself.
+   */
+  await page.evaluate(async (text) => {
+    const db = await new Promise((res) => {
+      const r = indexedDB.open('slate')
+      r.onsuccess = () => res(r.result)
+    })
+    const tx = db.transaction('files', 'readwrite')
+    tx.objectStore('files').put({
+      path: 'Novel.md',
+      kind: 'note',
+      text,
+      mime: 'text/markdown',
+      size: text.length,
+      hash: 'novel',
+      mtime: Date.now(),
+      ctime: Date.now(),
+      dirty: true,
+      dirtyFlag: 1,
+      sync: {},
+    })
+    await new Promise((res) => {
+      tx.oncomplete = res
+    })
+  }, '---\nStart: chapter three\n---\n\nThe novel.\n')
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForSelector('.note-row')
+  await page.locator('.note-row', { hasText: 'Novel' }).first().click()
+  await page.waitForTimeout(600)
+  let novelHops = 0
+  for (; novelHops < 3 && (await page.locator('.editor-date-button').count()) === 0; novelHops++) {
+    await page.keyboard.press('Control+Shift+m')
+    await page.waitForTimeout(400)
+  }
+  await page.locator('.editor-date-button').click()
+  await page.waitForTimeout(500)
+  check(
+    'a Start that is not start is an ordinary text field',
+    (await page.locator('[aria-label="Start value"]').getAttribute('type')) === 'text',
+    (await page.locator('[aria-label="Start value"]').getAttribute('type')) ?? 'missing',
+  )
+  await page.locator('[aria-label="Start value"]').fill('chapter four')
+  await page.waitForTimeout(900)
+  await page.locator('[aria-label="Start value"]').blur()
+  await page.waitForTimeout(900)
+  const novel = await page.evaluate(async () => {
+    const db = await new Promise((res) => {
+      const r = indexedDB.open('slate')
+      r.onsuccess = () => res(r.result)
+    })
+    const tx = db.transaction('files', 'readonly')
+    const all = await new Promise((res) => {
+      const q = tx.objectStore('files').getAll()
+      q.onsuccess = () => res(q.result)
+    })
+    return all.find((f) => f.path === 'Novel.md')?.text ?? ''
+  })
+  check(
+    'and editing it leaves one key, not two',
+    (novel.match(/^start:/gim) ?? []).length === 1 && novel.includes('Start: chapter four'),
+    novel.split('\n').slice(0, 4).join(' / '),
+  )
+
+  // And back to the mode this block found, so what follows is unsurprised.
+  for (let i = novelHops; i > 0 && i < 3; i++) {
+    await page.keyboard.press('Control+Shift+m')
+    await page.waitForTimeout(300)
+  }
+
   // Back to the whole vault: clicking a day filtered the list, and what comes
   // after this looks for a note by name.
   await page.locator('.side-row:has-text("All Notes")').first().click()

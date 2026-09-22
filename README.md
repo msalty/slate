@@ -19,8 +19,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 1334 unit, two-device sync and folder round-trip tests
-node scripts/smoke.mjs # 840-check browser smoke test against dist/
+npm test               # 1335 unit, two-device sync and folder round-trip tests
+node scripts/smoke.mjs # 842-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -2849,8 +2849,8 @@ and that is a better argument for the rail than the outline ever was.
 ## Testing
 
 ```bash
-npm test                # 1334 unit + two-device sync + folder round-trip tests
-node scripts/smoke.mjs  # 840 checks in headless Chromium against dist/
+npm test                # 1335 unit + two-device sync + folder round-trip tests
+node scripts/smoke.mjs  # 842 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 
