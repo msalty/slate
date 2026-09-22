@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { eventIsPast, eventTimeLabel, eventZoneLabel } from './agenda'
+import { eventIsPast, eventRowInstant, eventTimeLabel, eventZoneLabel } from './agenda'
 import { eventFor } from './markdown'
 import { parseYmd } from './util'
 
@@ -129,5 +129,41 @@ describe('what a row is called', () => {
   it('keeps a note that is genuinely called nothing but a date', async () => {
     const { eventTitle } = await import('./agenda')
     expect(eventTitle('2026-09-21')).toBe('2026-09-21')
+  })
+})
+
+/**
+ * A row that runs over midnight says one time. Both halves of it have to be
+ * that time: the continuation of a Tokyo evening showed "until 01:00" — the
+ * local end — beside "04:00 PM Tokyo", which was still the start. Two real
+ * times, a day apart, on one line.
+ */
+describe('a row that spans two days', () => {
+  const span = ev('start: 2026-09-21T16:00', 'end: 2026-09-22T02:00', 'tz: Asia/Tokyo')
+  const dayOne = new Date(2026, 8, 21).getTime()
+  const dayTwo = new Date(2026, 8, 22).getTime()
+
+  it('names the same instant in both labels, on the day it begins', () => {
+    expect(eventRowInstant(span, dayOne)).toBe(span.start)
+  })
+
+  it('and on the day it finishes', () => {
+    expect(eventRowInstant(span, dayTwo)).toBe(span.end)
+    const zone = eventZoneLabel(span, dayTwo)
+    if (zone) {
+      const endInTokyo = new Intl.DateTimeFormat(undefined, {
+        timeZone: 'Asia/Tokyo',
+        hour: '2-digit',
+        minute: '2-digit',
+      }).format(span.end)
+      expect(zone.startsWith(endInTokyo)).toBe(true)
+    }
+  })
+
+  it('and names neither on a day it merely covers', () => {
+    const long = ev('start: 2026-09-20T09:00', 'end: 2026-09-23T17:00', 'tz: Asia/Tokyo')
+    expect(eventRowInstant(long, dayTwo)).toBeUndefined()
+    expect(eventTimeLabel(long, dayTwo)).toBe('all day')
+    expect(eventZoneLabel(long, dayTwo)).toBe('')
   })
 })

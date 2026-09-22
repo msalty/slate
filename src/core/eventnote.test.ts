@@ -15,10 +15,12 @@ import {
   instantOf,
   keepDuration,
   knownZones,
+  setEventStart,
   localDateTime,
   wallPlusHour,
 } from './eventnote'
 import { parseYmd, roundUpToHalfHour } from './util'
+import { eventFor, parseFrontmatter } from './markdown'
 import { STARTER_TEMPLATES } from './starters'
 import { expandTemplate } from './templates'
 
@@ -527,5 +529,56 @@ describe('corrections that must know when to stop', () => {
     expect(keepDuration('2026-06-01T09:00', '2026-06-01T10:30', '2026-06-02T14:00', NY)).toBe(
       '2026-06-02T15:30',
     )
+  })
+})
+
+/**
+ * Moving an event's start from the properties form.
+ *
+ * The form edits one key at a time and keeps everything else byte for byte,
+ * which is right for a form over somebody's frontmatter. This pair is the
+ * deliberate exception, because leaving the end behind does not leave it
+ * behind: `eventFor` replaces an end that precedes its start with an hour, so
+ * a two-hour meeting dragged to the afternoon quietly became a one-hour one.
+ */
+describe('moving a start', () => {
+  const note = (...lines: string[]) => `---\n${lines.join('\n')}\n---\n\n# Meeting\n`
+  const lengthOf = (text: string) => {
+    const e = eventFor(parseFrontmatter(text).data)!
+    return (e.end - e.start) / 60_000
+  }
+
+  it('takes the end with it, keeping the length', () => {
+    const before = note('start: 2026-09-21T09:00', 'end: 2026-09-21T11:00')
+    expect(lengthOf(before)).toBe(120)
+    const after = setEventStart(before, '2026-09-21T14:00')
+    expect(after).toContain('start: 2026-09-21T14:00')
+    expect(after).toContain('end: 2026-09-21T16:00')
+    expect(lengthOf(after)).toBe(120)
+  })
+
+  it('in the zone the note names, not the device’s', () => {
+    const before = note('start: 2026-09-21T09:00', 'end: 2026-09-21T10:30', 'tz: Asia/Tokyo')
+    expect(setEventStart(before, '2026-09-21T14:00')).toContain('end: 2026-09-21T15:30')
+  })
+
+  it('leaves an empty end alone, which already means an hour', () => {
+    const before = note('start: 2026-09-21T09:00', 'end:')
+    const after = setEventStart(before, '2026-09-21T14:00')
+    expect(after).toContain('\nend:\n')
+    expect(lengthOf(after)).toBe(60)
+  })
+
+  it('and leaves a note that is not an event as one key edited', () => {
+    const before = note('start: chapter three')
+    expect(setEventStart(before, 'chapter four')).toBe(note('start: chapter four'))
+  })
+
+  it('touching nothing else in the file', () => {
+    const before = `---\n# why this is here\nstart: 2026-09-21T09:00\nend: 2026-09-21T11:00\ntags: [meeting]\n---\n\nBody.\n`
+    const after = setEventStart(before, '2026-09-21T14:00')
+    expect(after).toContain('# why this is here')
+    expect(after).toContain('tags: [meeting]')
+    expect(after).toContain('Body.')
   })
 })

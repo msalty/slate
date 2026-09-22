@@ -19,7 +19,7 @@
  * the only safe way to hold one.
  */
 
-import { roundUpToHalfHour, ymd } from './util'
+import { roundUpToHalfHour, splitInlineList, ymd } from './util'
 
 /**
  * How a value is written, and so how the form offers to edit it. Inferred from
@@ -110,23 +110,42 @@ function unquote(s: string): string {
  */
 const NEEDS_QUOTE = /^$|^\s|\s$|^[>|*&!%@`'"[\]{},#?:]|^-(?!\d)|:\s|\s#/
 
+/**
+ * The same, for an item written inside `[ ... ]`.
+ *
+ * A comma is only a separator out here, so a value carrying one has to be
+ * quoted even though it would be perfectly safe on a line of its own. Without
+ * this, reading `"Doe, Jane"` correctly and then writing it back produced two
+ * items — the parser fixed and the writer still breaking it on the way out.
+ */
+function inlineScalar(v: string): string {
+  return /[,[\]]/.test(v) ? JSON.stringify(v) : scalar(v)
+}
+
 function scalar(v: string): string {
   return NEEDS_QUOTE.test(v) ? JSON.stringify(v) : v
 }
 
 function splitInline(inner: string): string[] {
-  return inner
-    .split(',')
-    .map((s) => unquote(s.trim()))
+  return splitInlineList(inner)
+    .map(unquote)
     .filter((s) => s !== '')
 }
 
-/** Split what somebody typed into a list field: "a, b" → ["a", "b"]. */
+/**
+ * Split what somebody typed into a list field: `a, b` → `["a", "b"]`.
+ *
+ * Quote-aware, and so is `joinList` going the other way, because the field
+ * shows what the file holds: an alias of `"Doe, Jane"` was displayed as
+ * `Doe, Jane`, and the next keystroke in that field turned one name into two.
+ */
 export function splitList(v: string): string[] {
-  return v
-    .split(',')
-    .map((s) => s.trim())
-    .filter((s) => s !== '')
+  return splitInlineList(v).map(unquote).filter((s) => s !== '')
+}
+
+/** The items as one line for the form, quoting any that carry a comma. */
+export function joinList(items: string[]): string {
+  return items.map(inlineScalar).join(', ')
 }
 
 function parseBlock(text: string): Block {
@@ -176,7 +195,7 @@ function linesFor(e: Entry): string[] {
   const written = e.items
     ? e.block
       ? [`${e.key}:`, ...e.items.map((i) => `  - ${scalar(i)}`)]
-      : [`${e.key}: [${e.items.map(scalar).join(', ')}]`]
+      : [`${e.key}: [${e.items.map(inlineScalar).join(', ')}]`]
     : [e.value === '' ? `${e.key}:` : `${e.key}: ${scalar(e.value)}`]
   return [...written, ...extras]
 }
@@ -194,9 +213,28 @@ function serialize(b: Block): string {
   return `---\n${lines.join('\n')}\n---\n${b.exists ? b.body : `\n${b.body}`}`
 }
 
+/**
+ * True for a date that exists, not merely one that is spelled like one.
+ *
+ * `2026-13-01T09:00` is the right shape and no day at all, and a date field
+ * handed one shows *nothing* — so the row reads as empty while the file still
+ * holds the value, and the next thing typed overwrites something the form had
+ * said was not there.
+ */
+export function isRealDate(value: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2}))?)?$/.exec(value.trim())
+  if (!m) return false
+  const [y, mo, d] = [+m[1], +m[2], +m[3]]
+  const probe = new Date(y, mo - 1, d)
+  if (probe.getFullYear() !== y || probe.getMonth() !== mo - 1 || probe.getDate() !== d) return false
+  return +(m[4] ?? 0) < 24 && +(m[5] ?? 0) < 60 && +(m[6] ?? 0) < 60
+}
+
 function kindOf(key: string, value: string, items: string[] | null): PropertyKind {
   if (items) return 'list'
   if (value === 'true' || value === 'false') return 'checkbox'
+  // A date that does not exist stays text, where it is at least visible.
+  if ((DATETIME_RE.test(value) || DATE_RE.test(value)) && !isRealDate(value)) return 'text'
   if (DATETIME_RE.test(value)) return 'datetime'
   if (DATE_RE.test(value)) return 'date'
   if (value !== '' && NUMBER_RE.test(value)) return 'number'
@@ -208,7 +246,7 @@ function kindOf(key: string, value: string, items: string[] | null): PropertyKin
 export function readProperties(text: string): Property[] {
   return parseBlock(text).entries.map((e) => ({
     key: e.key,
-    value: e.items ? e.items.join(', ') : e.value,
+    value: e.items ? joinList(e.items) : e.value,
     items: e.items,
     kind: kindOf(e.key, e.value, e.items),
   }))

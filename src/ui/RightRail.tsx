@@ -271,7 +271,7 @@ export function AgendaPanel({ big = false }: { big?: boolean } = {}) {
       ) : (
         events.map((e) => {
           const ev = e.event!
-          const zone = eventZoneLabel(ev)
+          const zone = eventZoneLabel(ev, day)
           // A `tz:` nothing can read is shown rather than swallowed: the row
           // would otherwise look like any other and be silently hours out.
           const broken = eventZoneProblem(ev)

@@ -6863,12 +6863,28 @@ try {
   )
 
   await titleField.fill('Budget call')
+  /*
+   * Twice, quickly. The dialog used to close before the note was written, so a
+   * second Enter landed on a form that was already gone — and a write that
+   * failed took the whole draft with it. It stays up until the note is on disk
+   * and refuses the second press while it is getting there.
+   */
   await page.keyboard.press('Enter')
-  await page.waitForTimeout(800)
+  await page.keyboard.press('Enter')
+  await page.waitForTimeout(1200)
   check(
     'and Enter in the name is still the whole of making one',
     (await page.locator('.dialog').count()) === 0,
   )
+  await page.locator('.side-row:has-text("All Notes")').first().click()
+  await page.waitForTimeout(400)
+  check(
+    'pressed twice, it makes one event and not two',
+    (await page.locator('.note-row', { hasText: 'Budget call' }).count()) === 1,
+    `${await page.locator('.note-row', { hasText: 'Budget call' }).count()} notes named it`,
+  )
+  await page.locator('.note-row', { hasText: 'Budget call' }).first().click()
+  await page.waitForTimeout(600)
   check(
     'the new event opens ready to be written in',
     (await page.locator('.editor-title-input').inputValue()).includes('Budget call'),

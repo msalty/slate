@@ -4,6 +4,7 @@ import {
   addProperty,
   coerceValue,
   hasSeconds,
+  isRealDate,
   readProperties,
   removeProperty,
   renameProperty,
@@ -260,5 +261,55 @@ describe('date and time properties', () => {
     expect(hasSeconds('2026-09-21T09:30:15')).toBe(true)
     expect(hasSeconds('2026-09-21T09:30')).toBe(false)
     expect(hasSeconds('2026-09-21')).toBe(false)
+  })
+})
+
+/**
+ * A list item is not necessarily free of commas, and a date-shaped value is not
+ * necessarily a date.
+ */
+describe('values the form has to hold without breaking', () => {
+  const kindOfKey = (text: string, key: string) =>
+    readProperties(text).find((p) => p.key === key)?.kind
+
+  it('keeps a comma inside quotes on the way in', () => {
+    const p = readProperties('---\naliases: ["Doe, Jane", JD]\n---\n')[0]
+    expect(p.items).toEqual(['Doe, Jane', 'JD'])
+  })
+
+  it('and puts the quotes back on the way out, so it survives an edit', () => {
+    // The field shows what the file holds. Shown as `Doe, Jane` it re-split
+    // into two names on the next keystroke, and the link it was for stopped
+    // resolving.
+    const p = readProperties('---\naliases: ["Doe, Jane", JD]\n---\n')[0]
+    expect(p.value).toBe('"Doe, Jane", JD')
+    expect(splitList(p.value)).toEqual(['Doe, Jane', 'JD'])
+  })
+
+  it('writes one back into the file quoted', () => {
+    const next = setPropertyValue('---\naliases: [JD]\n---\n', 'aliases', ['Doe, Jane', 'JD'])
+    expect(next).toContain('aliases: ["Doe, Jane", JD]')
+    expect(parseFrontmatter(next).data.aliases).toEqual(['Doe, Jane', 'JD'])
+  })
+
+  it('leaves an ordinary list exactly as it was', () => {
+    const p = readProperties('---\ntags: [demo, test]\n---\n')[0]
+    expect(p.value).toBe('demo, test')
+    expect(setPropertyValue('---\ntags: [a]\n---\n', 'tags', ['demo', 'test'])).toContain(
+      'tags: [demo, test]',
+    )
+  })
+
+  it('keeps a date-shaped impossibility as text rather than a blank field', () => {
+    // A `datetime-local` handed 2026-13-01 shows nothing, so the row reads as
+    // empty over a file that still holds the value — and the next thing typed
+    // overwrites something the form said was not there.
+    expect(isRealDate('2026-13-01T09:00')).toBe(false)
+    expect(isRealDate('2026-02-30')).toBe(false)
+    expect(isRealDate('2026-09-21T24:00')).toBe(false)
+    expect(isRealDate('2026-09-21T09:00')).toBe(true)
+    expect(isRealDate('2028-02-29')).toBe(true)
+    expect(kindOfKey('---\nstart: 2026-13-01T09:00\n---\n', 'start')).toBe('text')
+    expect(kindOfKey('---\ndate: 2026-02-30\n---\n', 'date')).toBe('text')
   })
 })

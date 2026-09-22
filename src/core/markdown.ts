@@ -7,7 +7,7 @@
  * broken feature, but a note it refuses is lost work.
  */
 
-import { normPath, parseYmd, startOfDay, titleFromPath, ymd } from './util'
+import { normPath, parseYmd, splitInlineList, startOfDay, titleFromPath, ymd } from './util'
 
 /** What a single frontmatter key can hold, once parsed. */
 export type FrontmatterValue = string | string[] | boolean | number
@@ -42,11 +42,8 @@ export function parseFrontmatter(text: string): Frontmatter {
     if (rawVal === '') {
       data[lastKey] = ''
     } else if (rawVal.startsWith('[') && rawVal.endsWith(']')) {
-      data[lastKey] = rawVal
-        .slice(1, -1)
-        .split(',')
-        .map((s) => unquote(s.trim()))
-        .filter(Boolean)
+      // Quote-aware: a comma inside `"Doe, Jane"` is part of the name.
+      data[lastKey] = splitInlineList(rawVal.slice(1, -1)).map(unquote).filter(Boolean)
     } else if (rawVal === 'true' || rawVal === 'false') {
       data[lastKey] = rawVal === 'true'
     } else if (/^-?\d+(\.\d+)?$/.test(rawVal)) {

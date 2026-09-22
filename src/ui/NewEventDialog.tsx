@@ -15,8 +15,8 @@
  * wrong rather than in the way when it is right.
  */
 
-import { useEffect, useRef, useState } from "preact/hooks";
-import { signal } from "@preact/signals";
+import { useEffect, useRef, useState } from 'preact/hooks'
+import { signal } from '@preact/signals'
 import {
   defaultEventTimes,
   eventFolderFor,
@@ -26,26 +26,26 @@ import {
   newEventNote,
   templateZoneFor,
   wallPlusHour,
-} from "../core/eventnote";
-import { isKnownZone } from "../core/markdown";
-import { notify, openNote } from "./state";
-import { IconClose } from "./Icons";
+} from '../core/eventnote'
+import { isKnownZone } from '../core/markdown'
+import { notify, openNote } from './state'
+import { IconClose } from './Icons'
 
-const open = signal<{ day: number } | null>(null);
+const open = signal<{ day: number } | null>(null)
 
 export function openNewEventDialog(day: number) {
-  open.value = { day };
+  open.value = { day }
 }
 
 /** The date half of a `datetime-local` value, which is a whole day on its own. */
-const dateOf = (v: string) => v.slice(0, 10);
+const dateOf = (v: string) => v.slice(0, 10)
 
 export function NewEventDialog() {
-  const req = open.value;
-  const [title, setTitle] = useState("");
-  const [allDay, setAllDay] = useState(false);
-  const [start, setStart] = useState("");
-  const [end, setEnd] = useState("");
+  const req = open.value
+  const [title, setTitle] = useState('')
+  const [allDay, setAllDay] = useState(false)
+  const [start, setStart] = useState('')
+  const [end, setEnd] = useState('')
   /*
    * Empty means "no zone at all", which is the default and is not the same as
    * naming the zone you are in. A time with nothing on it is a *floating* time
@@ -54,53 +54,63 @@ export function NewEventDialog() {
    * zone pins it to an instant. Both are useful and only one can be the
    * default, so the default is the one that adds no line to the file.
    */
-  const [zone, setZone] = useState("");
+  const [zone, setZone] = useState('')
   /** A template's `tz:` that is not a zone at all, named rather than swallowed. */
-  const [zoneProblem, setZoneProblem] = useState("");
-  const titleRef = useRef<HTMLInputElement>(null);
+  const [zoneProblem, setZoneProblem] = useState('')
+  /*
+   * The dialog used to close and *then* write. A write that failed took the
+   * event with it — the name, the times, the zone, all of it gone behind a
+   * toast — which is the one outcome a form has no business producing. It stays
+   * up until the note is on disk, and says so when it is not.
+   */
+  const [saving, setSaving] = useState(false)
+  const [failed, setFailed] = useState('')
+  const titleRef = useRef<HTMLInputElement>(null)
   /*
    * What the times were before *all day* was ticked, so unticking it puts them
    * back rather than guessing again. A box ticked by mistake should cost the
    * two seconds it took to tick, not the times you had already set.
    */
-  const timed = useRef<{ start: string; end: string } | null>(null);
+  const timed = useRef<{ start: string; end: string } | null>(null)
 
   useEffect(() => {
-    if (!req) return;
-    const d = defaultEventTimes(req.day);
-    setTitle("");
-    setAllDay(false);
-    setStart(d.start);
-    setEnd(d.end);
+    if (!req) return
+    const d = defaultEventTimes(req.day)
+    setTitle('')
+    setAllDay(false)
+    setStart(d.start)
+    setEnd(d.end)
     /*
      * A template's zone is *shown*, not applied behind your back. Read once,
      * from the folder the chosen day lands in; changing the date afterwards
      * leaves whatever is selected alone, because by then it is your answer
      * rather than the template's suggestion.
      */
-    const fromTemplate = templateZoneFor(req.day);
+    const fromTemplate = templateZoneFor(req.day)
     // A zone that is not one cannot be selected, and must not be saved either.
-    const usable = fromTemplate && isKnownZone(fromTemplate);
-    setZone(usable ? fromTemplate : "");
-    setZoneProblem(fromTemplate && !usable ? fromTemplate : "");
-    timed.current = null;
-    requestAnimationFrame(() => titleRef.current?.focus());
-  }, [req]);
+    const usable = fromTemplate && isKnownZone(fromTemplate)
+    setZone(usable ? fromTemplate : '')
+    setZoneProblem(fromTemplate && !usable ? fromTemplate : '')
+    setSaving(false)
+    setFailed('')
+    timed.current = null
+    requestAnimationFrame(() => titleRef.current?.focus())
+  }, [req])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") open.value = null;
-    };
-    if (req) addEventListener("keydown", onKey);
-    return () => removeEventListener("keydown", onKey);
-  }, [req]);
+      if (e.key === 'Escape') open.value = null
+    }
+    if (req) addEventListener('keydown', onKey)
+    return () => removeEventListener('keydown', onKey)
+  }, [req])
 
-  if (!req) return null;
+  if (!req) return null
 
-  const close = () => (open.value = null);
+  const close = () => (open.value = null)
 
   /** The zone in force. An all-day event never has one: it has no clock. */
-  const tzOf = () => (allDay ? undefined : zone || undefined);
+  const tzOf = () => (allDay ? undefined : zone || undefined)
 
   /*
    * Moving the start takes the end with it, keeping the length the event had.
@@ -109,32 +119,32 @@ export function NewEventDialog() {
    * follows when it would otherwise end before it starts.
    */
   const changeStart = (v: string) => {
-    setStart(v);
+    setStart(v)
     if (allDay) {
-      if ((instantOf(end) ?? 0) < (instantOf(v) ?? 0)) setEnd(dateOf(v));
+      if ((instantOf(end) ?? 0) < (instantOf(v) ?? 0)) setEnd(dateOf(v))
     } else {
-      setEnd(keepDuration(start, end, v, zone || undefined));
+      setEnd(keepDuration(start, end, v, zone || undefined))
     }
-  };
+  }
 
   const toggleAllDay = (on: boolean) => {
-    setAllDay(on);
+    setAllDay(on)
     if (on) {
-      timed.current = { start, end };
-      setStart(dateOf(start));
+      timed.current = { start, end }
+      setStart(dateOf(start))
       // One day. A timed event that ran to midnight would otherwise become two,
       // which is not what "all day" was asking for.
-      setEnd(dateOf(start));
+      setEnd(dateOf(start))
     } else {
-      const back = timed.current ?? defaultEventTimes(req.day);
-      setStart(back.start);
-      setEnd(back.end);
+      const back = timed.current ?? defaultEventTimes(req.day)
+      setStart(back.start)
+      setEnd(back.end)
     }
-  };
+  }
 
   const submit = async () => {
-    const name = title.trim();
-    if (!name) return;
+    const name = title.trim()
+    if (!name) return
     /*
      * Judged in the zone that was chosen, not in the device's.
      *
@@ -145,25 +155,31 @@ export function NewEventDialog() {
      * refused — `eventFor` would do the same with one — but the fix has to be
      * judged by the right clock.
      */
-    const from = instantOf(start, tzOf());
-    if (from === undefined) return;
-    const to = instantOf(end, tzOf());
+    const from = instantOf(start, tzOf())
+    if (from === undefined) return
+    const to = instantOf(end, tzOf())
     const fixed =
-      to !== undefined && to >= from
-        ? end
-        : allDay
-          ? dateOf(start)
-          : wallPlusHour(start);
-    close();
-    const { path, caret } = await newEventNote(name, start, fixed, tzOf());
-    openNote(path, { editing: true, caret });
-    notify(`Created ${path}`);
-  };
+      to !== undefined && to >= from ? end : allDay ? dateOf(start) : wallPlusHour(start)
+    // Pressing Enter twice is one event, not two half-written ones.
+    if (saving) return
+    setSaving(true)
+    setFailed('')
+    try {
+      const { path, caret } = await newEventNote(name, start, fixed, tzOf())
+      close()
+      openNote(path, { editing: true, caret })
+      notify(`Created ${path}`)
+    } catch (err) {
+      setFailed(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSaving(false)
+    }
+  }
 
   const onKey = (e: KeyboardEvent) => {
-    if (e.key === "Enter") void submit();
-  };
-  const type = allDay ? "date" : "datetime-local";
+    if (e.key === 'Enter') void submit()
+  }
+  const type = allDay ? 'date' : 'datetime-local'
 
   return (
     <div class="scrim" onClick={close}>
@@ -172,7 +188,7 @@ export function NewEventDialog() {
         /* Wider than a one-field dialog: two date-and-time controls side by
            side need the room, and a locale that writes "09/21/2026, 04:00 PM"
            needs more of it than one that writes "21.09.2026, 16:00". */
-        style={{ width: "min(470px, 100%)" }}
+        style={{ width: 'min(470px, 100%)' }}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
@@ -209,9 +225,7 @@ export function NewEventDialog() {
                 type={type}
                 value={start}
                 aria-label="Starts"
-                onInput={(e) =>
-                  changeStart((e.target as HTMLInputElement).value)
-                }
+                onInput={(e) => changeStart((e.target as HTMLInputElement).value)}
                 onKeyDown={onKey}
               />
             </label>
@@ -234,8 +248,8 @@ export function NewEventDialog() {
               <select
                 value={zone}
                 onChange={(e) => {
-                  setZone((e.target as HTMLSelectElement).value);
-                  setZoneProblem("");
+                  setZone((e.target as HTMLSelectElement).value)
+                  setZoneProblem('')
                 }}
               >
                 <option value="">Local time — wherever this is read</option>
@@ -245,14 +259,14 @@ export function NewEventDialog() {
                     showing nothing while saving that name anyway. */}
                 {knownZones(zone).map((z) => (
                   <option key={z} value={z}>
-                    {z.replace(/_/g, " ")}
+                    {z.replace(/_/g, ' ')}
                   </option>
                 ))}
               </select>
               {zoneProblem && (
                 <small data-invalid="1">
-                  The template asks for <code>{zoneProblem}</code>, which is not
-                  a time zone this browser knows, so it has been left off.
+                  The template asks for <code>{zoneProblem}</code>, which is not a time zone this
+                  browser knows, so it has been left off.
                 </small>
               )}
             </label>
@@ -262,19 +276,23 @@ export function NewEventDialog() {
             <input
               type="checkbox"
               checked={allDay}
-              onChange={(e) =>
-                toggleAllDay((e.target as HTMLInputElement).checked)
-              }
+              onChange={(e) => toggleAllDay((e.target as HTMLInputElement).checked)}
             />
             <span>All day</span>
           </label>
+
+          {failed && (
+            <small data-invalid="1">
+              The event could not be saved: {failed}. Nothing has been written, and what you typed
+              is still here.
+            </small>
+          )}
 
           <small class="event-lands">
             {/* Worked out the way the note will be: same parser, same zone.
                 Device-local, it promised October for a Tokyo midnight that
                 saves into September. */}
-            Lands in{" "}
-            <code>{eventFolderFor(instantOf(start, tzOf()) ?? req.day)}</code>
+            Lands in <code>{eventFolderFor(instantOf(start, tzOf()) ?? req.day)}</code>
           </small>
         </div>
         <div class="dialog-foot">
@@ -284,13 +302,13 @@ export function NewEventDialog() {
           </button>
           <button
             class="btn btn-primary"
-            disabled={!title.trim()}
+            disabled={!title.trim() || saving}
             onClick={() => void submit()}
           >
-            Create event
+            {saving ? 'Saving…' : 'Create event'}
           </button>
         </div>
       </div>
     </div>
-  );
+  )
 }

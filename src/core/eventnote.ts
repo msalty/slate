@@ -11,7 +11,7 @@
  * the parsing end is imported *by* the vault to read one.
  */
 
-import { eventFor, isKnownZone, wallClockIn } from './markdown'
+import { eventFor, isKnownZone, parseFrontmatter, wallClockIn } from './markdown'
 import { readProperties, removeProperty, setPropertyValue } from './properties'
 import { templateBodyFor } from './templates'
 import { createNote } from './vault'
@@ -228,6 +228,33 @@ function templateForEvent(folder: string, title: string, day: number): TemplateB
     if (t) return t
   }
   return undefined
+}
+
+/**
+ * Move an event's start, and take its end with it.
+ *
+ * The properties form edits one key at a time and promises that what you did
+ * not touch comes back byte for byte, which is the right promise for a form
+ * over somebody's frontmatter. This is the one deliberate exception, for one
+ * pair of keys, and it is worth saying why: the alternative is not "the end
+ * stays put", it is *the duration silently becomes an hour*. An end left before
+ * its start is not an error the file can hold — `eventFor` replaces it with an
+ * hour — so moving a two-hour meeting from nine to two in the afternoon, and
+ * touching nothing else, quietly made it one hour long.
+ *
+ * Only when both keys are already there and the start actually moves. An empty
+ * `end:` is a template saying "an hour", and an hour follows a start on its
+ * own.
+ */
+export function setEventStart(text: string, next: string): string {
+  const fm = parseFrontmatter(text).data
+  const prevStart = typeof fm.start === 'string' ? fm.start : ''
+  const prevEnd = typeof fm.end === 'string' ? fm.end : ''
+  const tz = typeof fm.tz === 'string' ? fm.tz : undefined
+  const moved = setPropertyValue(text, 'start', next)
+  if (!prevStart.trim() || !prevEnd.trim()) return moved
+  const end = keepDuration(prevStart, prevEnd, next, tz)
+  return end === prevEnd ? moved : setPropertyValue(moved, 'end', end)
 }
 
 /**

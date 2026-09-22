@@ -19,8 +19,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 1311 unit, two-device sync and folder round-trip tests
-node scripts/smoke.mjs # 839-check browser smoke test against dist/
+npm test               # 1326 unit, two-device sync and folder round-trip tests
+node scripts/smoke.mjs # 840-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -147,6 +147,18 @@ never asked for; never, and a value that has them is rejected and the row reads
 as empty.
 Live preview and source still show the block exactly as it is written; they are
 the modes for looking at the file.
+
+**Two keys move together**, and they are the only ones that do. An event's
+`start:` takes its `end:` with it, keeping the length — because leaving the end
+behind does not leave it behind: an end that precedes its start is replaced by
+an hour when the note is read, so a two-hour meeting dragged to the afternoon
+quietly became a one-hour one. Everything else in this form edits exactly the
+key you touched.
+
+**A value shaped like a date that is not one stays a text field**, marked. A
+date control handed `2026-13-01` shows nothing at all, so the row would read as
+empty over a file that still held the value — and the next thing typed would
+overwrite something the form had said was not there.
 
 **No note needs any of it.** Frontmatter is optional in a markdown file and
 optional here: a note that has none opens the form empty, nothing is written
@@ -285,6 +297,10 @@ so `[[Jane Smith]]` reaches `Jane Doe.md` and shows up in her linked mentions
 like any other link. A maiden name, an acronym, what somebody is called rather
 than what they are filed as: without this, every one of them is a link that
 looks right, saves fine, and quietly points at nothing.
+
+A comma inside quotes is part of a name: `aliases: ["Doe, Jane", JD]` is two
+aliases, not three, and the form shows it back with its quotes so that editing
+the field does not split it.
 
 A name written on a file always beats the same name written in somebody else's
 alias list. Aliases are claimed in a pass of their own, after every real name,
@@ -2833,8 +2849,8 @@ and that is a better argument for the rail than the outline ever was.
 ## Testing
 
 ```bash
-npm test                # 1311 unit + two-device sync + folder round-trip tests
-node scripts/smoke.mjs  # 839 checks in headless Chromium against dist/
+npm test                # 1326 unit + two-device sync + folder round-trip tests
+node scripts/smoke.mjs  # 840 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

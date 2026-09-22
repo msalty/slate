@@ -98,3 +98,22 @@ describe('aliases', () => {
     expect(vault.resolveLink('Summary')).toBe('Summary.md')
   })
 })
+
+describe('an alias with a comma in it', () => {
+  it('is one name, and resolves', async () => {
+    const vault = await fresh()
+    await vault.createNote('', 'Jane Doe', '---\naliases: ["Doe, Jane", JD]\n---\n\nBody.\n')
+    expect(vault.getEntry('Jane Doe.md')?.aliases).toEqual(['Doe, Jane', 'JD'])
+    expect(vault.resolveLink('Doe, Jane')).toBe('Jane Doe.md')
+    expect(vault.resolveLink('JD')).toBe('Jane Doe.md')
+  })
+
+  it('and the halves of it are not names of their own', async () => {
+    const vault = await fresh()
+    await vault.createNote('', 'Jane Doe', '---\naliases: ["Doe, Jane"]\n---\n')
+    // `"Doe` and `Jane"` were two aliases, neither of them anything anybody
+    // would write, and `[[Doe, Jane]]` resolved to nothing.
+    expect(vault.resolveLink('"Doe')).toBeUndefined()
+    expect(vault.resolveLink('Jane"')).toBeUndefined()
+  })
+})

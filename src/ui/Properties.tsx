@@ -24,6 +24,7 @@ import {
   addProperty,
   coerceValue,
   hasSeconds,
+  isRealDate,
   hasProperty,
   readProperties,
   removeProperty,
@@ -40,7 +41,7 @@ import { syncSoon } from '../core/sync'
 import { notify } from './state'
 import { openMenu } from './Menu'
 import { isKnownZone } from '../core/markdown'
-import { knownZones } from '../core/eventnote'
+import { knownZones, setEventStart } from '../core/eventnote'
 import {
   IconCalendar,
   IconCheckbox,
@@ -210,7 +211,19 @@ function PropertyRow({
 
   const setValue = (v: string) => {
     setDraft(v)
-    write(setPropertyValue(getText(), p.key, p.kind === 'list' ? splitList(v) : v))
+    const text = getText()
+    /*
+     * Moving an event's start moves its end with it. The one pair of keys this
+     * form edits together, and only because leaving the end behind does not
+     * leave it behind — `eventFor` replaces an end that precedes its start with
+     * an hour, so a two-hour meeting dragged to the afternoon quietly became a
+     * one-hour one. See `setEventStart`.
+     */
+    if (p.key.toLowerCase() === 'start' && p.kind !== 'list') {
+      write(setEventStart(text, v))
+      return
+    }
+    write(setPropertyValue(text, p.key, p.kind === 'list' ? splitList(v) : v))
   }
 
   /*
@@ -245,6 +258,14 @@ function PropertyRow({
    */
   const badZone =
     p.key.toLowerCase() === 'tz' && draft === null && !!p.value.trim() && !isKnownZone(p.value)
+  /*
+   * A value shaped like a date that is not one. It stays a *text* field — a
+   * date field handed `2026-13-01` shows nothing at all, so the row would read
+   * as empty over a file that still held the value — and it is marked, because
+   * a text field is where it now looks like it belongs.
+   */
+  const badDate =
+    draft === null && /^\d{4}-\d{2}-\d{2}([T ]|$)/.test(p.value.trim()) && !isRealDate(p.value)
 
   return (
     <div class="property-row">
@@ -306,8 +327,14 @@ function PropertyRow({
            * and the mark below says so when one has been made anyway.
            */
           list={p.key.toLowerCase() === 'tz' ? 'slate-zones' : undefined}
-          data-invalid={badZone ? '1' : undefined}
-          title={badZone ? `${p.value} is not a time zone this browser knows` : undefined}
+          data-invalid={badZone || badDate ? '1' : undefined}
+          title={
+            badZone
+              ? `${p.value} is not a time zone this browser knows`
+              : badDate
+                ? `${p.value} is not a date that exists`
+                : undefined
+          }
           type={FIELD_TYPE[p.kind] ?? 'text'}
           /*
            * A time field shows seconds only when the value has them. Told to
