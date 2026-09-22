@@ -313,3 +313,40 @@ describe('values the form has to hold without breaking', () => {
     expect(kindOfKey('---\ndate: 2026-02-30\n---\n', 'date')).toBe('text')
   })
 })
+
+/**
+ * What a quoted value survives: the quotes coming off, and going back on.
+ */
+describe('quoted values, both directions', () => {
+  it('reads the escapes the writer put in', () => {
+    // Taking only the quotes off left literal backslashes in the name, and the
+    // next write escaped them again — every save doubling them.
+    const written = setPropertyValue('---\naliases: [x]\n---\n', 'aliases', ['Doe, "Jane"'])
+    expect(parseFrontmatter(written).data.aliases).toEqual(['Doe, "Jane"'])
+    expect(readProperties(written)[0].items).toEqual(['Doe, "Jane"'])
+  })
+
+  it('and writing what it read back gives the same line', () => {
+    const once = setPropertyValue('---\naliases: [x]\n---\n', 'aliases', ['Doe, "Jane"', 'JD'])
+    const twice = setPropertyValue(once, 'aliases', readProperties(once)[0].items!)
+    expect(twice).toBe(once)
+  })
+
+  it('reads a single-quoted value the way YAML does', () => {
+    expect(parseFrontmatter("---\ntitle: 'it''s here'\n---\n").data.title).toBe("it's here")
+  })
+
+  it('leaves a value JSON will not take as it is written', () => {
+    // A Windows path is not an escape sequence, and is not an error either.
+    expect(parseFrontmatter('---\npath: "C:\\Users"\n---\n').data.path).toBe('C:\\Users')
+  })
+
+  it('calls a space-separated time a real date, because the app reads one', () => {
+    // "Cannot be edited with a picker" and "is not a date" are different
+    // things, and the form was saying the second about a value it reads fine.
+    expect(isRealDate('2026-09-21 09:30')).toBe(true)
+    expect(eventFor({ start: '2026-09-21 09:30' })).toBeDefined()
+    // Still text, though: a `datetime-local` cannot hold that spelling.
+    expect(readProperties('---\nstart: 2026-09-21 09:30\n---\n')[0].kind).toBe('text')
+  })
+})

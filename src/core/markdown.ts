@@ -7,7 +7,7 @@
  * broken feature, but a note it refuses is lost work.
  */
 
-import { normPath, parseYmd, splitInlineList, startOfDay, titleFromPath, ymd } from './util'
+import { normPath, parseYmd, splitInlineList, startOfDay, titleFromPath, unquote, ymd } from './util'
 
 /** What a single frontmatter key can hold, once parsed. */
 export type FrontmatterValue = string | string[] | boolean | number
@@ -53,12 +53,6 @@ export function parseFrontmatter(text: string): Frontmatter {
     }
   }
   return { data, bodyStart: m[0].length, raw: m[0] }
-}
-
-function unquote(s: string): string {
-  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'")))
-    return s.slice(1, -1)
-  return s
 }
 
 /** Replace or insert a single frontmatter key, preserving everything else. */
@@ -996,6 +990,9 @@ export function zoneOffsetAt(at: number, tz: string): number {
  */
 export function wallClockIn(at: number, tz?: string): string {
   const p = (n: number) => `${n}`.padStart(2, '0')
+  // A zone this engine cannot read is one the whole app already falls back to
+  // local time over; a formatter is the last place that should throw about it.
+  if (tz && !isKnownZone(tz)) tz = undefined
   if (!tz) {
     const d = new Date(at)
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`

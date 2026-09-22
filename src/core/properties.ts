@@ -19,7 +19,7 @@
  * the only safe way to hold one.
  */
 
-import { roundUpToHalfHour, splitInlineList, ymd } from './util'
+import { roundUpToHalfHour, splitInlineList, unquote, ymd } from './util'
 
 /**
  * How a value is written, and so how the form offers to edit it. Inferred from
@@ -95,12 +95,6 @@ interface Block {
   entries: Entry[]
   /** Everything after the closing fence. */
   body: string
-}
-
-function unquote(s: string): string {
-  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'")))
-    return s.slice(1, -1)
-  return s
 }
 
 /**
@@ -222,7 +216,14 @@ function serialize(b: Block): string {
  * said was not there.
  */
 export function isRealDate(value: string): boolean {
-  const m = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2}))?)?$/.exec(value.trim())
+  /*
+   * Both separators, because `eventFor` reads both. Only the `T` spelling is
+   * offered a date field — a `datetime-local` cannot hold the other one — but
+   * "cannot be edited with a picker" and "is not a date" are different things,
+   * and the form was telling people a value the app reads perfectly well did
+   * not exist.
+   */
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?$/.exec(value.trim())
   if (!m) return false
   const [y, mo, d] = [+m[1], +m[2], +m[3]]
   const probe = new Date(y, mo - 1, d)

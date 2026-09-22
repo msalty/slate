@@ -15,7 +15,7 @@ import { eventFor, isKnownZone, parseFrontmatter, wallClockIn } from './markdown
 import { readProperties, removeProperty, setPropertyValue } from './properties'
 import { templateBodyFor } from './templates'
 import { createNote } from './vault'
-import { dirname, roundUpToHalfHour, startOfDay, ymd } from './util'
+import { addDays, dirname, roundUpToHalfHour, startOfDay, ymd } from './util'
 import type { TemplateBody } from './templates'
 
 /** Where an event is created when nothing says otherwise. */
@@ -86,6 +86,7 @@ export function instantOf(value: string, tz?: string): number | undefined {
 }
 
 const WALL_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/
+const BARE_DATE = /^\d{4}-\d{2}-\d{2}$/
 
 /**
  * Later on the clock face, by so many minutes — arithmetic no zone takes part
@@ -183,6 +184,18 @@ export function keepDuration(
   const b = instantOf(prevEnd, tz)
   const c = instantOf(nextStart, tz)
   if (a === undefined || c === undefined) return prevEnd
+  /*
+   * A whole-day event moves by whole days and stays a pair of bare dates.
+   *
+   * Sent through the clock instead, the end came back as `2026-09-30T00:00` —
+   * a datetime against a bare-date start, which is not a mixture `eventFor`
+   * will take. It refuses the end, falls back to "one day", and a week away
+   * turns into an afternoon.
+   */
+  if (BARE_DATE.test(prevStart) && BARE_DATE.test(prevEnd) && BARE_DATE.test(nextStart)) {
+    if (b === undefined || b < a) return prevEnd
+    return ymd(addDays(c, Math.round((b - a) / 86_400_000)))
+  }
   // An hour on the clock rather than an hour of elapsed time, because that is
   // what "an hour long" means to the person who has to read it back.
   if (b === undefined || b <= a) return wallPlusHour(nextStart)
@@ -250,7 +263,15 @@ export function setEventStart(text: string, next: string): string {
   const fm = parseFrontmatter(text).data
   const prevStart = typeof fm.start === 'string' ? fm.start : ''
   const prevEnd = typeof fm.end === 'string' ? fm.end : ''
-  const tz = typeof fm.tz === 'string' ? fm.tz : undefined
+  /*
+   * Only a zone that is one. The app deliberately keeps an unreadable `tz:` so
+   * it can be shown as broken rather than silently ignored — which means one
+   * can be sitting in a note, and handing it to anything that asks `Intl` about
+   * it throws. Local time is the fallback everywhere else here; it is the
+   * fallback here too.
+   */
+  const named = typeof fm.tz === 'string' ? fm.tz.trim() : ''
+  const tz = named && isKnownZone(named) ? named : undefined
   const moved = setPropertyValue(text, 'start', next)
   if (!prevStart.trim() || !prevEnd.trim()) return moved
   const end = keepDuration(prevStart, prevEnd, next, tz)

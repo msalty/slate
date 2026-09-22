@@ -31,10 +31,20 @@ import { isKnownZone } from '../core/markdown'
 import { notify, openNote } from './state'
 import { IconClose } from './Icons'
 
-const open = signal<{ day: number } | null>(null)
+/**
+ * Which opening of the dialog this is.
+ *
+ * A save runs after an `await`, and in that gap the dialog it belongs to may
+ * not be the dialog on screen any more — closed and reopened for a different
+ * day, and the first write finishing would then shut *that* one and navigate
+ * away from it. The ticket is how a completing submission knows whether the
+ * form in front of somebody is still its own.
+ */
+let opened = 0
+const open = signal<{ day: number; ticket: number } | null>(null)
 
 export function openNewEventDialog(day: number) {
-  open.value = { day }
+  open.value = { day, ticket: ++opened }
 }
 
 /** The date half of a `datetime-local` value, which is a whole day on its own. */
@@ -107,7 +117,15 @@ export function NewEventDialog() {
 
   if (!req) return null
 
-  const close = () => (open.value = null)
+  /*
+   * Not while it is saving. Escape, the scrim and Cancel were all still live
+   * during the write, so the form could be dismissed out from under a note that
+   * was about to exist — and if it failed there was nothing left to show the
+   * error on.
+   */
+  const close = () => {
+    if (!saving) open.value = null
+  }
 
   /** The zone in force. An all-day event never has one: it has no clock. */
   const tzOf = () => (allDay ? undefined : zone || undefined)
@@ -164,13 +182,17 @@ export function NewEventDialog() {
     if (saving) return
     setSaving(true)
     setFailed('')
+    const mine = req.ticket
     try {
       const { path, caret } = await newEventNote(name, start, fixed, tzOf())
-      close()
-      openNote(path, { editing: true, caret })
       notify(`Created ${path}`)
+      // Only if this is still the dialog on screen. If it is not, the note is
+      // written and said so, and whatever is open now is somebody else's.
+      if (open.value?.ticket !== mine) return
+      open.value = null
+      openNote(path, { editing: true, caret })
     } catch (err) {
-      setFailed(err instanceof Error ? err.message : String(err))
+      if (open.value?.ticket === mine) setFailed(err instanceof Error ? err.message : String(err))
     } finally {
       setSaving(false)
     }

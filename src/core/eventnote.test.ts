@@ -582,3 +582,45 @@ describe('moving a start', () => {
     expect(after).toContain('Body.')
   })
 })
+
+/**
+ * Two ways moving a start went wrong once it could move an end with it.
+ */
+describe('moving a start, awkwardly', () => {
+  const note = (...lines: string[]) => `---\n${lines.join('\n')}\n---\n\n# Trip\n`
+
+  it('moves a whole-day event by whole days, and keeps it whole-day', () => {
+    /*
+     * Through the clock instead, the end came back `2026-09-30T00:00` — a
+     * datetime against a bare-date start, which is not a mixture `eventFor`
+     * will take. It refused the end, fell back to "one day", and a three-day
+     * trip became an afternoon.
+     */
+    const after = setEventStart(note('start: 2026-09-21', 'end: 2026-09-23'), '2026-09-28')
+    expect(after).toContain('start: 2026-09-28')
+    expect(after).toContain('end: 2026-09-30')
+    const e = eventFor(parseFrontmatter(after).data)!
+    expect(e.allDay).toBe(true)
+    expect((e.end - e.start) / 86_400_000).toBe(2)
+  })
+
+  it('and across a month, and a daylight-saving change', () => {
+    expect(setEventStart(note('start: 2026-09-21', 'end: 2026-09-23'), '2026-10-30')).toContain(
+      'end: 2026-11-01',
+    )
+  })
+
+  it('does not throw on a zone the browser cannot read', () => {
+    /*
+     * The app keeps an unreadable `tz:` on purpose, to show it as broken rather
+     * than ignore it silently — so one can be sitting in a note, and anything
+     * that hands it to `Intl` throws. Local time is the fallback everywhere
+     * else here.
+     */
+    const before = note('start: 2026-09-21T09:00', 'end: 2026-09-21T11:00', 'tz: Amercia/New_York')
+    const after = setEventStart(before, '2026-09-21T14:00')
+    expect(after).toContain('end: 2026-09-21T16:00')
+    // And the broken zone is still there, still there to be complained about.
+    expect(after).toContain('tz: Amercia/New_York')
+  })
+})
