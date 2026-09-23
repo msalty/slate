@@ -26,7 +26,7 @@ import { openMenu } from './Menu'
 import { anchorOf, openDueMenu } from './DueMenu'
 import { notify, openNote } from './state'
 import { IconCheck, IconClose, IconNewNote } from './Icons'
-import { claimEscape, useModalLayer } from './modal'
+import { Z_SHEET, claimEscape, useModalLayer } from './modal'
 
 export type QuickAddMode = 'task' | 'note'
 
@@ -74,7 +74,12 @@ function flatten(node: FolderNode, depth = 0): Array<{ path: string; label: stri
 export function QuickAdd() {
   const st = state.value
   const open = !!st
-  const { isTop } = useModalLayer(open)
+  /*
+   * Above the toast, which this sheet stands in for — see `Z_SHEET`. A floor,
+   * not a fixed height: the palette opened over this sheet still paints above
+   * it, having been opened after it.
+   */
+  const { isTop, root } = useModalLayer(open, Z_SHEET)
   const [mode, setMode] = useState<QuickAddMode>('task')
   const [text, setText] = useState('')
   const [due, setDue] = useState<number | undefined>(undefined)
@@ -209,7 +214,7 @@ export function QuickAdd() {
   }
 
   return (
-    <div class="qa-root" data-open={open ? '1' : '0'} aria-hidden={open ? undefined : 'true'}>
+    <div class="qa-root" ref={root} data-open={open ? '1' : '0'} aria-hidden={open ? undefined : 'true'}>
       {open && <div class="qa-scrim" onClick={() => closeQuickAdd()} />}
       <div
         class="qa-sheet"

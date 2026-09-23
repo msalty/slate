@@ -20,7 +20,7 @@ npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
 npm test               # 1335 unit, two-device sync and folder round-trip tests
-node scripts/smoke.mjs # 849-check browser smoke test against dist/
+node scripts/smoke.mjs # 854-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -2540,7 +2540,8 @@ src/
    │                 order is not stacking order; a claim, because knowing you
    │                 are on top does not stop the handler that ran first; and a
    │                 z-index off that same stack, so the layer with the
-   │                 keyboard is the one you can see
+   │                 keyboard is the one you can see — with a floor for the
+   │                 two that have to be drawn high, which recency still beats
    ├─ Menu.tsx       popover on a pointer, bottom sheet on a phone
    ├─ tableMenu.ts   what a table offers, shared by the toolbar's ⊞ and by
    │                 the handles on the table itself
@@ -2855,7 +2856,7 @@ and that is a better argument for the rail than the outline ever was.
 
 ```bash
 npm test                # 1335 unit + two-device sync + folder round-trip tests
-node scripts/smoke.mjs  # 849 checks in headless Chromium against dist/
+node scripts/smoke.mjs  # 854 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

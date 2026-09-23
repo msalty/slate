@@ -934,7 +934,9 @@
 
    z-index sits below the context menu's 80 on purpose: the date picker opens
    over this sheet, and a picker underneath the thing it was opened from is
-   a picker nobody can use. */
+   a picker nobody can use. Both numbers are floors rather than heights while
+   the thing is open — see `Z_SHEET` and `Z_MENU` in ui/modal.ts, which raises
+   whatever was opened last above whatever was opened before it. */
 
 .qa-root {
   position: fixed;

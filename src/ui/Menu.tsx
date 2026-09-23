@@ -9,7 +9,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks'
 import { signal } from '@preact/signals'
 import { keyboardInset, layoutMode } from './layout'
-import { claimEscape, useModalLayer } from './modal'
+import { Z_MENU, claimEscape, useModalLayer } from './modal'
 import { IconCheck } from './Icons'
 
 export interface MenuItem {
@@ -122,13 +122,12 @@ export function ContextMenu() {
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
   const sheet = layoutMode.value === 'compact'
   /*
-   * A menu is modal too, even though its scrim is called something else. It is
-   * given no `root` to paint by: its place in the ladder is settled and
-   * deliberate — above the toast and above the quick-add sheet, because the
-   * date picker is a menu opened from inside that sheet — and nothing can open
-   * over a menu anyway, since there is only ever one.
+   * A menu is modal too, even though its scrim is called something else.
+   * `Z_MENU` is the floor it has always had, so the due-date picker still comes
+   * up over the quick-add sheet that opened it; anything opened after the menu
+   * is still drawn over the menu.
    */
-  const { isTop } = useModalLayer(!!state)
+  const { isTop, root } = useModalLayer(!!state, Z_MENU)
 
   // Flip the popover back on-screen once its real size is known. "On screen"
   // stops where the keyboard starts: a tablet's keyboard covers the bottom of
@@ -234,7 +233,15 @@ export function ContextMenu() {
   )
 
   return (
-    <div class={sheet ? 'menu-scrim menu-scrim-sheet' : 'menu-scrim'} onClick={closeMenu} onContextMenu={(e) => { e.preventDefault(); closeMenu() }}>
+    <div
+      ref={root}
+      class={sheet ? 'menu-scrim menu-scrim-sheet' : 'menu-scrim'}
+      onClick={closeMenu}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        closeMenu()
+      }}
+    >
       {body}
     </div>
   )

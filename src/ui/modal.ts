@@ -26,35 +26,56 @@
  *    was decided by document order, which is App's fixed list of dialogs. The
  *    palette opened over a half-filled New Event dialog was the top *layer* and
  *    took the keys, while the dialog painted over it: an invisible prompt that
- *    ran a command and replaced the form underneath it. A layer that hands us
- *    its root element gets its height from the stack instead, so the thing with
- *    the keyboard is the thing you can see.
+ *    ran a command and replaced the form underneath it. Every layer now takes
+ *    its height from the stack, so the thing with the keyboard is the thing you
+ *    can see.
+ *
+ * Two of them have a *floor* rather than a plain place in the queue. The
+ * quick-add sheet and the context menu sat above the rest of the ladder for
+ * reasons of their own — the due-date picker is a menu opened from inside that
+ * sheet, and a picker underneath the thing that opened it is a picker nobody
+ * can use — and the first attempt at this left them out of the stack entirely
+ * to keep that. Which reopened the same hole one rung up: a palette opened over
+ * the sheet was logically on top at 51 and painted under it at 70. A floor
+ * keeps the old relationship without costing recency, because every layer is
+ * still at least one above the one below it.
  */
 
 import { useEffect, useRef } from 'preact/hooks'
 import type { RefObject } from 'preact'
 
 /**
- * The floor the scrims already stood on, so nothing that was above them — the
- * toast at 70, the context menu at 80 — moves relative to a lone dialog. Only
- * the layers that stack on each other climb, one step each.
+ * The floors, each one the number its element already carries in the
+ * stylesheet. A layer alone on the stack is drawn exactly where it always was.
  */
-const Z_BASE = 50
 
-type Layer = { id: number; root: RefObject<HTMLDivElement> }
+/** `.scrim` and `.lightbox`: the ordinary dialog. */
+export const Z_DIALOG = 50
+/** `.qa-root`: the quick-add sheet, over the toast it replaced. */
+export const Z_SHEET = 70
+/** `.menu-scrim`: a context menu, over the sheet that can open one. */
+export const Z_MENU = 80
+
+type Layer = { id: number; floor: number; root: RefObject<HTMLDivElement> }
 
 let serial = 0
 const stack: Layer[] = []
 
 /**
  * Re-height everyone, since a layer closing underneath moves what is above it
- * down a step. Reading `.current` here rather than caching the node keeps this
- * honest when a dialog swaps its element without ever leaving the stack.
+ * down a step. Each layer is its own floor or one above the layer below it,
+ * whichever is higher — so a menu is never under the sheet it was opened from,
+ * and nothing is ever under something older than itself.
+ *
+ * Reading `.current` here rather than caching the node keeps this honest when a
+ * dialog swaps its element without ever leaving the stack.
  */
 function restack(): void {
-  for (let i = 0; i < stack.length; i++) {
-    const el = stack[i].root.current
-    if (el) el.style.zIndex = String(Z_BASE + i)
+  let z = 0
+  for (const layer of stack) {
+    z = Math.max(layer.floor, z + 1)
+    const el = layer.root.current
+    if (el) el.style.zIndex = String(z)
   }
 }
 
@@ -68,24 +89,29 @@ export type ModalLayer = {
    */
   isTop: () => boolean
   /**
-   * Put this on the layer's outermost fixed-position element and it is painted
-   * in stack order. Leave it off and the element keeps whatever the stylesheet
-   * gave it — which is what the quick-add sheet and the context menu want,
-   * since they have a settled place in the ladder that has nothing to do with
-   * who opened last.
+   * Goes on the layer's outermost fixed-position element, which is then painted
+   * in stack order. Every layer needs one: an element left out keeps its
+   * stylesheet height and is back to disagreeing with the stack about who is on
+   * top, which is the whole of what this is for.
    */
   root: RefObject<HTMLDivElement>
 }
 
-/** Take a place on the stack while `active`. */
-export function useModalLayer(active: boolean): ModalLayer {
+/**
+ * Take a place on the stack while `active`.
+ *
+ * `floor` is the height the element has in the stylesheet, for the layers that
+ * have a reason to sit above the ordinary run of dialogs. It is a minimum, not
+ * a position: something opened later is still drawn above.
+ */
+export function useModalLayer(active: boolean, floor: number = Z_DIALOG): ModalLayer {
   const mine = useRef<number | undefined>(undefined)
   const root = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (!active) return
     const id = ++serial
     mine.current = id
-    stack.push({ id, root })
+    stack.push({ id, floor, root })
     restack()
     return () => {
       mine.current = undefined
@@ -100,7 +126,7 @@ export function useModalLayer(active: boolean): ModalLayer {
       if (root.current) root.current.style.zIndex = ''
       restack()
     }
-  }, [active])
+  }, [active, floor])
   return {
     isTop: () => {
       const id = mine.current

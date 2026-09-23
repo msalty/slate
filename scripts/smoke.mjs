@@ -133,6 +133,37 @@ function check(name, ok, detail = '') {
   console.log(`${ok ? '  PASS' : '  FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`)
 }
 
+/**
+ * Whether the palette, opened over something else, is really on top of it.
+ *
+ * Both halves matter and they used to disagree. `ui/modal.ts` knows which layer
+ * opened last and hands the keyboard to it; the stylesheet decided what was
+ * painted, and gave every scrim the same height — so the palette could be the
+ * layer taking the keys while something else covered it. Asking only how many
+ * layers are up is what let that through twice, so this asks the page what it
+ * would actually hit at the palette's own input.
+ */
+async function paletteOnTop(page) {
+  return await page.evaluate(() => {
+    const palette = document.querySelector('.palette')
+    if (!palette) return { layers: 0 }
+    /* Everything fixed and full-window: the scrims, the sheet, a menu. */
+    const layers = [
+      ...document.querySelectorAll('.scrim, .lightbox, .qa-root[data-open="1"], .menu-scrim'),
+    ]
+    const mine = layers.find((l) => l.contains(palette))
+    const z = (el) => Number(getComputedStyle(el).zIndex) || 0
+    const box = palette.querySelector('input').getBoundingClientRect()
+    const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2)
+    return {
+      layers: layers.length,
+      above: !!mine && layers.every((l) => l === mine || z(mine) > z(l)),
+      hit: !!hit && palette.contains(hit),
+      z: layers.map(z),
+    }
+  })
+}
+
 await mkdir(SHOTS, { recursive: true })
 await new Promise((r) => server.listen(PORT, r))
 
@@ -4881,6 +4912,74 @@ try {
   await page.waitForTimeout(300)
   check('and the next Escape leaves it', (await zen()) === '0')
 
+  /*
+   * And the two layers that sit above the rest of the ladder.
+   *
+   * The capture sheet is drawn at 70 and a context menu at 80, each for a
+   * reason of its own, and the first pass at ordering left them out of the
+   * stack to keep those numbers. Which put the hole back one rung up: the
+   * palette opened over the sheet was the layer holding the keyboard at 51 and
+   * the sheet painted over it at 70, so an invisible prompt took an Enter and
+   * threw away the draft underneath. The numbers are floors now, and a floor
+   * does not outrank being opened last.
+   */
+  await page.keyboard.press('Meta+k')
+  await page.waitForTimeout(350)
+  await page.keyboard.type('>quick add task')
+  await page.waitForTimeout(400)
+  await page.keyboard.press('Enter')
+  await page.waitForSelector('.qa-root[data-open="1"]', { timeout: 10_000 })
+  await page.locator('.qa-field').fill('Ring the dentist')
+  /* `fill` is one instant write rather than typing; let the field's own state
+     catch up before the next render, or it renders the empty string back. */
+  await page.waitForTimeout(300)
+  await page.keyboard.press('Meta+k')
+  await page.waitForTimeout(400)
+  const overSheet = await paletteOnTop(page)
+  check(
+    'the palette opens over the capture sheet, and over means over',
+    overSheet.above && overSheet.hit,
+    JSON.stringify(overSheet),
+  )
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(350)
+  check(
+    'and its Escape leaves the sheet, and the draft in it, standing',
+    (await page.locator('.qa-root[data-open="1"]').count()) === 1 &&
+      (await page.locator('.qa-field').inputValue()) === 'Ring the dentist',
+    `sheet ${await page.locator('.qa-root[data-open="1"]').count()}, draft ${JSON.stringify(
+      await page.locator('.qa-field').inputValue(),
+    )}`,
+  )
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(350)
+  check(
+    'and the next one puts the sheet away, nothing captured',
+    (await page.locator('.qa-root[data-open="1"]').count()) === 0,
+  )
+
+  /* The same over a context menu, which is drawn higher still. */
+  await page.locator('.editor-head [aria-label="Editor mode"]').click()
+  await page.waitForTimeout(300)
+  await page.keyboard.press('Meta+k')
+  await page.waitForTimeout(400)
+  const overMenu = await paletteOnTop(page)
+  check(
+    'the palette opens over a context menu, and over means over there too',
+    overMenu.above && overMenu.hit,
+    JSON.stringify(overMenu),
+  )
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(300)
+  const menuKept = (await page.locator('.menu').count()) === 1
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(300)
+  check(
+    'and they come away one at a time, newest first',
+    menuKept && (await page.locator('.menu').count()) === 0 && (await zen()) === '0',
+    `menu kept ${menuKept}, menus ${await page.locator('.menu').count()}`,
+  )
+
   await page.keyboard.press('Meta+Shift+f')
   await page.waitForTimeout(250)
 
@@ -6957,23 +7056,10 @@ try {
   await page.waitForTimeout(200)
   await page.keyboard.press('Meta+k')
   await page.waitForTimeout(400)
-  const stacked = await page.evaluate(() => {
-    const scrims = [...document.querySelectorAll('.scrim')]
-    const palette = scrims.find((s) => s.querySelector('.palette'))
-    if (!palette || scrims.length < 2) return null
-    const z = (el) => Number(getComputedStyle(el).zIndex) || 0
-    const box = palette.querySelector('input').getBoundingClientRect()
-    const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2)
-    return {
-      layers: scrims.length,
-      above: scrims.every((s) => s === palette || z(palette) > z(s)),
-      hit: !!hit && palette.contains(hit),
-      z: scrims.map(z),
-    }
-  })
+  const stacked = await paletteOnTop(page)
   check(
     'the palette opens over the event dialog, and over means over',
-    !!stacked && stacked.layers === 2 && stacked.above && stacked.hit,
+    stacked.layers === 2 && stacked.above && stacked.hit,
     JSON.stringify(stacked),
   )
   await page.keyboard.press('Escape')
