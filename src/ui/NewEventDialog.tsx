@@ -52,7 +52,7 @@ export function openNewEventDialog(day: number) {
 const dateOf = (v: string) => v.slice(0, 10)
 
 export function NewEventDialog() {
-  const isTop = useModalLayer(!!open.value)
+  const { isTop, root } = useModalLayer(!!open.value)
   const req = open.value
   const [title, setTitle] = useState('')
   const [allDay, setAllDay] = useState(false)
@@ -243,7 +243,7 @@ export function NewEventDialog() {
   const type = allDay ? 'date' : 'datetime-local'
 
   return (
-    <div class="scrim" onClick={close}>
+    <div class="scrim" ref={root} onClick={close}>
       <div
         class="dialog"
         /* Wider than a one-field dialog: two date-and-time controls side by

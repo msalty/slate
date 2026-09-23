@@ -27,7 +27,7 @@ const REASON: Record<Version['reason'], string> = {
 }
 
 export function VersionHistory() {
-  const isTop = useModalLayer(historyOpen.value)
+  const { isTop, root } = useModalLayer(historyOpen.value)
   const [list, setList] = useState<Version[]>([])
   const [sel, setSel] = useState<Version | undefined>()
   const path = activePath.value
@@ -52,7 +52,7 @@ export function VersionHistory() {
   const current = getRaw(path)
 
   return (
-    <div class="scrim" onClick={() => (historyOpen.value = false)}>
+    <div class="scrim" ref={root} onClick={() => (historyOpen.value = false)}>
       <div
         class="dialog"
         style={{ width: 'min(900px, 100%)' }}

@@ -305,12 +305,15 @@ export function App() {
          * layer on the stack at all. And failing both, does the element the key
          * was pressed in sit inside a scrim: a dialog answers Escape by closing
          * itself, so the scrim can be gone from the page by the time this runs,
-         * but the target still has it as an ancestor, detached or not.
+         * but the target still has it as an ancestor, detached or not. A
+         * context menu's scrim is called something else, and being left out of
+         * that last question is how one of them used to close and drop out of
+         * focus mode on the same key.
          */
         const dialog =
           escapeClaimed(e) ||
           modalOpen() ||
-          !!(e.target as HTMLElement | null)?.closest?.('.scrim') ||
+          !!(e.target as HTMLElement | null)?.closest?.('.scrim, .menu-scrim') ||
           !!lightboxPath.value
         if (editorMaximized.value && !inEditor && !dialog) editorMaximized.value = false
         return

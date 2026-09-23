@@ -70,7 +70,7 @@ export function canTransform(): boolean {
 
 export function TransformDialog() {
   const t = target.value
-  const isTop = useModalLayer(!!t)
+  const { isTop, root } = useModalLayer(!!t)
   const [instruction, setInstruction] = useState('')
   const [preset, setPreset] = useState<string | undefined>()
   const [out, setOut] = useState('')
@@ -174,7 +174,7 @@ export function TransformDialog() {
   const lines = done && state === 'ok' ? diffLines(t.text, out) : []
 
   return (
-    <div class="scrim" onClick={close}>
+    <div class="scrim" ref={root} onClick={close}>
       <div
         class="dialog"
         style={{ width: 'min(720px, 100%)' }}

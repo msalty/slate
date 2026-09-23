@@ -34,7 +34,7 @@ const TAP_MS = 400
 const TAP_SLOP = 8
 
 export function Lightbox() {
-  useModalLayer(!!lightboxPath.value)
+  const { root } = useModalLayer(!!lightboxPath.value)
   const path = lightboxPath.value
   /*
    * Known before the hooks below, because the zoom keys and the toolbar have
@@ -206,6 +206,7 @@ export function Lightbox() {
 
   return (
     <div
+      ref={root}
       class="lightbox"
       role="dialog"
       aria-modal="true"

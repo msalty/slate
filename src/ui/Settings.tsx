@@ -129,7 +129,7 @@ async function startSnippets() {
 }
 
 export function Settings() {
-  const isTop = useModalLayer(settingsOpen.value)
+  const { isTop, root } = useModalLayer(settingsOpen.value)
   const [tab, setTab] = useState<Tab>('sync')
   const [testing, setTesting] = useState(false)
   const [aiTesting, setAiTesting] = useState(false)
@@ -226,7 +226,7 @@ export function Settings() {
   }
 
   return (
-    <div class="scrim" onClick={() => (settingsOpen.value = false)}>
+    <div class="scrim" ref={root} onClick={() => (settingsOpen.value = false)}>
       <div class="dialog" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         <div class="dialog-head">
           <h2>Settings</h2>

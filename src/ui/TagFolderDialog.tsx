@@ -53,7 +53,7 @@ const ICONS = ['🏷️', '✅', '☑️', '⭐️', '🔥', '📌', '💼', '�
 
 export function TagFolderDialog() {
   const draft = editing.value
-  const isTop = useModalLayer(!!draft)
+  const { isTop, root } = useModalLayer(!!draft)
   const [name, setName] = useState('')
   const [query, setQuery] = useState('')
   const [icon, setIcon] = useState('🏷️')
@@ -164,7 +164,7 @@ export function TagFolderDialog() {
   }
 
   return (
-    <div class="scrim" onClick={() => (editing.value = null)}>
+    <div class="scrim" ref={root} onClick={() => (editing.value = null)}>
       <div class="dialog" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         <div class="dialog-head">
           <h2>{draft.id ? 'Edit Tag Folder' : 'New Tag Folder'}</h2>

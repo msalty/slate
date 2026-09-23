@@ -30,7 +30,7 @@ export function openPrompt(d: Draft) {
 
 export function PromptDialog() {
   const d = draft.value
-  const isTop = useModalLayer(!!d)
+  const { isTop, root } = useModalLayer(!!d)
   const [value, setValue] = useState('')
   const ref = useRef<HTMLInputElement>(null)
 
@@ -67,7 +67,7 @@ export function PromptDialog() {
   }
 
   return (
-    <div class="scrim" onClick={close}>
+    <div class="scrim" ref={root} onClick={close}>
       <div
         class="dialog"
         style={{ width: 'min(420px, 100%)' }}

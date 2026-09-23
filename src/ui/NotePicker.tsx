@@ -25,7 +25,7 @@ const MAX_ROWS = 200
 
 export function NotePicker() {
   const req = notePick.value
-  const isTop = useModalLayer(!!req)
+  const { isTop, root } = useModalLayer(!!req)
   const [q, setQ] = useState('')
   const [sel, setSel] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -83,7 +83,7 @@ export function NotePicker() {
   }
 
   return (
-    <div class="scrim" onClick={dismiss}>
+    <div class="scrim" ref={root} onClick={dismiss}>
       <div
         class="palette file-picker"
         onClick={(e) => e.stopPropagation()}

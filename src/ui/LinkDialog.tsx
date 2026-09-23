@@ -31,7 +31,7 @@ export function openLinkDialog(d: Draft) {
 
 export function LinkDialog() {
   const d = draft.value
-  const isTop = useModalLayer(!!d)
+  const { isTop, root } = useModalLayer(!!d)
   const [text, setText] = useState('')
   const [url, setUrl] = useState('')
   const urlRef = useRef<HTMLInputElement>(null)
@@ -65,7 +65,7 @@ export function LinkDialog() {
   }
 
   return (
-    <div class="scrim" onClick={close}>
+    <div class="scrim" ref={root} onClick={close}>
       <div
         class="dialog"
         style={{ width: 'min(460px, 100%)' }}

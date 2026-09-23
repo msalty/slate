@@ -115,7 +115,7 @@ function rowSub(row: Row): string {
 }
 
 export function CommandPalette() {
-  useModalLayer(paletteOpen.value)
+  const { root } = useModalLayer(paletteOpen.value)
   const [q, setQ] = useState('')
   const [sel, setSel] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -540,7 +540,7 @@ export function CommandPalette() {
   }
 
   return (
-    <div class="scrim" onClick={() => (paletteOpen.value = false)}>
+    <div class="scrim" ref={root} onClick={() => (paletteOpen.value = false)}>
       <div class="palette" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         <input
           ref={inputRef}

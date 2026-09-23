@@ -36,7 +36,7 @@ export function openConfirm(a: Ask) {
 
 export function ConfirmDialog() {
   const a = ask.value
-  const isTop = useModalLayer(!!a)
+  const { isTop, root } = useModalLayer(!!a)
   const ref = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
@@ -61,7 +61,7 @@ export function ConfirmDialog() {
   }
 
   return (
-    <div class="scrim" onClick={close}>
+    <div class="scrim" ref={root} onClick={close}>
       <div
         class="dialog"
         style={{ width: 'min(420px, 100%)' }}

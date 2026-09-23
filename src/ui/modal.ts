@@ -12,7 +12,7 @@
  * rather than whatever is behind it" — and solved its own case with a capture
  * listener. This is that idea with somewhere to keep the answer.
  *
- * Two halves, because one is not enough:
+ * Three parts, because two were not enough:
  *
  *  - **A stack**, because listener order is registration order, which is *mount*
  *    order, which has nothing to do with what is on top. The palette renders
@@ -21,44 +21,99 @@
  *  - **A claim**, because knowing you are on top does not stop the handler that
  *    ran before you. The first to take an Escape owns it and everything else —
  *    including the rule that Escape leaves focus mode — stands down.
+ *  - **A z-index**, because the keyboard and the eye were answering to different
+ *    authorities. Every scrim in the app is `z-index: 50`, so what paints on top
+ *    was decided by document order, which is App's fixed list of dialogs. The
+ *    palette opened over a half-filled New Event dialog was the top *layer* and
+ *    took the keys, while the dialog painted over it: an invisible prompt that
+ *    ran a command and replaced the form underneath it. A layer that hands us
+ *    its root element gets its height from the stack instead, so the thing with
+ *    the keyboard is the thing you can see.
  */
 
 import { useEffect, useRef } from 'preact/hooks'
-
-let serial = 0
-const stack: number[] = []
+import type { RefObject } from 'preact'
 
 /**
- * Take a place on the stack while `active`, and say whether this layer is on
- * top of it.
- *
- * The answer is a function rather than a value because it is read inside event
- * handlers that were bound when the layer opened, and by then whatever opens
- * over it has not happened yet.
+ * The floor the scrims already stood on, so nothing that was above them — the
+ * toast at 70, the context menu at 80 — moves relative to a lone dialog. Only
+ * the layers that stack on each other climb, one step each.
  */
-export function useModalLayer(active: boolean): () => boolean {
+const Z_BASE = 50
+
+type Layer = { id: number; root: RefObject<HTMLDivElement> }
+
+let serial = 0
+const stack: Layer[] = []
+
+/**
+ * Re-height everyone, since a layer closing underneath moves what is above it
+ * down a step. Reading `.current` here rather than caching the node keeps this
+ * honest when a dialog swaps its element without ever leaving the stack.
+ */
+function restack(): void {
+  for (let i = 0; i < stack.length; i++) {
+    const el = stack[i].root.current
+    if (el) el.style.zIndex = String(Z_BASE + i)
+  }
+}
+
+export type ModalLayer = {
+  /**
+   * Whether this layer is on top of the stack.
+   *
+   * A function rather than a value because it is read inside event handlers
+   * that were bound when the layer opened, and by then whatever opens over it
+   * has not happened yet.
+   */
+  isTop: () => boolean
+  /**
+   * Put this on the layer's outermost fixed-position element and it is painted
+   * in stack order. Leave it off and the element keeps whatever the stylesheet
+   * gave it — which is what the quick-add sheet and the context menu want,
+   * since they have a settled place in the ladder that has nothing to do with
+   * who opened last.
+   */
+  root: RefObject<HTMLDivElement>
+}
+
+/** Take a place on the stack while `active`. */
+export function useModalLayer(active: boolean): ModalLayer {
   const mine = useRef<number | undefined>(undefined)
+  const root = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (!active) return
     const id = ++serial
     mine.current = id
-    stack.push(id)
+    stack.push({ id, root })
+    restack()
     return () => {
       mine.current = undefined
-      const at = stack.indexOf(id)
+      const at = stack.findIndex((l) => l.id === id)
       if (at >= 0) stack.splice(at, 1)
+      /*
+       * Give the element back its stylesheet height before re-heighting the
+       * rest: it may be on its way out, but a dialog that closes and reopens
+       * gets the same node back, and a number left on it from last time would
+       * outrank whatever is genuinely above.
+       */
+      if (root.current) root.current.style.zIndex = ''
+      restack()
     }
   }, [active])
-  return () => {
-    const id = mine.current
-    /*
-     * Failing *open* on purpose. A layer that is somehow not on the stack
-     * behaves the way it did before there was one — closing when asked — rather
-     * than refusing to close, which is the one outcome worse than closing too
-     * much.
-     */
-    if (id === undefined) return true
-    return stack[stack.length - 1] === id
+  return {
+    isTop: () => {
+      const id = mine.current
+      /*
+       * Failing *open* on purpose. A layer that is somehow not on the stack
+       * behaves the way it did before there was one — closing when asked —
+       * rather than refusing to close, which is the one outcome worse than
+       * closing too much.
+       */
+      if (id === undefined) return true
+      return stack[stack.length - 1]?.id === id
+    },
+    root,
   }
 }
 

@@ -74,7 +74,7 @@ function flatten(node: FolderNode, depth = 0): Array<{ path: string; label: stri
 export function QuickAdd() {
   const st = state.value
   const open = !!st
-  const isTop = useModalLayer(open)
+  const { isTop } = useModalLayer(open)
   const [mode, setMode] = useState<QuickAddMode>('task')
   const [text, setText] = useState('')
   const [due, setDue] = useState<number | undefined>(undefined)

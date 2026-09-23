@@ -9,6 +9,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks'
 import { signal } from '@preact/signals'
 import { keyboardInset, layoutMode } from './layout'
+import { claimEscape, useModalLayer } from './modal'
 import { IconCheck } from './Icons'
 
 export interface MenuItem {
@@ -120,6 +121,14 @@ export function ContextMenu() {
   const ref = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
   const sheet = layoutMode.value === 'compact'
+  /*
+   * A menu is modal too, even though its scrim is called something else. It is
+   * given no `root` to paint by: its place in the ladder is settled and
+   * deliberate — above the toast and above the quick-add sheet, because the
+   * date picker is a menu opened from inside that sheet — and nothing can open
+   * over a menu anyway, since there is only ever one.
+   */
+  const { isTop } = useModalLayer(!!state)
 
   // Flip the popover back on-screen once its real size is known. "On screen"
   // stops where the keyboard starts: a tablet's keyboard covers the bottom of
@@ -141,7 +150,13 @@ export function ContextMenu() {
   useEffect(() => {
     if (!state) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') closeMenu()
+      /*
+       * And the Escape that closes it is *only* the Escape that closes it. A
+       * menu raised over a dialog used to take the dialog with it, and one
+       * raised in focus mode threw the panels back up behind itself.
+       */
+      if (e.key !== 'Escape' || !isTop() || !claimEscape(e)) return
+      closeMenu()
     }
     /*
      * A menu is anchored to a point on screen, so anything scrolling out from

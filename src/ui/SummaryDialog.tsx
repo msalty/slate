@@ -57,7 +57,7 @@ export function openSummary() {
 
 export function SummaryDialog() {
   const t = target.value
-  const isTop = useModalLayer(!!t)
+  const { isTop, root } = useModalLayer(!!t)
   const [plan, setPlan] = useState<Plan | undefined>()
   const [running, setRunning] = useState(false)
   const [progress, setProgress] = useState<{ done: number; total: number }>()
@@ -129,7 +129,7 @@ export function SummaryDialog() {
   }
 
   return (
-    <div class="scrim" onClick={close}>
+    <div class="scrim" ref={root} onClick={close}>
       <div
         class="dialog"
         style={{ width: 'min(640px, 100%)' }}

@@ -4858,6 +4858,25 @@ try {
     paletteUp && (await page.locator('.scrim').count()) === 0 && (await zen()) === '1',
     `palette opened ${paletteUp}, zen ${await zen()}`,
   )
+  /*
+   * A context menu is a layer too, and for a long time it was the one nobody
+   * counted: its scrim is `.menu-scrim`, which the question above was not
+   * asking about, and it answered Escape without telling anyone. Closing one
+   * in focus mode therefore did both things at once.
+   *
+   * Opened and dismissed, so the editor mode this picks from is left as found.
+   */
+  await page.locator('.editor-head [aria-label="Editor mode"]').click()
+  await page.waitForTimeout(300)
+  const menuUp = (await page.locator('.menu').count()) === 1
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(300)
+  check(
+    'a menu\u2019s Escape closes the menu and leaves focus mode alone too',
+    menuUp && (await page.locator('.menu').count()) === 0 && (await zen()) === '1',
+    `menu opened ${menuUp}, zen ${await zen()}`,
+  )
+
   await page.keyboard.press('Escape')
   await page.waitForTimeout(300)
   check('and the next Escape leaves it', (await zen()) === '0')
@@ -6938,10 +6957,24 @@ try {
   await page.waitForTimeout(200)
   await page.keyboard.press('Meta+k')
   await page.waitForTimeout(400)
+  const stacked = await page.evaluate(() => {
+    const scrims = [...document.querySelectorAll('.scrim')]
+    const palette = scrims.find((s) => s.querySelector('.palette'))
+    if (!palette || scrims.length < 2) return null
+    const z = (el) => Number(getComputedStyle(el).zIndex) || 0
+    const box = palette.querySelector('input').getBoundingClientRect()
+    const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2)
+    return {
+      layers: scrims.length,
+      above: scrims.every((s) => s === palette || z(palette) > z(s)),
+      hit: !!hit && palette.contains(hit),
+      z: scrims.map(z),
+    }
+  })
   check(
-    'the palette opens over the event dialog',
-    (await page.locator('.scrim').count()) === 2,
-    `${await page.locator('.scrim').count()} layers`,
+    'the palette opens over the event dialog, and over means over',
+    !!stacked && stacked.layers === 2 && stacked.above && stacked.hit,
+    JSON.stringify(stacked),
   )
   await page.keyboard.press('Escape')
   await page.waitForTimeout(400)
