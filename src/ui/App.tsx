@@ -47,7 +47,6 @@ import {
   closeMobileEditor,
   editorMaximized,
   goToScope,
-  historyOpen,
   lightboxPath,
   mobileEditorOpen,
   mobileTab,
@@ -287,8 +286,28 @@ export function App() {
          * lightbox — is likewise still busy with this one.
          */
         const inEditor = !!(e.target as HTMLElement | null)?.closest?.('.cm-editor')
+        /*
+         * Asked of the page rather than of a list of signals.
+         *
+         * It used to name four — the palette, settings, history, the lightbox —
+         * and there are fourteen. Every one of them but the lightbox draws a
+         * scrim, because that is what being modal *is* here, so asking whether
+         * one is on screen asks the question directly and cannot fall behind a
+         * list somebody has to remember to add to. The New Event dialog was the
+         * one that noticed: Escape closed it and left focus mode in the same
+         * keypress, and during a save, when it rightly refused to close, Escape
+         * still threw the panels back up.
+         *
+         * The *target* is asked first, and it is the half that actually holds.
+         * A dialog answers Escape by closing itself, so by the time this runs
+         * the scrim may already be gone from the page — but the element the key
+         * was pressed in still has it as an ancestor, detached or not. Asking
+         * the page as well covers a dialog open with nothing inside it focused.
+         */
         const dialog =
-          paletteOpen.value || settingsOpen.value || historyOpen.value || !!lightboxPath.value
+          !!(e.target as HTMLElement | null)?.closest?.('.scrim') ||
+          !!document.querySelector('.scrim') ||
+          !!lightboxPath.value
         if (editorMaximized.value && !inEditor && !dialog) editorMaximized.value = false
         return
       }

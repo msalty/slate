@@ -76,18 +76,26 @@ export function NewEventDialog() {
   const [saving, setSaving] = useState(false)
   const [failed, setFailed] = useState('')
   /*
-   * The same flag, where a listener can read it.
+   * Which opening is busy, where a listener can read it.
    *
-   * The Escape handler is bound once per opening and would close over whatever
-   * `saving` was then — which is always `false`, since a dialog does not open
-   * mid-save. So it went round the guard, and Escape during a write dismissed
-   * the form: if the write then failed there was nothing left to show the error
-   * on, and nothing left of what had been typed.
+   * A ref rather than the state beside it, because the Escape handler is bound
+   * once per opening and would close over whatever `saving` was then — which is
+   * always `false`, since a dialog does not open mid-save. So it went round the
+   * guard, and Escape during a write dismissed the form: if the write then
+   * failed there was nothing left to show the error on, and nothing left of
+   * what had been typed.
+   *
+   * And a *ticket* rather than a flag, because "is something saving" is not the
+   * question — "is *this* dialog saving" is. Clearing a shared boolean from an
+   * older submission unlocked whatever dialog happened to be open, mid-write,
+   * which is the same stale-completion bug the ticket was introduced to stop,
+   * one level down. A completion that is not the current one now changes
+   * nothing at all.
    */
-  const savingRef = useRef(false)
-  const setBusy = (on: boolean) => {
-    savingRef.current = on
-    setSaving(on)
+  const busyTicket = useRef<number | undefined>(undefined)
+  const setBusy = (ticket: number | undefined) => {
+    busyTicket.current = ticket
+    setSaving(ticket !== undefined)
   }
   const titleRef = useRef<HTMLInputElement>(null)
   /*
@@ -115,7 +123,7 @@ export function NewEventDialog() {
     const usable = fromTemplate && isKnownZone(fromTemplate)
     setZone(usable ? fromTemplate : '')
     setZoneProblem(fromTemplate && !usable ? fromTemplate : '')
-    setBusy(false)
+    setBusy(undefined)
     setFailed('')
     timed.current = null
     requestAnimationFrame(() => titleRef.current?.focus())
@@ -124,7 +132,7 @@ export function NewEventDialog() {
   useEffect(() => {
     // Through the same guard the scrim and Cancel go through, not around it.
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !savingRef.current) open.value = null
+      if (e.key === 'Escape' && busyTicket.current === undefined) open.value = null
     }
     if (req) addEventListener('keydown', onKey)
     return () => removeEventListener('keydown', onKey)
@@ -139,7 +147,7 @@ export function NewEventDialog() {
    * error on.
    */
   const close = () => {
-    if (!savingRef.current) open.value = null
+    if (busyTicket.current === undefined) open.value = null
   }
 
   /** The zone in force. An all-day event never has one: it has no clock. */
@@ -194,10 +202,10 @@ export function NewEventDialog() {
     const fixed =
       to !== undefined && to >= from ? end : allDay ? dateOf(start) : wallPlusHour(start)
     // Pressing Enter twice is one event, not two half-written ones.
-    if (savingRef.current) return
-    setBusy(true)
-    setFailed('')
+    if (busyTicket.current !== undefined) return
     const mine = req.ticket
+    setBusy(mine)
+    setFailed('')
     try {
       const { path, caret } = await newEventNote(name, start, fixed, tzOf())
       notify(`Created ${path}`)
@@ -210,12 +218,12 @@ export function NewEventDialog() {
       if (open.value?.ticket === mine) setFailed(err instanceof Error ? err.message : String(err))
     } finally {
       /*
-       * And only this dialog's. A submission finishing after its own form has
-       * been closed and reopened would otherwise clear the *new* one's busy
-       * flag, unlocking a form that is in the middle of its own write.
+       * Only the submission that set it may clear it. A write finishing after
+       * its own form has been closed and reopened has nothing left to say about
+       * the dialog on screen — least of all "you are no longer saving" to one
+       * that is.
        */
-      if (open.value?.ticket === mine) setBusy(false)
-      else savingRef.current = false
+      if (busyTicket.current === mine) setBusy(undefined)
     }
   }
 

@@ -4799,6 +4799,36 @@ try {
     await page.getAttribute('.editor-pane', 'data-width'),
   )
   await page.screenshot({ path: join(SHOTS, '30-focus-mode.png') })
+
+  /*
+   * One Escape does one thing.
+   *
+   * Escape leaves focus mode, and a dialog has an Escape of its own — so the
+   * keypress that closes a dialog must not also throw the panels back up
+   * behind it. The rule was written against a list of four dialogs and there
+   * are fourteen, so every one it had not been told about did both at once.
+   *
+   * All keyboard, and it hands back the mode it was given: focus mode is on
+   * here and the line after this one is about turning it off.
+   */
+  const zen = async () => await page.getAttribute('.shell', 'data-zen')
+  await page.keyboard.press('Meta+k')
+  await page.waitForTimeout(350)
+  const paletteUp = (await page.locator('.scrim').count()) === 1
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(300)
+  check(
+    'a dialog’s Escape closes the dialog and leaves focus mode alone',
+    paletteUp && (await page.locator('.scrim').count()) === 0 && (await zen()) === '1',
+    `palette opened ${paletteUp}, zen ${await zen()}`,
+  )
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(300)
+  check('and the next Escape leaves it', (await zen()) === '0')
+  // Back in, since what follows is about coming out.
+  await page.keyboard.press('Meta+Shift+f')
+  await page.waitForTimeout(250)
+
   await page.keyboard.press('Meta+Shift+f')
   await page.waitForTimeout(250)
   check('⌘⇧F puts them back', (await page.getAttribute('.shell', 'data-zen')) === '0')
