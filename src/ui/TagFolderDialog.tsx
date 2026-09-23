@@ -27,6 +27,7 @@ import { setTagFolderOpen } from '../core/disclosure'
 import { describeQuery, parseQuery, type QueryNode } from '../core/tagquery'
 import { notify, setScope } from './state'
 import { IconClose } from './Icons'
+import { claimEscape, useModalLayer } from './modal'
 
 const editing = signal<Partial<SmartFolder> | null>(null)
 
@@ -52,6 +53,7 @@ const ICONS = ['🏷️', '✅', '☑️', '⭐️', '🔥', '📌', '💼', '�
 
 export function TagFolderDialog() {
   const draft = editing.value
+  const isTop = useModalLayer(!!draft)
   const [name, setName] = useState('')
   const [query, setQuery] = useState('')
   const [icon, setIcon] = useState('🏷️')
@@ -74,7 +76,7 @@ export function TagFolderDialog() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') editing.value = null
+      if (e.key === 'Escape' && isTop() && claimEscape(e)) editing.value = null
     }
     if (draft) addEventListener('keydown', onKey)
     return () => removeEventListener('keydown', onKey)

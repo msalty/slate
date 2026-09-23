@@ -58,6 +58,7 @@ import { canTransform, openTransform } from './TransformDialog'
 import { canSummarise, openSummary } from './SummaryDialog'
 import { askAboutNote, openAsk } from './AskDialog'
 import { canAsk } from '../app/ask'
+import { claimEscape, useModalLayer } from './modal'
 
 interface Cmd {
   id: string
@@ -114,6 +115,7 @@ function rowSub(row: Row): string {
 }
 
 export function CommandPalette() {
+  useModalLayer(paletteOpen.value)
   const [q, setQ] = useState('')
   const [sel, setSel] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -566,7 +568,7 @@ export function CommandPalette() {
             } else if (e.key === 'Enter') {
               e.preventDefault()
               void choose(sel)
-            } else if (e.key === 'Escape') {
+            } else if (e.key === 'Escape' && claimEscape(e)) {
               paletteOpen.value = false
             }
           }}

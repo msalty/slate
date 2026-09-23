@@ -29,6 +29,7 @@ import {
 import { activeEditor } from '../editor/context'
 import { notify } from './state'
 import { IconClose } from './Icons'
+import { claimEscape, useModalLayer } from './modal'
 
 interface Target {
   from: number
@@ -69,6 +70,7 @@ export function canTransform(): boolean {
 
 export function TransformDialog() {
   const t = target.value
+  const isTop = useModalLayer(!!t)
   const [instruction, setInstruction] = useState('')
   const [preset, setPreset] = useState<string | undefined>()
   const [out, setOut] = useState('')
@@ -91,7 +93,7 @@ export function TransformDialog() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
+      if (e.key === 'Escape' && isTop() && claimEscape(e)) {
         e.stopPropagation()
         close()
       }

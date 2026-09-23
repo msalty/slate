@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from 'preact/hooks'
 import { signal } from '@preact/signals'
 import { isUri } from '../editor/links'
 import { IconClose } from './Icons'
+import { claimEscape, useModalLayer } from './modal'
 
 interface Draft {
   text: string
@@ -30,6 +31,7 @@ export function openLinkDialog(d: Draft) {
 
 export function LinkDialog() {
   const d = draft.value
+  const isTop = useModalLayer(!!d)
   const [text, setText] = useState('')
   const [url, setUrl] = useState('')
   const urlRef = useRef<HTMLInputElement>(null)
@@ -45,7 +47,7 @@ export function LinkDialog() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') draft.value = null
+      if (e.key === 'Escape' && isTop() && claimEscape(e)) draft.value = null
     }
     if (d) addEventListener('keydown', onKey)
     return () => removeEventListener('keydown', onKey)

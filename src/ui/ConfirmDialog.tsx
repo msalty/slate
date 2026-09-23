@@ -17,6 +17,7 @@
 import { useEffect, useRef } from 'preact/hooks'
 import { signal } from '@preact/signals'
 import { IconClose } from './Icons'
+import { claimEscape, useModalLayer } from './modal'
 
 interface Ask {
   title: string
@@ -35,6 +36,7 @@ export function openConfirm(a: Ask) {
 
 export function ConfirmDialog() {
   const a = ask.value
+  const isTop = useModalLayer(!!a)
   const ref = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
@@ -44,7 +46,7 @@ export function ConfirmDialog() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') ask.value = null
+      if (e.key === 'Escape' && isTop() && claimEscape(e)) ask.value = null
     }
     if (a) addEventListener('keydown', onKey)
     return () => removeEventListener('keydown', onKey)

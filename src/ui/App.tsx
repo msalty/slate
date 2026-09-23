@@ -14,6 +14,7 @@ import { FilePicker } from './FilePicker'
 import { NotePicker } from './NotePicker'
 import { PromptDialog } from './PromptDialog'
 import { ConfirmDialog } from './ConfirmDialog'
+import { escapeClaimed, modalOpen } from './modal'
 import { NewEventDialog } from './NewEventDialog'
 import { TranscribeDialog } from './TranscribeDialog'
 import { TransformDialog, canTransform, openTransform } from './TransformDialog'
@@ -298,15 +299,18 @@ export function App() {
          * keypress, and during a save, when it rightly refused to close, Escape
          * still threw the panels back up.
          *
-         * The *target* is asked first, and it is the half that actually holds.
-         * A dialog answers Escape by closing itself, so by the time this runs
-         * the scrim may already be gone from the page — but the element the key
-         * was pressed in still has it as an ancestor, detached or not. Asking
-         * the page as well covers a dialog open with nothing inside it focused.
+         * Three questions, cheapest and most certain first. Has anything
+         * already *claimed* this Escape — the lightbox does, and so does every
+         * dialog that closes on it — in which case it is spoken for. Is a modal
+         * layer on the stack at all. And failing both, does the element the key
+         * was pressed in sit inside a scrim: a dialog answers Escape by closing
+         * itself, so the scrim can be gone from the page by the time this runs,
+         * but the target still has it as an ancestor, detached or not.
          */
         const dialog =
+          escapeClaimed(e) ||
+          modalOpen() ||
           !!(e.target as HTMLElement | null)?.closest?.('.scrim') ||
-          !!document.querySelector('.scrim') ||
           !!lightboxPath.value
         if (editorMaximized.value && !inEditor && !dialog) editorMaximized.value = false
         return

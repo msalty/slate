@@ -16,6 +16,7 @@ import { getRaw, saveNote } from '../core/vault'
 import { activePath, historyOpen, notify } from './state'
 import { formatBytes } from '../core/util'
 import { IconClose } from './Icons'
+import { claimEscape, useModalLayer } from './modal'
 
 const REASON: Record<Version['reason'], string> = {
   edit: 'Edited',
@@ -26,6 +27,7 @@ const REASON: Record<Version['reason'], string> = {
 }
 
 export function VersionHistory() {
+  const isTop = useModalLayer(historyOpen.value)
   const [list, setList] = useState<Version[]>([])
   const [sel, setSel] = useState<Version | undefined>()
   const path = activePath.value
@@ -40,7 +42,7 @@ export function VersionHistory() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') historyOpen.value = false
+      if (e.key === 'Escape' && isTop() && claimEscape(e)) historyOpen.value = false
     }
     if (historyOpen.value) addEventListener('keydown', onKey)
     return () => removeEventListener('keydown', onKey)

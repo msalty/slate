@@ -30,6 +30,7 @@ import {
 import { isKnownZone } from '../core/markdown'
 import { notify, openNote } from './state'
 import { IconClose } from './Icons'
+import { claimEscape, useModalLayer } from './modal'
 
 /**
  * Which opening of the dialog this is.
@@ -51,6 +52,7 @@ export function openNewEventDialog(day: number) {
 const dateOf = (v: string) => v.slice(0, 10)
 
 export function NewEventDialog() {
+  const isTop = useModalLayer(!!open.value)
   const req = open.value
   const [title, setTitle] = useState('')
   const [allDay, setAllDay] = useState(false)
@@ -132,7 +134,15 @@ export function NewEventDialog() {
   useEffect(() => {
     // Through the same guard the scrim and Cancel go through, not around it.
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && busyTicket.current === undefined) open.value = null
+      /*
+       * Only when nothing is stacked over this, and only if nothing else has
+       * already taken the key. Opening the palette over a half-filled form and
+       * pressing Escape used to close both — the palette because it was asked
+       * to, and this because it could not tell that it had not been.
+       */
+      if (e.key !== 'Escape' || busyTicket.current !== undefined) return
+      if (!isTop() || !claimEscape(e)) return
+      open.value = null
     }
     if (req) addEventListener('keydown', onKey)
     return () => removeEventListener('keydown', onKey)

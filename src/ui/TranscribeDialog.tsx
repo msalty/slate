@@ -20,6 +20,7 @@ import { basename, formatBytes, titleFromPath } from '../core/util'
 import { getRaw } from '../core/vault'
 import { activePath, notify } from './state'
 import { IconClose } from './Icons'
+import { claimEscape, useModalLayer } from './modal'
 
 interface Target {
   /** The attachment being read. */
@@ -36,6 +37,7 @@ export function openTranscribe(path: string) {
 
 export function TranscribeDialog() {
   const t = target.value
+  const isTop = useModalLayer(!!t)
   const [text, setText] = useState('')
   const [sent, setSent] = useState<string | undefined>()
   const [busy, setBusy] = useState(false)
@@ -67,7 +69,7 @@ export function TranscribeDialog() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
+      if (e.key === 'Escape' && isTop() && claimEscape(e)) {
         e.stopPropagation()
         target.value = undefined
       }

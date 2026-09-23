@@ -26,6 +26,7 @@ import { openMenu } from './Menu'
 import { anchorOf, openDueMenu } from './DueMenu'
 import { notify, openNote } from './state'
 import { IconCheck, IconClose, IconNewNote } from './Icons'
+import { claimEscape, useModalLayer } from './modal'
 
 export type QuickAddMode = 'task' | 'note'
 
@@ -73,6 +74,7 @@ function flatten(node: FolderNode, depth = 0): Array<{ path: string; label: stri
 export function QuickAdd() {
   const st = state.value
   const open = !!st
+  const isTop = useModalLayer(open)
   const [mode, setMode] = useState<QuickAddMode>('task')
   const [text, setText] = useState('')
   const [due, setDue] = useState<number | undefined>(undefined)
@@ -102,7 +104,7 @@ export function QuickAdd() {
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') closeQuickAdd()
+      if (e.key === 'Escape' && isTop() && claimEscape(e)) closeQuickAdd()
     }
     addEventListener('keydown', onKey)
     return () => removeEventListener('keydown', onKey)

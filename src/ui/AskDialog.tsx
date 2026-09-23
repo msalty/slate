@@ -20,6 +20,7 @@ import { settings } from '../core/settings'
 import { notify, openNote, scope, scopeLabel, scopeRule, visibleNotes } from './state'
 import { pendingQuestion } from './Composer'
 import { IconClose } from './Icons'
+import { claimEscape, useModalLayer } from './modal'
 
 interface Draft {
   /** The rule the conversation starts scoped to. */
@@ -80,6 +81,7 @@ export function askAboutNote(title: string) {
 
 export function AskDialog() {
   const d = draft.value
+  const isTop = useModalLayer(!!d)
   const [question, setQuestion] = useState('')
   const [source, setSource] = useState(ALL)
   const [busy, setBusy] = useState(false)
@@ -95,7 +97,7 @@ export function AskDialog() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
+      if (e.key === 'Escape' && isTop() && claimEscape(e)) {
         e.stopPropagation()
         draft.value = undefined
       }

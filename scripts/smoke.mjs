@@ -774,6 +774,42 @@ try {
 
     await page.keyboard.press('Escape')
     await page.waitForTimeout(300)
+
+    /*
+     * And a picture's Escape is its own. The lightbox closes itself from a
+     * *capture* listener and called `stopPropagation`, which does not stop the
+     * other listeners already bound to that same window — so the rule that
+     * Escape leaves focus mode ran too, and one keypress both shut the picture
+     * and threw the panels back up behind it.
+     */
+    await page.keyboard.press('Meta+Shift+f')
+    await page.waitForTimeout(300)
+    if ((await page.getAttribute('.shell', 'data-zen')) === '1') {
+      await page.locator('.cm-embed img').first().click()
+      await page.waitForTimeout(500)
+      const shown = (await page.locator('.lightbox').count()) === 1
+      await page.keyboard.press('Escape')
+      await page.waitForTimeout(350)
+      check(
+        'closing a picture with Escape leaves focus mode alone',
+        shown &&
+          (await page.locator('.lightbox').count()) === 0 &&
+          (await page.getAttribute('.shell', 'data-zen')) === '1',
+        `opened ${shown}, zen ${await page.getAttribute('.shell', 'data-zen')}`,
+      )
+      /*
+       * And out again by the shortcut rather than by Escape: the focus is in
+       * the editor here, where Escape hands the caret back before it does
+       * anything else, so leaving takes two and neither of them is what this
+       * block is about. The palette case above checks that half.
+       */
+      await page.keyboard.press('Meta+Shift+f')
+      await page.waitForTimeout(300)
+      check(
+        'and focus mode is still there to be left in the ordinary way',
+        (await page.getAttribute('.shell', 'data-zen')) === '0',
+      )
+    }
   }
 
   /* ---- transcribing a picture -------------------------------------------
@@ -4825,7 +4861,7 @@ try {
   await page.keyboard.press('Escape')
   await page.waitForTimeout(300)
   check('and the next Escape leaves it', (await zen()) === '0')
-  // Back in, since what follows is about coming out.
+
   await page.keyboard.press('Meta+Shift+f')
   await page.waitForTimeout(250)
 
@@ -6890,6 +6926,31 @@ try {
     (await startField.inputValue()) === `${isoDay(2)}T14:00` &&
       (await endField.inputValue()) === `${isoDay(2)}T15:00`,
     `${await startField.inputValue()} → ${await endField.inputValue()}`,
+  )
+
+  /*
+   * A dialog over a dialog. Opening the palette on top of a half-filled form
+   * and pressing Escape used to close *both* — the palette because it was
+   * asked to, and this because it could not tell that it had not been — so the
+   * draft went with it. Escape belongs to whatever is on top.
+   */
+  await titleField.fill('Design review')
+  await page.waitForTimeout(200)
+  await page.keyboard.press('Meta+k')
+  await page.waitForTimeout(400)
+  check(
+    'the palette opens over the event dialog',
+    (await page.locator('.scrim').count()) === 2,
+    `${await page.locator('.scrim').count()} layers`,
+  )
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(400)
+  check(
+    'and Escape closes the palette without taking the draft with it',
+    (await page.locator('.scrim').count()) === 1 && (await titleField.inputValue()) === 'Design review',
+    `${await page.locator('.scrim').count()} layers, title ${JSON.stringify(
+      await titleField.inputValue().catch(() => null),
+    )}`,
   )
 
   await titleField.fill('Budget call')

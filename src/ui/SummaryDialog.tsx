@@ -23,6 +23,7 @@ import { settings } from '../core/settings'
 import type { NoteIndexEntry } from '../core/types'
 import { notify, openNote, scopeLabel, scope, visibleNotes } from './state'
 import { IconClose } from './Icons'
+import { claimEscape, useModalLayer } from './modal'
 
 interface Target {
   what: string
@@ -56,6 +57,7 @@ export function openSummary() {
 
 export function SummaryDialog() {
   const t = target.value
+  const isTop = useModalLayer(!!t)
   const [plan, setPlan] = useState<Plan | undefined>()
   const [running, setRunning] = useState(false)
   const [progress, setProgress] = useState<{ done: number; total: number }>()
@@ -75,7 +77,7 @@ export function SummaryDialog() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
+      if (e.key === 'Escape' && isTop() && claimEscape(e)) {
         e.stopPropagation()
         abort.current?.abort()
         target.value = undefined
