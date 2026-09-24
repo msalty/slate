@@ -345,6 +345,24 @@ export function isTemplatePath(path: string): boolean {
 
 /* ------------------------------------------------------------------- index */
 
+/**
+ * Other names a note answers to. Read the same way tags are — a bare string is
+ * one alias, a list is several — because frontmatter somebody typed by hand is
+ * written both ways and neither is wrong.
+ */
+function aliasesIn(value: unknown): string[] {
+  const aliases: string[] = []
+  if (Array.isArray(value)) {
+    for (const a of value) {
+      const s = String(a).trim()
+      if (s) aliases.push(s)
+    }
+  } else if (typeof value === 'string' && value.trim()) {
+    aliases.push(value.trim())
+  }
+  return aliases
+}
+
 function buildEntry(f: VaultFile): NoteIndexEntry | undefined {
   if (f.kind !== 'note' || f.deleted) return undefined
   const text = f.text ?? ''
@@ -354,21 +372,7 @@ function buildEntry(f: VaultFile): NoteIndexEntry | undefined {
   if (Array.isArray(fmTags)) for (const t of fmTags) tags.add(String(t).replace(/^#/, ''))
   else if (typeof fmTags === 'string' && fmTags) tags.add(fmTags.replace(/^#/, ''))
 
-  /*
-   * Other names this note answers to. Read the same way tags are — a bare
-   * string is one alias, a list is several — because frontmatter somebody
-   * typed by hand is written both ways and neither is wrong.
-   */
-  const aliases: string[] = []
-  const fmAliases = fm.data.aliases
-  if (Array.isArray(fmAliases)) {
-    for (const a of fmAliases) {
-      const s = String(a).trim()
-      if (s) aliases.push(s)
-    }
-  } else if (typeof fmAliases === 'string' && fmAliases.trim()) {
-    aliases.push(fmAliases.trim())
-  }
+  const aliases = aliasesIn(fm.data.aliases)
 
   const links: string[] = []
   const embeds: string[] = []
@@ -616,33 +620,50 @@ export const allTags = computed<Array<{ tag: string; count: number }>>(() => {
 })
 
 /** title (lowercased) -> path, for wikilink resolution. */
-/**
- * Which of two notes a name means, when both have it: the older, by when this
- * device first had it, and the one earlier by path when that is a tie.
- *
- * "First writer wins, so link targets stay stable" the comment here used to
- * say — over a list sorted by when each note was last *edited*. So `[[Name]]`
- * meant whichever of `Work/Name` and `Home/Name` had been touched most
- * recently, and editing either one moved every such link in the vault to it.
- * Creation time does not change when a note is edited or moved; a folder path
- * would, and says nothing about which note the name belonged to first.
- *
- * `ctime` is local. A note that arrives by sync is dated by the remote's
- * modified time on the day this device first sees it, so two devices can
- * disagree about which of two same-named notes is older — never about it
- * changing. That is why a link written to one of them names it by path: see
- * `linkNameFor`.
- */
-function older(a: NoteIndexEntry, b: NoteIndexEntry): boolean {
-  return a.ctime !== b.ctime ? a.ctime < b.ctime : a.path < b.path
+/** What a name index is built from: where a note is, and what it answers to. */
+interface Named {
+  path: string
+  title: string
+  aliases: readonly string[]
 }
 
-export const titleIndex = computed(() => {
-  const held = new Map<string, NoteIndexEntry>()
-  for (const e of notes.value) {
+/**
+ * Which of two notes a name means, when both have it: the one first by path.
+ *
+ * The list this was chosen from was once sorted by when each note was last
+ * *edited*, under a comment promising that the first writer won so link targets
+ * stayed stable — so `[[Name]]` meant whichever of `Work/Name` and `Home/Name`
+ * had been touched most recently, and editing either moved every such link in
+ * the vault to it.
+ *
+ * Creation time was tried next, and is the wrong clock for a synced vault: it
+ * is local. A note arriving by sync is dated by the remote's modified time on
+ * the day a device first sees it, so two devices could each be sure a
+ * different note was the older, and one link meant two notes. A path is the one
+ * thing every device already agrees on, compared as plain code units so no
+ * locale can reorder it.
+ *
+ * What a path costs is that a move, or a new note that sorts earlier, would
+ * change the answer. That is paid where it happens: `relocate` and `createNote`
+ * work out what every bare link would mean afterwards and write the path into
+ * any whose meaning would change — so which note a name means is decided the
+ * same way everywhere, and nothing done on one device quietly moves a link.
+ */
+function preferred(a: Named, b: Named): boolean {
+  return a.path < b.path
+}
+
+/**
+ * The name → note map, for any set of notes — the vault as it is, or as it
+ * will be once some files have moved.
+ */
+function buildTitleIndex(entries: Iterable<Named>): Map<string, string> {
+  const list = [...entries]
+  const held = new Map<string, Named>()
+  for (const e of list) {
     const k = e.title.toLowerCase()
     const other = held.get(k)
-    if (!other || older(e, other)) held.set(k, e)
+    if (!other || preferred(e, other)) held.set(k, e)
   }
   /*
    * Aliases afterwards, in a pass of their own, so that every note's real name
@@ -651,23 +672,24 @@ export const titleIndex = computed(() => {
    * One pass would let a note whose `aliases:` happens to name *another* note
    * take that name, purely by being the one the walk reached first — and the
    * note it stole it from is the one with it written on the file. A name on
-   * disk beats a name in a list, always; among aliases the older note wins, as
-   * above.
+   * disk beats a name in a list, always; among aliases the same order decides.
    */
-  const byAlias = new Map<string, NoteIndexEntry>()
-  for (const e of notes.value) {
+  const byAlias = new Map<string, Named>()
+  for (const e of list) {
     for (const a of e.aliases) {
       const k = a.trim().toLowerCase()
       if (!k || held.has(k)) continue
       const other = byAlias.get(k)
-      if (!other || older(e, other)) byAlias.set(k, e)
+      if (!other || preferred(e, other)) byAlias.set(k, e)
     }
   }
   const m = new Map<string, string>()
   for (const [k, e] of held) m.set(k, e.path)
   for (const [k, e] of byAlias) m.set(k, e.path)
   return m
-})
+}
+
+export const titleIndex = computed(() => buildTitleIndex(notes.value))
 
 /** Titles more than one note has, lowercased. */
 export const sharedTitles = computed(() => {
@@ -685,10 +707,9 @@ export const sharedTitles = computed(() => {
  * What a new link to the note at `path` should say: its title, or — when
  * another note has that title too — its path.
  *
- * A bare title shared by two notes means the older of them (see `older`), and
- * "older" is decided on each device from what that device has seen, so a link
- * that has to mean one particular note says which. `[[Work/Name]]` means the
- * same note everywhere and whatever is edited.
+ * A bare title two notes share means one of them by a rule (see `preferred`),
+ * and a link written by *picking* a note should mean that note whatever the
+ * rule says. `[[Work/Name]]` does, on every device and after any move.
  */
 export function linkNameFor(path: string): string {
   const title = titleFromPath(path)
@@ -1159,6 +1180,19 @@ export async function createNote(
     dirty: true,
     ...inheritedSync(path),
   }
+  /*
+   * A name this note takes may already mean another note, and if this one sorts
+   * first it would take every bare link to it — so those are pinned first.
+   */
+  const arrival: Named = {
+    path,
+    title: titleFromPath(path),
+    aliases: aliasesIn(parseFrontmatter(text).data.aliases),
+  }
+  const index = titleIndex.value
+  if ([arrival.title, ...arrival.aliases].some((n) => index.has(n.toLowerCase()))) {
+    await writePlanned(planReferences(new Map(), [arrival]), () => true, (p) => p)
+  }
   await writeFile(f)
   reindex(path)
   bump()
@@ -1236,6 +1270,7 @@ export async function renameNote(path: string, newTitle: string): Promise<string
  */
 export async function relocate(moves: ReadonlyMap<string, string>): Promise<void> {
   if (!moves.size) return
+  checkMoves(moves)
   const plan = planReferences(moves)
   await writePlanned(plan, (path) => !moves.has(path), (path) => path)
   // Deepest first, so a parent's move cannot take a child's source out from under it.
@@ -1243,6 +1278,24 @@ export async function relocate(moves: ReadonlyMap<string, string>): Promise<void
     await movePath(from, to)
   }
   await writePlanned(plan, (path) => moves.has(path), (path) => moves.get(path)!)
+}
+
+/**
+ * Refuse a set of moves that could not all land, before any of them is made.
+ *
+ * `movePath` refuses a taken path too, but one at a time: a folder moved onto
+ * one that already held an attachment of the same name had its links rewritten
+ * and some of its notes moved before the one that collided threw, and was left
+ * half in each place. Checked here, as a whole, nothing is touched unless every
+ * file has somewhere to go.
+ */
+function checkMoves(moves: ReadonlyMap<string, string>): void {
+  const landing = new Set<string>()
+  for (const [from, to] of moves) {
+    if (from === to) continue
+    if (landing.has(to) || occupied(to)) throw new Error(`"${to}" already exists.`)
+    landing.add(to)
+  }
 }
 
 /** Move one note to `to`, taking every reference to it along. */
@@ -1342,19 +1395,37 @@ interface Planned {
  *    on the wrong note.
  *  - **A link that arrived through `aliases:`** is left as it is, since the alias
  *    is written in the note and goes where the note goes.
+ *  - **Any link by name that would mean a different note afterwards** — a title
+ *    two notes share goes to the first by path, so a move, or a note arriving
+ *    in `arrivals`, can hand it over — is written as the path of the note it
+ *    meant, whether or not that note is one of the ones moving.
  *
  * Headings, display text and embeds come through unchanged; a markdown link's
  * width suffix too.
  */
-function planReferences(moves: ReadonlyMap<string, string>): Map<string, Planned> {
+function planReferences(
+  moves: ReadonlyMap<string, string>,
+  arrivals: readonly Named[] = [],
+): Map<string, Planned> {
   const titles = titleIndex.value
   const paths = pathSet.value
   const moved = (path: string) => moves.get(path) ?? path
 
+  /* The vault as it will be: what each name will mean, and which paths there will be. */
+  const later: Named[] = notes.value.map((e) => ({
+    path: moved(e.path),
+    title: titleFromPath(moved(e.path)),
+    aliases: e.aliases,
+  }))
+  later.push(...arrivals)
+  const titlesAfter = buildTitleIndex(later)
+  const pathsAfter = new Set([...paths].map(moved))
+  for (const a of arrivals) pathsAfter.add(a.path)
+
   /* How many notes will have each title, once everything has moved. */
   const titleCount = new Map<string, number>()
-  for (const e of notes.value) {
-    const t = titleFromPath(moved(e.path)).toLowerCase()
+  for (const e of later) {
+    const t = e.title.toLowerCase()
     titleCount.set(t, (titleCount.get(t) ?? 0) + 1)
   }
   const nameFor = (to: string) =>
@@ -1397,10 +1468,17 @@ function planReferences(moves: ReadonlyMap<string, string>): Map<string, Planned
     const np = normPath(t)
     if (np === at) return to === at ? undefined : to
     if (`${np}.md` === at) return to === at ? undefined : to.replace(/\.md$/i, '')
-    if (t.toLowerCase() === titleFromPath(at).toLowerCase()) {
-      return titleFromPath(to) === titleFromPath(at) ? undefined : nameFor(to)
-    }
-    return undefined
+    // Reached by name — the note's title, or one of its `aliases:`.
+    const byTitle = t.toLowerCase() === titleFromPath(at).toLowerCase()
+    if (byTitle && titleFromPath(to) !== titleFromPath(at)) return nameFor(to)
+    /*
+     * Still the same note afterwards, or pinned to it by its path. A name two
+     * notes share means the first by path, so a move — of this note or another
+     * — or a new note can hand it to a different one; wherever that would
+     * happen the link is written as the path of the note it meant.
+     */
+    if (resolveTarget(t, titlesAfter, pathsAfter) === to) return undefined
+    return to.replace(/\.md$/i, '')
   }
 
   const plan = new Map<string, Planned>()

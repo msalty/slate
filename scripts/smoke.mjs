@@ -1391,7 +1391,7 @@ try {
     check('a pinned note is sent whatever the search found', /Quorum is four, and decisions/.test(material))
     check(
       'and goes first, ahead of anything the search turned up',
-      material.indexOf('## Team Charter') === material.indexOf('## '),
+      material.indexOf('## [[Team Charter]]') === material.indexOf('## [['),
       material.slice(0, 60).replace(/\n/g, ' · '),
     )
 
@@ -1542,8 +1542,8 @@ try {
      * version of this check pointed at a note with no links at all, so it
      * proved the scope kept the vault out while never once expanding.
      */
-    check('a note the scope reached by a link out of it is sent', /^## Decision Log$/m.test(scopedMaterial), sentHeadings)
-    check('and one it reached by a link back to it', /^## Retro Notes$/m.test(scopedMaterial), sentHeadings)
+    check('a note the scope reached by a link out of it is sent', /^## \[\[Decision Log\]\]$/m.test(scopedMaterial), sentHeadings)
+    check('and one it reached by a link back to it', /^## \[\[Retro Notes\]\]$/m.test(scopedMaterial), sentHeadings)
     /*
      * The note that makes the check mean something: it matches the same search
      * as the two above and is connected to nothing, so the only thing that can
@@ -1551,7 +1551,7 @@ try {
      */
     check(
       'but not one that matched the search and is linked to nothing',
-      !/^## Quorum Elsewhere$/m.test(scopedMaterial),
+      !/^## \[\[Quorum Elsewhere\]\]$/m.test(scopedMaterial),
       sentHeadings,
     )
     llm.replyFor = null
@@ -1612,7 +1612,8 @@ try {
     const onlyMaterial = onlyAnswer?.messages?.[1]?.content ?? ''
     check(
       'and exactly one note goes with the question',
-      (onlyMaterial.match(/^## /gm) ?? []).length === 1 && /## Working Agreements/.test(onlyMaterial),
+      (onlyMaterial.match(/^## \[\[/gm) ?? []).length === 1 &&
+        /## \[\[Working Agreements\]\]/.test(onlyMaterial),
       (onlyMaterial.match(/^## .*$/gm) ?? []).join(' · '),
     )
     const narrowFile = (await savedConvo('And how is it recorded')) ?? ''

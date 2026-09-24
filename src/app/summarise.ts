@@ -21,7 +21,7 @@ import {
   type SummarySource,
 } from '../core/summary'
 import { settings } from '../core/settings'
-import { createNote, getText } from '../core/vault'
+import { createNote, getText, linkNameFor } from '../core/vault'
 import type { NoteIndexEntry } from '../core/types'
 
 /** Read the notes and work out what it would take, without sending anything. */
@@ -29,7 +29,7 @@ export function planFor(entries: NoteIndexEntry[]): Plan {
   const sources: SummarySource[] = []
   for (const e of entries) {
     const text = getText(e.path)
-    if (text !== undefined) sources.push(sourceFor(e, text))
+    if (text !== undefined) sources.push(sourceFor(e, text, linkNameFor(e.path)))
   }
   return planSummary(sources, settings.value.ai.contextTokens)
 }

@@ -17,6 +17,7 @@ import { signal } from '@preact/signals'
 import { canAsk, startConversation } from '../app/ask'
 import { ALL, noteScopeRule, sourceDescription } from '../core/ask'
 import { settings } from '../core/settings'
+import { linkNameFor } from '../core/vault'
 import { notify, openNote, scope, scopeLabel, scopeRule, visibleNotes } from './state'
 import { pendingQuestion } from './Composer'
 import { IconClose } from './Icons'
@@ -33,7 +34,7 @@ interface Draft {
   pin?: string
 }
 
-const draft = signal<Draft | undefined>(undefined)
+export const draft = signal<Draft | undefined>(undefined)
 
 export { canAsk }
 
@@ -75,8 +76,9 @@ export function openAsk(opts: { pin?: string } = {}) {
  * the first question is what the conversation is named after and that is worth
  * being asked for.
  */
-export function askAboutNote(title: string) {
-  openAsk({ pin: title })
+export function askAboutNote(path: string) {
+  // By what a link to it would say: a title another note shares means the other one.
+  openAsk({ pin: linkNameFor(path) })
 }
 
 export function AskDialog() {

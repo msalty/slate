@@ -355,36 +355,66 @@ describe('moving a note, and the links it makes', () => {
 
 describe('two notes with one name', () => {
   /*
-   * `[[Name]]` meant whichever of them had been edited most recently, so
-   * editing one moved every such link in the vault to it.
+   * `[[Name]]` meant whichever had been edited most recently, and then
+   * whichever was made first — by a clock that is local, so a synced vault's
+   * devices could each be sure a different note was older.
    */
-  it('means the older, whichever is edited or moved afterwards', async () => {
-    const { vault, folders } = await fresh()
-    const now = Date.now()
-    const clock = vi.spyOn(Date, 'now')
-    clock.mockReturnValue(now)
-    const home = await vault.createNote('Home', 'Name', 'home')
-    clock.mockReturnValue(now + 1000)
+  it('means the first by path, whatever order they were made or edited in', async () => {
+    const { vault } = await fresh()
     const work = await vault.createNote('Work', 'Name', 'work')
-    clock.mockRestore()
+    const home = await vault.createNote('Home', 'Name', 'home')
     expect(vault.resolveLink('Name')).toBe(home)
     await vault.saveNote(work, 'work, edited')
     expect(vault.resolveLink('Name')).toBe(home)
-    await vault.saveNote(home, 'home, edited')
-    expect(vault.resolveLink('Name')).toBe(home)
-    const moved = await folders.moveNoteToFolder(work, 'Archive')
-    expect(moved).toBe('Archive/Name.md')
-    expect(vault.resolveLink('Name')).toBe(home)
   })
 
-  it('and the earlier by path when they are exactly as old', async () => {
+  it('keeps a link on its note when a new one would take the name', async () => {
     const { vault } = await fresh()
-    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now())
-    // Made in the other order, so it is the path deciding and not the order.
-    await vault.createNote('Work', 'Name', 'work')
+    const work = await vault.createNote('Work', 'Name', 'work')
+    const ref = await vault.createNote('', 'Ref', 'see [[Name#Costs|the costs]]')
+    const archive = await vault.createNote('Archive', 'Name', 'archive')
+    expect(vault.resolveLink('Name')).toBe(archive)
+    expect(vault.getRaw(ref)?.text).toBe('see [[Work/Name#Costs|the costs]]')
+    expect(vault.resolveLink('Work/Name')).toBe(work)
+  })
+
+  it('and when a move would hand it to the other note', async () => {
+    const { vault, folders } = await fresh()
     const home = await vault.createNote('Home', 'Name', 'home')
-    clock.mockRestore()
-    expect(vault.resolveLink('Name')).toBe(home)
+    const work = await vault.createNote('Work', 'Name', 'work')
+    const ref = await vault.createNote('', 'Ref', 'see [[Name]]')
+    // `Archive/Name` sorts before `Home/Name`: the bare name would go with it.
+    await folders.moveNoteToFolder(work, 'Archive')
+    expect(vault.getRaw(ref)?.text).toBe('see [[Home/Name]]')
+    expect(vault.resolveLink('Home/Name')).toBe(home)
+  })
+
+  it('and follows its own note when that one moves out of first place', async () => {
+    const { vault, folders } = await fresh()
+    await vault.createNote('Home', 'Name', 'home')
+    await vault.createNote('Work', 'Name', 'work')
+    const ref = await vault.createNote('', 'Ref', 'see [[Name]]')
+    await folders.moveNoteToFolder('Home/Name.md', 'Zed')
+    expect(vault.getRaw(ref)?.text).toBe('see [[Zed/Name]]')
+  })
+
+  it('leaves a link alone when it means the same note afterwards', async () => {
+    const { vault, folders } = await fresh()
+    await vault.createNote('Home', 'Name', 'home')
+    const work = await vault.createNote('Work', 'Name', 'work')
+    const ref = await vault.createNote('', 'Ref', 'see [[Name]]')
+    await folders.moveNoteToFolder(work, 'Zed')
+    expect(vault.getRaw(ref)?.text).toBe('see [[Name]]')
+  })
+
+  it('is asked about by path, so the question is about the note on screen', async () => {
+    const { vault } = await fresh()
+    await vault.createNote('Home', 'Name', 'home')
+    const work = await vault.createNote('Work', 'Name', 'work')
+    const ask = await import('../ui/AskDialog')
+    ask.askAboutNote(work)
+    expect(ask.draft.value?.pin).toBe('Work/Name')
+    expect(vault.resolveLink(ask.draft.value!.pin!)).toBe(work)
   })
 
   it('is linked to by path, so a new link means the note that was picked', async () => {
@@ -396,6 +426,45 @@ describe('two notes with one name', () => {
     expect(vault.linkNameFor(home)).toBe('Home/Name')
     expect(vault.linkNameFor(work)).toBe('Work/Name')
     expect(vault.linkNameFor(only)).toBe('Only')
+  })
+})
+
+describe('a folder renamed onto one that is there', () => {
+  /*
+   * A folder holding only an attachment was not seen as a folder, so the
+   * rename went ahead: links were rewritten, a note moved, and the attachment
+   * that collided threw — leaving the folder half in each place.
+   */
+  it('is refused before anything is touched', async () => {
+    const { vault, folders } = await fresh()
+    const png = () => new Blob(['x'], { type: 'image/png' })
+    await vault.addAttachment(png(), 'Dest/img.png')
+    await vault.addAttachment(png(), 'Src/img.png')
+    const note = await vault.createNote('Src', 'Note', 'n')
+    const ref = await vault.createNote('', 'Ref', 'see [[Src/Note]]')
+    await expect(folders.renameFolder('Src', 'Dest')).rejects.toThrow(/already exists/)
+    expect(vault.getRaw(ref)?.text).toBe('see [[Src/Note]]')
+    expect(vault.occupied(note)).toBe(true)
+    expect(vault.occupied('Dest/Note.md')).toBe(false)
+  })
+
+  it('and so is any set of moves that could not all land', async () => {
+    const { vault } = await fresh()
+    await vault.addAttachment(new Blob(['x'], { type: 'image/png' }), 'Dest/img.png')
+    await vault.addAttachment(new Blob(['y'], { type: 'image/png' }), 'Src/img.png')
+    const note = await vault.createNote('Src', 'Note', 'n')
+    const moves = new Map([
+      [note, 'Dest/Note.md'],
+      ['Src/img.png', 'Dest/img.png'],
+    ])
+    await expect(vault.relocate(moves)).rejects.toThrow(/already exists/)
+    expect(vault.occupied(note)).toBe(true)
+    const twice = new Map([
+      [note, 'Else/Same.md'],
+      ['Src/img.png', 'Else/Same.md'],
+    ])
+    await expect(vault.relocate(twice)).rejects.toThrow(/already exists/)
+    expect(vault.occupied(note)).toBe(true)
   })
 })
 

@@ -47,7 +47,7 @@ import {
   type QueryContext,
   type QueryNode,
 } from './tagquery'
-import type { NoteIndexEntry, TaskItem } from './types'
+import type { NoteIndexEntry, TaskItem, VaultFile } from './types'
 import { forgetFolder, forgetTagFolders, renameOpenFolder } from './disclosure'
 import { clearTemplateFolders, repointTemplateFolders } from './templates'
 import { mediaClass } from './util'
@@ -181,7 +181,11 @@ export async function renameFolder(from: string, name: string): Promise<string> 
   if (!src || !clean) return src
   const dest = joinPath(dirname(src), clean)
   if (dest === src) return src
-  if (folderExists(dest)) throw new Error(`"${clean}" already exists here.`)
+  // Anything already there — a folder, or a file of any kind at or under it.
+  const taken = (f: VaultFile) => f.path === dest || f.path.startsWith(`${dest}/`)
+  if (folderExists(dest) || listAll().some((f) => !f.deleted && taken(f))) {
+    throw new Error(`"${clean}" already exists here.`)
+  }
 
   const moves = new Map<string, string>()
   for (const f of listAll()) {

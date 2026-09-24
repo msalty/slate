@@ -242,7 +242,7 @@ export function CommandPalette() {
             {
               id: 'ask-note',
               label: `Ask about this note — ${openEntry.title}`,
-              run: () => askAboutNote(openEntry.title),
+              run: () => askAboutNote(openEntry.path),
             },
           ] satisfies Cmd[])
         : []),

@@ -24,6 +24,7 @@
 import type { NoteIndexEntry } from './types'
 import { parseFrontmatter } from './markdown'
 import { ymd } from './util'
+import { formatWikiLink } from './wikilink'
 
 /**
  * Characters per token, near enough.
@@ -44,6 +45,11 @@ export function estimateTokens(text: string): number {
 export interface SummarySource {
   path: string
   title: string
+  /**
+   * What the summary writes to link to it: the title, or the path when another
+   * note has that title too — a bare shared title means whichever comes first.
+   */
+  cite: string
   /** The body, with frontmatter removed. */
   body: string
   tokens: number
@@ -57,15 +63,20 @@ export interface SummarySource {
  * likeliest place for something you would not have chosen to send. The title is
  * passed separately because it is what the summary will cite.
  */
-export function sourceFor(entry: NoteIndexEntry, text: string): SummarySource {
+export function sourceFor(
+  entry: NoteIndexEntry,
+  text: string,
+  cite = entry.title,
+): SummarySource {
   const { bodyStart } = parseFrontmatter(text)
   const body = text.slice(bodyStart).trim()
-  return { path: entry.path, title: entry.title, body, tokens: estimateTokens(body) + 8 }
+  return { path: entry.path, title: entry.title, cite, body, tokens: estimateTokens(body) + 8 }
 }
 
 /** How one note appears in a prompt. */
 function block(s: SummarySource): string {
-  return `## ${s.title}\n\n${s.body}`
+  // Headed by the link to copy, so a citation is the note's own and not a lookalike's.
+  return `## ${formatWikiLink({ target: s.cite })}\n\n${s.body}`
 }
 
 export interface Plan {
@@ -140,7 +151,7 @@ export function planSummary(sources: SummarySource[], budgetTokens: number): Pla
 /* ------------------------------------------------------------------ prompts */
 
 const CITE =
-  'Refer to a note by writing its title in double square brackets, like [[Weekly review]], using the titles exactly as given. Do not invent titles.'
+  "Refer to a note by copying the link in its heading exactly, like [[Weekly review]] or [[Work/Weekly review]]. Do not shorten a link or invent one."
 
 export function summarySystem(what: string): string {
   return [

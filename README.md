@@ -303,13 +303,13 @@ same: the note you moved becomes `Foo 2`, the toast says so, and nothing is
 overwritten. An event keeps its date through that: `Standup - 2026-09-21 2`,
 never a counter cut into the date.
 
-**Two notes with one name.** `[[Name]]` means the older of them — by when
-this device first had each — and the earlier by path if that is a tie. Editing
-or moving either one does not change which, which it used to: the link followed
-whichever had been edited last. Because a synced note is dated by when this
-device first saw it, two devices can disagree about which is older, so a link
-made by *picking* one of them — from autocomplete, or pinning it — is written
-with its path: `[[Work/Name]]` means that note on every device.
+**Two notes with one name.** `[[Name]]` means the first of them by path —
+`Home/Name` before `Work/Name` — on every device, whatever order they were made
+or edited in. A link made by *picking* one of them — from autocomplete, pinning,
+*Ask about this note*, or an AI citation — is written with its path:
+`[[Work/Name]]` means that note wherever it is. And when a move, or a new note
+of that name, would hand an existing `[[Name]]` to the other note, that link is
+rewritten to the path of the note it meant first, so nothing moves under it.
 
 **A name can use the characters a link does.** `#`, `|` and `]` all mean
 something inside `[[…]]` — `[[C# Notes]]` is the note `C` and its heading
@@ -1583,7 +1583,9 @@ question into an unpredictable number of requests. This works on everything.
 
 **The citations are checked, not trusted.** The instruction says never to invent
 a note title, and every answer is read back to find out whether it was obeyed:
-each `[[citation]]` is compared against the notes actually sent, and anything
+each `[[citation]]` is followed to the note it leads to and compared against the
+notes actually sent — so of two notes called `Name`, citing the one that was not
+sent is caught — and anything
 else is named in the callout — linked if a note by that name exists, quoted as
 *invented* if none does. This costs no extra request; it is a scan of text
 already in hand. It matters because a fabricated citation renders identically to

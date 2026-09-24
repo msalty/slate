@@ -32,7 +32,15 @@ import { parseFrontmatter } from '../core/markdown'
 import { settings } from '../core/settings'
 import { estimateTokens } from '../core/summary'
 import { parseQuery } from '../core/tagquery'
-import { backlinkMap, createNote, getEntry, getText, resolveLink, search } from '../core/vault'
+import {
+  backlinkMap,
+  createNote,
+  getEntry,
+  getText,
+  linkNameFor,
+  resolveLink,
+  search,
+} from '../core/vault'
 import type { NoteIndexEntry } from '../core/types'
 
 /** Is there anywhere to send a question? The composer is absent without one. */
@@ -248,7 +256,7 @@ function gather(
     if (!body) continue
     const cost = estimateTokens(body) + 8
     if (sources.length && tokens + cost > room) break
-    sources.push({ title: entry.title, body, path: entry.path })
+    sources.push({ title: entry.title, cite: linkNameFor(entry.path), body, path: entry.path })
     tokens += cost
   }
   return { sources, tokens }
@@ -337,18 +345,22 @@ export async function askTurn(
    * title; this is the only thing that finds out whether it was obeyed, and it
    * costs one scan of text already in hand.
    */
-  const unread = citedWithoutReading(answer, sources.map((s) => s.title))
+  const unread = citedWithoutReading(
+    answer,
+    sources.map((s) => s.path),
+    resolveLink,
+  )
   return {
     answer: answer.trim(),
     provenance: {
       terms,
       matched: found.length,
-      read: sources.map((s) => s.title),
+      read: sources.map((s) => s.cite),
       tokens,
       dropped: Math.max(0, Math.min(candidates, limit) - sources.length),
       beyondLimit: Math.max(0, candidates - limit),
       limit,
-      pinned: pinsSent.map((e) => e.title),
+      pinned: pinsSent.map((e) => linkNameFor(e.path)),
       missingPins: pins.missing,
       pinsSkipped: pins.entries.length - pinsSent.length,
       citedNotRead: unread.filter((t) => !!resolveLink(t)),
