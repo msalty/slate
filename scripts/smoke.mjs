@@ -7099,6 +7099,19 @@ try {
   )
 
   await titleField.fill('Budget call')
+  await page.waitForTimeout(300)
+  /*
+   * The name the note will have, before it has it. The date goes on the end
+   * rather than the front — a prefix pushed the name off the end of the agenda
+   * row, which is one line wide and ends in an ellipsis — and it is shown here
+   * because a name is easier to argue with in the dialog than in the note list.
+   */
+  check(
+    'the dialog says what the note will be called, date and all',
+    (await page.locator('.event-lands').innerText()).includes(`Budget call - ${isoDay(2)}.md`),
+    await page.locator('.event-lands').innerText(),
+  )
+
   /*
    * Twice, quickly. The dialog used to close before the note was written, so a
    * second Enter landed on a form that was already gone — and a write that
@@ -7127,8 +7140,8 @@ try {
     await page.locator('.editor-title-input').inputValue(),
   )
   check(
-    'called exactly what was typed — a filename cannot follow a picker',
-    (await page.locator('.editor-title-input').inputValue()) === 'Budget call',
+    'called what was typed, with the day it is on after it and nothing before',
+    (await page.locator('.editor-title-input').inputValue()) === `Budget call - ${isoDay(2)}`,
     await page.locator('.editor-title-input').inputValue(),
   )
   check(
@@ -7141,6 +7154,11 @@ try {
     'and it is on the agenda it was made from',
     (await agenda.locator('.agenda-row').allInnerTexts()).join(' | ').includes('Budget call'),
     (await agenda.locator('.agenda-row').allInnerTexts()).join(' | '),
+  )
+  check(
+    'reading as its name, the date the file carries left off',
+    (await agenda.locator('.agenda-row .agenda-what').allInnerTexts()).includes('Budget call'),
+    (await agenda.locator('.agenda-row .agenda-what').allInnerTexts()).join(' | '),
   )
 
   /*
@@ -7183,7 +7201,7 @@ try {
   )
   check(
     'while the name it was given stays as it was, so no link to it breaks',
-    (await page.locator('.editor-title-input').inputValue()) === 'Budget call',
+    (await page.locator('.editor-title-input').inputValue()) === `Budget call - ${isoDay(2)}`,
     await page.locator('.editor-title-input').inputValue(),
   )
   check(
@@ -7196,6 +7214,56 @@ try {
     await page.keyboard.press('Control+Shift+m')
     await page.waitForTimeout(300)
   }
+
+  /*
+   * The same meeting, next time round — which is what the date on the end is
+   * for.
+   *
+   * Name collisions are resolved per *folder* and an event's folder is a
+   * month, so a weekly lunch used to be `Lunch with Joe`, `Lunch with Joe 2`,
+   * `Lunch with Joe 3` through September and then start again at `Lunch with
+   * Joe` in October: the same series, numbered differently every month, with
+   * nothing in any name saying which occurrence it was. Each one now carries
+   * its own day, so they are told apart by something that means something and
+   * they sort the way the calendar does.
+   *
+   * The two days here may fall either side of a month end, which is the case
+   * that had no collision to resolve and so produced two files with one name.
+   * Either way the claim is the same: each name carries its own date.
+   */
+  const againOn = await showDay(3)
+  await againOn.click()
+  await page.waitForTimeout(400)
+  await page.locator('.rail .agenda [aria-label="New event"]').click()
+  await page.waitForTimeout(350)
+  await titleField.fill('Budget call')
+  await page.waitForTimeout(250)
+  await page.keyboard.press('Enter')
+  await page.waitForTimeout(1200)
+  check(
+    'the agenda row for the second one reads as the meeting, not as a filename',
+    (await agenda.locator('.agenda-row .agenda-what').allInnerTexts()).includes('Budget call'),
+    (await agenda.locator('.agenda-row .agenda-what').allInnerTexts()).join(' | '),
+  )
+
+  await page.locator('.side-row:has-text("All Notes")').first().click()
+  await page.waitForTimeout(500)
+  const calls = (await page.locator('.note-row-title').allInnerTexts())
+    .map((t) => t.trim())
+    .filter((t) => t.startsWith('Budget call'))
+  check(
+    'and the week before it is still there, under a name of its own',
+    calls.length === 2 &&
+      new Set(calls).size === 2 &&
+      calls.includes(`Budget call - ${isoDay(2)}`) &&
+      calls.includes(`Budget call - ${isoDay(3)}`),
+    calls.join(' | '),
+  )
+  check(
+    'told apart by the day rather than by a number that starts over each month',
+    calls.every((t) => !/ \d+$/.test(t)),
+    calls.join(' | '),
+  )
 
   /*
    * And a key that only looks like one the app knows.

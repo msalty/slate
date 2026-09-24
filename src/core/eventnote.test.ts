@@ -46,11 +46,47 @@ describe('where an event goes and what it is called', () => {
     expect(eventFolderFor(DAY)).toBe('Calendar/2026/09')
   })
 
-  it('is called what you called it, with nothing stamped on the front', () => {
-    // A filename does not follow the frontmatter, so anything about *when* in
-    // the name is a claim that stops being true the moment the event moves.
+  it('is called what you called it, with the day it is on after it', () => {
+    // After, never in front: a prefix pushes the name off the end of the
+    // agenda row, which is one line wide and ends in an ellipsis.
+    expect(eventNoteName('Design review', '2026-09-21T09:30')).toBe('Design review - 2026-09-21')
+    expect(eventNoteName('  Office closed  ', '2026-09-21')).toBe('Office closed - 2026-09-21')
+  })
+
+  it('takes the date from the start it is given, not from a clock', () => {
+    // The name says exactly what `start:` says, so no zone takes part in it.
+    expect(eventNoteName('Standup', '2026-12-31T23:30')).toBe('Standup - 2026-12-31')
+  })
+
+  it('does not tell you the date twice', () => {
+    expect(eventNoteName('Retro 2026-09-21', '2026-09-21T09:30')).toBe('Retro 2026-09-21')
+    expect(eventNoteName('Retro - 2026-09-21', '2026-09-21')).toBe('Retro - 2026-09-21')
+    // A different date is a different thing being said, so it is still added.
+    expect(eventNoteName('Retro 2026-09-14', '2026-09-21')).toBe('Retro 2026-09-14 - 2026-09-21')
+  })
+
+  it('is just the name when there is no start to date it by', () => {
     expect(eventNoteName('Design review')).toBe('Design review')
-    expect(eventNoteName('  Office closed  ')).toBe('Office closed')
+    expect(eventNoteName('Design review', '')).toBe('Design review')
+    expect(eventNoteName('Design review', 'whenever')).toBe('Design review')
+  })
+
+  it('gives a weekly meeting a different name every week', () => {
+    // The one this exists for. Collisions are per folder and the folder is a
+    // month, so numbering restarted every October and the same series was
+    // `Lunch with Joe 2` in September and `Lunch with Joe` again in October.
+    const weekly = ['2026-09-07', '2026-09-14', '2026-09-21', '2026-09-28'].map((d) =>
+      eventNoteName('Lunch with Joe', `${d}T12:00`),
+    )
+    expect(new Set(weekly).size).toBe(4)
+    expect(weekly).toEqual([
+      'Lunch with Joe - 2026-09-07',
+      'Lunch with Joe - 2026-09-14',
+      'Lunch with Joe - 2026-09-21',
+      'Lunch with Joe - 2026-09-28',
+    ])
+    // And sorts the way the calendar does, which ` 2` never did.
+    expect([...weekly].sort()).toEqual(weekly)
   })
 
   it('opens on the chosen day at that half hour, for an hour', () => {
@@ -76,7 +112,7 @@ describe('the note it writes', () => {
   it('lands in the calendar folder under the year and month, named for itself', async () => {
     const { ev } = await fresh()
     const { path } = await ev.newEventNote('Design review', '2026-09-21T09:30', '2026-09-21T10:30')
-    expect(path).toBe('Calendar/2026/09/Design review.md')
+    expect(path).toBe('Calendar/2026/09/Design review - 2026-09-21.md')
   })
 
   it('opens with a start and an end already written', async () => {
@@ -93,14 +129,26 @@ describe('the note it writes', () => {
     expect(vault.eventsByDay.value.get(DAY)?.map((e) => e.path)).toEqual([path])
   })
 
-  it('gives two of one name on one day the `2` every collision in the vault gets', async () => {
+  it('tells one week of a weekly meeting from the next', async () => {
+    const { vault, ev } = await fresh()
+    const a = await ev.newEventNote('Standup', '2026-09-21T09:30', '2026-09-21T10:30')
+    const b = await ev.newEventNote('Standup', '2026-09-28T09:30', '2026-09-28T10:30')
+    expect(a.path).toBe('Calendar/2026/09/Standup - 2026-09-21.md')
+    expect(b.path).toBe('Calendar/2026/09/Standup - 2026-09-28.md')
+    expect(vault.resolveLink('Standup - 2026-09-21')).toBe(a.path)
+    expect(vault.resolveLink('Standup - 2026-09-28')).toBe(b.path)
+    // And nothing holds the bare name any more, which is the price of it.
+    expect(vault.resolveLink('Standup')).toBeUndefined()
+  })
+
+  it('still gives two on one day the `2` every collision in the vault gets', async () => {
     const { vault, ev } = await fresh()
     const a = await ev.newEventNote('Standup', '2026-09-21T09:30', '2026-09-21T10:30')
     const b = await ev.newEventNote('Standup', '2026-09-21T14:00', '2026-09-21T15:00')
-    expect(a.path).toBe('Calendar/2026/09/Standup.md')
-    expect(b.path).toBe('Calendar/2026/09/Standup 2.md')
-    expect(vault.resolveLink('Standup')).toBe(a.path)
-    expect(vault.resolveLink('Standup 2')).toBe(b.path)
+    expect(a.path).toBe('Calendar/2026/09/Standup - 2026-09-21.md')
+    expect(b.path).toBe('Calendar/2026/09/Standup - 2026-09-21 2.md')
+    expect(vault.resolveLink('Standup - 2026-09-21')).toBe(a.path)
+    expect(vault.resolveLink('Standup - 2026-09-21 2')).toBe(b.path)
   })
 
   it('keeps the name it was given when the day or time is changed afterwards', async () => {
@@ -112,10 +160,11 @@ describe('the note it writes', () => {
     )
     /*
      * The file does not rename itself — a rename would break every `[[link]]`
-     * pointing at it — and it does not need to, because nothing about when it
-     * happens was ever written into the name. It simply moves.
+     * pointing at it — so the date in the name is now a fortnight out and is
+     * left that way on purpose. Nothing reads it: the agenda takes the day off
+     * `start:`, and the note moves to October without being touched.
      */
-    expect(vault.resolveLink('Design review')).toBe(path)
+    expect(vault.resolveLink('Design review - 2026-09-21')).toBe(path)
     expect(vault.eventsByDay.value.get(DAY)).toBeUndefined()
     expect(vault.eventsByDay.value.get(parseYmd('2026-10-05')!)?.length).toBe(1)
     expect(vault.getEntry(path)?.calendarDate).toBe(parseYmd('2026-10-05'))
@@ -260,7 +309,7 @@ describe('the times the dialog chose', () => {
   it('are written as given, and files the note in the start’s own month', async () => {
     const { vault, ev } = await fresh()
     const { path } = await ev.newEventNote('Budget call', '2026-11-03T16:45', '2026-11-03T17:15')
-    expect(path).toBe('Calendar/2026/11/Budget call.md')
+    expect(path).toBe('Calendar/2026/11/Budget call - 2026-11-03.md')
     const text = vault.getRaw(path)?.text ?? ''
     expect(text).toContain('start: 2026-11-03T16:45')
     expect(text).toContain('end: 2026-11-03T17:15')
@@ -375,7 +424,7 @@ describe('the zone on a new event', () => {
     const { path } = await v.ev.newEventNote('Kickoff', '2026-10-01T00:30', '2026-10-01T01:30')
     expect(v.vault.getRaw(path)?.text).not.toContain('tz:')
     // The day the dialog said, in the month the dialog said.
-    expect(path).toBe('Calendar/2026/10/Kickoff.md')
+    expect(path).toBe('Calendar/2026/10/Kickoff - 2026-10-01.md')
     expect(v.vault.getEntry(path)?.calendarDate).toBe(parseYmd('2026-10-01'))
   })
 

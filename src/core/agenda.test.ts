@@ -114,10 +114,37 @@ describe('what is already over', () => {
 })
 
 describe('what a row is called', () => {
-  it('drops the date and time the filename carries for uniqueness', async () => {
+  it('drops the date the filename carries for uniqueness', async () => {
+    const { eventTitle } = await import('./agenda')
+    expect(eventTitle('Lunch with Joe - 2026-09-22')).toBe('Lunch with Joe')
+    expect(eventTitle('Office closed - 2026-09-21')).toBe('Office closed')
+  })
+
+  it('drops the counter a name taken twice in one day picks up', async () => {
+    const { eventTitle } = await import('./agenda')
+    expect(eventTitle('Lunch with Joe - 2026-09-22 2')).toBe('Lunch with Joe')
+  })
+
+  it('still drops the stamp notes made before it moved to the end carry', async () => {
     const { eventTitle } = await import('./agenda')
     expect(eventTitle('2026-09-21 0930 Standup')).toBe('Standup')
     expect(eventTitle('2026-09-21 Office closed')).toBe('Office closed')
+  })
+
+  it('leaves a name that merely contains a date alone', async () => {
+    const { eventTitle } = await import('./agenda')
+    // Only a date the *whole* suffix shape puts there, so a name that happens
+    // to end in one keeps it.
+    expect(eventTitle('Deadline 2026-09-22')).toBe('Deadline 2026-09-22')
+    expect(eventTitle('Sprint 2026-09-22 kickoff')).toBe('Sprint 2026-09-22 kickoff')
+  })
+
+  it('round-trips what eventNoteName writes', async () => {
+    const { eventTitle } = await import('./agenda')
+    const { eventNoteName } = await import('./eventnote')
+    for (const name of ['Standup', 'Lunch with Joe', 'Q3 2026 planning', '1:1 - Ana']) {
+      expect(eventTitle(eventNoteName(name, '2026-09-22T12:00'))).toBe(name)
+    }
   })
 
   it('leaves a name alone when there is no stamp on it', async () => {

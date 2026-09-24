@@ -130,30 +130,49 @@ the mechanism for "I always want these four fields", and the `Meeting` starter
 is one — it opens with `start:`, so a meeting note lands on the agenda for the
 day it happened.
 
-**Filenames.** `Calendar/2026/09/Design review.md`. Year/month subfolders keep
+**Filenames.** `Calendar/2026/09/Design review - 2026-09-21.md`. Year/month subfolders keep
 any one directory browsable, and a template assigned to `Calendar/` reaches them
 — the walk goes up within the calendar tree, because `Calendar/2026/09` is not a
 folder anybody chose.
 
-**Nothing about *when* goes in the name.** Not the time, and not the date. A
-filename does not follow the frontmatter, so either one is a claim that stops
-being true the moment the event moves — and it would be wrong in all the places
-a name shows (the note list, the editor header, search, every `[[link]]`) while
-being invisible in the one place it was right, since the agenda reads both the
-clock and the day off `start:`.
+**The day goes on the end of the name, and nothing goes on the front.**
+`Calendar/2026/09/Lunch with Joe - 2026-09-22.md`. Not the time — that moves too
+often to be worth writing down twice — and never a prefix, which is what this
+was first built as and what had to be taken out again: a prefix pushes the name
+out of every list that shows one, and the agenda rail is a single line ending in
+an ellipsis, so it showed the date and then ran out of room before reaching the
+thing you named.
 
-This costs something real and the app accepts it: `titleIndex` is
-first-writer-wins on collision (`src/core/vault.ts:574`), so twelve notes called
-Standup leave eleven unreachable by `[[Standup]]`. For a hand-made event that is
-a fair trade — there are few of them and `aliases:` or a rename is available.
+The objection to writing *when* into a filename is real and still stands: a
+filename does not follow the frontmatter, so the date stops being true the
+moment the event moves. It is left stale rather than chased, because a rename
+breaks every `[[link]]` pointing at the note, and nothing reads it — the agenda
+takes both the clock and the day off `start:`, and `eventTitle` strips the
+suffix before a row is drawn.
 
-**The importer cannot make that trade**, because it writes hundreds and needs
-every one linkable. It disambiguates with a short stable suffix derived from the
-`uid` — `Standup (a41b).md` — rather than with a date or a time. Stable is the
-requirement: "whatever name was free" changes between runs, and anything
-describing *when* would force a rename every time a meeting moved, breaking
-every link pointing at it. This is the one place the two sides deliberately
-differ, and the reason is volume rather than taste.
+What makes it worth paying is the alternative. Collisions resolve per
+*directory* and the directory is a month, so a weekly lunch was `Lunch with
+Joe`, `Lunch with Joe 2`, `Lunch with Joe 3` through September — and then began
+again at `Lunch with Joe` in October, a different folder with a fresh counter.
+The same series, numbered differently every month, with nothing in any of the
+names saying which occurrence it was. A date is a disambiguator that means
+something, sorts the way the folder already sorts, and leaves the name you typed
+at the front where prefix search and every alphabetical list expect it.
+
+It still costs the bare name. `titleIndex` is first-writer-wins on collision
+(`src/core/vault.ts:574`), and now no occurrence holds `Lunch with Joe.md` at
+all, so `[[Lunch with Joe]]` resolves to nothing and a link names a date or goes
+through `aliases:`. That is a better trade than eleven notes reachable only by a
+number that starts over in October.
+
+**The importer disambiguates differently**, and deliberately. It uses a short
+stable suffix derived from the `uid` — `Standup (a41b).md` — because it writes
+hundreds and *stability* is its requirement: a recurring series it re-syncs must
+land on the same filenames every run, and a date would force a rename every time
+a meeting moved, breaking every link pointing at it. A hand-made event is
+written once and never rewritten by anything, so it can afford a date that goes
+stale; an imported one cannot. Same problem, two answers, and the difference is
+who rewrites the file.
 
 **Bodies stay short.** The description is truncated to roughly 500 characters,
 conference boilerplate is stripped, and the join link goes in `url` rather than
@@ -367,9 +386,11 @@ shape:
 - Timed events in a list, `09:30` in a fixed-width gutter, title beside it.
   **Not** a time grid: a grid needs vertical space the rail has not got, and
   this is a surface for reading a day, not for scheduling one.
-- A row reads as the event's *name*: the leading `2026-09-21 0930` the filename
+- A row reads as the event's *name*: the trailing ` - 2026-09-21` the filename
   carries for uniqueness is stripped, since the panel is under a heading naming
-  the day and puts the clock in its own column already.
+  the day and puts the clock in its own column already. (A leading
+  `2026-09-21 0930` is stripped too, for notes made while the stamp went on the
+  front.)
 - Zoned events annotate with their own zone.
 - A small provider mark on external events; nothing on your own.
 - Empty state: "Nothing scheduled.", matching `rail-empty` elsewhere.
@@ -406,7 +427,7 @@ differences.
 ### 5.4 Creating an event
 
 - A `>New event` command in the palette: asks for a title, writes
-  `Calendar/<year>/<month>/<date> <time> <title>.md` with `start` and `end`
+  `Calendar/<year>/<month>/<title> - <date>.md` with `start` and `end`
   prefilled from the selected day, and opens it.
 - A folder template on `Calendar/` for anyone wanting extra fields. This uses
   the existing folder-template mechanism; there is nothing new to build.

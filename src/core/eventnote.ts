@@ -35,26 +35,50 @@ export function eventFolderFor(day: number): string {
   return `${CALENDAR_FOLDER}/${d.getFullYear()}/${`${d.getMonth() + 1}`.padStart(2, '0')}`
 }
 
+/** The date at the head of a `start:` value, whether or not a clock follows. */
+const DATE_HEAD = /^(\d{4}-\d{2}-\d{2})/
+
 /**
- * An event is called what you called it.
+ * What you called it, and the day it is on.
  *
- * Nothing is stamped onto the front of it — not the time, and not the date
- * either. A filename does not follow the frontmatter, so anything about *when*
- * written into the name is a claim that stops being true the moment the event
- * moves, and moving one is a two-second job now the properties form has a
- * picker on it. Worse, it was wrong in all the places the name shows — the note
- * list, the editor's header, search, every `[[link]]` — and invisible in the
- * one place it was right, since the agenda reads the clock and the day off
- * `start:`.
+ * `Lunch with Joe - 2026-09-22.md`. The date is a *suffix* and the distinction
+ * is the whole of why this is here at all: stamped on the front, as it was
+ * first built, it pushed the name out of every list that shows one, and the
+ * agenda rail — the narrowest of them, one line with an ellipsis — showed the
+ * date and then ran out of room before reaching the thing you named.
  *
- * What that costs is real and worth saying: a weekly standup is twelve notes
- * called Standup, and `[[Standup]]` can only mean one of them. Two in one month
- * get the `2` that every name collision in the vault gets; two in different
- * months are two files with one name. `aliases:` or a rename is the way out for
- * an occurrence worth linking to on its own.
+ * What was wrong with the prefix is still wrong. A filename does not follow the
+ * frontmatter, so this date stops being true the moment the event moves, and
+ * moving one is a two-second job now the properties form has a picker on it. It
+ * is left stale on purpose rather than chased: a rename breaks every `[[link]]`
+ * pointing at the note, and the agenda has never read the name for anything —
+ * it takes the clock and the day off `start:`.
+ *
+ * What changed is what the alternative turned out to cost. Collisions are per
+ * *folder*, and the folder is `Calendar/<year>/<month>`, so a weekly lunch was
+ * `Lunch with Joe`, `Lunch with Joe 2`, `Lunch with Joe 3` through September —
+ * and then began again at `Lunch with Joe` in October, because that is a
+ * different directory. The same series, numbered differently every month, with
+ * nothing in any of the names saying which occurrence it was. A date is a
+ * disambiguator that means something, sorts the way the folder already sorts,
+ * and leaves the name you typed at the front where every prefix search and
+ * every alphabetical list expects it.
+ *
+ * It still costs the bare name: there is no longer a `Lunch with Joe.md` for
+ * `[[Lunch with Joe]]` to land on, so a link to one occurrence names its date
+ * or goes through `aliases:`. That is the trade, and it is a better one than
+ * eleven notes reachable only by a number that changes in October.
+ *
+ * `start` is the dialog's own field value — `2026-09-22T14:00` or a bare
+ * `2026-09-22` — and only its date is used, so the name says exactly what
+ * `start:` says and no zone arithmetic happens on the way. A title that already
+ * ends in that date is not told twice.
  */
-export function eventNoteName(title: string): string {
-  return title.trim()
+export function eventNoteName(title: string, start?: string): string {
+  const name = title.trim()
+  const on = DATE_HEAD.exec(start?.trim() ?? '')?.[1]
+  if (!on || name.endsWith(on)) return name
+  return `${name} - ${on}`
 }
 
 /* ------------------------------------------------- the values a field holds */
@@ -379,7 +403,7 @@ export async function newEventNote(
    */
   text = tz ? setPropertyValue(text, 'tz', tz) : removeProperty(text, 'tz')
   return {
-    path: await createNote(folder, eventNoteName(title), text),
+    path: await createNote(folder, eventNoteName(title, start), text),
     caret: t?.caret === undefined ? undefined : t.caret + (text.length - body.length),
   }
 }

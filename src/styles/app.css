@@ -1697,6 +1697,9 @@ button.property-kind:hover {
 .event-lands code {
   font-family: var(--font-mono);
   font-size: 11.5px;
+  /* A name can be any length somebody wants to type, and this line is under a
+     form whose width is not negotiable. */
+  overflow-wrap: anywhere;
 }
 
 .rail-day {

@@ -112,23 +112,34 @@ export function eventZoneProblem(ev: NoteEvent): string {
   return ev.badZone ?? ''
 }
 
-const STAMP_RE = /^\d{4}-\d{2}-\d{2}(?:[ T]\d{4})?\s+/
+/** `2026-09-21 0930 Standup` — where the stamp used to go. */
+const HEAD_RE = /^\d{4}-\d{2}-\d{2}(?:[ T]\d{4})?\s+/
+/**
+ * `Lunch with Joe - 2026-09-22`, and `- 2026-09-22 2` for the second one that
+ * day, since a name taken twice still picks up the counter every collision in
+ * the vault gets.
+ */
+const TAIL_RE = /\s+-\s+\d{4}-\d{2}-\d{2}(?:\s+\d+)?$/
 
 /**
  * What an event is called, on a list that already knows the day.
  *
- * The date and time live in the *filename* because a note's title is its
- * filename and two standups on one day would otherwise be one linkable note
- * and one unreachable one. None of that is worth reading twice: the agenda
- * sits under a heading naming the day and puts the clock in its own column, so
- * a row reading "2026-09-21 0930 Standup" at 09:30 on the 21st is saying the
- * same thing three times.
+ * The date lives in the *filename* because a note's title is its filename, and
+ * a weekly lunch filed by month is otherwise one linkable note and three
+ * unreachable ones — see `eventNoteName`. None of it is worth reading here: the
+ * agenda sits under a heading naming the day and puts the clock in its own
+ * column, so a row reading "Lunch with Joe - 2026-09-22" on the 22nd is saying
+ * the same thing twice. Worse, this row is one line with an ellipsis on the end
+ * of it, so what the date pushes off the edge is the name.
  *
- * Only the stamp comes off, and only when something is left after it — a note
- * genuinely called `2026-09-21` keeps its name rather than losing it.
+ * Both ends, because the stamp used to go on the front and notes named that way
+ * are still in vaults.
+ *
+ * A date is only taken off when something is left after it — a note genuinely
+ * called `2026-09-21` keeps its name rather than losing it.
  */
 export function eventTitle(title: string): string {
-  const stripped = title.replace(STAMP_RE, '')
+  const stripped = title.replace(HEAD_RE, '').replace(TAIL_RE, '')
   return stripped || title
 }
 

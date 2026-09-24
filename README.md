@@ -19,8 +19,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 1335 unit, two-device sync and folder round-trip tests
-node scripts/smoke.mjs # 855-check browser smoke test against dist/
+npm test               # 1344 unit, two-device sync and folder round-trip tests
+node scripts/smoke.mjs # 860-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -1056,20 +1056,33 @@ chose** — so making next month's meeting no longer means clicking the calendar
 into next month first. Nested because this is the one folder that fills up on
 its own, and a directory with hundreds of files in it is one nobody opens twice.
 
-It is called **what you called it**, with nothing stamped on the front — not the
-time, and not the date either. A filename does not follow the frontmatter, so
-anything about *when* written into the name is a claim that stops being true the
-moment the event moves, and moving one is a two-second job now the properties
-form has a picker on it. Worse, it would be wrong in all the places a name shows
-— the note list, the editor's header, search, every `[[link]]` — and invisible
-in the one place it was right, since the agenda reads both the clock and the day
-off `start:`.
+It is called **what you called it, and then the day it is on** — `Lunch with
+Joe - 2026-09-22.md`. The date goes on the end and never on the front, which is
+what this was first built as and what had to come out again: a prefix pushes the
+name out of every list that shows one, and the agenda rail is a single line
+ending in an ellipsis, so it showed the date and then ran out of room before
+reaching the thing you named. The agenda strips the date back off, since the
+row already sits under a heading naming the day.
 
-What that costs is worth saying plainly: a weekly standup is twelve notes called
-Standup, and `[[Standup]]` can only mean one of them. Two in one month get the
-`2` every name collision in the vault gets; two in different months are two
-files with one name. `aliases:` or a rename is the way out for an occurrence
-worth linking to on its own.
+The objection to putting *when* in a filename is real and stands: a filename
+does not follow the frontmatter, so that date stops being true the moment the
+event moves, and moving one is a two-second job now the properties form has a
+picker on it. It is left stale rather than chased, because a rename breaks every
+`[[link]]` pointing at the note and nothing reads the date anyway — the agenda
+takes both the clock and the day off `start:`.
+
+What makes it worth paying is the alternative. Name collisions are resolved per
+*folder*, and an event's folder is a month, so a weekly lunch was `Lunch with
+Joe`, `Lunch with Joe 2`, `Lunch with Joe 3` through September — and then began
+again at `Lunch with Joe` in October, a different directory with a fresh
+counter. The same series, numbered differently every month, with nothing in any
+of the names saying which occurrence it was. A date means something, sorts the
+way the folder already sorts, and leaves the name you typed at the front where
+prefix search and every alphabetical list expect it.
+
+It still costs the bare name: no occurrence holds `Lunch with Joe.md`, so
+`[[Lunch with Joe]]` resolves to nothing and a link names a date — `[[Lunch with
+Joe - 2026-09-22]]` — or goes through `aliases:`.
 
 A template on `Calendar/` is picked up the way one on `Daily/` is, and the walk
 goes up: a template assigned to `Calendar/` reaches `Calendar/2026/09`, which is
@@ -2290,7 +2303,7 @@ Vault/
 │  └─ Highway 9.md
 ├─ Calendar/                  ← where a new event lands, by year and month
 │  └─ 2026/09/
-│     └─ 2026-09-21 Design review.md
+│     └─ Design review - 2026-09-21.md
 ├─ attachments/
 │  └─ 2026/08/pasted-a3f9.webp
 └─ backstage/                 ← app's own files, hidden in the UI
@@ -2856,8 +2869,8 @@ and that is a better argument for the rail than the outline ever was.
 ## Testing
 
 ```bash
-npm test                # 1335 unit + two-device sync + folder round-trip tests
-node scripts/smoke.mjs  # 855 checks in headless Chromium against dist/
+npm test                # 1344 unit + two-device sync + folder round-trip tests
+node scripts/smoke.mjs  # 860 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

@@ -20,6 +20,7 @@ import { signal } from '@preact/signals'
 import {
   defaultEventTimes,
   eventFolderFor,
+  eventNoteName,
   instantOf,
   keepDuration,
   knownZones,
@@ -354,6 +355,20 @@ export function NewEventDialog() {
                 Device-local, it promised October for a Tokyo midnight that
                 saves into September. */}
             Lands in <code>{eventFolderFor(instantOf(start, tzOf()) ?? req.day)}</code>
+            {title.trim() && (
+              <>
+                {' as '}
+                {/*
+                 * Including the date the name will carry, because a name is
+                 * easier to argue with here than after it is in the note list
+                 * and in every link pointing at it. Not the `2` a name already
+                 * taken picks up — that is decided at the moment of writing,
+                 * and guessing at it here would be a second answer to a
+                 * question only the vault can settle.
+                 */}
+                <code>{`${eventNoteName(title, start)}.md`}</code>
+              </>
+            )}
           </small>
         </div>
         <div class="dialog-foot">
