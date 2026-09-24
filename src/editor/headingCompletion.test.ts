@@ -247,3 +247,61 @@ describe('accepting one', () => {
     expect(scanWikiLinks(revenue)[0].alias).toBeUndefined()
   })
 })
+
+/*
+ * Linking to one of two notes with the same name. `[[Name]]` means one of
+ * them — the older — so a link written by picking the other has to say which.
+ */
+describe('completing a name two notes share', () => {
+  beforeEach(async () => {
+    vi.resetModules()
+    ;(globalThis as { __SLATE_DB__?: string }).__SLATE_DB__ = `slate-headings-${++seq}`
+    const vault = await import('../core/vault')
+    await vault.initVault()
+    await vault.createNote('Home', 'Name', 'home')
+    await vault.createNote('Work', 'Name', 'work')
+    await vault.createNote('', 'Only', 'only')
+    ;({ wikiCompletion: complete } = await import('./completion'))
+  })
+
+  /** What accepting the option shown in `folder` writes. */
+  function acceptIn(doc: string, folder: string): string {
+    const state = EditorState.create({ doc, selection: { anchor: doc.length } })
+    const view = new EditorView({ state })
+    try {
+      const result = at(doc)!
+      const option = result.options.find((o) => o.detail === folder)!
+      ;(option.apply as (v: EditorView, c: unknown, f: number, t: number) => void)(
+        view,
+        option,
+        result.from,
+        doc.length,
+      )
+      return view.state.doc.toString()
+    } finally {
+      view.destroy()
+    }
+  }
+
+  it('writes the path of the one that was picked', () => {
+    expect(acceptIn('See [[Name', 'Home')).toBe('See [[Home/Name]]')
+    expect(acceptIn('See [[Name', 'Work')).toBe('See [[Work/Name]]')
+  })
+
+  it('and a name nobody else has, as the name', async () => {
+    const view = new EditorView({ state: EditorState.create({ doc: 'See [[Onl' }) })
+    try {
+      const result = at('See [[Onl')!
+      const option = result.options.find((o) => o.label === 'Only')!
+      ;(option.apply as (v: EditorView, c: unknown, f: number, t: number) => void)(
+        view,
+        option,
+        result.from,
+        'See [[Onl'.length,
+      )
+      expect(view.state.doc.toString()).toBe('See [[Only]]')
+    } finally {
+      view.destroy()
+    }
+  })
+})

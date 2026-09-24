@@ -4108,6 +4108,64 @@ try {
   await page.locator('.side-row:has-text("All Notes")').first().click()
   await page.waitForTimeout(350)
 
+  /*
+   * Renaming a folder. It moved every note and rewrote nothing, so a link by
+   * path into it — `[[Alpha/Plan]]` — pointed at nothing once `Alpha` was
+   * `Beta`. Through the folder's own menu and dialog, as a person would.
+   */
+  await page.evaluate(async () => {
+    const seed = [
+      ['Alpha/Plan.md', '# Plan\n\nThe plan.\n'],
+      ['Folder linker.md', '# Folder linker\n\nSee [[Alpha/Plan#Plan|the plan]] here.\n'],
+    ]
+    const hash = async (t) => {
+      const d = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)))
+      return [...d.slice(0, 16)].map((b) => b.toString(16).padStart(2, '0')).join('')
+    }
+    const hashes = await Promise.all(seed.map(([, t]) => hash(t)))
+    const db = await new Promise((res, rej) => {
+      const r = indexedDB.open('slate')
+      r.onsuccess = () => res(r.result)
+      r.onerror = () => rej(r.error)
+    })
+    const tx = db.transaction('files', 'readwrite')
+    seed.forEach(([path, text], i) => {
+      tx.objectStore('files').put({
+        path, kind: 'note', text, mime: 'text/markdown', size: text.length,
+        hash: hashes[i], mtime: Date.now() + 40_000 - i * 100, ctime: Date.now(),
+        dirty: true, dirtyFlag: 1, sync: {},
+      })
+    })
+    await new Promise((res) => { tx.oncomplete = res })
+  })
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForSelector('.note-row')
+  await folderRow('Alpha').first().click({ button: 'right' })
+  await page.waitForTimeout(300)
+  await page.locator('.menu-item:has-text("Rename")').first().click()
+  await nameFolder('Beta')
+  await page.locator('.side-row:has-text("All Notes")').first().click()
+  await page.waitForTimeout(350)
+  await page.locator('.note-row', { hasText: 'Folder linker' }).first().click()
+  await page.waitForTimeout(700)
+  const folderLink = page.locator('.cm-content .cm-wikilink').first()
+  const folderSeen = {
+    to: await folderLink.getAttribute('data-wikilink'),
+    anchor: await folderLink.getAttribute('data-anchor'),
+    exists: await folderLink.getAttribute('data-exists'),
+    shown: await folderLink.evaluate((el) => el.innerText),
+  }
+  check(
+    'a link by path into a renamed folder follows it, heading and display text kept',
+    folderSeen.to === 'Beta/Plan' &&
+      folderSeen.anchor === 'Plan' &&
+      folderSeen.exists === '1' &&
+      folderSeen.shown === 'the plan',
+    JSON.stringify(folderSeen),
+  )
+  await page.locator('.side-row:has-text("All Notes")').first().click()
+  await page.waitForTimeout(350)
+
 
 
   /* ---- tables render properly -------------------------------------------

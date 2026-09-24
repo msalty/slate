@@ -277,6 +277,128 @@ describe('moving a note into a folder', () => {
   })
 })
 
+describe('renaming a folder', () => {
+  /*
+   * It moved every note and rewrote nothing, so a link by path into the folder
+   * pointed at nothing while the note sat at its new path.
+   */
+  it('takes every link into it along, in the shape each was written', async () => {
+    const { vault, folders } = await fresh()
+    const note = await vault.createNote('Projects/Alpha', 'Note', '# H\n\nnote')
+    await vault.createNote('Projects/Alpha/Sub', 'Deep', 'deep')
+    const png = new Blob(['x'], { type: 'image/png' })
+    const img = await vault.addAttachment(png, 'Projects/Alpha/img.png')
+    const linker = await vault.createNote(
+      '',
+      'Linker',
+      [
+        '[[Projects/Alpha/Note]]',
+        '[[Projects/Alpha/Note.md#H|shown]]',
+        '![[Projects/Alpha/Note]]',
+        '[[Projects/Alpha/Sub/Deep]]',
+        '[[Note]]',
+        `![[${img}|400]]`,
+        `![](${img}#w=200)`,
+      ].join('\n'),
+    )
+    const dest = await folders.renameFolder('Projects/Alpha', 'Beta')
+    expect(dest).toBe('Projects/Beta')
+    expect(vault.getRaw(linker)?.text).toBe(
+      [
+        '[[Projects/Beta/Note]]',
+        '[[Projects/Beta/Note.md#H|shown]]',
+        '![[Projects/Beta/Note]]',
+        '[[Projects/Beta/Sub/Deep]]',
+        // By its name, which a folder does not change.
+        '[[Note]]',
+        '![[Projects/Beta/img.png|400]]',
+        '![](Projects/Beta/img.png#w=200)',
+      ].join('\n'),
+    )
+    expect(vault.resolveLink('Projects/Beta/Note')).toBe('Projects/Beta/Note.md')
+    expect(vault.occupied(note)).toBe(false)
+  })
+
+  it('leaves links between notes inside it that do not need to change', async () => {
+    const { vault, folders } = await fresh()
+    await vault.addAttachment(new Blob(['x'], { type: 'image/png' }), 'Projects/Alpha/img.png')
+    const inside = await vault.createNote(
+      'Projects/Alpha',
+      'Inside',
+      '![](img.png) and ![[img.png]] and [[Projects/Alpha/Other]]',
+    )
+    await vault.createNote('Projects/Alpha', 'Other', 'other')
+    await folders.renameFolder('Projects/Alpha', 'Beta')
+    const moved = inside.replace('Alpha', 'Beta')
+    // Relative, and still right from where the note now is; the path is not.
+    expect(vault.getRaw(moved)?.text).toBe(
+      '![](img.png) and ![[img.png]] and [[Projects/Beta/Other]]',
+    )
+    // And the note it moved from is gone — rewritten after the move, so no
+    // save of the old path can bring it back.
+    await vault.saveNote(inside, '![](img.png) and ![[img.png]] and [[Projects/Alpha/Other]]')
+    expect(vault.occupied(inside)).toBe(false)
+  })
+})
+
+describe('moving a note, and the links it makes', () => {
+  it('keeps a relative link to a file that stayed behind pointing at it', async () => {
+    const { vault, folders } = await fresh()
+    await vault.addAttachment(new Blob(['x'], { type: 'image/png' }), 'Home/img.png')
+    const note = await vault.createNote('Home', 'Trip', 'see ![](img.png)')
+    const dest = await folders.moveNoteToFolder(note, 'Work')
+    // `img.png` from `Work/` is a file that is not there.
+    expect(vault.getRaw(dest)?.text).toBe('see ![](Home/img.png)')
+    expect(vault.resolveEmbed('Home/img.png', dest)).toBe('Home/img.png')
+  })
+})
+
+describe('two notes with one name', () => {
+  /*
+   * `[[Name]]` meant whichever of them had been edited most recently, so
+   * editing one moved every such link in the vault to it.
+   */
+  it('means the older, whichever is edited or moved afterwards', async () => {
+    const { vault, folders } = await fresh()
+    const now = Date.now()
+    const clock = vi.spyOn(Date, 'now')
+    clock.mockReturnValue(now)
+    const home = await vault.createNote('Home', 'Name', 'home')
+    clock.mockReturnValue(now + 1000)
+    const work = await vault.createNote('Work', 'Name', 'work')
+    clock.mockRestore()
+    expect(vault.resolveLink('Name')).toBe(home)
+    await vault.saveNote(work, 'work, edited')
+    expect(vault.resolveLink('Name')).toBe(home)
+    await vault.saveNote(home, 'home, edited')
+    expect(vault.resolveLink('Name')).toBe(home)
+    const moved = await folders.moveNoteToFolder(work, 'Archive')
+    expect(moved).toBe('Archive/Name.md')
+    expect(vault.resolveLink('Name')).toBe(home)
+  })
+
+  it('and the earlier by path when they are exactly as old', async () => {
+    const { vault } = await fresh()
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now())
+    // Made in the other order, so it is the path deciding and not the order.
+    await vault.createNote('Work', 'Name', 'work')
+    const home = await vault.createNote('Home', 'Name', 'home')
+    clock.mockRestore()
+    expect(vault.resolveLink('Name')).toBe(home)
+  })
+
+  it('is linked to by path, so a new link means the note that was picked', async () => {
+    const { vault } = await fresh()
+    const home = await vault.createNote('Home', 'Name', 'home')
+    const only = await vault.createNote('', 'Only', 'only')
+    expect(vault.linkNameFor(home)).toBe('Name')
+    const work = await vault.createNote('Work', 'Name', 'work')
+    expect(vault.linkNameFor(home)).toBe('Home/Name')
+    expect(vault.linkNameFor(work)).toBe('Work/Name')
+    expect(vault.linkNameFor(only)).toBe('Only')
+  })
+})
+
 describe('the move underneath every rename', () => {
   it('refuses to write over a note that is there', async () => {
     const { vault } = await fresh()

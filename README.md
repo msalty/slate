@@ -19,8 +19,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 1404 unit, two-device sync and folder round-trip tests
-node scripts/smoke.mjs # 868-check browser smoke test against dist/
+npm test               # 1412 unit, two-device sync and folder round-trip tests
+node scripts/smoke.mjs # 869-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -302,6 +302,14 @@ Moving a note into a folder that already has one by the same name does the
 same: the note you moved becomes `Foo 2`, the toast says so, and nothing is
 overwritten. An event keeps its date through that: `Standup - 2026-09-21 2`,
 never a counter cut into the date.
+
+**Two notes with one name.** `[[Name]]` means the older of them — by when
+this device first had each — and the earlier by path if that is a tie. Editing
+or moving either one does not change which, which it used to: the link followed
+whichever had been edited last. Because a synced note is dated by when this
+device first saw it, two devices can disagree about which is older, so a link
+made by *picking* one of them — from autocomplete, or pinning it — is written
+with its path: `[[Work/Name]]` means that note on every device.
 
 **A name can use the characters a link does.** `#`, `|` and `]` all mean
 something inside `[[…]]` — `[[C# Notes]]` is the note `C` and its heading
@@ -1895,8 +1903,9 @@ to go looking for.
 subfolder…* on any folder, and renamed from its own menu — each of them a
 one-field dialog in the app rather than a browser `prompt()`, which on a phone
 is a system alert thrown over the whole screen. Renaming moves every note
-underneath and says so before you commit to it; wikilinks are unaffected,
-because they point at a note's name rather than its path.
+underneath and says so before you commit to it, and every link into the folder
+follows: a link by name needs nothing, and one by path — `[[Projects/Alpha/Plan]]`
+— is rewritten to the new path, with its heading and display text kept.
 
 Long-press or right-click a Tag Folder for *New folder inside…*, *Move up* and
 *Move down*, *Move…*, and the two delete variants. Siblings sit in the order
@@ -2900,8 +2909,8 @@ and that is a better argument for the rail than the outline ever was.
 ## Testing
 
 ```bash
-npm test                # 1404 unit + two-device sync + folder round-trip tests
-node scripts/smoke.mjs  # 868 checks in headless Chromium against dist/
+npm test                # 1412 unit + two-device sync + folder round-trip tests
+node scripts/smoke.mjs  # 869 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

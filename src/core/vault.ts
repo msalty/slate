@@ -616,12 +616,33 @@ export const allTags = computed<Array<{ tag: string; count: number }>>(() => {
 })
 
 /** title (lowercased) -> path, for wikilink resolution. */
+/**
+ * Which of two notes a name means, when both have it: the older, by when this
+ * device first had it, and the one earlier by path when that is a tie.
+ *
+ * "First writer wins, so link targets stay stable" the comment here used to
+ * say — over a list sorted by when each note was last *edited*. So `[[Name]]`
+ * meant whichever of `Work/Name` and `Home/Name` had been touched most
+ * recently, and editing either one moved every such link in the vault to it.
+ * Creation time does not change when a note is edited or moved; a folder path
+ * would, and says nothing about which note the name belonged to first.
+ *
+ * `ctime` is local. A note that arrives by sync is dated by the remote's
+ * modified time on the day this device first sees it, so two devices can
+ * disagree about which of two same-named notes is older — never about it
+ * changing. That is why a link written to one of them names it by path: see
+ * `linkNameFor`.
+ */
+function older(a: NoteIndexEntry, b: NoteIndexEntry): boolean {
+  return a.ctime !== b.ctime ? a.ctime < b.ctime : a.path < b.path
+}
+
 export const titleIndex = computed(() => {
-  const m = new Map<string, string>()
+  const held = new Map<string, NoteIndexEntry>()
   for (const e of notes.value) {
     const k = e.title.toLowerCase()
-    // First writer wins so link targets stay stable when titles collide.
-    if (!m.has(k)) m.set(k, e.path)
+    const other = held.get(k)
+    if (!other || older(e, other)) held.set(k, e)
   }
   /*
    * Aliases afterwards, in a pass of their own, so that every note's real name
@@ -630,17 +651,49 @@ export const titleIndex = computed(() => {
    * One pass would let a note whose `aliases:` happens to name *another* note
    * take that name, purely by being the one the walk reached first — and the
    * note it stole it from is the one with it written on the file. A name on
-   * disk beats a name in a list, always; among aliases the same first-writer
-   * rule applies as above.
+   * disk beats a name in a list, always; among aliases the older note wins, as
+   * above.
    */
+  const byAlias = new Map<string, NoteIndexEntry>()
   for (const e of notes.value) {
     for (const a of e.aliases) {
       const k = a.trim().toLowerCase()
-      if (k && !m.has(k)) m.set(k, e.path)
+      if (!k || held.has(k)) continue
+      const other = byAlias.get(k)
+      if (!other || older(e, other)) byAlias.set(k, e)
     }
   }
+  const m = new Map<string, string>()
+  for (const [k, e] of held) m.set(k, e.path)
+  for (const [k, e] of byAlias) m.set(k, e.path)
   return m
 })
+
+/** Titles more than one note has, lowercased. */
+export const sharedTitles = computed(() => {
+  const seen = new Set<string>()
+  const shared = new Set<string>()
+  for (const e of notes.value) {
+    const k = e.title.toLowerCase()
+    if (seen.has(k)) shared.add(k)
+    else seen.add(k)
+  }
+  return shared
+})
+
+/**
+ * What a new link to the note at `path` should say: its title, or — when
+ * another note has that title too — its path.
+ *
+ * A bare title shared by two notes means the older of them (see `older`), and
+ * "older" is decided on each device from what that device has seen, so a link
+ * that has to mean one particular note says which. `[[Work/Name]]` means the
+ * same note everywhere and whatever is edited.
+ */
+export function linkNameFor(path: string): string {
+  const title = titleFromPath(path)
+  return sharedTitles.value.has(title.toLowerCase()) ? path.replace(/\.md$/i, '') : title
+}
 
 export const pathSet = computed(() => {
   revision.value
@@ -1161,27 +1214,40 @@ export async function renameNote(path: string, newTitle: string): Promise<string
 }
 
 /**
- * Move a note to `to`, taking every link that pointed at it along.
+ * Move files, taking every reference to them along — the one way anything in
+ * the vault is renamed or moved: a note, an attachment, a note into a folder,
+ * a whole folder.
  *
- * Which links are *its* is decided before the move, against the vault as it
- * stands, so it can be answered by resolving them rather than by reading them.
- * Every other note is rewritten then, while its links still resolve here.
+ * Built as one map of every move and one pass over every note, which a folder
+ * needs: renaming `Projects/Alpha` moved its notes and rewrote nothing, so
+ * `[[Projects/Alpha/Note]]` pointed at nothing while the note sat at
+ * `Projects/Beta/Note.md`. Which references are affected is decided before
+ * anything moves, against the vault as it stands — see `planReferences`.
  *
- * The note's own links to itself are rewritten *after* it has moved, at the
- * path it moved to. Rewritten first, they changed its text on the way out, so
- * the tombstone left behind recorded the rewritten text's hash — and the
- * editor, which saves the buffer it still holds for the old path once more as
- * the rename lands, saved text whose hash no longer matched. A save that does
- * not match a tombstone resurrects it: renaming a note that linked to itself
- * left a copy of it under the old name, on this device and every other. Moved
- * with its text untouched, the tombstone matches that save and it does
- * nothing, which is how it was before links were resolved at all.
+ * Notes staying where they are are rewritten then, while their links still
+ * resolve. Notes that move are rewritten *after* they have moved, at the path
+ * they moved to. Rewritten first, a note that linked to itself changed its text
+ * on the way out, so the tombstone left behind recorded the rewritten text's
+ * hash — and the editor, which saves the buffer it still holds for the old path
+ * once more as a rename lands, saved text whose hash no longer matched. A save
+ * that does not match a tombstone resurrects it: the note came back under its
+ * old name, on this device and every other. Moved with its text untouched, the
+ * tombstone matches that save and it does nothing.
  */
+export async function relocate(moves: ReadonlyMap<string, string>): Promise<void> {
+  if (!moves.size) return
+  const plan = planReferences(moves)
+  await writePlanned(plan, (path) => !moves.has(path), (path) => path)
+  // Deepest first, so a parent's move cannot take a child's source out from under it.
+  for (const [from, to] of [...moves].sort((a, b) => b[0].length - a[0].length)) {
+    await movePath(from, to)
+  }
+  await writePlanned(plan, (path) => moves.has(path), (path) => moves.get(path)!)
+}
+
+/** Move one note to `to`, taking every reference to it along. */
 export async function relocateNote(from: string, to: string): Promise<void> {
-  const retarget = linkRetargeter(from, to)
-  await rewriteNoteLinks(retarget, (path) => path !== from)
-  await movePath(from, to)
-  await rewriteNoteLinks(retarget, (path) => path === to)
+  await relocate(new Map([[from, to]]))
 }
 
 /**
@@ -1237,77 +1303,165 @@ export async function movePath(from: string, to: string): Promise<void> {
   for (const fn of moveListeners) await fn(from, to)
 }
 
-/**
- * Where a link that pointed at the note at `from` should point once it is at
- * `to` — or undefined for a link that did not point at it.
- *
- * Which links those are is decided by *resolving* them, not by comparing their
- * text with the old title — which was the whole of the old rule, and wrong in
- * both directions. Renaming a note onto a name already taken sends it to
- * `Foo 2.md`, but its links were rewritten to `[[Foo]]`, the note that was
- * already there. And of two notes both called `A`, `[[A]]` can only mean one:
- * renaming the *other* rewrote it anyway, taking a link that was never its own.
- *
- * Resolved against the index as it is when this is called, and kept: the answer
- * is still needed after the note has moved, when its old name resolves to
- * nothing.
- *
- * Only links that named the note by its file — its title, or its path — are
- * touched. One that reached it through `aliases:` still reaches it, because the
- * alias is written in the note and goes where the note goes, and rewriting it
- * would change how somebody had chosen to link.
- *
- * Each is rewritten in the shape it was written in: a path stays a path, with
- * or without its `.md`. A bare title stays bare only if the new title will be
- * the note's alone. If another note already has it, `[[B]]` would mean
- * whichever of the two the index met first, so the link is written as a path
- * instead — the one form that cannot land on the wrong note.
- */
-function linkRetargeter(from: string, to: string): (l: WikiLink) => string | undefined {
-  const titles = titleIndex.value
-  const paths = pathSet.value
-  const oldTitle = titleFromPath(from).toLowerCase()
-  const newTitle = titleFromPath(to)
-  const toBare = to.replace(/\.md$/i, '')
-  const shared = notes.value.some(
-    (e) => e.path !== from && e.title.toLowerCase() === newTitle.toLowerCase(),
-  )
-  const titleTarget = shared ? toBare : newTitle
-  return (l) => {
-    if (resolveTarget(l.target, titles, paths) !== from) return undefined
-    const np = normPath(l.target.trim())
-    if (np === from) return to
-    if (`${np}.md` === from) return toBare
-    if (l.target.trim().toLowerCase() === oldTitle) return titleTarget
-    return undefined
-  }
+interface Rewrite {
+  from: number
+  to: number
+  insert: string
 }
 
-/** Rewrite, in the notes `which` picks, every link `retarget` has a new target for. */
-async function rewriteNoteLinks(
-  retarget: (l: WikiLink) => string | undefined,
-  which: (path: string) => boolean,
-): Promise<void> {
-  const touched: VaultFile[] = []
-  for (const f of files.values()) {
-    if (f.kind !== 'note' || f.deleted || !f.text || !which(f.path)) continue
-    const hits: Array<{ link: WikiLink; target: string }> = []
-    for (const l of scanWikiLinks(f.text)) {
-      const target = retarget(l)
-      if (target !== undefined) hits.push({ link: l, target })
+interface Planned {
+  /** The text the plan was made from — written over only if it still is. */
+  was: string
+  text: string
+}
+
+/**
+ * The text every note should have once `moves` has happened, for the notes in
+ * which a reference changes. Decided before anything moves, against the vault
+ * as it stands, which is the only time the old paths still resolve.
+ *
+ * Which references are affected is decided by *resolving* them, not by
+ * comparing their text with the old name — which was once the whole of the
+ * rule, and wrong both ways. Renaming a note onto a name already taken sends it
+ * to `Foo 2.md` while its links were rewritten to `[[Foo]]`, the note that was
+ * already there; and of two notes both called `A`, `[[A]]` can only mean one,
+ * yet renaming the *other* rewrote it too.
+ *
+ * Each is rewritten in the shape it was written in, so a rename does not change
+ * how somebody chose to link:
+ *
+ *  - **A path from the vault root** stays one, with or without its `.md`, and
+ *    changes only if the file moved.
+ *  - **A path relative to the note** stays relative — worked out again from
+ *    wherever the note now is, so a note moved to another folder does not point
+ *    its `![](img.png)` at a file that is not there. Nothing it could name from
+ *    there, it becomes a path from the root.
+ *  - **A name alone** — a note's title, a file's name — changes only if the name
+ *    did. A new title another note already has is written as a path: `[[B]]`
+ *    would mean whichever of the two the index prefers, and a path cannot land
+ *    on the wrong note.
+ *  - **A link that arrived through `aliases:`** is left as it is, since the alias
+ *    is written in the note and goes where the note goes.
+ *
+ * Headings, display text and embeds come through unchanged; a markdown link's
+ * width suffix too.
+ */
+function planReferences(moves: ReadonlyMap<string, string>): Map<string, Planned> {
+  const titles = titleIndex.value
+  const paths = pathSet.value
+  const moved = (path: string) => moves.get(path) ?? path
+
+  /* How many notes will have each title, once everything has moved. */
+  const titleCount = new Map<string, number>()
+  for (const e of notes.value) {
+    const t = titleFromPath(moved(e.path)).toLowerCase()
+    titleCount.set(t, (titleCount.get(t) ?? 0) + 1)
+  }
+  const nameFor = (to: string) =>
+    (titleCount.get(titleFromPath(to).toLowerCase()) ?? 0) > 1
+      ? to.replace(/\.md$/i, '')
+      : titleFromPath(to)
+
+  /** A file named by its path, from the root or from the note, or by its name. */
+  const retargetFile = (ref: string, notePath: string, newDir: string): string | undefined => {
+    const bare = ref.trim()
+    if (!bare) return undefined
+    const fromRoot = normPath(bare)
+    if (paths.has(fromRoot)) {
+      const to = moved(fromRoot)
+      return to === fromRoot ? undefined : to
     }
-    if (!hits.length) continue
-    let text = f.text
-    // Apply right-to-left so earlier offsets stay valid.
-    for (const { link: l, target } of hits.reverse()) {
+    const oldDir = dirname(notePath)
+    const fromNote = joinPath(oldDir, bare)
+    if (oldDir && paths.has(fromNote)) {
+      const to = moved(fromNote)
+      const again = newDir && to.startsWith(`${newDir}/`) ? to.slice(newDir.length + 1) : to
+      return again === bare ? undefined : again
+    }
+    const found = resolveEmbed(bare, notePath)
+    if (found && basename(bare).toLowerCase() === basename(found).toLowerCase()) {
+      const to = moved(found)
+      return basename(to) === basename(found) ? undefined : basename(to)
+    }
+    return undefined
+  }
+
+  /** Where a wikilink should point: a note by path or name, or a file. */
+  const retargetWiki = (l: WikiLink, notePath: string, newDir: string): string | undefined => {
+    const t = l.target.trim()
+    // `[[#Heading]]` is this note, wherever it goes.
+    if (!t) return undefined
+    const at = resolveTarget(t, titles, paths)
+    if (!at) return retargetFile(t, notePath, newDir)
+    const to = moved(at)
+    const np = normPath(t)
+    if (np === at) return to === at ? undefined : to
+    if (`${np}.md` === at) return to === at ? undefined : to.replace(/\.md$/i, '')
+    if (t.toLowerCase() === titleFromPath(at).toLowerCase()) {
+      return titleFromPath(to) === titleFromPath(at) ? undefined : nameFor(to)
+    }
+    return undefined
+  }
+
+  const plan = new Map<string, Planned>()
+  for (const f of files.values()) {
+    if (f.kind !== 'note' || f.deleted || !f.text) continue
+    const newDir = dirname(moved(f.path))
+    const regions = codeRegions(f.text)
+    const edits: Rewrite[] = []
+    for (const l of scanWikiLinks(f.text, regions)) {
+      const target = retargetWiki(l, f.path, newDir)
+      if (target === undefined) continue
       /*
        * Through the one writer the syntax has. Renamed to `C# Notes`, a link
        * written out by hand as `[[C# Notes]]` is the note `C` and its heading
        * `Notes`, so every link to the note pointed somewhere else afterwards.
        */
-      const link = formatWikiLink({ target, anchor: l.anchor, alias: l.alias, embed: l.embed })
-      text = `${text.slice(0, l.from)}${link}${text.slice(l.to)}`
+      const insert = formatWikiLink({ target, anchor: l.anchor, alias: l.alias, embed: l.embed })
+      edits.push({ from: l.from, to: l.to, insert })
     }
+    for (const l of scanMdLinks(f.text, regions)) {
+      const url = l.url.trim()
+      if (!url || /^[a-z]+:/i.test(url)) continue
+      const [bare] = splitSizeFragment(decodeLinkPath(url))
+      const [, width] = splitSizeFragment(l.url)
+      const next = retargetFile(bare, f.path, newDir)
+      if (next === undefined) continue
+      // Encoded the way every address is — see `encodeLinkPath`.
+      edits.push({
+        from: l.urlFrom,
+        to: l.urlTo,
+        insert: encodeLinkPath(next) + (width ? `#w=${width}` : ''),
+      })
+    }
+    if (!edits.length) continue
+    // Right to left, so earlier offsets stay valid.
+    let text = f.text
+    for (const ed of edits.sort((a, b) => b.from - a.from)) {
+      text = `${text.slice(0, ed.from)}${ed.insert}${text.slice(ed.to)}`
+    }
+    plan.set(f.path, { was: f.text, text })
+  }
+  return plan
+}
+
+/**
+ * Write the planned texts of the notes `which` picks, at the path `where` says
+ * each now has — and only where the text is still what the plan was made from.
+ * One edited in the meantime keeps the edit and its old links, rather than
+ * having a plan made from text it no longer has written over it.
+ */
+async function writePlanned(
+  plan: ReadonlyMap<string, Planned>,
+  which: (path: string) => boolean,
+  where: (path: string) => string,
+): Promise<void> {
+  const touched: VaultFile[] = []
+  for (const [path, { was, text }] of plan) {
+    if (!which(path)) continue
+    const at = where(path)
+    const f = files.get(at)
+    if (!f || f.deleted || f.text !== was) continue
     const next: VaultFile = {
       ...f,
       text,
@@ -1316,7 +1470,7 @@ async function rewriteNoteLinks(
       mtime: Date.now(),
       dirty: true,
     }
-    setFile(f.path, next)
+    setFile(at, next)
     touched.push(next)
   }
   if (touched.length) {
@@ -1352,85 +1506,8 @@ export async function renameAttachment(path: string, newName: string): Promise<s
   while (occupied(dest) && dest !== path) dest = joinPath(dir, numberedFile(name, n++))
   if (dest === path) return path
 
-  // Rewrite while the old file is still in place, so references still resolve.
-  await repointReferences(path, dest)
-  await movePath(path, dest)
+  await relocate(new Map([[path, dest]]))
   return dest
-}
-
-/** Rewrite every reference to `from` so it points at `to`. */
-async function repointReferences(from: string, to: string): Promise<void> {
-  const touched: VaultFile[] = []
-
-  for (const e of notes.value) {
-    const f = files.get(e.path)
-    if (!f?.text) continue
-    const regions = codeRegions(f.text)
-    interface Rewrite {
-      from: number
-      to: number
-      insert: string
-    }
-    const edits: Rewrite[] = []
-
-    /** The new reference, written the way the old one was. */
-    const reshape = (ref: string): string | undefined => {
-      let clean = ref.trim()
-      if (!clean || /^[a-z]+:/i.test(clean)) return undefined
-      const [bare] = splitSizeFragment(decodeLinkPath(clean))
-      if (normPath(bare) === from) return to
-      const noteDir = dirname(e.path)
-      if (noteDir && joinPath(noteDir, bare) === from) {
-        return to.startsWith(`${noteDir}/`) ? to.slice(noteDir.length + 1) : to
-      }
-      if (basename(bare).toLowerCase() === basename(from).toLowerCase() && resolveEmbed(bare, e.path) === from)
-        return basename(to)
-      return undefined
-    }
-
-    for (const l of scanWikiLinks(f.text, regions)) {
-      const next = reshape(l.target)
-      if (next === undefined) continue
-      const insert = formatWikiLink({
-        target: next,
-        anchor: l.anchor,
-        alias: l.alias,
-        embed: l.embed,
-      })
-      edits.push({ from: l.from, to: l.to, insert })
-    }
-    for (const l of scanMdLinks(f.text, regions)) {
-      const [, width] = splitSizeFragment(l.url)
-      const next = reshape(l.url)
-      if (next === undefined) continue
-      // Spaces have to be encoded or the parens close the link early.
-      const url = encodeLinkPath(next) + (width ? `#w=${width}` : '')
-      edits.push({ from: l.urlFrom, to: l.urlTo, insert: url })
-    }
-    if (!edits.length) continue
-
-    // Right to left, so earlier offsets stay valid.
-    let text = f.text
-    for (const ed of edits.sort((a, b) => b.from - a.from)) {
-      text = `${text.slice(0, ed.from)}${ed.insert}${text.slice(ed.to)}`
-    }
-    const next: VaultFile = {
-      ...f,
-      text,
-      hash: await hashText(text),
-      size: text.length,
-      mtime: Date.now(),
-      dirty: true,
-    }
-    setFile(f.path, next)
-    touched.push(next)
-  }
-
-  if (touched.length) {
-    await putFiles(touched)
-    for (const f of touched) reindex(f.path)
-    bump()
-  }
 }
 
 /**

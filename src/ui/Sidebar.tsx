@@ -194,7 +194,7 @@ function folderMenu(node: FolderNode): MenuItem[] {
           label: 'Name',
           value: node.name,
           confirm: 'Rename',
-          hint: 'Every note inside moves with it. Wikilinks are unaffected.',
+          hint: 'Every note inside moves with it, and links to them follow.',
           onSubmit: async (name) => {
             if (name === node.name) return
             try {

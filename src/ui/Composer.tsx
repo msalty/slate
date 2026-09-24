@@ -39,7 +39,7 @@ import {
 import { setFrontmatterKey } from '../core/markdown'
 import { isConfigured } from '../core/llm'
 import { settings } from '../core/settings'
-import { resolveLink } from '../core/vault'
+import { linkNameFor, resolveLink } from '../core/vault'
 import { openMenu, type MenuItem } from './Menu'
 import { openNotePicker } from './pickNote'
 import { openPrompt } from './PromptDialog'
@@ -226,7 +226,8 @@ export function Composer({ getView, text, path }: ComposerProps) {
           exclude: [path, ...pins.map((t) => resolveLink(t)).filter((p): p is string => !!p)],
           onPick: (entry) => {
             const live = getView()
-            if (live) setPins(live, [...pins, entry.title])
+            // By path when another note shares the title — a pin is one note.
+            if (live) setPins(live, [...pins, linkNameFor(entry.path)])
           },
         }),
     })

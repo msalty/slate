@@ -10,7 +10,7 @@
 
 import type { Completion, CompletionContext, CompletionResult } from '@codemirror/autocomplete'
 import type { EditorView } from '@codemirror/view'
-import { allTags, attachments, getText, notes, resolveLink } from '../core/vault'
+import { allTags, attachments, getText, linkNameFor, notes, resolveLink } from '../core/vault'
 import { expandSnippet, matchSnippets, previewOf, type Snippet } from '../core/snippets'
 import { scanHeadings } from '../core/markdown'
 import { basename, mediaClass, relativeTime } from '../core/util'
@@ -191,7 +191,9 @@ export function wikiCompletion(context: CompletionContext): CompletionResult | n
       label: n.title,
       detail: n.folder || undefined,
       info: n.excerpt || undefined,
-      apply: applyTarget(escapeWikiTarget(n.title)),
+      // By path when another note has this title too, so the link means the
+      // note that was picked and not whichever of them the index prefers.
+      apply: applyTarget(escapeWikiTarget(linkNameFor(n.path))),
       boost: clampBoost(isEmbed ? s / 2 : s),
     })
   }

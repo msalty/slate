@@ -22,10 +22,10 @@ import {
   getRaw,
   isHidden,
   listAll,
-  movePath,
   collisionNamesFor,
   notes,
   occupied,
+  relocate,
   relocateNote,
   readBackstage,
   revision,
@@ -166,7 +166,15 @@ export async function createFolder(parent: string, name: string): Promise<string
   return path
 }
 
-/** Rename a folder, moving every note beneath it. Wikilinks are unaffected. */
+/**
+ * Rename a folder, moving every file beneath it and every reference to one.
+ *
+ * "Wikilinks are unaffected", this used to say, and it was half right: a link
+ * by a note's name does not care what folder the note is in, and a link by its
+ * path does. `[[Projects/Alpha/Note]]` pointed at nothing after `Alpha` became
+ * `Beta`. The whole move is handed to `relocate` as one map, which rewrites every
+ * reference into the folder in one pass before anything moves.
+ */
 export async function renameFolder(from: string, name: string): Promise<string> {
   const src = normPath(from)
   const clean = safeSegment(name)
@@ -175,14 +183,12 @@ export async function renameFolder(from: string, name: string): Promise<string> 
   if (dest === src) return src
   if (folderExists(dest)) throw new Error(`"${clean}" already exists here.`)
 
-  // Deepest paths first so a parent move can't invalidate a child's source.
-  const moving = listAll()
-    .filter((f) => !f.deleted && (f.path.startsWith(`${src}/`) || dirname(f.path) === src))
-    .sort((a, b) => b.path.length - a.path.length)
-
-  for (const f of moving) {
-    await movePath(f.path, `${dest}${f.path.slice(src.length)}`)
+  const moves = new Map<string, string>()
+  for (const f of listAll()) {
+    if (f.deleted || !f.path.startsWith(`${src}/`)) continue
+    moves.set(f.path, `${dest}${f.path.slice(src.length)}`)
   }
+  await relocate(moves)
 
   explicitFolders.value = explicitFolders.value.map((p) =>
     p === src || p.startsWith(`${src}/`) ? `${dest}${p.slice(src.length)}` : p,
