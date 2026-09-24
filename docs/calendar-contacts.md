@@ -80,6 +80,7 @@ material*, and so not allowed to inflate anything that counts.
 
 ```markdown
 ---
+title: Design review          # what it was called when it was made
 start: 2026-09-21T09:30
 end: 2026-09-21T10:00
 tz: America/New_York          # optional; start/end are written in this zone
@@ -99,6 +100,7 @@ Short description, if any.
 
 | Key | Type | Notes |
 | --- | --- | --- |
+| `title` | string | Written by Slate when it makes an event: the title as typed, before the filename sanitised it, cut it to length and put a date on the end. Read only to tell which part of the filename was typed — see *Filenames* below. Not a second name: editing it renames nothing. |
 | `start` | date or datetime | **Required.** Its presence is what makes a note an event. A bare date means all-day. |
 | `end` | date or datetime | Optional. **Inclusive** for all-day. Defaults to `start` + 1h (timed) or `start` (all-day). |
 | `tz` | IANA zone name | Optional. When present, `start` and `end` are written in it. |
@@ -109,8 +111,9 @@ Short description, if any.
 | `source` | string | Provider slug. **Its presence means the file is externally owned.** |
 | `uid` | string | The source system's identity key. Helper-owned; Slate only round-trips it. |
 
-**Only the first three are read by code.** `start` (with `end` and `tz`) is the
-whole of what Slate parses, plus `source` and `uid` from §2.3 onward. Everything
+**Only the first four are read by code.** `start` (with `end` and `tz`) is the
+whole of what Slate parses for *when*, `title` is read for what a row is called,
+and `source` and `uid` join them from §2.3 onward. Everything
 else in the table is a *blessed name* — frontmatter is open, so any key already
 works and shows in the properties form; naming these buys nothing but the
 guarantee that a hand-written event and an imported one use the same words.
@@ -123,9 +126,11 @@ deleted, and `TENTATIVE` is not worth a key nothing reads), and reminders or
 alarms of any kind — Slate has no notification story, and a field nothing acts
 on is a promise the file cannot keep.
 
-**A new event pre-fills `start` and `end` and nothing else.** Every pre-filled
-empty key is a row of chrome in the properties panel and a line of noise in the
-file, and for most events it would be wrong. A folder template on `Calendar/` is
+**A new event pre-fills `title`, `start` and `end` and nothing else.** Every
+pre-filled empty key is a row of chrome in the properties panel and a line of
+noise in the file, and for most events it would be wrong. `title` is not empty
+and not optional in the same sense: it is the one record of what was typed, and
+the filename cannot be one. A folder template on `Calendar/` is
 the mechanism for "I always want these four fields", and the `Meeting` starter
 is one — it opens with `start:`, so a meeting note lands on the agenda for the
 day it happened.
@@ -160,13 +165,32 @@ something, sorts the way the folder already sorts, and leaves the name you typed
 at the front where prefix search and every alphabetical list expect it.
 
 The suffix is part of building the name, not something added to a name already
-built. `safeSegment` caps a path segment at 120 characters, so a suffix stuck on
-afterwards is the first thing cut — and a long title came back either without
-its date or with half of one. The title is cut with the suffix's room already
-taken out, and `eventTitle(eventNoteName(title, start))` is `title` for every
-title, including one that ends in a date of its own: that one is given a second
-date rather than skipped, because a filename cannot say which of the two a
-reader wrote.
+built. `safeSegment` caps a path segment at 120 characters, and whatever comes
+last is what a cap removes — first the date went, and then, once the date had
+room, the counter a second same-named event gets pushed the name to 122. Both
+are reserved out of the budget before the title is cut.
+
+**The agenda reads the name against `title:`, not by its shape.** Three rounds of
+fixing the shape-reading each found a case one further out, because they were
+one problem: any shape Slate writes is also a shape a person can type, so a
+filename cannot say which of its parts were typed. `2026-09-21 0930 Postmortem -
+2026-09-22` is an old note stamped on the front with a date in its title, *or* a
+new note whose title began with a timestamp, and nothing in the string decides
+it. So a new event records its title, and `eventTitle(name, title)` believes the
+record while the filename is still exactly what `eventNoteName` would have made
+from it — date, counter, length cut and all — and gives the record back
+character for character, including the colon a filename cannot hold.
+
+When the filename is anything else, the filename wins, because a note's name is
+its filename everywhere else in the app. That is what makes a rename from the
+editor header work: the new name no longer matches, and the agenda follows the
+file. It is also why editing `title:` by hand renames nothing — it would
+otherwise be a second name disagreeing with the first on every surface but one.
+
+Notes without a record — made before there was one, or by hand — are read by
+shape, front first, because a date-and-time on the front was only ever a stamp
+while a date on the end is typed as readily as written. No such note has left
+the branch this was built on.
 
 It still costs the bare name. `titleIndex` is first-writer-wins on collision
 (`src/core/vault.ts:574`), and now no occurrence holds `Lunch with Joe.md` at
@@ -181,7 +205,10 @@ land on the same filenames every run, and a date would force a rename every time
 a meeting moved, breaking every link pointing at it. A hand-made event is
 written once and never rewritten by anything, so it can afford a date that goes
 stale; an imported one cannot. Same problem, two answers, and the difference is
-who rewrites the file.
+who rewrites the file. The importer should write `title:` too — and the agenda's
+check, which today recognises only the names `eventNoteName` makes, then needs
+the importer's naming as a second shape it can confirm, or every imported row
+reads as `Standup (a41b)`.
 
 **Bodies stay short.** The description is truncated to roughly 500 characters,
 conference boilerplate is stripped, and the join link goes in `url` rather than
@@ -395,11 +422,11 @@ shape:
 - Timed events in a list, `09:30` in a fixed-width gutter, title beside it.
   **Not** a time grid: a grid needs vertical space the rail has not got, and
   this is a surface for reading a day, not for scheduling one.
-- A row reads as the event's *name*: the trailing ` - 2026-09-21` the filename
-  carries for uniqueness is stripped, since the panel is under a heading naming
-  the day and puts the clock in its own column already. (A leading
-  `2026-09-21 0930` is stripped too, for notes made while the stamp went on the
-  front.)
+- A row reads as the event's *name*: the title recorded in `title:`, while the
+  filename is still the one made from it — not the trailing ` - 2026-09-21` the
+  filename carries for uniqueness, since the panel is under a heading naming the
+  day and puts the clock in its own column already. A renamed note reads as its
+  filename, and one with no record is read by shape (§2.1, *Filenames*).
 - Zoned events annotate with their own zone.
 - A small provider mark on external events; nothing on your own.
 - Empty state: "Nothing scheduled.", matching `rail-empty` elsewhere.

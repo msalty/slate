@@ -15,7 +15,8 @@ import { eventFor, isKnownZone, parseFrontmatter, wallClockIn } from './markdown
 import { readProperties, removeProperty, setPropertyValue } from './properties'
 import { templateBodyFor } from './templates'
 import { createNote } from './vault'
-import { addDays, dirname, roundUpToHalfHour, safeSegment, startOfDay, ymd } from './util'
+import { addDays, dirname, roundUpToHalfHour, startOfDay, ymd } from './util'
+import { eventNoteName } from './eventname'
 import type { TemplateBody } from './templates'
 
 /** Where an event is created when nothing says otherwise. */
@@ -35,79 +36,11 @@ export function eventFolderFor(day: number): string {
   return `${CALENDAR_FOLDER}/${d.getFullYear()}/${`${d.getMonth() + 1}`.padStart(2, '0')}`
 }
 
-/** The date at the head of a `start:` value, whether or not a clock follows. */
-const DATE_HEAD = /^(\d{4}-\d{2}-\d{2})/
-
-/**
- * What `safeSegment` will cut a filename down to, known here so a name can be
- * built inside it rather than trimmed to fit afterwards.
+/*
+ * The name a new event is given, and how the agenda reads it back, are in
+ * `eventname.ts` — side by side, because they have to be exact inverses.
  */
-const NAME_MAX = 120
-/** What an empty name becomes, the same word `safeSegment` uses. */
-const UNTITLED = 'Untitled'
-
-/**
- * What you called it, and the day it is on.
- *
- * `Lunch with Joe - 2026-09-22.md`. The date is a *suffix* and the distinction
- * is the whole of why this is here at all: stamped on the front, as it was
- * first built, it pushed the name out of every list that shows one, and the
- * agenda rail — the narrowest of them, one line with an ellipsis — showed the
- * date and then ran out of room before reaching the thing you named.
- *
- * What was wrong with the prefix is still wrong. A filename does not follow the
- * frontmatter, so this date stops being true the moment the event moves, and
- * moving one is a two-second job now the properties form has a picker on it. It
- * is left stale on purpose rather than chased: a rename breaks every `[[link]]`
- * pointing at the note, and the agenda has never read the name for anything —
- * it takes the clock and the day off `start:`.
- *
- * What changed is what the alternative turned out to cost. Collisions are per
- * *folder*, and the folder is `Calendar/<year>/<month>`, so a weekly lunch was
- * `Lunch with Joe`, `Lunch with Joe 2`, `Lunch with Joe 3` through September —
- * and then began again at `Lunch with Joe` in October, because that is a
- * different directory. The same series, numbered differently every month, with
- * nothing in any of the names saying which occurrence it was. A date is a
- * disambiguator that means something, sorts the way the folder already sorts,
- * and leaves the name you typed at the front where every prefix search and
- * every alphabetical list expects it.
- *
- * It still costs the bare name: there is no longer a `Lunch with Joe.md` for
- * `[[Lunch with Joe]]` to land on, so a link to one occurrence names its date
- * or goes through `aliases:`. That is the trade, and it is a better one than
- * eleven notes reachable only by a number that changes in October.
- *
- * `start` is the dialog's own field value — `2026-09-22T14:00` or a bare
- * `2026-09-22` — and only its date is used, so the name says exactly what
- * `start:` says and no zone arithmetic happens on the way.
- *
- * **The whole name is made here**, sanitised and cut to length, rather than
- * handed half-made to `createNote` to finish. Both halves of that mattered.
- * `safeSegment` caps a segment at 120 characters, and a suffix appended before
- * that cap is the part that goes: a long title came back with ` - 2026-0` on
- * the end of it, or with nothing on the end of it, while the dialog had just
- * promised the full name. So the *title* is cut with the suffix's room already
- * taken out of the budget, and what comes back is short enough that the cap
- * never fires again — which is also what lets the dialog show the name by
- * calling this rather than by describing it.
- *
- * **A title that already ends in the date is still given one.** It looks silly
- * — `Postmortem - 2026-09-22 - 2026-09-22` — and the alternative was worse:
- * skipping it meant `eventTitle` could not tell a date this wrote from a date
- * somebody typed, and took the typed one off, so an event deliberately named
- * for its day showed on the agenda as `Postmortem`. Exactly one suffix on,
- * exactly one suffix off, and what you typed is what the row reads.
- */
-export function eventNoteName(title: string, start?: string): string {
-  const safe = safeSegment(title)
-  const on = DATE_HEAD.exec(start?.trim() ?? '')?.[1]
-  if (!on) return safe
-  const tail = ` - ${on}`
-  // Trailing spaces and dots again, because the cut can leave one where the
-  // title had none — and Windows rejects a segment ending in either.
-  const room = safe.slice(0, NAME_MAX - tail.length).replace(/[. ]+$/, '')
-  return `${room || UNTITLED}${tail}`
-}
+export { eventNoteName } from './eventname'
 
 /* ------------------------------------------------- the values a field holds */
 
@@ -417,7 +350,17 @@ export async function newEventNote(
   const folder = eventFolderFor(at)
   const t = templateForEvent(folder, title, at)
   const body = t?.text ?? `# ${title}\n\n`
-  let text = setPropertyValue(body, 'start', start)
+  /*
+   * The title as typed, first, so the agenda has something better than the
+   * filename to read it from. A filename is sanitised, cut to length and has a
+   * date put on the end of it, and cannot say afterwards which of those parts
+   * somebody typed — `eventTitle` reads it against this instead. Written over
+   * whatever a template put there, for the reason the times are: the dialog
+   * asked, and a template cannot know the answer.
+   */
+  const named = title.trim()
+  let text = named ? setPropertyValue(body, 'title', named) : body
+  text = setPropertyValue(text, 'start', start)
   text = setPropertyValue(text, 'end', end)
   /*
    * Written *or removed*, never left to whatever a template happened to say.
@@ -431,7 +374,7 @@ export async function newEventNote(
    */
   text = tz ? setPropertyValue(text, 'tz', tz) : removeProperty(text, 'tz')
   return {
-    path: await createNote(folder, eventNoteName(title, start), text),
+    path: await createNote(folder, title, text, (n) => eventNoteName(title, start, n)),
     caret: t?.caret === undefined ? undefined : t.caret + (text.length - body.length),
   }
 }

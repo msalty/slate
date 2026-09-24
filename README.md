@@ -19,8 +19,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 1348 unit, two-device sync and folder round-trip tests
-node scripts/smoke.mjs # 860-check browser smoke test against dist/
+npm test               # 1357 unit, two-device sync and folder round-trip tests
+node scripts/smoke.mjs # 861-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -1083,6 +1083,16 @@ prefix search and every alphabetical list expect it.
 It still costs the bare name: no occurrence holds `Lunch with Joe.md`, so
 `[[Lunch with Joe]]` resolves to nothing and a link names a date — `[[Lunch with
 Joe - 2026-09-22]]` — or goes through `aliases:`.
+
+The note also records **what you typed** in `title:`, because the filename
+cannot: it has had characters a filename cannot hold swapped out, been cut to
+length, and had a date put on the end, and afterwards nothing in it says which
+parts were yours. The agenda shows the recorded title while the filename is
+still the one made from it — so an event you called `1:1 - Ana` or `Postmortem -
+2026-09-22` reads exactly that way. **Rename the note to rename the event**: the
+agenda then follows the filename, like every other surface does. Editing
+`title:` by hand renames nothing; it is a record of what was typed, not a second
+name.
 
 A template on `Calendar/` is picked up the way one on `Daily/` is, and the walk
 goes up: a template assigned to `Calendar/` reaches `Calendar/2026/09`, which is
@@ -2869,8 +2879,8 @@ and that is a better argument for the rail than the outline ever was.
 ## Testing
 
 ```bash
-npm test                # 1348 unit + two-device sync + folder round-trip tests
-node scripts/smoke.mjs  # 860 checks in headless Chromium against dist/
+npm test                # 1357 unit + two-device sync + folder round-trip tests
+node scripts/smoke.mjs  # 861 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

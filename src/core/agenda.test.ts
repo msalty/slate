@@ -139,11 +139,40 @@ describe('what a row is called', () => {
     expect(eventTitle('Sprint 2026-09-22 kickoff')).toBe('Sprint 2026-09-22 kickoff')
   })
 
-  it('takes the suffix off a name whose title looks like the old prefix', async () => {
+  it('reads a name against the title it was given, when there is one', async () => {
     const { eventTitle } = await import('./agenda')
-    // One end or the other, never both: this is a name written today whose
-    // *title* is a date and a time, not a note stamped on the front in 2025.
-    expect(eventTitle('2026-09-22 0930 Standup - 2026-09-22')).toBe('2026-09-22 0930 Standup')
+    // The filename alone cannot say whether that front is a stamp or a title
+    // somebody typed. The record can, and it is believed.
+    expect(eventTitle('2026-09-22 0930 Standup - 2026-09-22', '2026-09-22 0930 Standup')).toBe(
+      '2026-09-22 0930 Standup',
+    )
+    expect(eventTitle('Postmortem - 2026-09-22 - 2026-09-22', 'Postmortem - 2026-09-22')).toBe(
+      'Postmortem - 2026-09-22',
+    )
+    // And gives back what the filename could not hold.
+    expect(eventTitle('1-1 - Ana - 2026-09-22', '1:1 - Ana')).toBe('1:1 - Ana')
+  })
+
+  it('follows the file once it has been renamed away from its title', async () => {
+    const { eventTitle } = await import('./agenda')
+    // Renamed from the editor's header: a note's name is its filename, and the
+    // agenda agrees with every other surface about what that is.
+    expect(eventTitle('Incident review', 'Postmortem')).toBe('Incident review')
+    expect(eventTitle('Incident review - 2026-09-22', 'Postmortem')).toBe('Incident review')
+    // And a `title:` edited by hand is a record, not a rename: the file still
+    // says what it is called, so that is what the row says too.
+    expect(eventTitle('Postmortem - 2026-09-22', 'Incident review')).toBe('Postmortem')
+  })
+
+  it('reads a note made before titles were recorded by its shape, front first', async () => {
+    const { eventTitle } = await import('./agenda')
+    // A date-and-time on the front was only ever a stamp. A date on the end
+    // is as often typed as written, so this old note keeps the one it had.
+    expect(eventTitle('2026-09-21 0930 Postmortem - 2026-09-22')).toBe('Postmortem - 2026-09-22')
+    expect(eventTitle('Lunch with Joe - 2026-09-22')).toBe('Lunch with Joe')
+    expect(eventTitle('Lunch with Joe - 2026-09-22 2')).toBe('Lunch with Joe')
+    // A note called nothing but a date is not a stamp in front of a dash.
+    expect(eventTitle('2026-09-22 - 2026-09-22')).toBe('2026-09-22')
   })
 
   /* The round trip against `eventNoteName` is in `eventnote.test.ts`, beside

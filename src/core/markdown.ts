@@ -950,6 +950,31 @@ export interface NoteEvent {
    * agenda and the properties form can show that it is not doing anything.
    */
   badZone?: string
+  /**
+   * The title the event was given when it was made, from its `title:`.
+   *
+   * Not a display name on its own: `eventTitle` trusts it only while the
+   * filename is still exactly what this title would have been named, so a note
+   * renamed since reads as its new name. It exists because a filename cannot
+   * say which of its parts somebody typed.
+   */
+  title?: string
+}
+
+/**
+ * A `title:` as the text it was written as.
+ *
+ * The property writer leaves `true` and `123` bare, which is right for the
+ * checkbox and number fields it writes them for and means a meeting called
+ * `123` reads back as a number. `String` gives those back exactly; the few it
+ * cannot — `007`, `1.50` — fail the filename check in `eventTitle` and are read
+ * by shape instead, which gets every one of them right, since none can look
+ * like a stamp.
+ */
+function recordedTitle(v: FrontmatterValue | undefined): string | undefined {
+  if (typeof v === 'string') return v.trim() || undefined
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v)
+  return undefined
 }
 
 const EVENT_TIME_RE = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?$/
@@ -1114,6 +1139,7 @@ export function eventFor(fm: Record<string, FrontmatterValue>): NoteEvent | unde
   const { tz, badZone } = readZone(fm.tz)
   const start = parseEventTime(fm.start, tz)
   if (!start) return undefined
+  const title = recordedTitle(fm.title)
   const end = parseEventTime(fm.end, tz)
   /*
    * An end written in the other shape is not an end this can use: a day cannot
@@ -1129,6 +1155,7 @@ export function eventFor(fm: Record<string, FrontmatterValue>): NoteEvent | unde
     // Reported whatever the shape: a zone nobody can read is worth saying on an
     // all-day event too, since it means a line of the file is doing nothing.
     ...(badZone ? { badZone } : {}),
+    ...(title ? { title } : {}),
   }
 }
 

@@ -99,8 +99,13 @@ describe('where an event goes and what it is called', () => {
     expect(name).toBe(`${'M'.repeat(106)} - 2026-09-22`)
   })
 
-  it('is the thing eventTitle undoes, for any title at all', async () => {
+  it('is the thing eventTitle undoes, exactly, for any title and any attempt', async () => {
     const { eventTitle } = await import('./agenda')
+    /*
+     * Given the recorded title, character for character — not the sanitised
+     * one — because the record is what it is compared against and what it
+     * gives back. Every shape that has caught this out before is in here.
+     */
     const titles = [
       'Standup',
       'Lunch with Joe',
@@ -110,11 +115,18 @@ describe('where an event goes and what it is called', () => {
       'Retro 2026-09-22',
       '2026-09-22',
       '2026-09-22 0930 Standup',
+      '2026-09-21 0930 Postmortem - 2026-09-22',
       'Deadline 2026-09-22 2',
-      '  padded  ',
+      'Meeting: planning',
+      'M'.repeat(200),
+      `a${'🎉'.repeat(80)}`,
     ]
     for (const t of titles) {
-      expect(eventTitle(eventNoteName(t, '2026-09-22T12:00'))).toBe(safeSegment(t))
+      for (const n of [1, 2, 13]) {
+        const name = eventNoteName(t, '2026-09-22T12:00', n)
+        expect(name.length).toBeLessThanOrEqual(120)
+        expect(eventTitle(name, t)).toBe(t)
+      }
     }
   })
 
@@ -161,6 +173,33 @@ describe('where an event goes and what it is called', () => {
   })
 })
 
+/*
+ * Not an event's own rule — every note in the vault gets the counter — but the
+ * fixture is here, and so is the reason it was found.
+ */
+describe('the counter a name already taken is given', () => {
+  const base = (p: string) => p.slice(p.lastIndexOf('/') + 1, -'.md'.length)
+
+  it('fits inside the limit when a note is made', async () => {
+    const { vault } = await fresh()
+    const long = 'M'.repeat(200)
+    await vault.createNote('', long)
+    const second = await vault.createNote('', long)
+    expect(base(second).length).toBe(120)
+    expect(base(second).endsWith(' 2')).toBe(true)
+  })
+
+  it('and when one is renamed onto a name already in use', async () => {
+    const { vault } = await fresh()
+    const long = 'M'.repeat(200)
+    await vault.createNote('', long)
+    const other = await vault.createNote('', 'Other')
+    const renamed = await vault.renameNote(other, long)
+    expect(base(renamed).length).toBe(120)
+    expect(base(renamed).endsWith(' 2')).toBe(true)
+  })
+})
+
 describe('the note it writes', () => {
   it('lands in the calendar folder under the year and month, named for itself', async () => {
     const { ev } = await fresh()
@@ -168,11 +207,12 @@ describe('the note it writes', () => {
     expect(path).toBe('Calendar/2026/09/Design review - 2026-09-21.md')
   })
 
-  it('opens with a start and an end already written', async () => {
+  it('opens with its title, a start and an end already written', async () => {
     const { vault, ev } = await fresh()
     const { path } = await ev.newEventNote('Design review', '2026-09-21T09:30', '2026-09-21T10:30')
     expect(vault.getRaw(path)?.text).toBe(
-      '---\nstart: 2026-09-21T09:30\nend: 2026-09-21T10:30\n---\n\n# Design review\n\n',
+      '---\ntitle: Design review\nstart: 2026-09-21T09:30\nend: 2026-09-21T10:30\n---\n\n' +
+        '# Design review\n\n',
     )
   })
 
@@ -207,6 +247,47 @@ describe('the note it writes', () => {
     const { path } = await ev.newEventNote(long, '2026-09-21T09:30', '2026-09-21T10:30')
     expect(path).toBe(`Calendar/2026/09/${'M'.repeat(107)} - 2026-09-21.md`)
     expect(path.endsWith(' - 2026-09-21.md')).toBe(true)
+  })
+
+  it('keeps the date, and the counter, on a second long name inside the limit', async () => {
+    const { vault, ev } = await fresh()
+    /*
+     * The first of two came out at exactly 120; the second had ` 2` appended
+     * after the name was made, and came out at 122. The counter is reserved out
+     * of the budget with the date now, so the title gives up two more
+     * characters and the name keeps both.
+     */
+    const long = 'M'.repeat(200)
+    const a = await ev.newEventNote(long, '2026-09-21T09:30', '2026-09-21T10:30')
+    const b = await ev.newEventNote(long, '2026-09-21T14:00', '2026-09-21T15:00')
+    const name = (p: string) => p.slice(p.lastIndexOf('/') + 1, -'.md'.length)
+    expect(name(a.path).length).toBe(120)
+    expect(name(b.path).length).toBe(120)
+    expect(name(b.path).endsWith(' - 2026-09-21 2')).toBe(true)
+    // Two names, one meeting: both read as everything that was typed.
+    const { eventTitle } = await import('./agenda')
+    for (const p of [a.path, b.path]) {
+      const e = vault.getEntry(p)!
+      expect(eventTitle(e.title, e.event?.title)).toBe(long)
+    }
+  })
+
+  it('reads as its new name on the agenda once it is renamed', async () => {
+    const { vault, ev } = await fresh()
+    const { eventTitle } = await import('./agenda')
+    const { path } = await ev.newEventNote(
+      'Postmortem - 2026-09-22',
+      '2026-09-22T09:30',
+      '2026-09-22T10:30',
+    )
+    let e = vault.getEntry(path)!
+    // Made: the date typed on the end of it survives, because it is recorded.
+    expect(e.event?.title).toBe('Postmortem - 2026-09-22')
+    expect(eventTitle(e.title, e.event?.title)).toBe('Postmortem - 2026-09-22')
+    // Renamed from the header: the file is what it is called now.
+    const moved = await vault.renameNote(path, 'Incident review')
+    e = vault.getEntry(moved)!
+    expect(eventTitle(e.title, e.event?.title)).toBe('Incident review')
   })
 
   it('still gives two on one day the `2` every collision in the vault gets', async () => {

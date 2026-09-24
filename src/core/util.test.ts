@@ -4,9 +4,12 @@ import {
   dueLabel,
   duePresets,
   dueTone,
+  fitSegment,
   matchRanges,
   matchesAll,
   monthGrid,
+  numberedSegment,
+  safeSegment,
   searchTerms,
   startOfDay,
 } from './util'
@@ -180,5 +183,33 @@ describe('matchRanges', () => {
   it('caps separated matches too', () => {
     const text = 'e '.repeat(500)
     expect(matchRanges(text, ['e'], 20)).toHaveLength(20)
+  })
+})
+
+describe('a segment that has to fit', () => {
+  const lone = /[\uD800-\uDBFF]$/
+
+  it('never cuts a character in half', () => {
+    // An emoji is two UTF-16 units. A cut between them is not a character in
+    // any encoding, and a sync backend writes it back as U+FFFD — so the name
+    // on the other device is not the name here.
+    const odd = `a${'🎉'.repeat(70)}`
+    expect(lone.test(safeSegment(odd))).toBe(false)
+    expect(safeSegment(odd).length).toBeLessThanOrEqual(120)
+    expect(lone.test(fitSegment(odd, 100))).toBe(false)
+  })
+
+  it('leaves no trailing space or dot where the cut lands', () => {
+    expect(fitSegment('abc def', 4)).toBe('abc')
+    expect(fitSegment('abc.def', 4)).toBe('abc')
+  })
+
+  it('makes room for a counter rather than running past the limit', () => {
+    const full = 'M'.repeat(120)
+    expect(numberedSegment(full, 1)).toBe(full)
+    expect(numberedSegment(full, 2)).toBe(`${'M'.repeat(118)} 2`)
+    expect(numberedSegment(full, 13)).toBe(`${'M'.repeat(117)} 13`)
+    // A short name is untouched apart from the counter.
+    expect(numberedSegment('Standup', 2)).toBe('Standup 2')
   })
 })

@@ -283,7 +283,7 @@ export function AgendaPanel({ big = false }: { big?: boolean } = {}) {
               onClick={() => openNote(e.path)}
             >
               <span class="agenda-when">{eventTimeLabel(ev, day)}</span>
-              <span class="agenda-what">{eventTitle(e.title)}</span>
+              <span class="agenda-what">{eventTitle(e.title, ev.title)}</span>
               {broken ? (
                 <em class="agenda-zone" data-invalid="1" title={`${broken} is not a time zone this browser knows, so it is being ignored`}>
                   {broken}?

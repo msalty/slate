@@ -112,47 +112,11 @@ export function eventZoneProblem(ev: NoteEvent): string {
   return ev.badZone ?? ''
 }
 
-/** `2026-09-21 0930 Standup` — where the stamp used to go. */
-const HEAD_RE = /^\d{4}-\d{2}-\d{2}(?:[ T]\d{4})?\s+/
-/**
- * `Lunch with Joe - 2026-09-22`, and `- 2026-09-22 2` for the second one that
- * day, since a name taken twice still picks up the counter every collision in
- * the vault gets.
+/*
+ * What a row is called lives with the function that names the file, in
+ * `eventname.ts`, since the one has to undo exactly what the other did.
  */
-const TAIL_RE = /\s+-\s+\d{4}-\d{2}-\d{2}(?:\s+\d+)?$/
-
-/**
- * What an event is called, on a list that already knows the day.
- *
- * The date lives in the *filename* because a note's title is its filename, and
- * a weekly lunch filed by month is otherwise one linkable note and three
- * unreachable ones — see `eventNoteName`. None of it is worth reading here: the
- * agenda sits under a heading naming the day and puts the clock in its own
- * column, so a row reading "Lunch with Joe - 2026-09-22" on the 22nd is saying
- * the same thing twice. Worse, this row is one line with an ellipsis on the end
- * of it, so what the date pushes off the edge is the name.
- *
- * One or the other, never both, because the stamp used to go on the front and
- * notes named that way are still in vaults — but a name has only ever had one
- * of them. Taking a turn at each end instead read `2026-09-22 0930 Standup`,
- * typed by somebody who likes naming things that way, as plain `Standup`: the
- * suffix came off because this wrote it, and then the front came off too
- * because it looked like something written long ago.
- *
- * Exactly one, which is what makes this the inverse of `eventNoteName` rather
- * than an approximation of it. A title that ends in a date of its own is given
- * a second one when the file is named, and gets it back here — without that
- * pair, an event deliberately called `Postmortem - 2026-09-22` read on the
- * agenda as `Postmortem`.
- *
- * A date is only taken off when something is left after it — a note genuinely
- * called `2026-09-21` keeps its name rather than losing it.
- */
-export function eventTitle(title: string): string {
-  const tail = title.replace(TAIL_RE, '')
-  const stripped = tail === title ? title.replace(HEAD_RE, '') : tail
-  return stripped || title
-}
+export { eventTitle } from './eventname'
 
 /** Whether an event has already finished, for dimming a row you have done. */
 export function eventIsPast(ev: NoteEvent, now = Date.now()): boolean {

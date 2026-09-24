@@ -7266,6 +7266,30 @@ try {
   )
 
   /*
+   * And renamed, it reads as its new name.
+   *
+   * A new event records what it was called in `title:`, because a filename
+   * cannot say which of its parts somebody typed. That record is only believed
+   * while the filename is still exactly what it would have been named — so a
+   * rename from the header, which is how anything in this app is renamed, has
+   * the agenda follow the file rather than go on showing the old name.
+   */
+  await page.locator('.note-row', { hasText: `Budget call - ${isoDay(3)}` }).first().click()
+  await page.waitForTimeout(500)
+  await page.locator('.editor-title-input').fill('Quarterly budget review')
+  await page.locator('.editor-title-input').press('Enter')
+  await page.waitForTimeout(600)
+  const renamedOn = await showDay(3)
+  await renamedOn.click()
+  await page.waitForTimeout(400)
+  const afterRename = await agenda.locator('.agenda-row .agenda-what').allInnerTexts()
+  check(
+    'an event renamed from its header is called its new name on the agenda',
+    afterRename.includes('Quarterly budget review') && !afterRename.includes('Budget call'),
+    afterRename.join(' | '),
+  )
+
+  /*
    * And a key that only looks like one the app knows.
    *
    * `Start:` is not `start:` — frontmatter is case-sensitive and so is every

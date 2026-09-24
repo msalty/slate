@@ -80,6 +80,7 @@ import {
   joinPath,
   mimeForPath,
   normPath,
+  numberedSegment,
   safeSegment,
   startOfDay,
   titleFromPath,
@@ -1021,15 +1022,19 @@ export async function createNote(
   folder = '',
   title: string = UNTITLED,
   body = '',
+  /**
+   * The name to try on the `n`th attempt, for a caller whose names have to end
+   * in something. The default is the title, then the title with ` 2`, ` 3` — cut
+   * to leave room for the counter, which appending it to a name already at the
+   * limit did not. An event passes its own, because its date has to survive a
+   * collision too and a counter tacked on after this made it would cut it off.
+   */
+  nameFor: (n: number) => string = (n) => numberedSegment(safeSegment(title), n),
 ): Promise<string> {
   const dir = normPath(folder)
-  let name = safeSegment(title)
-  let path = joinPath(dir, `${name}.md`)
-  let n = 2
-  while (files.has(path)) {
-    name = `${safeSegment(title)} ${n++}`
-    path = joinPath(dir, `${name}.md`)
-  }
+  let n = 1
+  let path = joinPath(dir, `${nameFor(n)}.md`)
+  while (files.has(path)) path = joinPath(dir, `${nameFor(++n)}.md`)
   const now = Date.now()
   const text = body
   const f: VaultFile = {
@@ -1091,7 +1096,9 @@ export async function renameNote(path: string, newTitle: string): Promise<string
   if (!clean || clean === oldTitle) return path
   let next = joinPath(dirname(path), `${clean}.md`)
   let n = 2
-  while (files.has(next) && next !== path) next = joinPath(dirname(path), `${clean} ${n++}.md`)
+  while (files.has(next) && next !== path) {
+    next = joinPath(dirname(path), `${numberedSegment(clean, n++)}.md`)
+  }
 
   await movePath(path, next)
   await rewriteLinksTo(oldTitle, clean)
