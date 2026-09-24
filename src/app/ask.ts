@@ -12,6 +12,7 @@ import {
   ALL,
   answerSystem,
   citedWithoutReading,
+  settleCitations,
   isDerived,
   newConversation,
   noteScope,
@@ -325,12 +326,15 @@ export async function askTurn(
       : 'Nothing matched — answering anyway…',
   )
 
-  const answer = await streamText(
+  const said = await streamText(
     ai,
     answerSystem(sourceDescription(source), pinsSent.length),
     answerUser(question, sources, history),
     { signal: opts.signal, onChunk: opts.onChunk },
   )
+  // Cited by the names they were sent under, which may since mean other notes.
+  const sent = new Map(sources.map((s) => [s.cite.toLowerCase(), s.path]))
+  const answer = settleCitations(said, sent, linkNameFor)
 
   /*
    * `matched` stays what the *search* found, so the number keeps meaning what
@@ -355,7 +359,7 @@ export async function askTurn(
     provenance: {
       terms,
       matched: found.length,
-      read: sources.map((s) => s.cite),
+      read: sources.map((s) => linkNameFor(s.path)),
       tokens,
       dropped: Math.max(0, Math.min(candidates, limit) - sources.length),
       beyondLimit: Math.max(0, candidates - limit),

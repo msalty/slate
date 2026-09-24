@@ -308,8 +308,11 @@ never a counter cut into the date.
 or edited in. A link made by *picking* one of them — from autocomplete, pinning,
 *Ask about this note*, or an AI citation — is written with its path:
 `[[Work/Name]]` means that note wherever it is. And when a move, or a new note
-of that name, would hand an existing `[[Name]]` to the other note, that link is
-rewritten to the path of the note it meant first, so nothing moves under it.
+of that name — made here or pulled in by sync — would hand an existing `[[Name]]`
+to the other note, that link is rewritten to the path of the note it meant
+first, so nothing moves under it. A conversation's note scope is kept the same
+way, and an AI answer's citations are written to lead to the notes that were
+actually sent, even if another of the same name arrived while it was thinking.
 
 **A name can use the characters a link does.** `#`, `|` and `]` all mean
 something inside `[[…]]` — `[[C# Notes]]` is the note `C` and its heading

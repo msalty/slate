@@ -56,6 +56,7 @@ import {
 } from './markdown'
 import type { WikiLink } from './markdown'
 import { formatWikiLink } from './wikilink'
+import { noteScope, noteScopeRule, quoteRule } from './ask'
 import { nameAfterCollision } from './eventname'
 import {
   loadDeviceRecords,
@@ -1044,6 +1045,12 @@ export async function installFromRemote(list: VaultFile[]): Promise<void> {
   // Device files first: a note pulled in the same batch can then be credited to
   // whoever pushed it, rather than to "somewhere else".
   loadDeviceRecords(list)
+  /*
+   * A note pulled in can take a name — see `planArrivals`. Locally made notes
+   * always pinned what they would take; one made on another device did not,
+   * here: `[[Name]]` meant `Work/Name` until `Archive/Name` was pulled.
+   */
+  const plan = planArrivals(list)
   for (const f of list) {
     if (f.kind === 'note') {
       await pushVersion({
@@ -1060,6 +1067,10 @@ export async function installFromRemote(list: VaultFile[]): Promise<void> {
   await putFiles(list)
   for (const f of list) reindex(f.path)
   bump()
+  if (plan) {
+    const incoming = new Set(list.map((f) => f.path))
+    await writePlanned(plan, (p) => !incoming.has(p), (p) => p)
+  }
 }
 
 /**
@@ -1180,23 +1191,49 @@ export async function createNote(
     dirty: true,
     ...inheritedSync(path),
   }
-  /*
-   * A name this note takes may already mean another note, and if this one sorts
-   * first it would take every bare link to it — so those are pinned first.
-   */
-  const arrival: Named = {
-    path,
-    title: titleFromPath(path),
-    aliases: aliasesIn(parseFrontmatter(text).data.aliases),
-  }
-  const index = titleIndex.value
-  if ([arrival.title, ...arrival.aliases].some((n) => index.has(n.toLowerCase()))) {
-    await writePlanned(planReferences(new Map(), [arrival]), () => true, (p) => p)
-  }
+  const plan = planArrivals([f])
   await writeFile(f)
   reindex(path)
   bump()
+  if (plan) await writePlanned(plan, (p) => p !== path, (p) => p)
   return path
+}
+
+/**
+ * What the notes in `list` arriving would do to existing bare links — a plan
+ * to pin them, if any would change meaning, and nothing otherwise.
+ *
+ * A name a new note takes, or an alias a note gains, may already mean another
+ * note, and if the newcomer sorts first by path it takes every bare link to
+ * that name. Made against the vault before `list` lands; written after, and
+ * never to the arriving notes themselves, whose links were written by whoever
+ * made them, against a vault that already had them.
+ *
+ * Only worked out when some name is actually contested, which is rarely: this
+ * is on the path of every note made and every note pulled.
+ */
+function planArrivals(list: readonly VaultFile[]): Plan | undefined {
+  const index = titleIndex.value
+  const arrivals: Named[] = []
+  let contested = false
+  for (const f of list) {
+    if (f.kind !== 'note' || f.deleted) continue
+    const a: Named = {
+      path: f.path,
+      title: titleFromPath(f.path),
+      aliases: aliasesIn(parseFrontmatter(f.text ?? '').data.aliases),
+    }
+    arrivals.push(a)
+    const had = getEntry(f.path)
+    const known = new Set(had ? [a.title, ...had.aliases].map((n) => n.toLowerCase()) : [])
+    for (const n of [a.title, ...a.aliases]) {
+      const k = n.toLowerCase()
+      if (known.has(k)) continue
+      const holder = index.get(k)
+      if (holder !== undefined && holder !== f.path) contested = true
+    }
+  }
+  return contested ? planReferences(new Map(), arrivals) : undefined
 }
 
 /** Save note text. Called from the editor's debounced autosave. */
@@ -1368,6 +1405,16 @@ interface Planned {
   text: string
 }
 
+interface Plan {
+  notes: Map<string, Planned>
+  /**
+   * The same rewrite, for a note's text as it is now — decided against the
+   * vault as it was when the plan was made, so a note edited while the plan
+   * was being written can be planned again rather than skipped or overwritten.
+   */
+  rewrite: (path: string, text: string) => string | undefined
+}
+
 /**
  * The text every note should have once `moves` has happened, for the notes in
  * which a reference changes. Decided before anything moves, against the vault
@@ -1406,17 +1453,17 @@ interface Planned {
 function planReferences(
   moves: ReadonlyMap<string, string>,
   arrivals: readonly Named[] = [],
-): Map<string, Planned> {
+): Plan {
   const titles = titleIndex.value
   const paths = pathSet.value
   const moved = (path: string) => moves.get(path) ?? path
 
   /* The vault as it will be: what each name will mean, and which paths there will be. */
-  const later: Named[] = notes.value.map((e) => ({
-    path: moved(e.path),
-    title: titleFromPath(moved(e.path)),
-    aliases: e.aliases,
-  }))
+  // An arrival at a path a note already has is that note with new names.
+  const arriving = new Set(arrivals.map((a) => a.path))
+  const later: Named[] = notes.value
+    .filter((e) => !arriving.has(e.path))
+    .map((e) => ({ path: moved(e.path), title: titleFromPath(moved(e.path)), aliases: e.aliases }))
   later.push(...arrivals)
   const titlesAfter = buildTitleIndex(later)
   const pathsAfter = new Set([...paths].map(moved))
@@ -1464,6 +1511,11 @@ function planReferences(
     if (!t) return undefined
     const at = resolveTarget(t, titles, paths)
     if (!at) return retargetFile(t, notePath, newDir)
+    return retargetNote(t, at)
+  }
+
+  /** Where a name or path that leads to the note at `at` should lead instead. */
+  const retargetNote = (t: string, at: string): string | undefined => {
     const to = moved(at)
     const np = normPath(t)
     if (np === at) return to === at ? undefined : to
@@ -1481,14 +1533,12 @@ function planReferences(
     return to.replace(/\.md$/i, '')
   }
 
-  const plan = new Map<string, Planned>()
-  for (const f of files.values()) {
-    if (f.kind !== 'note' || f.deleted || !f.text) continue
-    const newDir = dirname(moved(f.path))
-    const regions = codeRegions(f.text)
+  const rewrite = (path: string, was: string): string | undefined => {
+    const newDir = dirname(moved(path))
+    const regions = codeRegions(was)
     const edits: Rewrite[] = []
-    for (const l of scanWikiLinks(f.text, regions)) {
-      const target = retargetWiki(l, f.path, newDir)
+    for (const l of scanWikiLinks(was, regions)) {
+      const target = retargetWiki(l, path, newDir)
       if (target === undefined) continue
       /*
        * Through the one writer the syntax has. Renamed to `C# Notes`, a link
@@ -1498,12 +1548,27 @@ function planReferences(
       const insert = formatWikiLink({ target, anchor: l.anchor, alias: l.alias, embed: l.embed })
       edits.push({ from: l.from, to: l.to, insert })
     }
-    for (const l of scanMdLinks(f.text, regions)) {
+    /*
+     * A conversation's scope names a note too — `source: "links:Work/Name"` —
+     * and is kept pointing at it the same way a link is.
+     */
+    const scope = /^source:.*$/m.exec(was.startsWith('---') ? was : '')
+    const fm = scope ? parseFrontmatter(was) : undefined
+    const rule = fm && typeof fm.data.source === 'string' ? noteScope(fm.data.source) : undefined
+    if (scope && fm && rule && scope.index < fm.bodyStart) {
+      const at = resolveTarget(rule.title, titles, paths)
+      const target = at && retargetNote(rule.title, at)
+      if (target) {
+        const insert = `source: ${quoteRule(noteScopeRule(rule.kind, target))}`
+        edits.push({ from: scope.index, to: scope.index + scope[0].length, insert })
+      }
+    }
+    for (const l of scanMdLinks(was, regions)) {
       const url = l.url.trim()
       if (!url || /^[a-z]+:/i.test(url)) continue
       const [bare] = splitSizeFragment(decodeLinkPath(url))
       const [, width] = splitSizeFragment(l.url)
-      const next = retargetFile(bare, f.path, newDir)
+      const next = retargetFile(bare, path, newDir)
       if (next === undefined) continue
       // Encoded the way every address is — see `encodeLinkPath`.
       edits.push({
@@ -1512,44 +1577,67 @@ function planReferences(
         insert: encodeLinkPath(next) + (width ? `#w=${width}` : ''),
       })
     }
-    if (!edits.length) continue
+    if (!edits.length) return undefined
     // Right to left, so earlier offsets stay valid.
-    let text = f.text
+    let text = was
     for (const ed of edits.sort((a, b) => b.from - a.from)) {
       text = `${text.slice(0, ed.from)}${ed.insert}${text.slice(ed.to)}`
     }
-    plan.set(f.path, { was: f.text, text })
+    return text
   }
-  return plan
+
+  const planned = new Map<string, Planned>()
+  for (const f of files.values()) {
+    if (f.kind !== 'note' || f.deleted || !f.text) continue
+    const text = rewrite(f.path, f.text)
+    if (text !== undefined) planned.set(f.path, { was: f.text, text })
+  }
+  return { notes: planned, rewrite }
 }
 
 /**
  * Write the planned texts of the notes `which` picks, at the path `where` says
- * each now has — and only where the text is still what the plan was made from.
- * One edited in the meantime keeps the edit and its old links, rather than
- * having a plan made from text it no longer has written over it.
+ * each now has — over the text the plan was made from, and nothing else.
+ *
+ * The check comes after the last `await` and before the write, with nothing in
+ * between. It came before hashing once, so an edit saved while the hash was
+ * being worked out was checked for too early and then written over: `see [[A]]
+ * plus my edit` became `see [[B]]`. A note that has changed is planned again from
+ * what it says now, so it keeps both the edit and the rewrite.
  */
 async function writePlanned(
-  plan: ReadonlyMap<string, Planned>,
+  plan: Plan,
   which: (path: string) => boolean,
   where: (path: string) => string,
 ): Promise<void> {
   const touched: VaultFile[] = []
-  for (const [path, { was, text }] of plan) {
+  for (const [path, first] of plan.notes) {
     if (!which(path)) continue
     const at = where(path)
-    const f = files.get(at)
-    if (!f || f.deleted || f.text !== was) continue
-    const next: VaultFile = {
-      ...f,
-      text,
-      hash: await hashText(text),
-      size: text.length,
-      mtime: Date.now(),
-      dirty: true,
+    let { was, text } = first
+    // Bounded, so a note being rewritten continuously cannot hold this forever.
+    for (let tries = 0; tries < 8; tries++) {
+      const hash = await hashText(text)
+      const f = files.get(at)
+      if (!f || f.deleted) break
+      if (f.text === was) {
+        const next: VaultFile = {
+          ...f,
+          text,
+          hash,
+          size: text.length,
+          mtime: Date.now(),
+          dirty: true,
+        }
+        setFile(at, next)
+        touched.push(next)
+        break
+      }
+      was = f.text ?? ''
+      const again = plan.rewrite(path, was)
+      if (again === undefined) break
+      text = again
     }
-    setFile(at, next)
-    touched.push(next)
   }
   if (touched.length) {
     await putFiles(touched)

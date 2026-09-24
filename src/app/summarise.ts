@@ -22,6 +22,7 @@ import {
 } from '../core/summary'
 import { settings } from '../core/settings'
 import { createNote, getText, linkNameFor } from '../core/vault'
+import { settleCitations } from '../core/ask'
 import type { NoteIndexEntry } from '../core/types'
 
 /** Read the notes and work out what it would take, without sending anything. */
@@ -71,7 +72,12 @@ export async function runSummary(
     partials.push(unfence(text))
   }
 
-  if (partials.length === 1) return partials[0]
+  /*
+   * Cited by the names they were sent under, which may since mean other notes —
+   * see `settleCitations`.
+   */
+  const sent = new Map(plan.batches.flat().map((s) => [s.cite.toLowerCase(), s.path]))
+  if (partials.length === 1) return settleCitations(partials[0], sent, linkNameFor)
 
   opts.onProgress?.(total - 1, total)
   const combined = await streamText(
@@ -80,7 +86,7 @@ export async function runSummary(
     combineUser(partials),
     { onChunk: opts.onChunk, signal: opts.signal },
   )
-  return unfence(combined)
+  return settleCitations(unfence(combined), sent, linkNameFor)
 }
 
 /** Write the summary into a new note and answer with its path. */

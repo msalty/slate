@@ -24,6 +24,23 @@ async function fresh() {
 
 const base = (p: string) => p.slice(p.lastIndexOf('/') + 1, -'.md'.length)
 
+/** A note as a sync pull hands it over. */
+function pulled(path: string, text: string) {
+  return {
+    path,
+    kind: 'note' as const,
+    text,
+    mime: 'text/markdown',
+    size: text.length,
+    hash: `h-${path}`,
+    mtime: Date.now(),
+    ctime: Date.now(),
+    deleted: false,
+    dirty: false,
+    sync: {},
+  }
+}
+
 describe('renaming onto a name already taken', () => {
   it('sends the links where the note went, not to the note that had the name', async () => {
     const { vault } = await fresh()
@@ -417,6 +434,52 @@ describe('two notes with one name', () => {
     expect(vault.resolveLink(ask.draft.value!.pin!)).toBe(work)
   })
 
+  /*
+   * The dialog held `Name` while `Work/Name` was the only one, and an
+   * `Archive/Name` arriving before it was sent took the question.
+   */
+  it('and stays that note if another of the name turns up while the dialog is open', async () => {
+    const { vault } = await fresh()
+    const work = await vault.createNote('Work', 'Name', 'work')
+    const ask = await import('../ui/AskDialog')
+    ask.askAboutNote(work)
+    expect(ask.draft.value?.pinLabel).toBe('Name')
+    await vault.createNote('Archive', 'Name', 'archive')
+    expect(vault.resolveLink(ask.draft.value!.pin!)).toBe(work)
+  })
+
+  it('keeps a link on its note when one of that name is pulled in by sync', async () => {
+    const { vault } = await fresh()
+    const work = await vault.createNote('Work', 'Name', 'work')
+    const ref = await vault.createNote('', 'Ref', 'see [[Name]]')
+    const text = 'from elsewhere, see [[Name]]'
+    await vault.installFromRemote([pulled('Archive/Name.md', text)])
+    expect(vault.resolveLink('Name')).toBe('Archive/Name.md')
+    expect(vault.getRaw(ref)?.text).toBe('see [[Work/Name]]')
+    expect(vault.resolveLink('Work/Name')).toBe(work)
+    // Its own links were written by a device that already had it: left alone.
+    expect(vault.getRaw('Archive/Name.md')?.text).toBe(text)
+  })
+
+  it('and when a note pulled in brings an alias another note answers to', async () => {
+    const { vault } = await fresh()
+    const work = await vault.createNote('Work', 'X', '---\naliases: [Nick]\n---\nx')
+    const ref = await vault.createNote('', 'Ref', 'see [[Nick]]')
+    await vault.installFromRemote([pulled('Archive/Y.md', '---\naliases: [Nick]\n---\ny')])
+    expect(vault.getRaw(ref)?.text).toBe('see [[Work/X]]')
+    expect(vault.resolveLink('Work/X')).toBe(work)
+  })
+
+  it('keeps a conversation’s scope on its note, through arrivals and moves', async () => {
+    const { vault, folders } = await fresh()
+    await vault.createNote('Work', 'Name', 'work')
+    const convo = await vault.createNote('', 'Chat', '---\nsource: "links:Name"\n---\n# Chat\n')
+    await vault.createNote('Archive', 'Name', 'archive')
+    expect(vault.getRaw(convo)?.text).toContain('source: "links:Work/Name"')
+    await folders.moveNoteToFolder('Work/Name.md', 'Zed')
+    expect(vault.getRaw(convo)?.text).toContain('source: "links:Zed/Name"')
+  })
+
   it('is linked to by path, so a new link means the note that was picked', async () => {
     const { vault } = await fresh()
     const home = await vault.createNote('Home', 'Name', 'home')
@@ -465,6 +528,33 @@ describe('a folder renamed onto one that is there', () => {
     ])
     await expect(vault.relocate(twice)).rejects.toThrow(/already exists/)
     expect(vault.occupied(note)).toBe(true)
+  })
+})
+
+describe('a rename racing an edit', () => {
+  /*
+   * The plan checked the note's text, then awaited the hash of the rewrite; an
+   * edit saved in that gap was written over: `see [[A]] plus my edit` became
+   * `see [[B]]`.
+   */
+  it('keeps the edit and still rewrites the link', async () => {
+    const { vault } = await fresh()
+    const a = await vault.createNote('', 'A', 'a')
+    const ref = await vault.createNote('', 'Ref', 'see [[A]]')
+    const digest = crypto.subtle.digest.bind(crypto.subtle)
+    let raced = false
+    const spy = vi.spyOn(crypto.subtle, 'digest').mockImplementation(async (alg, data) => {
+      const text = new TextDecoder().decode(data as ArrayBuffer)
+      if (!raced && text === 'see [[B]]') {
+        raced = true
+        await vault.saveNote(ref, 'see [[A]] plus my edit')
+      }
+      return digest(alg, data as ArrayBuffer)
+    })
+    await vault.renameNote(a, 'B')
+    spy.mockRestore()
+    expect(raced).toBe(true)
+    expect(vault.getRaw(ref)?.text).toBe('see [[B]] plus my edit')
   })
 })
 

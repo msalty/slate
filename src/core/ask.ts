@@ -27,7 +27,7 @@
  */
 
 import { formatWikiLink, splitWikiInner } from './wikilink'
-import { parseFrontmatter, scanWikiLinks, setFrontmatterList } from './markdown'
+import { codeRegions, parseFrontmatter, scanWikiLinks, setFrontmatterList } from './markdown'
 import { unfence } from './llm'
 import { safeSegment, ymd } from './util'
 
@@ -114,10 +114,18 @@ export function noteScopeRule(kind: NoteScope['kind'], title: string): string {
   return `${kind === 'note' ? NOTE_SCOPE : LINKS_SCOPE}${title.trim()}`
 }
 
+/**
+ * The note a scope names, as it is called on screen. A scope chosen by picking
+ * a note names it by path, so it stays that note; the folder is not its name.
+ */
+function shown(ns: NoteScope): string {
+  return ns.title.slice(ns.title.lastIndexOf('/') + 1)
+}
+
 /** How a scope reads in the composer's chip and in the note's own heading. */
 export function sourceLabel(source: string): string {
   const ns = noteScope(source)
-  if (ns) return ns.kind === 'note' ? `Only ${ns.title}` : `${ns.title} + links`
+  if (ns) return ns.kind === 'note' ? `Only ${shown(ns)}` : `${shown(ns)} + links`
   return source === ALL || !source.trim() ? 'All notes' : source
 }
 
@@ -130,7 +138,9 @@ export function sourceLabel(source: string): string {
  */
 export function sourceDescription(source: string): string {
   const ns = noteScope(source)
-  if (ns) return ns.kind === 'note' ? `“${ns.title}” and nothing else` : `“${ns.title}” and its links`
+  if (ns) {
+    return ns.kind === 'note' ? `“${shown(ns)}” and nothing else` : `“${shown(ns)}” and its links`
+  }
   return source === ALL || !source.trim() ? 'all notes' : source
 }
 
@@ -238,7 +248,7 @@ export function newConversation(opts: {
  * concerned, so it has to be quoted or the next parser to look at this file
  * sees an empty `source:`.
  */
-function quoteRule(source: string): string {
+export function quoteRule(source: string): string {
   return /^[A-Za-z0-9_/-]+$/.test(source) ? source : JSON.stringify(source)
 }
 
@@ -463,6 +473,36 @@ export function citedWithoutReading(
     const at = resolve(t)
     return at === undefined || !given.has(at)
   })
+}
+
+/**
+ * An answer's citations of the notes it was sent, written so they lead to those
+ * notes *now*.
+ *
+ * A note is sent under the name that led to it when the request went out —
+ * `[[Name]]` if it was the only `Name` — and the answer can take long enough
+ * for another `Name` to arrive by sync and take that name. So what a citation
+ * meant is looked up in `sent` (lowercased cite → path), not in the vault, and
+ * written as `nameFor` that path says, at the moment the answer is written in.
+ * Once it is in a note, moves and arrivals keep it pointing where it did.
+ */
+export function settleCitations(
+  answer: string,
+  sent: ReadonlyMap<string, string>,
+  nameFor: (path: string) => string,
+): string {
+  let out = answer
+  const links = scanWikiLinks(answer, codeRegions(answer))
+  // Right to left, so earlier offsets stay valid.
+  for (const l of links.sort((a, b) => b.from - a.from)) {
+    const path = sent.get(l.target.trim().toLowerCase())
+    if (path === undefined) continue
+    const target = nameFor(path)
+    if (target === l.target) continue
+    const insert = formatWikiLink({ target, anchor: l.anchor, alias: l.alias, embed: l.embed })
+    out = `${out.slice(0, l.from)}${insert}${out.slice(l.to)}`
+  }
+  return out
 }
 
 /* ----------------------------------------------------------- writing a turn */

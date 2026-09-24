@@ -602,6 +602,36 @@ describe('sync round trips', () => {
   })
 })
 
+describe('a name taken on another device', () => {
+  /*
+   * `[[Name]]` meant `Work/Name` on both; `Archive/Name` made on one of them
+   * took it on the other once pulled, since only the maker pinned its links.
+   */
+  it('leaves every link on both devices meaning what it did, without conflicts', async () => {
+    const server = new MemoryServer()
+    const a = await makeDevice(server, 'a')
+    await a.vault.createNote('Work', 'Name', 'work')
+    await a.vault.createNote('', 'Ref', 'see [[Name]]')
+    await run(a)
+    const b = await makeDevice(server, 'b')
+    await run(b)
+    // Written on b before it has heard of the newcomer.
+    await b.vault.createNote('', 'Mine', 'also [[Name]]')
+    await a.vault.createNote('Archive', 'Name', 'archive')
+    await run(a)
+    await run(b)
+    expect(b.vault.getText('Mine.md')).toBe('also [[Work/Name]]')
+    // b's rewrite of its own note goes up with its next run.
+    await run(b)
+    await run(a)
+    for (const d of [a, b]) {
+      expect(d.vault.getText('Ref.md')).toBe('see [[Work/Name]]')
+      expect(d.vault.getText('Mine.md')).toBe('also [[Work/Name]]')
+      expect(d.vault.listAll().filter((f) => f.path.includes('conflict'))).toEqual([])
+    }
+  })
+})
+
 describe('device attribution', () => {
   it('credits a pulled change to the device that pushed it', async () => {
     const server = new MemoryServer()
