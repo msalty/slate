@@ -30,6 +30,15 @@
  *    its height from the stack, so the thing with the keyboard is the thing you
  *    can see.
  *
+ * And it is where the focus goes back to. Every dialog in this app takes the
+ * focus when it opens and none of them ever gave it back: dismissing the
+ * palette over a half-written capture left the caret on `<body>`, so the next
+ * thing typed was either dropped or read as a keyboard shortcut. A layer
+ * remembers what was focused when it opened and hands it back on the way out —
+ * but only if nobody else has taken it in the meantime, and only if the thing
+ * it remembers is out in the open again rather than buried under the next
+ * dialog along.
+ *
  * Two of them have a *floor* rather than a plain place in the queue. The
  * quick-add sheet and the context menu sat above the rest of the ladder for
  * reasons of their own — the due-date picker is a menu opened from inside that
@@ -79,6 +88,42 @@ function restack(): void {
   }
 }
 
+/**
+ * Is `el` out in the open — either nothing is left on the stack, or it belongs
+ * to whatever is now on top?
+ *
+ * Asked at the moment of handing focus back rather than at the moment of
+ * closing, because closing one layer is how another gets opened: a menu item
+ * that raises a confirmation closes the menu first, and the button that opened
+ * the menu is no place for the caret once that confirmation is up.
+ */
+function exposed(el: HTMLElement): boolean {
+  const top = stack[stack.length - 1]
+  if (!top) return true
+  const root = top.root.current
+  return !!root && root.contains(el)
+}
+
+/**
+ * Give the focus back to whatever had it before this layer opened.
+ *
+ * In a microtask, for two reasons. The element this layer was holding the focus
+ * in may still be in the document when the cleanup runs, and "has anyone else
+ * taken the focus" has no answer until it is gone. And anything that means to
+ * claim the focus itself does so from a `requestAnimationFrame`, which is later
+ * than this, so a layer that knows where the caret belongs still wins.
+ */
+function returnFocus(from: HTMLElement | null): void {
+  if (!from) return
+  queueMicrotask(() => {
+    const now = document.activeElement
+    if (now && now !== document.body && now !== document.documentElement) return
+    if (!from.isConnected || !from.getClientRects().length) return
+    if (!exposed(from)) return
+    from.focus({ preventScroll: true })
+  })
+}
+
 export type ModalLayer = {
   /**
    * Whether this layer is on top of the stack.
@@ -111,6 +156,13 @@ export function useModalLayer(active: boolean, floor: number = Z_DIALOG): ModalL
     if (!active) return
     const id = ++serial
     mine.current = id
+    /*
+     * Before anything of this layer's is focused: the effect runs on the commit
+     * that mounts it, and every dialog here reaches for its own field a frame
+     * later.
+     */
+    const came = document.activeElement
+    const from = came instanceof HTMLElement && came !== document.body ? came : null
     stack.push({ id, floor, root })
     restack()
     return () => {
@@ -125,6 +177,7 @@ export function useModalLayer(active: boolean, floor: number = Z_DIALOG): ModalL
        */
       if (root.current) root.current.style.zIndex = ''
       restack()
+      returnFocus(from)
     }
   }, [active, floor])
   return {

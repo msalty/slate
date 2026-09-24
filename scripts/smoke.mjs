@@ -4929,10 +4929,19 @@ try {
   await page.waitForTimeout(400)
   await page.keyboard.press('Enter')
   await page.waitForSelector('.qa-root[data-open="1"]', { timeout: 10_000 })
+  /*
+   * The sheet empties its field in an effect as it opens, and Preact flushes
+   * effects a frame after the commit — so a draft written the instant the sheet
+   * appears can be wiped by the sheet's own opening. Wait for that to have
+   * happened, then make sure what was typed actually stuck, so the race shows
+   * up here as a failure rather than as an empty draft three checks later.
+   */
+  await page.waitForTimeout(400)
   await page.locator('.qa-field').fill('Ring the dentist')
-  /* `fill` is one instant write rather than typing; let the field's own state
-     catch up before the next render, or it renders the empty string back. */
-  await page.waitForTimeout(300)
+  await page.waitForFunction(
+    () => document.querySelector('.qa-field')?.value === 'Ring the dentist',
+    { timeout: 5_000 },
+  )
   await page.keyboard.press('Meta+k')
   await page.waitForTimeout(400)
   const overSheet = await paletteOnTop(page)
@@ -4951,6 +4960,23 @@ try {
       await page.locator('.qa-field').inputValue(),
     )}`,
   )
+  /*
+   * And the caret goes back where it was. Every dialog here takes the focus
+   * when it opens and none of them used to give it back, so dismissing the
+   * palette left it on `<body>`: the draft survived, and the next thing typed
+   * into it went nowhere — or worse, was read as a shortcut.
+   */
+  await page.keyboard.type(' tomorrow')
+  await page.waitForTimeout(250)
+  check(
+    'and hands the caret back to the field it took it from',
+    (await page.evaluate(() => document.activeElement?.classList.contains('qa-field'))) === true &&
+      (await page.locator('.qa-field').inputValue()) === 'Ring the dentist tomorrow',
+    `focus ${await page.evaluate(() => document.activeElement?.className)}, draft ${JSON.stringify(
+      await page.locator('.qa-field').inputValue(),
+    )}`,
+  )
+
   await page.keyboard.press('Escape')
   await page.waitForTimeout(350)
   check(
