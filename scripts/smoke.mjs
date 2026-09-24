@@ -3937,6 +3937,75 @@ try {
   )
   await page.locator('.side-row:has-text("All Notes")').first().click()
   await page.waitForTimeout(350)
+  /*
+   * Under its own name. Leaving a folder leaves a tombstone where the note was,
+   * and a collision check that counted it came back as `Retro 2` — nothing
+   * called Retro anywhere for it to have collided with. The check above only
+   * asked whether the folder was empty, which is how that got past it.
+   */
+  const home = await page.locator('.note-row-title').allInnerTexts()
+  check(
+    'and comes home under the name it left with',
+    home.includes('Retro') && !home.includes('Retro 2'),
+    home.filter((t) => t.startsWith('Retro')).join(', '),
+  )
+
+  /*
+   * Onto a folder that already has a note by that name. The move went straight
+   * onto the path and the note that was there was overwritten — one drag into
+   * the wrong folder deleted something, and sync took the loss to every other
+   * device. The one being moved takes the next free name instead, and says so.
+   *
+   * Seeded rather than made through the UI so the pair is known exactly; the
+   * next section reloads the page for its own seeding either way.
+   */
+  await page.evaluate(async () => {
+    const seed = [
+      ['Clients/Dupe.md', '# Dupe\n\nAlready in Clients, and must survive.\n'],
+      ['Dupe.md', '# Dupe\n\nThe one being moved.\n'],
+    ]
+    const db = await new Promise((res, rej) => {
+      const r = indexedDB.open('slate')
+      r.onsuccess = () => res(r.result)
+      r.onerror = () => rej(r.error)
+    })
+    const tx = db.transaction('files', 'readwrite')
+    seed.forEach(([path, text], i) => {
+      tx.objectStore('files').put({
+        path, kind: 'note', text, mime: 'text/markdown', size: text.length,
+        hash: `dupe${i}`, mtime: Date.now() + 20_000 - i * 100, ctime: Date.now(),
+        dirty: true, dirtyFlag: 1, sync: {},
+      })
+    })
+    await new Promise((res) => { tx.oncomplete = res })
+  })
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForSelector('.note-row')
+  await page.locator('.side-row:has-text("All Notes")').first().click()
+  await page.waitForTimeout(350)
+  await page
+    .locator('.note-row', { hasText: 'The one being moved' })
+    .first()
+    .dragTo(folderRow('Clients'))
+  await page.waitForTimeout(600)
+  const dupeToast = (await page.locator('.toast').innerText().catch(() => '')) || 'no toast'
+  await folderRow('Clients').click()
+  await page.waitForTimeout(400)
+  const inClients = await page.locator('.note-row').allInnerTexts()
+  check(
+    'a note dragged into a folder that has one by its name leaves that one alone',
+    inClients.some((t) => t.includes('Already in Clients')) &&
+      inClients.some((t) => t.includes('The one being moved')),
+    inClients.map((t) => t.split('\n')[0]).join(' | '),
+  )
+  check(
+    'and takes the next free name, and says so',
+    (await page.locator('.note-row-title').allInnerTexts()).includes('Dupe 2') &&
+      dupeToast.includes('as Dupe 2'),
+    `${(await page.locator('.note-row-title').allInnerTexts()).join(', ')} — "${dupeToast}"`,
+  )
+  await page.locator('.side-row:has-text("All Notes")').first().click()
+  await page.waitForTimeout(350)
 
 
 

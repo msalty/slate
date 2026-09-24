@@ -64,7 +64,7 @@ import { openMenu, useLongPress, type MenuItem } from './Menu'
 import { SwipeRow, type SwipeAction } from './SwipeRow'
 import { Highlight } from './Highlight'
 import { openPrompt } from './PromptDialog'
-import { noteDragProps } from './dragNote'
+import { movedNotice, noteDragProps } from './dragNote'
 import { layoutMode, toggleSidebar } from './layout'
 import { MobileScopeBar } from './Mobile'
 import { IconImage, IconNewNote, IconPin, IconPlus, IconSearch, IconSidebar, IconClose, IconDots } from './Icons'
@@ -178,7 +178,7 @@ function openMoveMenu(entry: NoteIndexEntry) {
       onSelect: async () => {
         const dest = await moveNoteToFolder(entry.path, path)
         activePath.value = dest
-        notify(`Moved to ${path || 'the vault root'}`)
+        notify(movedNotice(entry.path, dest, path))
       },
     })),
     `Move "${entry.title}" to`,

@@ -21,7 +21,7 @@
 
 import { signal } from '@preact/signals'
 import { moveNoteToFolder } from '../core/folders'
-import { dirname } from '../core/util'
+import { basename, dirname, titleFromPath } from '../core/util'
 import { activePath, notify } from './state'
 
 /** Our own type, so a file dragged in from the desktop is never mistaken for one. */
@@ -96,8 +96,20 @@ export function folderDropProps(folder: string, onDropped?: (dest: string) => vo
       // following it is worth doing unconditionally: the alternative is the
       // editor holding a path that no longer exists.
       if (activePath.value === path) activePath.value = dest
-      notify(`Moved to ${folder || 'the vault root'}`)
+      notify(movedNotice(path, dest, folder))
       onDropped?.(dest)
     },
   }
+}
+
+/**
+ * What a move says it did — including a new name, when the folder already had
+ * a note by the old one and this one had to take the next free name. Without
+ * that the note simply seemed to vanish: "Moved to Work", and nothing in Work
+ * called what you dragged.
+ */
+export function movedNotice(from: string, to: string, folder: string): string {
+  const where = folder || 'the vault root'
+  if (basename(to) === basename(from)) return `Moved to ${where}`
+  return `Moved to ${where} as ${titleFromPath(to)}`
 }

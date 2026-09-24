@@ -173,33 +173,6 @@ describe('where an event goes and what it is called', () => {
   })
 })
 
-/*
- * Not an event's own rule — every note in the vault gets the counter — but the
- * fixture is here, and so is the reason it was found.
- */
-describe('the counter a name already taken is given', () => {
-  const base = (p: string) => p.slice(p.lastIndexOf('/') + 1, -'.md'.length)
-
-  it('fits inside the limit when a note is made', async () => {
-    const { vault } = await fresh()
-    const long = 'M'.repeat(200)
-    await vault.createNote('', long)
-    const second = await vault.createNote('', long)
-    expect(base(second).length).toBe(120)
-    expect(base(second).endsWith(' 2')).toBe(true)
-  })
-
-  it('and when one is renamed onto a name already in use', async () => {
-    const { vault } = await fresh()
-    const long = 'M'.repeat(200)
-    await vault.createNote('', long)
-    const other = await vault.createNote('', 'Other')
-    const renamed = await vault.renameNote(other, long)
-    expect(base(renamed).length).toBe(120)
-    expect(base(renamed).endsWith(' 2')).toBe(true)
-  })
-})
-
 describe('the note it writes', () => {
   it('lands in the calendar folder under the year and month, named for itself', async () => {
     const { ev } = await fresh()

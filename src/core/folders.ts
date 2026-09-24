@@ -24,12 +24,24 @@ import {
   listAll,
   movePath,
   notes,
+  occupied,
+  relocateNote,
   readBackstage,
   revision,
   tasks,
   writeBackstage,
 } from './vault'
-import { basename, dirname, joinPath, normPath, safeSegment, startOfDay, uid } from './util'
+import {
+  basename,
+  dirname,
+  joinPath,
+  normPath,
+  numberedSegment,
+  safeSegment,
+  startOfDay,
+  titleFromPath,
+  uid,
+} from './util'
 import {
   evaluateQuery,
   parseQuery,
@@ -208,16 +220,32 @@ export async function deleteFolder(path: string): Promise<number> {
   return inside.length
 }
 
-/** Move one note into a folder (`''` for the vault root). */
+/**
+ * Move one note into a folder (`''` for the vault root).
+ *
+ * Into a folder that already holds a note of the same name, it takes the next
+ * free one — `Foo 2` — the way making or renaming a note does. It used to move
+ * straight onto the path, and the note that was there was overwritten: a drag
+ * into the wrong folder deleted something, and sync took the deletion
+ * everywhere. A move that has to rename also takes its links with it, since
+ * `[[Foo]]` would otherwise go to the note that was there first.
+ */
 export async function moveNoteToFolder(notePath: string, folder: string): Promise<string> {
   const f = getRaw(notePath)
   if (!f) return notePath
-  const dest = joinPath(normPath(folder), basename(notePath))
+  const dir = normPath(folder)
+  const title = titleFromPath(notePath)
+  let dest = joinPath(dir, basename(notePath))
   if (dest === notePath) return notePath
-  await movePath(notePath, dest)
+  let n = 2
+  while (occupied(dest) && dest !== notePath) {
+    dest = joinPath(dir, `${numberedSegment(title, n++)}.md`)
+  }
+  await relocateNote(notePath, dest)
   await persistFolders()
   return dest
 }
+
 
 /* ------------------------------------------------------------ tag folders */
 

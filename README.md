@@ -19,8 +19,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 1357 unit, two-device sync and folder round-trip tests
-node scripts/smoke.mjs # 861-check browser smoke test against dist/
+npm test               # 1377 unit, two-device sync and folder round-trip tests
+node scripts/smoke.mjs # 864-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -289,7 +289,18 @@ from a shared vault is untrusted input.
 **Linking.** `[[Note Title]]` links notes to each other. Typing `[[` opens an
 autocomplete over every note; picking one that doesn't exist yet offers to create
 it. Clicking a broken link creates the note on the spot. Renaming a note rewrites
-every link that pointed at it.
+every link that pointed at it — and only those. Which links those are is worked
+out by following each one, not by matching its text, so of two notes called `A`
+renaming one leaves the `[[A]]`s that meant the other alone. A link written as a
+path stays a path; one that reached the note through an alias is left as it is,
+since the alias goes with the note. Renamed onto a name another note already
+has, the note becomes `Foo 2` and its links say `Foo 2`; if its new title is one
+another folder's note also has, its links are written as a path, the one form
+that cannot land on the wrong note.
+
+Moving a note into a folder that already has one by the same name does the
+same: the note you moved becomes `Foo 2`, the toast says so, and nothing is
+overwritten.
 
 **And a note can answer to more than the name on the file.** `aliases:` in the
 frontmatter — one name or a list of them — files the note under those names too,
@@ -2879,8 +2890,8 @@ and that is a better argument for the rail than the outline ever was.
 ## Testing
 
 ```bash
-npm test                # 1357 unit + two-device sync + folder round-trip tests
-node scripts/smoke.mjs  # 861 checks in headless Chromium against dist/
+npm test                # 1377 unit + two-device sync + folder round-trip tests
+node scripts/smoke.mjs  # 864 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

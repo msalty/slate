@@ -54,6 +54,7 @@ import {
   stripInline,
   withDue,
 } from './markdown'
+import type { WikiLink } from './markdown'
 import {
   loadDeviceRecords,
   localDeviceName,
@@ -854,6 +855,44 @@ export function getRaw(path: string): VaultFile | undefined {
   return files.get(path)
 }
 
+/**
+ * Whether a file that is actually there has `path` — what every "is this name
+ * taken" means.
+ *
+ * Not merely whether the path is in the map. Deleting or moving a file leaves a
+ * tombstone at the path it came from, the row that tells sync the remote copy
+ * has to go, and counting that as occupied gave a phantom counter everywhere a
+ * name was reused: a note dragged into a folder and straight back came home as
+ * `Retro 2`, renaming a note away and back did the same, and so did making a
+ * note again after deleting one of that name. Nothing called `Retro` was
+ * anywhere for it to have collided with. `restoreFromTrash` found this first
+ * and wrote the rule inline; it lives here now so every caller asks the same
+ * question.
+ */
+export function occupied(path: string): boolean {
+  const f = files.get(path)
+  return !!f && !f.deleted
+}
+
+/**
+ * The sync record a new file at `path` takes over from the tombstone there.
+ *
+ * Reusing a freed name writes a live file where a tombstone was, and the
+ * tombstone was not only "a file was here": it held what each remote last
+ * confirmed about this path — the base three-way merge starts from. A file
+ * written over it with no record looked, to the next sync, like one that had
+ * never been synced sitting beside a remote copy with different text — which is
+ * a conflict — so deleting a note and making another of the same name raised a
+ * conflict copy nobody had caused. With the record carried across, the new text
+ * is simply this path's next edit. A remote that really did change in the
+ * meantime still differs from the base, and still conflicts, as it should.
+ */
+function inheritedSync(path: string): Pick<VaultFile, 'sync' | 'folder'> {
+  const was = files.get(path)
+  if (!was?.deleted) return { sync: {}, folder: undefined }
+  return { sync: was.sync, folder: was.folder }
+}
+
 export function getText(path: string): string | undefined {
   return files.get(path)?.text
 }
@@ -1034,7 +1073,7 @@ export async function createNote(
   const dir = normPath(folder)
   let n = 1
   let path = joinPath(dir, `${nameFor(n)}.md`)
-  while (files.has(path)) path = joinPath(dir, `${nameFor(++n)}.md`)
+  while (occupied(path)) path = joinPath(dir, `${nameFor(++n)}.md`)
   const now = Date.now()
   const text = body
   const f: VaultFile = {
@@ -1047,7 +1086,7 @@ export async function createNote(
     mtime: now,
     ctime: now,
     dirty: true,
-    sync: {},
+    ...inheritedSync(path),
   }
   await writeFile(f)
   reindex(path)
@@ -1091,18 +1130,28 @@ export async function saveNote(path: string, text: string): Promise<void> {
 export async function renameNote(path: string, newTitle: string): Promise<string> {
   const f = files.get(path)
   if (!f || f.kind !== 'note') return path
-  const oldTitle = titleFromPath(path)
   const clean = safeSegment(newTitle)
-  if (!clean || clean === oldTitle) return path
+  if (!clean || clean === titleFromPath(path)) return path
   let next = joinPath(dirname(path), `${clean}.md`)
   let n = 2
-  while (files.has(next) && next !== path) {
+  while (occupied(next) && next !== path) {
     next = joinPath(dirname(path), `${numberedSegment(clean, n++)}.md`)
   }
 
-  await movePath(path, next)
-  await rewriteLinksTo(oldTitle, clean)
+  await relocateNote(path, next)
   return next
+}
+
+/**
+ * Move a note to `to`, taking every link that pointed at it along.
+ *
+ * The links first, while the note is still where they point, so the question
+ * of which links are *its* can be answered by resolving them rather than by
+ * reading them — the same order `renameAttachment` uses, for the same reason.
+ */
+export async function relocateNote(from: string, to: string): Promise<void> {
+  await repointNoteLinks(from, to)
+  await movePath(from, to)
 }
 
 /**
@@ -1127,16 +1176,27 @@ export function onPathMoved(fn: (from: string, to: string) => void | Promise<voi
 export async function movePath(from: string, to: string): Promise<void> {
   const f = files.get(from)
   if (!f || from === to) return
+  /*
+   * Never onto a file that is there. This wrote the moved file over whatever
+   * held the path, and `moveNoteToFolder` never looked first — so dragging
+   * `Home/Foo` into a `Work/` that had a `Foo` of its own replaced it, and the
+   * next sync carried the loss to every other device. Every caller now finds a
+   * free name before it gets here; this is so the next one to forget fails
+   * loudly instead of deleting a note. A tombstone is not in the way: it is the
+   * record of a file that has gone, and `restoreFromTrash` writes over one on
+   * purpose.
+   */
+  if (occupied(to)) throw new Error(`Cannot move ${from}: ${to} already exists.`)
   // A move is a delete + create as far as any target is concerned, so the old
-  // path gets a tombstone and the new one starts fresh and owed to both.
+  // path gets a tombstone and the new one is owed to both — starting from the
+  // record of whatever was last at that path, if anything was.
   const now = Date.now()
   const moved: VaultFile = {
     ...f,
     path: to,
     mtime: now,
     dirty: true,
-    sync: {},
-    folder: undefined,
+    ...inheritedSync(to),
   }
   setFile(to, moved)
   await putFile(moved)
@@ -1147,20 +1207,59 @@ export async function movePath(from: string, to: string): Promise<void> {
   for (const fn of moveListeners) await fn(from, to)
 }
 
-async function rewriteLinksTo(oldTitle: string, newTitle: string): Promise<void> {
-  const lower = oldTitle.toLowerCase()
+/**
+ * Rewrite every link that pointed at the note at `from` so it points at `to`.
+ *
+ * Which links those are is decided by *resolving* them, not by comparing their
+ * text with the old title — which was the whole of the old rule, and wrong in
+ * both directions. Renaming a note onto a name already taken sends it to
+ * `Foo 2.md`, but its links were rewritten to `[[Foo]]`, the note that was
+ * already there. And of two notes both called `A`, `[[A]]` can only mean one:
+ * renaming the *other* rewrote it anyway, taking a link that was never its own.
+ *
+ * Only links that named the note by its file — its title, or its path — are
+ * touched. One that reached it through `aliases:` still reaches it, because the
+ * alias is written in the note and goes where the note goes, and rewriting it
+ * would change how somebody had chosen to link.
+ *
+ * Each is rewritten in the shape it was written in: a path stays a path, with
+ * or without its `.md`. A bare title stays bare only if the new title will be
+ * the note's alone. If another note already has it, `[[B]]` would mean
+ * whichever of the two the index met first, so the link is written as a path
+ * instead — the one form that cannot land on the wrong note.
+ */
+async function repointNoteLinks(from: string, to: string): Promise<void> {
+  const titles = titleIndex.value
+  const paths = pathSet.value
+  const oldTitle = titleFromPath(from).toLowerCase()
+  const newTitle = titleFromPath(to)
+  const toBare = to.replace(/\.md$/i, '')
+  const shared = notes.value.some(
+    (e) => e.path !== from && e.title.toLowerCase() === newTitle.toLowerCase(),
+  )
+  const titleTarget = shared ? toBare : newTitle
+
   const touched: VaultFile[] = []
   for (const f of files.values()) {
     if (f.kind !== 'note' || f.deleted || !f.text) continue
-    const links = scanWikiLinks(f.text)
-    const hits = links.filter((l) => l.target.toLowerCase() === lower)
+    const hits: Array<{ link: WikiLink; target: string }> = []
+    for (const l of scanWikiLinks(f.text)) {
+      if (resolveTarget(l.target, titles, paths) !== from) continue
+      const np = normPath(l.target.trim())
+      if (np === from) hits.push({ link: l, target: to })
+      else if (`${np}.md` === from) hits.push({ link: l, target: toBare })
+      else if (l.target.trim().toLowerCase() === oldTitle) {
+        hits.push({ link: l, target: titleTarget })
+      }
+    }
     if (!hits.length) continue
     let text = f.text
     // Apply right-to-left so earlier offsets stay valid.
-    for (const l of hits.reverse()) {
-      const inner = [newTitle, l.anchor ? `#${l.anchor}` : '', l.alias !== undefined ? `|${l.alias}` : '']
-        .join('')
-      text = `${text.slice(0, l.from)}${l.embed ? '!' : ''}[[${inner}]]${text.slice(l.to)}`
+    for (const { link: l, target } of hits.reverse()) {
+      const anchor = l.anchor ? `#${l.anchor}` : ''
+      const alias = l.alias !== undefined ? `|${l.alias}` : ''
+      const link = `${l.embed ? '!' : ''}[[${target}${anchor}${alias}]]`
+      text = `${text.slice(0, l.from)}${link}${text.slice(l.to)}`
     }
     const next: VaultFile = {
       ...f,
@@ -1203,7 +1302,7 @@ export async function renameAttachment(path: string, newName: string): Promise<s
 
   let dest = joinPath(dir, name)
   let n = 2
-  while (files.has(dest) && dest !== path) {
+  while (occupied(dest) && dest !== path) {
     const dot = name.lastIndexOf('.')
     dest = joinPath(dir, dot > 0 ? `${name.slice(0, dot)} ${n++}${name.slice(dot)}` : `${name} ${n++}`)
   }
@@ -1327,7 +1426,7 @@ export async function restoreFromTrash(trashPath: string, to?: string): Promise<
    * note deleted and restored came back as "Note 2", every time, with nothing
    * called "Note" anywhere for it to have collided with.
    */
-  while (files.has(dest) && !files.get(dest)!.deleted) {
+  while (occupied(dest)) {
     const dot = name.lastIndexOf('.')
     dest = dot > 0 ? `${name.slice(0, dot)} ${n++}${name.slice(dot)}` : `${name} ${n++}`
   }
