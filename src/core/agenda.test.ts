@@ -139,13 +139,15 @@ describe('what a row is called', () => {
     expect(eventTitle('Sprint 2026-09-22 kickoff')).toBe('Sprint 2026-09-22 kickoff')
   })
 
-  it('round-trips what eventNoteName writes', async () => {
+  it('takes the suffix off a name whose title looks like the old prefix', async () => {
     const { eventTitle } = await import('./agenda')
-    const { eventNoteName } = await import('./eventnote')
-    for (const name of ['Standup', 'Lunch with Joe', 'Q3 2026 planning', '1:1 - Ana']) {
-      expect(eventTitle(eventNoteName(name, '2026-09-22T12:00'))).toBe(name)
-    }
+    // One end or the other, never both: this is a name written today whose
+    // *title* is a date and a time, not a note stamped on the front in 2025.
+    expect(eventTitle('2026-09-22 0930 Standup - 2026-09-22')).toBe('2026-09-22 0930 Standup')
   })
+
+  /* The round trip against `eventNoteName` is in `eventnote.test.ts`, beside
+     the function that has to stay its inverse. */
 
   it('leaves a name alone when there is no stamp on it', async () => {
     const { eventTitle } = await import('./agenda')

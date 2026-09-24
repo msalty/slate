@@ -8,6 +8,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
+import { safeSegment } from './util'
 import {
   defaultEventTimes,
   eventFolderFor,
@@ -58,11 +59,63 @@ describe('where an event goes and what it is called', () => {
     expect(eventNoteName('Standup', '2026-12-31T23:30')).toBe('Standup - 2026-12-31')
   })
 
-  it('does not tell you the date twice', () => {
-    expect(eventNoteName('Retro 2026-09-21', '2026-09-21T09:30')).toBe('Retro 2026-09-21')
-    expect(eventNoteName('Retro - 2026-09-21', '2026-09-21')).toBe('Retro - 2026-09-21')
-    // A different date is a different thing being said, so it is still added.
-    expect(eventNoteName('Retro 2026-09-14', '2026-09-21')).toBe('Retro 2026-09-14 - 2026-09-21')
+  it('dates a title that already carries one anyway', () => {
+    /*
+     * It looks silly, and skipping it was worse. `eventTitle` sees only a
+     * filename, so a date this did not write is one it cannot recognise — and
+     * it took the typed one off, leaving an event deliberately called
+     * `Postmortem - 2026-09-22` reading as `Postmortem` on the agenda. One
+     * suffix on, one suffix off, and the round trip holds for every title.
+     */
+    expect(eventNoteName('Retro - 2026-09-21', '2026-09-21')).toBe(
+      'Retro - 2026-09-21 - 2026-09-21',
+    )
+    expect(eventNoteName('Retro 2026-09-21', '2026-09-21T09:30')).toBe(
+      'Retro 2026-09-21 - 2026-09-21',
+    )
+  })
+
+  it('makes a name a filename can hold, suffix and all', async () => {
+    const { eventTitle } = await import('./agenda')
+    /*
+     * `safeSegment` cuts a segment at 120 characters, and a suffix stuck on
+     * before that cut is the part that goes. A 120-character title used to
+     * produce a name with ` - 2026-0` on the end, or with nothing on the end,
+     * while the dialog had just promised the whole thing — and a name with no
+     * date on it is back to being told from next week's by a number.
+     */
+    const long = 'M'.repeat(200)
+    const name = eventNoteName(long, '2026-09-22T12:00')
+    expect(name.length).toBe(120)
+    expect(name.endsWith(' - 2026-09-22')).toBe(true)
+    // And short enough that the cut never fires a second time on the way in.
+    expect(safeSegment(name)).toBe(name)
+    // What is left of the title is still the front of the title.
+    expect(eventTitle(name)).toBe('M'.repeat(107))
+  })
+
+  it('never puts a trailing space in front of the date, whatever the cut lands on', () => {
+    const name = eventNoteName(`${'M'.repeat(106)} and then some`, '2026-09-22')
+    expect(name).toBe(`${'M'.repeat(106)} - 2026-09-22`)
+  })
+
+  it('is the thing eventTitle undoes, for any title at all', async () => {
+    const { eventTitle } = await import('./agenda')
+    const titles = [
+      'Standup',
+      'Lunch with Joe',
+      'Q3 2026 planning',
+      '1:1 - Ana',
+      'Postmortem - 2026-09-22',
+      'Retro 2026-09-22',
+      '2026-09-22',
+      '2026-09-22 0930 Standup',
+      'Deadline 2026-09-22 2',
+      '  padded  ',
+    ]
+    for (const t of titles) {
+      expect(eventTitle(eventNoteName(t, '2026-09-22T12:00'))).toBe(safeSegment(t))
+    }
   })
 
   it('is just the name when there is no start to date it by', () => {
@@ -139,6 +192,21 @@ describe('the note it writes', () => {
     expect(vault.resolveLink('Standup - 2026-09-28')).toBe(b.path)
     // And nothing holds the bare name any more, which is the price of it.
     expect(vault.resolveLink('Standup')).toBeUndefined()
+  })
+
+  it('keeps the date on a name long enough to be cut, which the vault cuts again', async () => {
+    const { ev } = await fresh()
+    /*
+     * The dialog shows the name by calling `eventNoteName`, and the note is
+     * written by calling it too — but only if what it returns survives the
+     * trip. `createNote` sanitises again and cuts at 120, so a name made 133
+     * characters long arrived without the part that made it unique, and the
+     * dialog had promised otherwise.
+     */
+    const long = 'M'.repeat(200)
+    const { path } = await ev.newEventNote(long, '2026-09-21T09:30', '2026-09-21T10:30')
+    expect(path).toBe(`Calendar/2026/09/${'M'.repeat(107)} - 2026-09-21.md`)
+    expect(path.endsWith(' - 2026-09-21.md')).toBe(true)
   })
 
   it('still gives two on one day the `2` every collision in the vault gets', async () => {

@@ -132,14 +132,25 @@ const TAIL_RE = /\s+-\s+\d{4}-\d{2}-\d{2}(?:\s+\d+)?$/
  * the same thing twice. Worse, this row is one line with an ellipsis on the end
  * of it, so what the date pushes off the edge is the name.
  *
- * Both ends, because the stamp used to go on the front and notes named that way
- * are still in vaults.
+ * One or the other, never both, because the stamp used to go on the front and
+ * notes named that way are still in vaults — but a name has only ever had one
+ * of them. Taking a turn at each end instead read `2026-09-22 0930 Standup`,
+ * typed by somebody who likes naming things that way, as plain `Standup`: the
+ * suffix came off because this wrote it, and then the front came off too
+ * because it looked like something written long ago.
+ *
+ * Exactly one, which is what makes this the inverse of `eventNoteName` rather
+ * than an approximation of it. A title that ends in a date of its own is given
+ * a second one when the file is named, and gets it back here — without that
+ * pair, an event deliberately called `Postmortem - 2026-09-22` read on the
+ * agenda as `Postmortem`.
  *
  * A date is only taken off when something is left after it — a note genuinely
  * called `2026-09-21` keeps its name rather than losing it.
  */
 export function eventTitle(title: string): string {
-  const stripped = title.replace(HEAD_RE, '').replace(TAIL_RE, '')
+  const tail = title.replace(TAIL_RE, '')
+  const stripped = tail === title ? title.replace(HEAD_RE, '') : tail
   return stripped || title
 }
 

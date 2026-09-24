@@ -159,6 +159,15 @@ names saying which occurrence it was. A date is a disambiguator that means
 something, sorts the way the folder already sorts, and leaves the name you typed
 at the front where prefix search and every alphabetical list expect it.
 
+The suffix is part of building the name, not something added to a name already
+built. `safeSegment` caps a path segment at 120 characters, so a suffix stuck on
+afterwards is the first thing cut — and a long title came back either without
+its date or with half of one. The title is cut with the suffix's room already
+taken out, and `eventTitle(eventNoteName(title, start))` is `title` for every
+title, including one that ends in a date of its own: that one is given a second
+date rather than skipped, because a filename cannot say which of the two a
+reader wrote.
+
 It still costs the bare name. `titleIndex` is first-writer-wins on collision
 (`src/core/vault.ts:574`), and now no occurrence holds `Lunch with Joe.md` at
 all, so `[[Lunch with Joe]]` resolves to nothing and a link names a date or goes

@@ -15,7 +15,7 @@ import { eventFor, isKnownZone, parseFrontmatter, wallClockIn } from './markdown
 import { readProperties, removeProperty, setPropertyValue } from './properties'
 import { templateBodyFor } from './templates'
 import { createNote } from './vault'
-import { addDays, dirname, roundUpToHalfHour, startOfDay, ymd } from './util'
+import { addDays, dirname, roundUpToHalfHour, safeSegment, startOfDay, ymd } from './util'
 import type { TemplateBody } from './templates'
 
 /** Where an event is created when nothing says otherwise. */
@@ -37,6 +37,14 @@ export function eventFolderFor(day: number): string {
 
 /** The date at the head of a `start:` value, whether or not a clock follows. */
 const DATE_HEAD = /^(\d{4}-\d{2}-\d{2})/
+
+/**
+ * What `safeSegment` will cut a filename down to, known here so a name can be
+ * built inside it rather than trimmed to fit afterwards.
+ */
+const NAME_MAX = 120
+/** What an empty name becomes, the same word `safeSegment` uses. */
+const UNTITLED = 'Untitled'
 
 /**
  * What you called it, and the day it is on.
@@ -71,14 +79,34 @@ const DATE_HEAD = /^(\d{4}-\d{2}-\d{2})/
  *
  * `start` is the dialog's own field value — `2026-09-22T14:00` or a bare
  * `2026-09-22` — and only its date is used, so the name says exactly what
- * `start:` says and no zone arithmetic happens on the way. A title that already
- * ends in that date is not told twice.
+ * `start:` says and no zone arithmetic happens on the way.
+ *
+ * **The whole name is made here**, sanitised and cut to length, rather than
+ * handed half-made to `createNote` to finish. Both halves of that mattered.
+ * `safeSegment` caps a segment at 120 characters, and a suffix appended before
+ * that cap is the part that goes: a long title came back with ` - 2026-0` on
+ * the end of it, or with nothing on the end of it, while the dialog had just
+ * promised the full name. So the *title* is cut with the suffix's room already
+ * taken out of the budget, and what comes back is short enough that the cap
+ * never fires again — which is also what lets the dialog show the name by
+ * calling this rather than by describing it.
+ *
+ * **A title that already ends in the date is still given one.** It looks silly
+ * — `Postmortem - 2026-09-22 - 2026-09-22` — and the alternative was worse:
+ * skipping it meant `eventTitle` could not tell a date this wrote from a date
+ * somebody typed, and took the typed one off, so an event deliberately named
+ * for its day showed on the agenda as `Postmortem`. Exactly one suffix on,
+ * exactly one suffix off, and what you typed is what the row reads.
  */
 export function eventNoteName(title: string, start?: string): string {
-  const name = title.trim()
+  const safe = safeSegment(title)
   const on = DATE_HEAD.exec(start?.trim() ?? '')?.[1]
-  if (!on || name.endsWith(on)) return name
-  return `${name} - ${on}`
+  if (!on) return safe
+  const tail = ` - ${on}`
+  // Trailing spaces and dots again, because the cut can leave one where the
+  // title had none — and Windows rejects a segment ending in either.
+  const room = safe.slice(0, NAME_MAX - tail.length).replace(/[. ]+$/, '')
+  return `${room || UNTITLED}${tail}`
 }
 
 /* ------------------------------------------------- the values a field holds */
