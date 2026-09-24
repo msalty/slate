@@ -4007,6 +4007,92 @@ try {
   await page.locator('.side-row:has-text("All Notes")').first().click()
   await page.waitForTimeout(350)
 
+  /*
+   * Renamed to a name the link syntax uses. `[[C# Notes]]` is the note `C`
+   * and its heading `Notes`, so renaming a note to `C# Notes` used to turn
+   * every link to it into a link to somewhere else. The rename writes
+   * `[[C\# Notes]]` now, and everything that reads a link — the editor
+   * included — reads that as the note. Through the header, as a person would.
+   */
+  await page.evaluate(async () => {
+    const seed = [
+      // It links to itself, which is the case a rename has to take most care
+      // over: see the check on the old name below.
+      ['Hash target.md', '# Hash target\n\nThe note being renamed. [[Hash target#Hash target]]\n'],
+      ['Hash linker.md', '# Hash linker\n\nSee [[Hash target]] for more.\n'],
+    ]
+    /*
+     * With the hash the app would have given them. Seeded with a made-up one,
+     * a note renamed in the editor comes back under its old name: the editor
+     * saves the old path once more as the rename lands, and a save whose hash
+     * does not match the tombstone there brings the note back. No real note has
+     * a hash that does not match its text, so this is the only honest seed.
+     */
+    const hash = async (t) => {
+      const d = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)))
+      return [...d.slice(0, 16)].map((b) => b.toString(16).padStart(2, '0')).join('')
+    }
+    const hashes = await Promise.all(seed.map(([, t]) => hash(t)))
+    const db = await new Promise((res, rej) => {
+      const r = indexedDB.open('slate')
+      r.onsuccess = () => res(r.result)
+      r.onerror = () => rej(r.error)
+    })
+    const tx = db.transaction('files', 'readwrite')
+    seed.forEach(([path, text], i) => {
+      tx.objectStore('files').put({
+        path, kind: 'note', text, mime: 'text/markdown', size: text.length,
+        hash: hashes[i], mtime: Date.now() + 30_000 - i * 100, ctime: Date.now(),
+        dirty: true, dirtyFlag: 1, sync: {},
+      })
+    })
+    await new Promise((res) => { tx.oncomplete = res })
+  })
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForSelector('.note-row')
+  await page.locator('.side-row:has-text("All Notes")').first().click()
+  await page.waitForTimeout(350)
+  await page.locator('.note-row', { hasText: 'The note being renamed' }).first().click()
+  await page.waitForTimeout(500)
+  await page.locator('.editor-title-input').fill('C# Notes')
+  await page.locator('.editor-title-input').press('Enter')
+  await page.waitForTimeout(700)
+  /*
+   * And only under its new name. Rewriting its own link to itself before it
+   * moved left the tombstone at the old name expecting different text from
+   * the save the editor makes as a rename lands, and that save brought the old
+   * note back: two notes, one under each name.
+   */
+  const hashRenamed = await page.locator('.note-row-title').allInnerTexts()
+  check(
+    'a note renamed from its header is gone from its old name, even one that links to itself',
+    hashRenamed.includes('C# Notes') && !hashRenamed.includes('Hash target'),
+    hashRenamed.filter((t) => /Hash|C#/.test(t)).join(', '),
+  )
+  await page.locator('.note-row', { hasText: 'Hash linker' }).first().click()
+  await page.waitForTimeout(700)
+  const hashLink = page.locator('.cm-content .cm-wikilink').first()
+  const hashSeen = {
+    to: await hashLink.getAttribute('data-wikilink'),
+    exists: await hashLink.getAttribute('data-exists'),
+    // What is on screen, with the caret elsewhere: the name, not its escape.
+    shown: await hashLink.evaluate((el) => el.innerText),
+  }
+  check(
+    'a link to a note renamed to C# Notes still goes to it, and reads as its name',
+    hashSeen.to === 'C# Notes' && hashSeen.exists === '1' && hashSeen.shown === 'C# Notes',
+    JSON.stringify(hashSeen),
+  )
+  await hashLink.click()
+  await page.waitForTimeout(700)
+  check(
+    'and following it opens that note',
+    (await page.locator('.editor-title-input').inputValue()) === 'C# Notes',
+    await page.locator('.editor-title-input').inputValue(),
+  )
+  await page.locator('.side-row:has-text("All Notes")').first().click()
+  await page.waitForTimeout(350)
+
 
 
   /* ---- tables render properly -------------------------------------------

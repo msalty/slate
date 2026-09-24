@@ -8,6 +8,7 @@ import {
   matchRanges,
   matchesAll,
   monthGrid,
+  numberedFile,
   numberedSegment,
   safeSegment,
   searchTerms,
@@ -211,5 +212,15 @@ describe('a segment that has to fit', () => {
     expect(numberedSegment(full, 13)).toBe(`${'M'.repeat(117)} 13`)
     // A short name is untouched apart from the counter.
     expect(numberedSegment('Standup', 2)).toBe('Standup 2')
+  })
+
+  it('puts a file’s counter before its extension, inside the limit', () => {
+    expect(numberedFile('receipt.pdf', 1)).toBe('receipt.pdf')
+    expect(numberedFile('receipt.pdf', 2)).toBe('receipt 2.pdf')
+    const long = `${'M'.repeat(116)}.pdf`
+    expect(numberedFile(long, 2)).toBe(`${'M'.repeat(114)} 2.pdf`)
+    expect(numberedFile(long, 2).length).toBe(120)
+    // No extension to keep, so it is a plain counter.
+    expect(numberedFile('README', 3)).toBe('README 3')
   })
 })

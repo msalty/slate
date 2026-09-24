@@ -127,6 +127,87 @@ describe('which links a rename takes with it', () => {
     const moved = await vault.renameNote(a, 'B')
     expect(vault.getRaw(moved)?.text).toBe('# Costs\n\nsee [[B#Costs]]')
   })
+
+  it('and leaves nothing behind when the editor saves the old name once more', async () => {
+    const { vault } = await fresh()
+    const text = '# Costs\n\nsee [[A#Costs]]'
+    const a = await vault.createNote('', 'A', text)
+    const moved = await vault.renameNote(a, 'B')
+    /*
+     * What the editor does as a rename lands: saves the buffer it still holds
+     * for the path it had open. A save that does not match the tombstone there
+     * brings the note back — and rewriting the self-link before the move made
+     * the tombstone record the rewritten text, so it never matched. Renaming a
+     * note that linked to itself left a copy under its old name.
+     */
+    await vault.saveNote(a, text)
+    expect(vault.occupied(a)).toBe(false)
+    expect(vault.notes.value.map((n) => n.title)).toEqual(['B'])
+    expect(vault.getRaw(moved)?.text).toBe('# Costs\n\nsee [[B#Costs]]')
+  })
+})
+
+describe('renaming to a name the link syntax uses', () => {
+  /*
+   * `#`, `|` and `]` all mean something inside `[[…]]`, and renaming a note to
+   * `C# Notes` wrote its links out as `[[C# Notes]]` — the note `C` and its
+   * heading `Notes`. Every link to it went somewhere else.
+   */
+  it('keeps every link to a note renamed to a name with a #', async () => {
+    const { vault } = await fresh()
+    const a = await vault.createNote('', 'A', '# Costs\n\nnote A')
+    const linker = await vault.createNote(
+      '',
+      'Linker',
+      '[[A]] [[A#Costs|the plan]] ![[A]] [[#Here]]',
+    )
+    const moved = await vault.renameNote(a, 'C# Notes')
+    expect(moved).toBe('C# Notes.md')
+    const text = vault.getRaw(linker)?.text ?? ''
+    expect(text).toBe('[[C\\# Notes]] [[C\\# Notes#Costs|the plan]] ![[C\\# Notes]] [[#Here]]')
+    // And every one of them arrives.
+    expect(vault.resolveLink('C# Notes')).toBe(moved)
+    const { scanWikiLinks } = await import('./markdown')
+    const targets = scanWikiLinks(text).map((l) => l.target)
+    expect(targets).toEqual(['C# Notes', 'C# Notes', 'C# Notes', ''])
+    expect(vault.backlinkMap.value.get(moved)).toEqual([linker])
+  })
+
+  it('and one renamed to a name with a ] in it', async () => {
+    const { vault } = await fresh()
+    const a = await vault.createNote('', 'A', 'note A')
+    const linker = await vault.createNote('', 'Linker', 'see [[A]] then more')
+    const moved = await vault.renameNote(a, 'Draft ]v2')
+    expect(vault.getRaw(linker)?.text).toBe('see [[Draft \\]v2]] then more')
+    expect(vault.backlinkMap.value.get(moved)).toEqual([linker])
+  })
+
+  it('and one written as a path', async () => {
+    const { vault } = await fresh()
+    const a = await vault.createNote('Work', 'A', 'work A')
+    const linker = await vault.createNote('', 'Linker', 'see [[Work/A]]')
+    const moved = await vault.renameNote(a, 'C# Notes')
+    expect(vault.getRaw(linker)?.text).toBe('see [[Work/C\\# Notes]]')
+    expect(vault.backlinkMap.value.get(moved)).toEqual([linker])
+  })
+
+  it('keeps an attachment’s embeds when it is renamed to a name with a #', async () => {
+    const { vault } = await fresh()
+    const photo = await vault.addAttachment(new Blob(['x'], { type: 'image/png' }), 'photo.png')
+    const note = await vault.createNote('', 'Receipts', `![[${photo}]] and ![](${photo})`)
+    const renamed = await vault.renameAttachment(photo, 'receipt#2')
+    expect(renamed).toBe('receipt#2.png')
+    /*
+     * A wikilink escapes the `#`, and a markdown link encodes it: in an
+     * address `#` starts the fragment, and `encodeURI` leaves it alone on
+     * purpose, so it was written bare and read as `receipt` plus `#2.png`.
+     */
+    expect(vault.getRaw(note)?.text).toBe('![[receipt\\#2.png]] and ![](receipt%232.png)')
+    // Both read back as the file, by the index and by the embed resolver.
+    expect(vault.resolveEmbed('receipt%232.png', note)).toBe(renamed)
+    const entry = vault.getEntry(note)!
+    expect(entry.embeds).toEqual([renamed, renamed])
+  })
 })
 
 describe('moving a note into a folder', () => {
@@ -200,6 +281,73 @@ describe('the counter a name already taken is given', () => {
     const renamed = await vault.renameNote(other, long)
     expect(base(renamed).length).toBe(120)
     expect(base(renamed).endsWith(' 2')).toBe(true)
+  })
+
+  /*
+   * An event's name ends in its date, and a counter makes room for itself by
+   * cutting the end: a 120-character event moved into a folder holding its
+   * twin came out `… - 2026-09- 2`, and the agenda showed the mangled name.
+   */
+  it('keeps an event’s date whole when a move has to count', async () => {
+    const { vault, folders } = await fresh()
+    const ev = await import('./eventnote')
+    const { eventTitle } = await import('./agenda')
+    const long = 'M'.repeat(200)
+    const { path } = await ev.newEventNote(long, '2026-09-21T09:30', '2026-09-21T10:30')
+    await vault.createNote('Elsewhere', base(path), 'its twin')
+    const dest = await folders.moveNoteToFolder(path, 'Elsewhere')
+    expect(base(dest).length).toBe(120)
+    expect(base(dest).endsWith(' - 2026-09-21 2')).toBe(true)
+    const e = vault.getEntry(dest)!
+    // Still made from the title it records, so still read by it.
+    expect(eventTitle(e.title, e.event?.title)).toBe(long)
+  })
+
+  it('and one with no recorded title, by the title in its name', async () => {
+    const { vault, folders } = await fresh()
+    const stem = `${'M'.repeat(107)} - 2026-09-21`
+    const p = await vault.createNote('', stem, '---\nstart: 2026-09-21T09:30\n---\n')
+    await vault.createNote('Elsewhere', stem, 'its twin')
+    const dest = await folders.moveNoteToFolder(p, 'Elsewhere')
+    expect(base(dest)).toBe(`${'M'.repeat(105)} - 2026-09-21 2`)
+  })
+
+  it('and when it comes back out of the trash to a name now taken', async () => {
+    const { vault } = await fresh()
+    const ev = await import('./eventnote')
+    const { eventTitle } = await import('./agenda')
+    const long = 'M'.repeat(200)
+    const { path } = await ev.newEventNote(long, '2026-09-21T09:30', '2026-09-21T10:30')
+    await vault.deleteNote(path)
+    // A restore goes to the vault root — the trash keeps only the name — so
+    // that is where the name has to be taken.
+    await vault.createNote('', base(path), 'its twin')
+    const trashed = vault.trashFiles.value[0].path
+    const back = await vault.restoreFromTrash(trashed)
+    expect(base(back).length).toBe(120)
+    expect(base(back).endsWith(' - 2026-09-21 2')).toBe(true)
+    const e = vault.getEntry(back)!
+    expect(eventTitle(e.title, e.event?.title)).toBe(long)
+  })
+
+  it('and keeps a restore in the folder it was sent to', async () => {
+    const { vault } = await fresh()
+    const p = await vault.createNote('', 'Foo', 'the one deleted')
+    await vault.deleteNote(p)
+    await vault.createNote('Work', 'Foo', 'already there')
+    const back = await vault.restoreFromTrash(vault.trashFiles.value[0].path, 'Work/Foo.md')
+    // The counter was built from the bare name, which put it at the root.
+    expect(back).toBe('Work/Foo 2.md')
+  })
+
+  it('and when an attachment is renamed onto a long name already in use', async () => {
+    const { vault } = await fresh()
+    const blob = () => new Blob(['x'], { type: 'image/png' })
+    const long = 'M'.repeat(200)
+    await vault.renameAttachment(await vault.addAttachment(blob(), 'a.png'), long)
+    const second = await vault.renameAttachment(await vault.addAttachment(blob(), 'b.png'), long)
+    expect(second.length).toBe(120)
+    expect(second.endsWith(' 2.png')).toBe(true)
   })
 
   it('and when one is moved into a folder that has its name', async () => {

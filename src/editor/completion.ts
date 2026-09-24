@@ -14,6 +14,7 @@ import { allTags, attachments, getText, notes, resolveLink } from '../core/vault
 import { expandSnippet, matchSnippets, previewOf, type Snippet } from '../core/snippets'
 import { scanHeadings } from '../core/markdown'
 import { basename, mediaClass, relativeTime } from '../core/util'
+import { escapeWikiAnchor, escapeWikiTarget, findUnescaped, unescapeWiki } from '../core/wikilink'
 import { CALLOUT_NAMES, calloutSpec } from './callout'
 
 /**
@@ -64,21 +65,6 @@ function applyTarget(text: string) {
 }
 
 /**
- * A heading no `[[Note#Anchor]]` could name.
- *
- * The anchor ends at a `]` and splits at a `|`, and the syntax has no escape
- * for either — so `## Revenue | costs` becomes the anchor "Revenue" with the
- * alias "costs", and `## Status [draft]` truncates to "Status [draft". Both
- * resolve to nothing.
- *
- * Offering them completed somebody into a link that could never work, which is
- * the same mistake as offering headings inside an embed. The outline still
- * reaches these headings — ⌘⇧O navigates rather than writing a link — so what
- * is lost is linking to them, which was never possible in the first place.
- */
-const UNNAMEABLE = /[|\]]/
-
-/**
  * The headings of whichever note a `[[…#` names, as completions.
  *
  * Two notes it can be asking about, and they are read from different places on
@@ -108,7 +94,6 @@ function headingOptions(context: CompletionContext, target: string, q: string): 
     return undefined
   }
   headings.forEach((h, i) => {
-    if (UNNAMEABLE.test(h.text)) return
     const s = rank(h.text, q)
     if (s < 0) return
     /*
@@ -136,8 +121,13 @@ function headingOptions(context: CompletionContext, target: string, q: string): 
        * anchored after the `#` — which is what lets the completion filter on
        * the heading as it is typed — and it leaves the note half exactly as it
        * was written, case, spacing and all.
+       *
+       * Escaped, which is what lets a heading with a `|` or a `]` in it be
+       * offered at all. `## Revenue | costs` used to become the heading
+       * "Revenue" with the display text "costs", so headings like it were left
+       * out of this list; `[[Plan#Revenue \| costs]]` names it exactly.
        */
-      apply: applyTarget(h.text),
+      apply: applyTarget(escapeWikiAnchor(h.text)),
     })
   })
   return options
@@ -149,9 +139,11 @@ export function wikiCompletion(context: CompletionContext): CompletionResult | n
   if (!before) return null
   const isEmbed = before.text.startsWith('!')
   const typed = before.text.slice(isEmbed ? 3 : 2)
-  // Once the user has typed a pipe they are writing an alias, not a target.
-  if (typed.includes('|')) return null
-  const q = typed.toLowerCase()
+  // Once the user has typed a pipe they are writing an alias, not a target —
+  // an unescaped one, since `\|` is part of a name.
+  if (findUnescaped(typed, '|') >= 0) return null
+  // Ranked on what the text *says*: `C\# N` is looking for "C# N".
+  const q = unescapeWiki(typed).toLowerCase()
   const from = before.from + (isEmbed ? 3 : 2)
 
   /*
@@ -163,11 +155,12 @@ export function wikiCompletion(context: CompletionContext): CompletionResult | n
    * different feature and not one that exists — so offering the headings there
    * would be completing somebody into an embed that resolves to nothing.
    */
-  const hash = typed.indexOf('#')
+  const hash = findUnescaped(typed, '#')
   if (hash >= 0) {
     if (isEmbed) return null
-    const target = typed.slice(0, hash).trim()
-    const options = headingOptions(context, target, typed.slice(hash + 1).toLowerCase())
+    const target = unescapeWiki(typed.slice(0, hash).trim())
+    const heading = unescapeWiki(typed.slice(hash + 1)).toLowerCase()
+    const options = headingOptions(context, target, heading)
     if (!options.length) return null
     return { from: from + hash + 1, options: options.slice(0, 60), validFor: /^[^\]\n|]*$/ }
   }
@@ -183,7 +176,7 @@ export function wikiCompletion(context: CompletionContext): CompletionResult | n
       options.push({
         label: name,
         detail: mediaClass(a.path),
-        apply: applyTarget(a.path),
+        apply: applyTarget(escapeWikiTarget(a.path)),
         boost: clampBoost(s),
       })
     }
@@ -198,7 +191,7 @@ export function wikiCompletion(context: CompletionContext): CompletionResult | n
       label: n.title,
       detail: n.folder || undefined,
       info: n.excerpt || undefined,
-      apply: applyTarget(n.title),
+      apply: applyTarget(escapeWikiTarget(n.title)),
       boost: clampBoost(isEmbed ? s / 2 : s),
     })
   }
@@ -212,7 +205,9 @@ export function wikiCompletion(context: CompletionContext): CompletionResult | n
   // and pressing Enter would create a duplicate stub instead of linking.
   if (typed.trim() && !hasPrefixMatch && !notes.value.some((n) => n.title.toLowerCase() === q)) {
     options.push({
-      label: typed.trim(),
+      // Shown as the name it will make; inserted as it was typed, which is
+      // already how it has to be written.
+      label: unescapeWiki(typed.trim()),
       detail: 'Create new note',
       apply: applyTarget(typed.trim()),
       boost: -99,

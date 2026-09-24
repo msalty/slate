@@ -55,6 +55,8 @@ import {
   withDue,
 } from './markdown'
 import type { WikiLink } from './markdown'
+import { formatWikiLink } from './wikilink'
+import { nameAfterCollision } from './eventname'
 import {
   loadDeviceRecords,
   localDeviceName,
@@ -74,13 +76,16 @@ import {
 import {
   addDays,
   basename,
+  decodeLinkPath,
   dirname,
+  encodeLinkPath,
   extname,
   hashBlob,
   hashText,
   joinPath,
   mimeForPath,
   normPath,
+  numberedFile,
   numberedSegment,
   safeSegment,
   startOfDay,
@@ -382,7 +387,7 @@ function buildEntry(f: VaultFile): NoteIndexEntry | undefined {
   for (const l of scanMdLinks(text)) {
     if (!l.embed) continue
     const [clean] = splitSizeFragment(l.url)
-    if (!/^[a-z]+:/i.test(clean)) embeds.push(decodeURI(clean))
+    if (!/^[a-z]+:/i.test(clean)) embeds.push(decodeLinkPath(clean))
   }
 
   const title = titleFromPath(f.path)
@@ -817,11 +822,7 @@ export const orphanFiles = computed<Set<string>>(() => {
   const claim = (ref: string, from: string) => {
     let clean = ref.trim()
     if (!clean || /^[a-z]+:/i.test(clean)) return
-    try {
-      clean = decodeURI(clean)
-    } catch {
-      // A half-encoded link is still a link; match it as written.
-    }
+    clean = decodeLinkPath(clean)
     ;[clean] = splitSizeFragment(clean)
     for (const c of [normPath(clean), joinPath(dirname(from), clean)]) {
       if (unused.delete(c)) return
@@ -887,6 +888,23 @@ export function occupied(path: string): boolean {
  * is simply this path's next edit. A remote that really did change in the
  * meantime still differs from the base, and still conflicts, as it should.
  */
+/**
+ * The filename to try on the `n`th attempt when the file at `path` is going
+ * somewhere its name is taken — into another folder, or back out of the trash.
+ *
+ * An event's is made again rather than cut short — `nameAfterCollision` says
+ * why — reading the record from the file itself, since a note in the trash is
+ * not one the index lists. `file` is the name it is going by, which for a
+ * trashed file is not the one it is stored under.
+ */
+export function collisionNamesFor(path: string, file = basename(path)): (n: number) => string {
+  if (!/\.md$/i.test(file)) return (n) => numberedFile(file, n)
+  const text = files.get(path)?.text
+  const recorded = text ? eventFor(parseFrontmatter(text).data)?.title : undefined
+  const next = nameAfterCollision(file.slice(0, -'.md'.length), recorded)
+  return (n) => `${next(n)}.md`
+}
+
 function inheritedSync(path: string): Pick<VaultFile, 'sync' | 'folder'> {
   const was = files.get(path)
   if (!was?.deleted) return { sync: {}, folder: undefined }
@@ -908,7 +926,7 @@ export function resolveLink(target: string): string | undefined {
 
 /** Resolve an embed reference relative to the note that contains it. */
 export function resolveEmbed(ref: string, fromPath: string): string | undefined {
-  const clean = decodeURI(ref.trim())
+  const clean = decodeLinkPath(ref.trim())
   if (!clean || /^[a-z]+:/i.test(clean)) return undefined
   const candidates = [
     normPath(clean),
@@ -1145,13 +1163,25 @@ export async function renameNote(path: string, newTitle: string): Promise<string
 /**
  * Move a note to `to`, taking every link that pointed at it along.
  *
- * The links first, while the note is still where they point, so the question
- * of which links are *its* can be answered by resolving them rather than by
- * reading them — the same order `renameAttachment` uses, for the same reason.
+ * Which links are *its* is decided before the move, against the vault as it
+ * stands, so it can be answered by resolving them rather than by reading them.
+ * Every other note is rewritten then, while its links still resolve here.
+ *
+ * The note's own links to itself are rewritten *after* it has moved, at the
+ * path it moved to. Rewritten first, they changed its text on the way out, so
+ * the tombstone left behind recorded the rewritten text's hash — and the
+ * editor, which saves the buffer it still holds for the old path once more as
+ * the rename lands, saved text whose hash no longer matched. A save that does
+ * not match a tombstone resurrects it: renaming a note that linked to itself
+ * left a copy of it under the old name, on this device and every other. Moved
+ * with its text untouched, the tombstone matches that save and it does
+ * nothing, which is how it was before links were resolved at all.
  */
 export async function relocateNote(from: string, to: string): Promise<void> {
-  await repointNoteLinks(from, to)
+  const retarget = linkRetargeter(from, to)
+  await rewriteNoteLinks(retarget, (path) => path !== from)
   await movePath(from, to)
+  await rewriteNoteLinks(retarget, (path) => path === to)
 }
 
 /**
@@ -1208,7 +1238,8 @@ export async function movePath(from: string, to: string): Promise<void> {
 }
 
 /**
- * Rewrite every link that pointed at the note at `from` so it points at `to`.
+ * Where a link that pointed at the note at `from` should point once it is at
+ * `to` — or undefined for a link that did not point at it.
  *
  * Which links those are is decided by *resolving* them, not by comparing their
  * text with the old title — which was the whole of the old rule, and wrong in
@@ -1216,6 +1247,10 @@ export async function movePath(from: string, to: string): Promise<void> {
  * `Foo 2.md`, but its links were rewritten to `[[Foo]]`, the note that was
  * already there. And of two notes both called `A`, `[[A]]` can only mean one:
  * renaming the *other* rewrote it anyway, taking a link that was never its own.
+ *
+ * Resolved against the index as it is when this is called, and kept: the answer
+ * is still needed after the note has moved, when its old name resolves to
+ * nothing.
  *
  * Only links that named the note by its file — its title, or its path — are
  * touched. One that reached it through `aliases:` still reaches it, because the
@@ -1228,7 +1263,7 @@ export async function movePath(from: string, to: string): Promise<void> {
  * whichever of the two the index met first, so the link is written as a path
  * instead — the one form that cannot land on the wrong note.
  */
-async function repointNoteLinks(from: string, to: string): Promise<void> {
+function linkRetargeter(from: string, to: string): (l: WikiLink) => string | undefined {
   const titles = titleIndex.value
   const paths = pathSet.value
   const oldTitle = titleFromPath(from).toLowerCase()
@@ -1238,27 +1273,39 @@ async function repointNoteLinks(from: string, to: string): Promise<void> {
     (e) => e.path !== from && e.title.toLowerCase() === newTitle.toLowerCase(),
   )
   const titleTarget = shared ? toBare : newTitle
+  return (l) => {
+    if (resolveTarget(l.target, titles, paths) !== from) return undefined
+    const np = normPath(l.target.trim())
+    if (np === from) return to
+    if (`${np}.md` === from) return toBare
+    if (l.target.trim().toLowerCase() === oldTitle) return titleTarget
+    return undefined
+  }
+}
 
+/** Rewrite, in the notes `which` picks, every link `retarget` has a new target for. */
+async function rewriteNoteLinks(
+  retarget: (l: WikiLink) => string | undefined,
+  which: (path: string) => boolean,
+): Promise<void> {
   const touched: VaultFile[] = []
   for (const f of files.values()) {
-    if (f.kind !== 'note' || f.deleted || !f.text) continue
+    if (f.kind !== 'note' || f.deleted || !f.text || !which(f.path)) continue
     const hits: Array<{ link: WikiLink; target: string }> = []
     for (const l of scanWikiLinks(f.text)) {
-      if (resolveTarget(l.target, titles, paths) !== from) continue
-      const np = normPath(l.target.trim())
-      if (np === from) hits.push({ link: l, target: to })
-      else if (`${np}.md` === from) hits.push({ link: l, target: toBare })
-      else if (l.target.trim().toLowerCase() === oldTitle) {
-        hits.push({ link: l, target: titleTarget })
-      }
+      const target = retarget(l)
+      if (target !== undefined) hits.push({ link: l, target })
     }
     if (!hits.length) continue
     let text = f.text
     // Apply right-to-left so earlier offsets stay valid.
     for (const { link: l, target } of hits.reverse()) {
-      const anchor = l.anchor ? `#${l.anchor}` : ''
-      const alias = l.alias !== undefined ? `|${l.alias}` : ''
-      const link = `${l.embed ? '!' : ''}[[${target}${anchor}${alias}]]`
+      /*
+       * Through the one writer the syntax has. Renamed to `C# Notes`, a link
+       * written out by hand as `[[C# Notes]]` is the note `C` and its heading
+       * `Notes`, so every link to the note pointed somewhere else afterwards.
+       */
+      const link = formatWikiLink({ target, anchor: l.anchor, alias: l.alias, embed: l.embed })
       text = `${text.slice(0, l.from)}${link}${text.slice(l.to)}`
     }
     const next: VaultFile = {
@@ -1302,10 +1349,7 @@ export async function renameAttachment(path: string, newName: string): Promise<s
 
   let dest = joinPath(dir, name)
   let n = 2
-  while (occupied(dest) && dest !== path) {
-    const dot = name.lastIndexOf('.')
-    dest = joinPath(dir, dot > 0 ? `${name.slice(0, dot)} ${n++}${name.slice(dot)}` : `${name} ${n++}`)
-  }
+  while (occupied(dest) && dest !== path) dest = joinPath(dir, numberedFile(name, n++))
   if (dest === path) return path
 
   // Rewrite while the old file is still in place, so references still resolve.
@@ -1333,13 +1377,7 @@ async function repointReferences(from: string, to: string): Promise<void> {
     const reshape = (ref: string): string | undefined => {
       let clean = ref.trim()
       if (!clean || /^[a-z]+:/i.test(clean)) return undefined
-      let decoded = clean
-      try {
-        decoded = decodeURI(clean)
-      } catch {
-        /* a half-encoded link is matched as written */
-      }
-      const [bare] = splitSizeFragment(decoded)
+      const [bare] = splitSizeFragment(decodeLinkPath(clean))
       if (normPath(bare) === from) return to
       const noteDir = dirname(e.path)
       if (noteDir && joinPath(noteDir, bare) === from) {
@@ -1353,15 +1391,20 @@ async function repointReferences(from: string, to: string): Promise<void> {
     for (const l of scanWikiLinks(f.text, regions)) {
       const next = reshape(l.target)
       if (next === undefined) continue
-      const inner = [next, l.anchor ? `#${l.anchor}` : '', l.alias !== undefined ? `|${l.alias}` : ''].join('')
-      edits.push({ from: l.from, to: l.to, insert: `${l.embed ? '!' : ''}[[${inner}]]` })
+      const insert = formatWikiLink({
+        target: next,
+        anchor: l.anchor,
+        alias: l.alias,
+        embed: l.embed,
+      })
+      edits.push({ from: l.from, to: l.to, insert })
     }
     for (const l of scanMdLinks(f.text, regions)) {
       const [, width] = splitSizeFragment(l.url)
       const next = reshape(l.url)
       if (next === undefined) continue
       // Spaces have to be encoded or the parens close the link early.
-      const url = encodeURI(next) + (width ? `#w=${width}` : '')
+      const url = encodeLinkPath(next) + (width ? `#w=${width}` : '')
       edits.push({ from: l.urlFrom, to: l.urlTo, insert: url })
     }
     if (!edits.length) continue
@@ -1417,8 +1460,12 @@ export async function deleteNote(path: string): Promise<void> {
 
 export async function restoreFromTrash(trashPath: string, to?: string): Promise<string> {
   const name = trashDisplayName(trashPath)
-  let dest = to ?? name
+  const target = to ?? name
+  let dest = target
   let n = 2
+  // Counted in the folder it is going back to, which a counter built from the
+  // bare name dropped — and inside the length budget, which it ran past.
+  const nameFor = collisionNamesFor(trashPath, basename(target))
   /*
    * Only a file that is actually there counts as being in the way. Deleting
    * something leaves a tombstone at the path it came from — the row that tells
@@ -1426,10 +1473,7 @@ export async function restoreFromTrash(trashPath: string, to?: string): Promise<
    * note deleted and restored came back as "Note 2", every time, with nothing
    * called "Note" anywhere for it to have collided with.
    */
-  while (occupied(dest)) {
-    const dot = name.lastIndexOf('.')
-    dest = dot > 0 ? `${name.slice(0, dot)} ${n++}${name.slice(dot)}` : `${name} ${n++}`
-  }
+  while (occupied(dest)) dest = joinPath(dirname(target), nameFor(n++))
   await movePath(trashPath, dest)
   return dest
 }

@@ -9,6 +9,7 @@
  * disappearing silently.
  */
 
+import { formatWikiLink } from '../core/wikilink'
 import { EditorSelection, type SelectionRange } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { addAttachment } from '../core/vault'
@@ -62,7 +63,7 @@ export function insertFiles(view: EditorView, files: File[]) {
     let replacement: string
     try {
       const path = await ingest(file)
-      replacement = `![[${path}]]`
+      replacement = formatWikiLink({ target: path, embed: true })
     } catch (e) {
       console.error('[slate] attachment failed', e)
       replacement = `> Could not attach **${file.name || 'pasted file'}** — ${(e as Error).message}`
@@ -88,7 +89,7 @@ export function insertFiles(view: EditorView, files: File[]) {
  */
 export function insertVaultFiles(view: EditorView, paths: string[]): void {
   if (!paths.length) return
-  const text = `${paths.map((p) => `![[${p}]]`).join('\n')}\n`
+  const text = `${paths.map((p) => formatWikiLink({ target: p, embed: true })).join('\n')}\n`
   const head = view.state.selection.main
   view.dispatch({
     changes: { from: head.from, to: head.to, insert: text },

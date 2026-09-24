@@ -78,6 +78,30 @@ export function eventNoteName(title: string, start?: string, n = 1): string {
 const SUFFIX_RE = /^(.*) - (\d{4}-\d{2}-\d{2})(?: (\d+))?$/
 
 /**
+ * The name to try on the `n`th attempt, for a note that already has one and is
+ * going somewhere it is taken — a folder move, or back out of the trash.
+ *
+ * A counter makes room for itself by cutting the end of the name, which is
+ * right for a name that is only a title and wrong for an event's: the end is
+ * the date. A 120-character event moved into a folder that held its twin came
+ * out `… - 2026-09- 2`, and the agenda, finding a name nothing would have
+ * made, showed the whole mangled filename. So a name in the shape
+ * `eventNoteName` makes is made again by it, and the title gives up the room.
+ *
+ * From the recorded title, when the name is still the one made from it: cut
+ * from the whole of it, the new name is also what the record would make, so
+ * the agenda goes on reading the event by what was typed.
+ */
+export function nameAfterCollision(stem: string, recorded?: string): (n: number) => string {
+  const m = SUFFIX_RE.exec(stem)
+  if (!m) return (n) => numberedSegment(stem, n)
+  const date = m[2]
+  const made = recorded && eventNoteName(recorded, date, m[3] ? Number(m[3]) : 1) === stem
+  const title = made ? recorded : m[1]
+  return (n) => eventNoteName(title, date, n)
+}
+
+/**
  * `2026-09-21 0930 Standup` — where the stamp went while it went on the front.
  *
  * Followed by a title, and a title does not begin with a dash: without that,

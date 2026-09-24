@@ -26,6 +26,7 @@
  * Everything here is pure. The searching and the requests are in `app/ask.ts`.
  */
 
+import { formatWikiLink, splitWikiInner } from './wikilink'
 import { parseFrontmatter, scanWikiLinks, setFrontmatterList } from './markdown'
 import { unfence } from './llm'
 import { safeSegment, ymd } from './util'
@@ -167,7 +168,9 @@ export const PINS = 'include'
  */
 export function pinTitle(raw: string): string {
   const wiki = /^!?\[\[(.*)\]\]$/.exec(raw.trim())
-  return (wiki ? wiki[1] : raw).split(/[#|]/)[0].trim()
+  // Read as the link it is, so a pin on `C# Notes` — written `[[C\# Notes]]` —
+  // is that note and not `C`. A bare title has no escapes to read.
+  return wiki ? splitWikiInner(wiki[1]).target : raw.split(/[#|]/)[0].trim()
 }
 
 /** The notes a conversation pins, in the order they were pinned. */
@@ -188,7 +191,7 @@ export function withPins(text: string, titles: string[]): string {
   return setFrontmatterList(
     text,
     PINS,
-    titles.map((t) => `[[${t.trim()}]]`),
+    titles.map((t) => formatWikiLink({ target: t.trim() })),
   )
 }
 
@@ -512,7 +515,9 @@ export function provenanceCallout(p: Provenance): string {
   const skipped = p.pinsSkipped ?? 0
   const searched = p.terms.length ? `Searched ${p.terms.map((t) => `“${t}”`).join(', ')}` : 'No search terms'
   const read = p.read.length
-    ? p.read.map((t) => (pinned.includes(t) ? `[[${t}]] (pinned)` : `[[${t}]]`)).join(', ')
+    ? p.read
+        .map((t) => formatWikiLink({ target: t }) + (pinned.includes(t) ? ' (pinned)' : ''))
+        .join(', ')
     : 'nothing'
   const lines = [
     `> [!note]- ${searched} · read ${read}`,
@@ -545,7 +550,7 @@ export function provenanceCallout(p: Provenance): string {
   const notFound = p.citedNotFound ?? []
   if (notRead.length) {
     lines.push(
-      `> Cited without reading: ${notRead.map((t) => `[[${t}]]`).join(', ')} — a real note, but not one of the ones sent.`,
+      `> Cited without reading: ${notRead.map((t) => formatWikiLink({ target: t })).join(', ')} — a real note, but not one of the ones sent.`,
     )
   }
   if (notFound.length) {

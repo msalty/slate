@@ -19,8 +19,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 1377 unit, two-device sync and folder round-trip tests
-node scripts/smoke.mjs # 864-check browser smoke test against dist/
+npm test               # 1397 unit, two-device sync and folder round-trip tests
+node scripts/smoke.mjs # 867-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -300,7 +300,18 @@ that cannot land on the wrong note.
 
 Moving a note into a folder that already has one by the same name does the
 same: the note you moved becomes `Foo 2`, the toast says so, and nothing is
-overwritten.
+overwritten. An event keeps its date through that: `Standup - 2026-09-21 2`,
+never a counter cut into the date.
+
+**A name can use the characters a link does.** `#`, `|` and `]` all mean
+something inside `[[…]]` — `[[C# Notes]]` is the note `C` and its heading
+`Notes` — so a backslash escapes them: `[[C\# Notes]]` links to `C# Notes`.
+Nobody has to type that. Autocomplete, *make a link from the selection*, paste,
+pins and renaming all write it, live preview hides the backslash until the caret
+is in the link, and a heading with a `|` or `]` in it can be linked to the same
+way. Obsidian allows none of these characters in a filename and has no escape
+for them, so a note named with one cannot be linked to from there whatever is
+written; a name without them links identically in both.
 
 **And a note can answer to more than the name on the file.** `aliases:` in the
 frontmatter — one name or a list of them — files the note under those names too,
@@ -2890,8 +2901,8 @@ and that is a better argument for the rail than the outline ever was.
 ## Testing
 
 ```bash
-npm test                # 1377 unit + two-device sync + folder round-trip tests
-node scripts/smoke.mjs  # 864 checks in headless Chromium against dist/
+npm test                # 1397 unit + two-device sync + folder round-trip tests
+node scripts/smoke.mjs  # 867 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

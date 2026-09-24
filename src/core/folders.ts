@@ -23,6 +23,7 @@ import {
   isHidden,
   listAll,
   movePath,
+  collisionNamesFor,
   notes,
   occupied,
   relocateNote,
@@ -36,10 +37,8 @@ import {
   dirname,
   joinPath,
   normPath,
-  numberedSegment,
   safeSegment,
   startOfDay,
-  titleFromPath,
   uid,
 } from './util'
 import {
@@ -234,13 +233,12 @@ export async function moveNoteToFolder(notePath: string, folder: string): Promis
   const f = getRaw(notePath)
   if (!f) return notePath
   const dir = normPath(folder)
-  const title = titleFromPath(notePath)
   let dest = joinPath(dir, basename(notePath))
   if (dest === notePath) return notePath
+  // An event keeps its date through the counter; see `nameAfterCollision`.
+  const nameFor = collisionNamesFor(notePath)
   let n = 2
-  while (occupied(dest) && dest !== notePath) {
-    dest = joinPath(dir, `${numberedSegment(title, n++)}.md`)
-  }
+  while (occupied(dest) && dest !== notePath) dest = joinPath(dir, nameFor(n++))
   await relocateNote(notePath, dest)
   await persistFolders()
   return dest

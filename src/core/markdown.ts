@@ -7,6 +7,7 @@
  * broken feature, but a note it refuses is lost work.
  */
 
+import { WIKI_SOURCE, splitWikiInner, unescapeWiki } from './wikilink'
 import { normPath, parseYmd, splitInlineList, startOfDay, titleFromPath, unquote, ymd } from './util'
 
 /** What a single frontmatter key can hold, once parsed. */
@@ -535,8 +536,12 @@ export interface WikiLink {
  * an anchor with no note in front of it means a heading in *this* note. Both
  * halves empty is not a link at all — see the guard in the scan — so `[[]]`
  * and `[[|alias]]` stay inert text the way they always were.
+ *
+ * What is inside is taken apart by `splitWikiInner`, the one reading of the
+ * syntax everything shares, so an escaped `\#` in a name is part of the name
+ * here exactly as it is in the editor.
  */
-const WIKI = /(!?)\[\[([^\]\n|#]*)(?:#([^\]\n|]+))?(?:\|([^\]\n]*))?\]\]/g
+const WIKI = new RegExp(WIKI_SOURCE, 'g')
 
 export function scanWikiLinks(text: string, regions = codeRegions(text)): WikiLink[] {
   const out: WikiLink[] = []
@@ -544,8 +549,7 @@ export function scanWikiLinks(text: string, regions = codeRegions(text)): WikiLi
   let m: RegExpExecArray | null
   while ((m = WIKI.exec(text))) {
     if (inRegions(regions, m.index)) continue
-    const target = m[2].trim()
-    const anchor = m[3]?.trim()
+    const { target, anchor, alias } = splitWikiInner(m[2])
     // Brackets round nothing. Naming neither a note nor a place in one, it
     // points at nothing that could be opened.
     if (!target && !anchor) continue
@@ -554,11 +558,19 @@ export function scanWikiLinks(text: string, regions = codeRegions(text)): WikiLi
       to: m.index + m[0].length,
       target,
       anchor,
-      alias: m[4]?.trim(),
+      alias,
       embed: m[1] === '!',
     })
   }
   return out
+}
+
+/** A wikilink as the words it shows: its display text, or what it names. */
+function wikiAsText(s: string): string {
+  return s.replace(new RegExp(WIKI_SOURCE, 'g'), (_, _bang: string, inner: string) => {
+    const { alias, head } = splitWikiInner(inner)
+    return alias || unescapeWiki(head.trim())
+  })
 }
 
 export interface MdLink {
@@ -768,8 +780,7 @@ export function withDue(line: string, date: number | undefined): string {
  * used for what's shown, so nothing round-trips through it.
  */
 export function stripInline(s: string): string {
-  return s
-    .replace(/!?\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/g, (_, t, a) => a || t)
+  return wikiAsText(s)
     .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/(\*\*|__|~~|\*|_|`)/g, '')
     .replace(DUE_CUT, '')
@@ -796,15 +807,13 @@ export function excerptOf(
     if (/^#{1,6}\s/.test(line)) continue
     if (/^(-{3,}|\*{3,}|_{3,})$/.test(line)) continue
     if (/^```/.test(line)) continue
-    const clean = line
-      /*
-       * A callout's `[!NOTE]` is a marker, not the note's first words: the
-       * app draws it as an icon, and a list row that led with "[!NOTE] In one
-       * line" would be reading out the punctuation. Taken off before the
-       * blockquote `>` goes, so the pattern can still see which line it is on.
-       */
-      .replace(/^>\s*\[![A-Za-z]+\][+-]?\s*/, '')
-      .replace(/!?\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/g, (_, t, a) => a || t)
+    /*
+     * A callout's `[!NOTE]` is a marker, not the note's first words: the app
+     * draws it as an icon, and a list row that led with "[!NOTE] In one line"
+     * would be reading out the punctuation. Taken off before the blockquote `>`
+     * goes, so the pattern can still see which line it is on.
+     */
+    const clean = wikiAsText(line.replace(/^>\s*\[![A-Za-z]+\][+-]?\s*/, ''))
       .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
       .replace(/[*_~`>]/g, '')
       .replace(/^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s*)?/, '')
