@@ -191,6 +191,40 @@ describe('renaming to a name the link syntax uses', () => {
     expect(vault.backlinkMap.value.get(moved)).toEqual([linker])
   })
 
+  it('keeps display text with a ] in it through a rename', async () => {
+    const { vault } = await fresh()
+    const { formatWikiLink } = await import('./wikilink')
+    const { scanWikiLinks } = await import('./markdown')
+    const a = await vault.createNote('', 'A', 'note A')
+    const linker = await vault.createNote(
+      '',
+      'Linker',
+      `see ${formatWikiLink({ target: 'A', alias: 'Status [draft]' })} after`,
+    )
+    await vault.renameNote(a, 'B')
+    const text = vault.getRaw(linker)?.text ?? ''
+    // Written back as `[[B|Status [draft]]]` it was `Status [draft` and a stray `]`.
+    expect(text).toBe('see [[B|Status [draft\\]]] after')
+    expect(scanWikiLinks(text)[0]).toMatchObject({ target: 'B', alias: 'Status [draft]' })
+  })
+
+  it('tells receipt%23 from receipt#, both ways a link can name one', async () => {
+    const { vault } = await fresh()
+    const blob = () => new Blob(['x'], { type: 'image/png' })
+    const hash = await vault.addAttachment(blob(), 'receipt#.png')
+    const photo = await vault.addAttachment(blob(), 'photo.png')
+    const note = await vault.createNote('', 'Receipts', `![](${photo})`)
+    const literal = await vault.renameAttachment(photo, 'receipt%23')
+    expect([hash, literal]).toEqual(['receipt#.png', 'receipt%23.png'])
+    // Its `%` is encoded like any other, so the address is `receipt%2523.png` —
+    expect(vault.getRaw(note)?.text).toBe('![](receipt%2523.png)')
+    // which decoded the old way, everything first and `%23` after, came back
+    // as `receipt#.png`: the other file.
+    expect(vault.getEntry(note)!.embeds).toEqual([literal])
+    expect(vault.resolveEmbed('receipt%2523.png', note)).toBe(literal)
+    expect(vault.resolveEmbed('receipt%23.png', note)).toBe(hash)
+  })
+
   it('keeps an attachment’s embeds when it is renamed to a name with a #', async () => {
     const { vault } = await fresh()
     const photo = await vault.addAttachment(new Blob(['x'], { type: 'image/png' }), 'photo.png')

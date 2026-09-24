@@ -19,8 +19,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 1397 unit, two-device sync and folder round-trip tests
-node scripts/smoke.mjs # 867-check browser smoke test against dist/
+npm test               # 1404 unit, two-device sync and folder round-trip tests
+node scripts/smoke.mjs # 868-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -309,8 +309,9 @@ something inside `[[…]]` — `[[C# Notes]]` is the note `C` and its heading
 Nobody has to type that. Autocomplete, *make a link from the selection*, paste,
 pins and renaming all write it, live preview hides the backslash until the caret
 is in the link, and a heading with a `|` or `]` in it can be linked to the same
-way. Obsidian allows none of these characters in a filename and has no escape
-for them, so a note named with one cannot be linked to from there whatever is
+way — as can display text: `[[Plan|Status [draft\]]]` shows `Status [draft]`.
+Obsidian allows none of these characters in a filename and has no escape for
+them, so a note named with one cannot be linked to from there whatever is
 written; a name without them links identically in both.
 
 **And a note can answer to more than the name on the file.** `aliases:` in the
@@ -2768,14 +2769,12 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
   same reason: offering them there would be completing somebody into an embed
   that resolves to nothing.
 
-- **A heading with a `|` or a `]` in it cannot be linked to.** `[[Note#Anchor]]`
-  ends its anchor at a `]` and splits it at a `|`, and the syntax has no escape
-  for either: `[[#Revenue | costs]]` reads as the anchor "Revenue" with the
-  alias "costs", and `[[#Status [draft]]]` truncates to "Status [draft". So the
-  completion leaves those headings out rather than offering a link that could
-  never resolve. The outline still reaches them — ⌘⇧O navigates rather than
-  writing a link — so what is missing is linking to them, which was never
-  possible.
+- **A heading with a `|` or a `]` in it is written escaped.** `[[Note#Anchor]]`
+  ends its anchor at a `]` and splits it at a `|`, so `## Revenue | costs` is
+  completed as `[[Note#Revenue \| costs]]` rather than as the anchor "Revenue"
+  with the display text "costs". These headings were left out of the completion
+  until the syntax had an escape; see *A name can use the characters a link
+  does*, above.
 
 - **A heading completion is over one note, not over the vault.** `[[#` and
   `[[Trip#` both need the note named first — there is no "find me the section
@@ -2901,8 +2900,8 @@ and that is a better argument for the rail than the outline ever was.
 ## Testing
 
 ```bash
-npm test                # 1397 unit + two-device sync + folder round-trip tests
-node scripts/smoke.mjs  # 867 checks in headless Chromium against dist/
+npm test                # 1404 unit + two-device sync + folder round-trip tests
+node scripts/smoke.mjs  # 868 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

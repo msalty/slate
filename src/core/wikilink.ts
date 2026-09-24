@@ -29,6 +29,16 @@
 const TARGET_RESERVED = /[\\#|\]]/g
 /** In a heading, `#` is only text: the first one already said where it starts. */
 const ANCHOR_RESERVED = /[\\|\]]/g
+/**
+ * In display text only `]` can end anything: the first `|` already said where
+ * it starts, so any after it are text, and so is `#`.
+ */
+const ALIAS_RESERVED = /[\\\]]/g
+/*
+ * One reading for every part. Each part is *written* with only what it needs
+ * escaped, and a backslash is always among them, which is what makes that safe:
+ * a literal `\#` in display text is written `\\#`, and reads back as `\#`.
+ */
 const ESCAPE = /\\([\\#|\]])/g
 
 /** A note name or path, written so it survives the brackets. */
@@ -39,6 +49,11 @@ export function escapeWikiTarget(s: string): string {
 /** A heading, written so it survives the brackets. */
 export function escapeWikiAnchor(s: string): string {
   return s.replace(ANCHOR_RESERVED, (c) => `\\${c}`)
+}
+
+/** Display text, written so it survives the brackets. */
+export function escapeWikiAlias(s: string): string {
+  return s.replace(ALIAS_RESERVED, (c) => `\\${c}`)
 }
 
 /** What an escaped part says. A backslash in front of anything else is kept. */
@@ -87,7 +102,7 @@ export interface WikiParts {
   target: string
   /** The heading after the first `#`, unescaped and trimmed, if there is one. */
   anchor?: string
-  /** Display text after the first `|`, as written, trimmed. */
+  /** Display text after the first `|`, unescaped and trimmed. */
   alias?: string
   /** What comes before the `|`, exactly as written — for hiding it in place. */
   head: string
@@ -101,8 +116,10 @@ export interface WikiParts {
  * of the heading — `[[Notes#C# bindings]]` — which is why a heading is escaped
  * without it.
  *
- * Display text is left as written. It never had escapes, it is the part a
- * person typed to be read, and a rename carries it across untouched.
+ * Display text is unescaped too. It was once left as written, on the grounds
+ * that nobody escapes the words they want shown — which held until a rename
+ * wrote display text back out: `Status [draft]` came back as `[[Plan|Status
+ * [draft]]]`, which is the display text `Status [draft` and a stray bracket.
  */
 export function splitWikiInner(inner: string): WikiParts {
   const pipe = findUnescaped(inner, '|')
@@ -112,7 +129,7 @@ export function splitWikiInner(inner: string): WikiParts {
   return {
     target: unescapeWiki((hash < 0 ? head : head.slice(0, hash)).trim()),
     ...(anchor ? { anchor } : {}),
-    ...(pipe < 0 ? {} : { alias: inner.slice(pipe + 1).trim() }),
+    ...(pipe < 0 ? {} : { alias: unescapeWiki(inner.slice(pipe + 1).trim()) }),
     head,
   }
 }
@@ -125,6 +142,6 @@ export function formatWikiLink(l: {
   embed?: boolean
 }): string {
   const anchor = l.anchor ? `#${escapeWikiAnchor(l.anchor)}` : ''
-  const alias = l.alias !== undefined ? `|${l.alias}` : ''
+  const alias = l.alias !== undefined ? `|${escapeWikiAlias(l.alias)}` : ''
   return `${l.embed ? '!' : ''}[[${escapeWikiTarget(l.target)}${anchor}${alias}]]`
 }

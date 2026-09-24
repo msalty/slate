@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   addDays,
+  decodeLinkPath,
   dueLabel,
+  encodeLinkPath,
   duePresets,
   dueTone,
   fitSegment,
@@ -222,5 +224,44 @@ describe('a segment that has to fit', () => {
     expect(numberedFile(long, 2).length).toBe(120)
     // No extension to keep, so it is a plain counter.
     expect(numberedFile('README', 3)).toBe('README 3')
+  })
+})
+
+describe('a path as a link address', () => {
+  /*
+   * Every path comes back as itself. `%23` in a path used to be read as `#`
+   * whether it had been one or not: a file literally called `receipt%23.pdf`
+   * is written `receipt%2523.pdf`, and came back as `receipt#.pdf`.
+   */
+  const PATHS = [
+    'receipt.pdf',
+    'receipt#2.pdf',
+    'receipt%23.pdf',
+    'x %2523 y.png',
+    'a%2Fb.png',
+    '50% off.png',
+    '%',
+    '%%23',
+    'café.png',
+    'emoji 🎉.png',
+    '(paren) [bracket].png',
+    'attachments/2026/09/Scan #3 — final.pdf',
+    "&=+$,;:@'!~*.png",
+    'half \uD800 a character.png',
+  ]
+
+  it('decodes to exactly what was encoded, for every path', () => {
+    for (const p of PATHS) expect(decodeLinkPath(encodeLinkPath(p)), p).toBe(p)
+  })
+
+  it('never writes a # an address would take for a fragment', () => {
+    for (const p of PATHS) expect(encodeLinkPath(p), p).not.toContain('#')
+  })
+
+  it('still reads one written by hand', () => {
+    expect(decodeLinkPath('receipt%232.pdf')).toBe('receipt#2.pdf')
+    expect(decodeLinkPath('My%20Photo.png')).toBe('My Photo.png')
+    // Half-encoded, and read as written rather than thrown.
+    expect(decodeLinkPath('50%off.png')).toBe('50%off.png')
   })
 })

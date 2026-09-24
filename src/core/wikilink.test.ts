@@ -32,7 +32,18 @@ const TARGETS = [
   '#leading',
 ]
 const ANCHORS = [undefined, 'Costs', 'C# bindings', 'Revenue | costs', 'Status [draft]', 'a\\b']
-const ALIASES = [undefined, 'shown text', '']
+const ALIASES = [
+  undefined,
+  'shown text',
+  '',
+  'Status [draft]',
+  'ends with ]',
+  'a\\b',
+  'a\\#b',
+  'trailing \\',
+  'a|b|c',
+  '#not a heading',
+]
 
 describe('a link written by formatWikiLink', () => {
   it('reads back as exactly the parts it was given, for every awkward name', () => {
@@ -51,6 +62,16 @@ describe('a link written by formatWikiLink', () => {
         }
       }
     }
+  })
+
+  it('keeps display text with a ] in it inside the link', () => {
+    // Was `[[Plan|Status [draft]]]`: display text `Status [draft`, and a `]` left over.
+    const link = formatWikiLink({ target: 'Plan', alias: 'Status [draft]' })
+    expect(link).toBe('[[Plan|Status [draft\\]]]')
+    const text = `see ${link} after`
+    const [read] = scanWikiLinks(text)
+    expect(read.alias).toBe('Status [draft]')
+    expect(text.slice(read.to)).toBe(' after')
   })
 
   it('is one link, ending where it should, however many brackets are in it', () => {
@@ -73,13 +94,26 @@ describe('a link written by formatWikiLink', () => {
 })
 
 describe('what live preview hides', () => {
+  const unhidden = (written: string) => {
+    const hide = new Set(escapePositions(written))
+    return [...written].filter((_, i) => !hide.has(i)).join('')
+  }
+
   it('is exactly the backslashes unescaping removes, so the link reads as its name', () => {
     for (const target of TARGETS) {
       const written = formatWikiLink({ target }).slice(2, -2)
-      const hide = new Set(escapePositions(written))
-      const shown = [...written].filter((_, i) => !hide.has(i)).join('')
-      expect(shown, written).toBe(unescapeWiki(written))
-      expect(shown, written).toBe(target)
+      expect(unhidden(written), written).toBe(unescapeWiki(written))
+      expect(unhidden(written), written).toBe(target)
+    }
+  })
+
+  it('and as its display text, when it has some', () => {
+    for (const alias of ALIASES) {
+      if (alias === undefined) continue
+      const inner = formatWikiLink({ target: 'Plan', alias }).slice(2, -2)
+      // What is shown is everything after the first `|` that is not an escape.
+      const written = inner.slice(inner.indexOf('|') + 1)
+      expect(unhidden(written), inner).toBe(alias)
     }
   })
 })

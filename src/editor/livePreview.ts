@@ -518,15 +518,20 @@ function buildDecorations(view: EditorView): DecorationSet {
             // Hide the brackets and, when there is an alias, the target too.
             out.push(hidden.range(node.from, open))
             out.push(hidden.range(close, node.to))
+            /*
+             * And the backslashes that escape whatever is shown — the name when
+             * there is no display text, the display text when there is — so the
+             * link reads as `C# Notes` or `Status [draft]` and not with its
+             * escapes in. They come back with the brackets when the caret is in
+             * the link.
+             */
+            const shownFrom = alias !== undefined ? open + targetPart.length + 1 : open
+            const shown = state.doc.sliceString(shownFrom, close)
             if (alias !== undefined) {
-              out.push(hidden.range(open, open + targetPart.length + 1))
-            } else {
-              // And the backslashes that escape it: the link reads as the name
-              // it goes to, `C# Notes`, not as `C\# Notes`. They come back with
-              // the brackets when the caret is in the link.
-              for (const i of escapePositions(targetPart)) {
-                out.push(hidden.range(open + i, open + i + 1))
-              }
+              out.push(hidden.range(open, shownFrom))
+            }
+            for (const i of escapePositions(shown)) {
+              out.push(hidden.range(shownFrom + i, shownFrom + i + 1))
             }
           }
           const textFrom = !active && alias !== undefined ? open + targetPart.length + 1 : open

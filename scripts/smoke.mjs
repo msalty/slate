@@ -4019,7 +4019,10 @@ try {
       // It links to itself, which is the case a rename has to take most care
       // over: see the check on the old name below.
       ['Hash target.md', '# Hash target\n\nThe note being renamed. [[Hash target#Hash target]]\n'],
-      ['Hash linker.md', '# Hash linker\n\nSee [[Hash target]] for more.\n'],
+      [
+        'Hash linker.md',
+        '# Hash linker\n\nSee [[Hash target]] for more.\n\nAnd [[Hash target|Status [draft\\]]] too.\n',
+      ],
     ]
     /*
      * With the hash the app would have given them. Seeded with a made-up one,
@@ -4082,6 +4085,18 @@ try {
     'a link to a note renamed to C# Notes still goes to it, and reads as its name',
     hashSeen.to === 'C# Notes' && hashSeen.exists === '1' && hashSeen.shown === 'C# Notes',
     JSON.stringify(hashSeen),
+  )
+  // Display text with a `]` in it: carried through the rename escaped, and
+  // shown without the escape.
+  const draftLink = page.locator('.cm-content .cm-wikilink').nth(1)
+  const draftSeen = {
+    to: await draftLink.getAttribute('data-wikilink'),
+    shown: await draftLink.evaluate((el) => el.innerText),
+  }
+  check(
+    'and display text with a ] in it survives the rename, shown as written',
+    draftSeen.to === 'C# Notes' && draftSeen.shown === 'Status [draft]',
+    JSON.stringify(draftSeen),
   )
   await hashLink.click()
   await page.waitForTimeout(700)
