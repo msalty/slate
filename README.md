@@ -307,12 +307,15 @@ never a counter cut into the date.
 `Home/Name` before `Work/Name` — on every device, whatever order they were made
 or edited in. A link made by *picking* one of them — from autocomplete, pinning,
 *Ask about this note*, or an AI citation — is written with its path:
-`[[Work/Name]]` means that note wherever it is. And when a move, or a new note
-of that name — made here or pulled in by sync — would hand an existing `[[Name]]`
-to the other note, that link is rewritten to the path of the note it meant
-first, so nothing moves under it. A conversation's note scope is kept the same
+`[[Work/Name]]` means that note wherever it is. And whenever something would
+hand an existing `[[Name]]` to a different note — a move, a note of that name
+made, restored or pulled in by sync, one deleted here or on another device, an
+alias added or removed — that link is rewritten to the path of the note it led
+to, so nothing moves under it. A link that would simply lead nowhere is left as
+it is. A conversation's note scope is kept the same
 way, and an AI answer's citations are written to lead to the notes that were
-actually sent, even if another of the same name arrived while it was thinking.
+actually sent, even if another of the same name arrived, or the note was
+renamed, while it was thinking.
 
 **A name can use the characters a link does.** `#`, `|` and `]` all mean
 something inside `[[…]]` — `[[C# Notes]]` is the note `C` and its heading

@@ -36,6 +36,7 @@ import { parseQuery } from '../core/tagquery'
 import {
   backlinkMap,
   createNote,
+  currentPath,
   getEntry,
   getText,
   linkNameFor,
@@ -332,9 +333,17 @@ export async function askTurn(
     answerUser(question, sources, history),
     { signal: opts.signal, onChunk: opts.onChunk },
   )
-  // Cited by the names they were sent under, which may since mean other notes.
+  /*
+   * Cited by the names they were sent under, which may since mean other notes —
+   * or none, if a note was renamed while the model was answering. Each is
+   * followed to where it is now.
+   */
   const sent = new Map(sources.map((s) => [s.cite.toLowerCase(), s.path]))
-  const answer = settleCitations(said, sent, linkNameFor)
+  const answer = settleCitations(said, sent, (p) => {
+    const at = currentPath(p)
+    return at && linkNameFor(at)
+  })
+  const sentNow = sources.map((s) => currentPath(s.path) ?? s.path)
 
   /*
    * `matched` stays what the *search* found, so the number keeps meaning what
@@ -351,7 +360,7 @@ export async function askTurn(
    */
   const unread = citedWithoutReading(
     answer,
-    sources.map((s) => s.path),
+    sentNow,
     resolveLink,
   )
   return {
@@ -359,7 +368,7 @@ export async function askTurn(
     provenance: {
       terms,
       matched: found.length,
-      read: sources.map((s) => linkNameFor(s.path)),
+      read: sentNow.map(linkNameFor),
       tokens,
       dropped: Math.max(0, Math.min(candidates, limit) - sources.length),
       beyondLimit: Math.max(0, candidates - limit),

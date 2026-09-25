@@ -1046,11 +1046,17 @@ export async function installFromRemote(list: VaultFile[]): Promise<void> {
   // whoever pushed it, rather than to "somewhere else".
   loadDeviceRecords(list)
   /*
-   * A note pulled in can take a name — see `planArrivals`. Locally made notes
-   * always pinned what they would take; one made on another device did not,
-   * here: `[[Name]]` meant `Work/Name` until `Archive/Name` was pulled.
+   * A note pulled in can take a name, or give one up — see `planChange`. One
+   * made or deleted here always pinned the links it would move; one made on
+   * another device did not, here: `[[Name]]` meant `Work/Name` until
+   * `Archive/Name` was pulled. Written after, and never to the pulled notes
+   * themselves, whose links were written by whoever wrote them, against a vault
+   * that already had them.
    */
-  const plan = planArrivals(list)
+  const plan = planChange({
+    arrivals: list,
+    departures: list.filter((f) => f.deleted).map((f) => f.path),
+  })
   for (const f of list) {
     if (f.kind === 'note') {
       await pushVersion({
@@ -1191,7 +1197,7 @@ export async function createNote(
     dirty: true,
     ...inheritedSync(path),
   }
-  const plan = planArrivals([f])
+  const plan = planChange({ arrivals: [f] })
   await writeFile(f)
   reindex(path)
   bump()
@@ -1199,70 +1205,71 @@ export async function createNote(
   return path
 }
 
-/**
- * What the notes in `list` arriving would do to existing bare links — a plan
- * to pin them, if any would change meaning, and nothing otherwise.
- *
- * A name a new note takes, or an alias a note gains, may already mean another
- * note, and if the newcomer sorts first by path it takes every bare link to
- * that name. Made against the vault before `list` lands; written after, and
- * never to the arriving notes themselves, whose links were written by whoever
- * made them, against a vault that already had them.
- *
- * Only worked out when some name is actually contested, which is rarely: this
- * is on the path of every note made and every note pulled.
- */
-function planArrivals(list: readonly VaultFile[]): Plan | undefined {
-  const index = titleIndex.value
-  const arrivals: Named[] = []
-  let contested = false
-  for (const f of list) {
-    if (f.kind !== 'note' || f.deleted) continue
-    const a: Named = {
-      path: f.path,
-      title: titleFromPath(f.path),
-      aliases: aliasesIn(parseFrontmatter(f.text ?? '').data.aliases),
-    }
-    arrivals.push(a)
-    const had = getEntry(f.path)
-    const known = new Set(had ? [a.title, ...had.aliases].map((n) => n.toLowerCase()) : [])
-    for (const n of [a.title, ...a.aliases]) {
-      const k = n.toLowerCase()
-      if (known.has(k)) continue
-      const holder = index.get(k)
-      if (holder !== undefined && holder !== f.path) contested = true
-    }
-  }
-  return contested ? planReferences(new Map(), arrivals) : undefined
-}
-
 /** Save note text. Called from the editor's debounced autosave. */
 export async function saveNote(path: string, text: string): Promise<void> {
-  const f = files.get(path)
-  if (!f) return
-  if (f.text === text) return
-  const hash = await hashText(text)
-  if (hash === f.hash) return
-  await pushVersion({
-    path,
-    at: Date.now(),
-    text: f.text ?? '',
-    hash: f.hash,
-    reason: 'edit',
-    device: localDeviceName(),
+  const plan = await withPathLock(path, async () => {
+    const f = files.get(path)
+    if (!f) return undefined
+    if (f.text === text) return undefined
+    const hash = await hashText(text)
+    if (hash === f.hash) return undefined
+    await pushVersion({
+      path,
+      at: Date.now(),
+      text: f.text ?? '',
+      hash: f.hash,
+      reason: 'edit',
+      device: localDeviceName(),
+    })
+    const next: VaultFile = {
+      ...files.get(path)!,
+      text,
+      hash,
+      size: text.length,
+      mtime: Date.now(),
+      dirty: true,
+      deleted: false,
+    }
+    // An edit to `aliases:` can take a name from another note, or give one up.
+    const plan = mayRename(f.text, text) ? planChange({ arrivals: [next] }) : undefined
+    await writeFile(next)
+    reindex(path)
+    bump()
+    return plan
   })
-  const next: VaultFile = {
-    ...f,
-    text,
-    hash,
-    size: text.length,
-    mtime: Date.now(),
-    dirty: true,
-    deleted: false,
+  // Outside the lock: the plan takes other notes' locks, one at a time.
+  if (plan) await writePlanned(plan, (p) => p !== path, (p) => p)
+}
+
+/** Whether an edit could have changed the note's `aliases:` — cheaply, as this is every save. */
+function mayRename(before: string | undefined, after: string): boolean {
+  const fm = (t: string | undefined) => {
+    const end = t?.startsWith('---') ? t.indexOf('\n---', 3) : -1
+    return end < 0 ? '' : t!.slice(0, end)
   }
-  await writeFile(next)
-  reindex(path)
-  bump()
+  return fm(before) !== fm(after)
+}
+
+/**
+ * One writer at a time for each path.
+ *
+ * A save and a link rewrite for the same note each read it, work out the new
+ * text, and write — and interleaved, the second wrote over the first. The
+ * rewrite once held its results to persist as a batch at the end, so an edit
+ * saved to one note while another was being hashed stayed on screen and then
+ * went on reload, written over in the database by the batch's copy.
+ */
+const pathLocks = new Map<string, Promise<unknown>>()
+
+async function withPathLock<T>(path: string, fn: () => Promise<T>): Promise<T> {
+  const before = pathLocks.get(path) ?? Promise.resolve()
+  const mine = before.catch(() => undefined).then(fn)
+  pathLocks.set(path, mine)
+  try {
+    return await mine
+  } finally {
+    if (pathLocks.get(path) === mine) pathLocks.delete(path)
+  }
 }
 
 /**
@@ -1308,7 +1315,7 @@ export async function renameNote(path: string, newTitle: string): Promise<string
 export async function relocate(moves: ReadonlyMap<string, string>): Promise<void> {
   if (!moves.size) return
   checkMoves(moves)
-  const plan = planReferences(moves)
+  const plan = planReferences({ moves })
   await writePlanned(plan, (path) => !moves.has(path), (path) => path)
   // Deepest first, so a parent's move cannot take a child's source out from under it.
   for (const [from, to] of [...moves].sort((a, b) => b[0].length - a[0].length)) {
@@ -1358,6 +1365,35 @@ export function onPathMoved(fn: (from: string, to: string) => void | Promise<voi
   return () => moveListeners.delete(fn)
 }
 
+/**
+ * Where each path that has moved went, most recent last — this session's moves
+ * only, and only the last few hundred.
+ *
+ * For whatever held a note's path across a wait: a question sent to a model
+ * with `A.md` in it can come back after `A` was renamed `B`, and the citation
+ * it holds has to follow. A path moved *to* is live again, so its own entry
+ * goes — renaming `A` to `B` and back leaves `A` meaning `A`.
+ */
+const movedTo = new Map<string, string>()
+const MOVES_KEPT = 500
+
+function recordMove(from: string, to: string): void {
+  movedTo.delete(to)
+  movedTo.delete(from)
+  movedTo.set(from, to)
+  if (movedTo.size > MOVES_KEPT) movedTo.delete(movedTo.keys().next().value!)
+}
+
+/**
+ * Where the note that was at `path` is now, following any moves since — or
+ * nothing, if it has gone (to the trash, or for good) or was never a note.
+ */
+export function currentPath(path: string): string | undefined {
+  let at = path
+  for (let hops = 0; movedTo.has(at) && hops < MOVES_KEPT; hops++) at = movedTo.get(at)!
+  return getEntry(at) && !isHidden(at) ? at : undefined
+}
+
 /** Move a file to a new path, preserving history and sync bookkeeping. */
 export async function movePath(from: string, to: string): Promise<void> {
   const f = files.get(from)
@@ -1390,6 +1426,7 @@ export async function movePath(from: string, to: string): Promise<void> {
   await tombstone(from)
   reindex(to)
   bump()
+  recordMove(from, to)
   for (const fn of moveListeners) await fn(from, to)
 }
 
@@ -1403,6 +1440,96 @@ interface Planned {
   /** The text the plan was made from — written over only if it still is. */
   was: string
   text: string
+}
+
+/**
+ * Anything that changes which note a name or path leads to: files moving, notes
+ * arriving or taking new names (an arrival at a path already held is that note
+ * with its new `aliases:`), and notes going.
+ */
+interface Change {
+  moves?: ReadonlyMap<string, string>
+  arrivals?: readonly Named[]
+  departures?: ReadonlySet<string>
+}
+
+/** The vault as it will be after `change`: what each name will mean, which paths there will be. */
+function afterState(change: Change) {
+  const moves = change.moves ?? new Map<string, string>()
+  const moved = (path: string) => moves.get(path) ?? path
+  const arrivals = change.arrivals ?? []
+  const gone = change.departures ?? new Set<string>()
+  const arriving = new Set(arrivals.map((a) => a.path))
+  const later: Named[] = notes.value
+    .filter((e) => !arriving.has(e.path) && !gone.has(e.path))
+    .map((e) => ({ path: moved(e.path), title: titleFromPath(moved(e.path)), aliases: e.aliases }))
+  later.push(...arrivals)
+  const paths = new Set([...pathSet.value].filter((p) => !gone.has(p)).map(moved))
+  for (const a of arrivals) paths.add(a.path)
+  return { later, titles: buildTitleIndex(later), paths }
+}
+
+/** A note's names, lowercased: its title and its aliases. */
+function namesOf(path: string, aliases: readonly string[]): Set<string> {
+  return new Set([titleFromPath(path), ...aliases].map((n) => n.trim().toLowerCase()))
+}
+
+/** A note as the name index sees it. */
+function named(f: VaultFile): Named {
+  return {
+    path: f.path,
+    title: titleFromPath(f.path),
+    aliases: aliasesIn(parseFrontmatter(f.text ?? '').data.aliases),
+  }
+}
+
+/**
+ * The plan that keeps every link meaning what it does through `change` — or
+ * nothing, when no name would change hands.
+ *
+ * One rule for everything that is not a move (`relocate` plans those itself):
+ * a link that leads to one note now and would lead to a *different* note
+ * afterwards is written as the path of the note it leads to now. A note made
+ * or pulled in that sorts first would take a shared name; one deleted would
+ * hand its name to the next; an alias added would take links from a note
+ * later by path, and an alias removed would hand its links to the next note
+ * with it. A link that would lead nowhere afterwards is left as it is.
+ *
+ * Checked cheaply first, since this is on the path of every save, pull and
+ * delete: only when some name the change touches is one the index hands out
+ * is the vault's name index rebuilt to compare, and only when that shows a
+ * name changing hands are the notes read.
+ */
+function planChange(change: {
+  arrivals?: readonly VaultFile[]
+  departures?: readonly string[]
+}): Plan | undefined {
+  const index = titleIndex.value
+  const arrivals = (change.arrivals ?? [])
+    .filter((f) => f.kind === 'note' && !f.deleted && !isHidden(f.path))
+    .map(named)
+  const departures = new Set(
+    (change.departures ?? []).filter((p) => !isHidden(p) && getEntry(p) !== undefined),
+  )
+  let touches = false
+  for (const a of arrivals) {
+    const had = getEntry(a.path)
+    const now = namesOf(a.path, a.aliases)
+    const was = had ? namesOf(a.path, had.aliases) : new Set<string>()
+    for (const k of now) if (!was.has(k) && index.has(k) && index.get(k) !== a.path) touches = true
+    for (const k of was) if (!now.has(k) && index.get(k) === a.path) touches = true
+  }
+  for (const p of departures) {
+    for (const k of namesOf(p, getEntry(p)!.aliases)) if (index.get(k) === p) touches = true
+  }
+  if (!touches) return undefined
+  const full: Change = { arrivals, departures }
+  const after = afterState(full)
+  for (const [k, p] of index) {
+    const q = after.titles.get(k)
+    if (q !== undefined && q !== p) return planReferences(full, after)
+  }
+  return undefined
 }
 
 interface Plan {
@@ -1450,24 +1577,12 @@ interface Plan {
  * Headings, display text and embeds come through unchanged; a markdown link's
  * width suffix too.
  */
-function planReferences(
-  moves: ReadonlyMap<string, string>,
-  arrivals: readonly Named[] = [],
-): Plan {
+function planReferences(change: Change, after = afterState(change)): Plan {
   const titles = titleIndex.value
   const paths = pathSet.value
+  const moves = change.moves ?? new Map<string, string>()
   const moved = (path: string) => moves.get(path) ?? path
-
-  /* The vault as it will be: what each name will mean, and which paths there will be. */
-  // An arrival at a path a note already has is that note with new names.
-  const arriving = new Set(arrivals.map((a) => a.path))
-  const later: Named[] = notes.value
-    .filter((e) => !arriving.has(e.path))
-    .map((e) => ({ path: moved(e.path), title: titleFromPath(moved(e.path)), aliases: e.aliases }))
-  later.push(...arrivals)
-  const titlesAfter = buildTitleIndex(later)
-  const pathsAfter = new Set([...paths].map(moved))
-  for (const a of arrivals) pathsAfter.add(a.path)
+  const { later, titles: titlesAfter, paths: pathsAfter } = after
 
   /* How many notes will have each title, once everything has moved. */
   const titleCount = new Map<string, number>()
@@ -1519,7 +1634,10 @@ function planReferences(
     const to = moved(at)
     const np = normPath(t)
     if (np === at) return to === at ? undefined : to
-    if (`${np}.md` === at) return to === at ? undefined : to.replace(/\.md$/i, '')
+    // A path without `.md` — but at the root that is the title too, so it is read as one.
+    if (`${np}.md` === at && np.includes('/')) {
+      return to === at ? undefined : to.replace(/\.md$/i, '')
+    }
     // Reached by name — the note's title, or one of its `aliases:`.
     const byTitle = t.toLowerCase() === titleFromPath(at).toLowerCase()
     if (byTitle && titleFromPath(to) !== titleFromPath(at)) return nameFor(to)
@@ -1529,8 +1647,14 @@ function planReferences(
      * — or a new note can hand it to a different one; wherever that would
      * happen the link is written as the path of the note it meant.
      */
-    if (resolveTarget(t, titlesAfter, pathsAfter) === to) return undefined
-    return to.replace(/\.md$/i, '')
+    const then = resolveTarget(t, titlesAfter, pathsAfter)
+    // Leading nowhere afterwards is not leading somewhere else: that is left be.
+    if (then === undefined || then === to) return undefined
+    /*
+     * At the root a note's path without `.md` is its title, which leads to the
+     * next note of that name once this one has gone; with it, only this one.
+     */
+    return to.includes('/') ? to.replace(/\.md$/i, '') : to
   }
 
   const rewrite = (path: string, was: string): string | undefined => {
@@ -1610,7 +1734,7 @@ async function writePlanned(
   which: (path: string) => boolean,
   where: (path: string) => string,
 ): Promise<void> {
-  const touched: VaultFile[] = []
+  let wrote = false
   for (const [path, first] of plan.notes) {
     if (!which(path)) continue
     const at = where(path)
@@ -1618,32 +1742,24 @@ async function writePlanned(
     // Bounded, so a note being rewritten continuously cannot hold this forever.
     for (let tries = 0; tries < 8; tries++) {
       const hash = await hashText(text)
-      const f = files.get(at)
-      if (!f || f.deleted) break
-      if (f.text === was) {
-        const next: VaultFile = {
-          ...f,
-          text,
-          hash,
-          size: text.length,
-          mtime: Date.now(),
-          dirty: true,
-        }
-        setFile(at, next)
-        touched.push(next)
-        break
-      }
-      was = f.text ?? ''
+      // Checked, written and made durable under the note's lock, one note at a time.
+      const done = await withPathLock(at, async () => {
+        const f = files.get(at)
+        if (!f || f.deleted) return true
+        if (f.text !== was) return false
+        await writeFile({ ...f, text, hash, size: text.length, mtime: Date.now(), dirty: true })
+        reindex(at)
+        wrote = true
+        return true
+      })
+      if (done) break
+      was = files.get(at)?.text ?? ''
       const again = plan.rewrite(path, was)
       if (again === undefined) break
       text = again
     }
   }
-  if (touched.length) {
-    await putFiles(touched)
-    for (const f of touched) reindex(f.path)
-    bump()
-  }
+  if (wrote) bump()
 }
 
 /**
@@ -1698,7 +1814,10 @@ export async function deleteNote(path: string): Promise<void> {
   let dest = joinPath(TRASH, `${stamp}--${basename(path)}`)
   let n = 2
   while (files.has(dest)) dest = joinPath(TRASH, `${stamp}--${n++}--${basename(path)}`)
+  // Its links stay its own: a name it shared goes to the next note, and they must not.
+  const plan = planChange({ departures: [path] })
   await movePath(path, dest)
+  if (plan) await writePlanned(plan, () => true, (p) => p)
 }
 
 export async function restoreFromTrash(trashPath: string, to?: string): Promise<string> {
@@ -1717,7 +1836,11 @@ export async function restoreFromTrash(trashPath: string, to?: string): Promise<
    * called "Note" anywhere for it to have collided with.
    */
   while (occupied(dest)) dest = joinPath(dirname(target), nameFor(n++))
+  const f = files.get(trashPath)
+  // Back under a name another note may have now — see `planChange`.
+  const plan = f && planChange({ arrivals: [{ ...f, path: dest }] })
   await movePath(trashPath, dest)
+  if (plan) await writePlanned(plan, (p) => p !== dest, (p) => p)
   return dest
 }
 
@@ -1836,6 +1959,7 @@ export async function tombstone(path: string): Promise<void> {
  */
 export async function forget(path: string, slot: SyncSlot = 'cloud'): Promise<void> {
   const f = files.get(path)
+  const plan = f && !f.deleted ? planChange({ departures: [path] }) : undefined
   const cleared: VaultFile | undefined = f
     ? slot === 'folder'
       ? { ...f, folder: undefined }
@@ -1855,6 +1979,7 @@ export async function forget(path: string, slot: SyncSlot = 'cloud'): Promise<vo
   await deleteFileRow(path)
   releaseUrl(path)
   bump()
+  if (plan) await writePlanned(plan, () => true, (p) => p)
 }
 
 /**
@@ -1878,6 +2003,7 @@ export async function acceptDeletion(path: string, slot: SyncSlot): Promise<void
   if (!f) return
   const other: SyncSlot = slot === 'folder' ? 'cloud' : 'folder'
   if (metaFor(f, other).baseHash === undefined) return forget(path, slot)
+  const plan = f.deleted ? undefined : planChange({ departures: [path] })
 
   const now = Date.now()
   const next: VaultFile = {
@@ -1900,6 +2026,7 @@ export async function acceptDeletion(path: string, slot: SyncSlot): Promise<void
   dropFromSearchIndex(path)
   releaseUrl(path)
   bump()
+  if (plan) await writePlanned(plan, () => true, (p) => p)
 }
 
 /* ------------------------------------------------------------- attachments */

@@ -189,3 +189,34 @@ describe('whether the search has anywhere to look', () => {
     expect(m.ask.searchesAnything(noteScopeRule('note', 'Never Existed'), [], 'Ask.md')).toBe(false)
   })
 })
+
+describe('an answer to notes that moved while it was being written', () => {
+  /*
+   * `A` was sent and renamed `B` before the reply came back; the answer kept
+   * `[[A]]`, which led nowhere.
+   */
+  it('cites them where they are now', async () => {
+    vi.resetModules()
+    ;(globalThis as { __SLATE_DB__?: string }).__SLATE_DB__ = `slate-ask-${++seq}`
+    const vault = await import('../core/vault')
+    let renamed = ''
+    vi.doMock('../adapters/llm', () => ({
+      streamText: async () => {
+        renamed = await vault.renameNote('A.md', 'B')
+        return 'Alpha is covered in [[A]].'
+      },
+    }))
+    const ask = await import('./ask')
+    await vault.initVault()
+    await vault.createNote('', 'A', 'Alpha facts, about alpha.\n')
+    const { answer, provenance } = await ask.askTurn('what about alpha?', '# Chat\n', ALL, 'Chat.md', {
+      terms: ['alpha'],
+    })
+    vi.doUnmock('../adapters/llm')
+    expect(renamed).toBe('B.md')
+    expect(answer).toBe('Alpha is covered in [[B]].')
+    expect(provenance.read).toEqual(['B'])
+    expect(provenance.citedNotRead ?? []).toEqual([])
+    expect(provenance.citedNotFound ?? []).toEqual([])
+  })
+})

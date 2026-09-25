@@ -21,7 +21,7 @@ import {
   type SummarySource,
 } from '../core/summary'
 import { settings } from '../core/settings'
-import { createNote, getText, linkNameFor } from '../core/vault'
+import { createNote, currentPath, getText, linkNameFor } from '../core/vault'
 import { settleCitations } from '../core/ask'
 import type { NoteIndexEntry } from '../core/types'
 
@@ -77,7 +77,11 @@ export async function runSummary(
    * see `settleCitations`.
    */
   const sent = new Map(plan.batches.flat().map((s) => [s.cite.toLowerCase(), s.path]))
-  if (partials.length === 1) return settleCitations(partials[0], sent, linkNameFor)
+  const nameFor = (p: string) => {
+    const at = currentPath(p)
+    return at && linkNameFor(at)
+  }
+  if (partials.length === 1) return settleCitations(partials[0], sent, nameFor)
 
   opts.onProgress?.(total - 1, total)
   const combined = await streamText(
@@ -86,7 +90,7 @@ export async function runSummary(
     combineUser(partials),
     { onChunk: opts.onChunk, signal: opts.signal },
   )
-  return settleCitations(unfence(combined), sent, linkNameFor)
+  return settleCitations(unfence(combined), sent, nameFor)
 }
 
 /** Write the summary into a new note and answer with its path. */

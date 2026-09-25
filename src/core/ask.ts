@@ -483,13 +483,15 @@ export function citedWithoutReading(
  * `[[Name]]` if it was the only `Name` — and the answer can take long enough
  * for another `Name` to arrive by sync and take that name. So what a citation
  * meant is looked up in `sent` (lowercased cite → path), not in the vault, and
- * written as `nameFor` that path says, at the moment the answer is written in.
+ * written as `nameFor` that path says, at the moment the answer is written in —
+ * following the note if it was renamed meanwhile, and left as the model wrote
+ * it if `nameFor` has nothing, the note having gone.
  * Once it is in a note, moves and arrivals keep it pointing where it did.
  */
 export function settleCitations(
   answer: string,
   sent: ReadonlyMap<string, string>,
-  nameFor: (path: string) => string,
+  nameFor: (path: string) => string | undefined,
 ): string {
   let out = answer
   const links = scanWikiLinks(answer, codeRegions(answer))
@@ -498,7 +500,7 @@ export function settleCitations(
     const path = sent.get(l.target.trim().toLowerCase())
     if (path === undefined) continue
     const target = nameFor(path)
-    if (target === l.target) continue
+    if (target === undefined || target === l.target) continue
     const insert = formatWikiLink({ target, anchor: l.anchor, alias: l.alias, embed: l.embed })
     out = `${out.slice(0, l.from)}${insert}${out.slice(l.to)}`
   }

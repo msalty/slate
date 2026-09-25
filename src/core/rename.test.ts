@@ -470,6 +470,91 @@ describe('two notes with one name', () => {
     expect(vault.resolveLink('Work/X')).toBe(work)
   })
 
+  it('keeps a link on its note when an alias it was reached by is removed', async () => {
+    const { vault } = await fresh()
+    const a = await vault.createNote('Archive', 'A', '---\naliases: [Nick]\n---\na')
+    await vault.createNote('Work', 'B', '---\naliases: [Nick]\n---\nb')
+    const ref = await vault.createNote('', 'Ref', 'see [[Nick]]')
+    expect(vault.resolveLink('Nick')).toBe(a)
+    await vault.saveNote(a, 'a')
+    expect(vault.getRaw(ref)?.text).toBe('see [[Archive/A]]')
+  })
+
+  it('and when an alias added to an earlier note would take it', async () => {
+    const { vault } = await fresh()
+    const a = await vault.createNote('Archive', 'A', 'a')
+    const b = await vault.createNote('Work', 'B', '---\naliases: [Nick]\n---\nb')
+    const ref = await vault.createNote('', 'Ref', 'see [[Nick]]')
+    await vault.saveNote(a, '---\naliases: [Nick]\n---\na')
+    expect(vault.resolveLink('Nick')).toBe(a)
+    expect(vault.getRaw(ref)?.text).toBe('see [[Work/B]]')
+    expect(vault.resolveLink('Work/B')).toBe(b)
+  })
+
+  it('and when the note it leads to is deleted and the name would pass on', async () => {
+    const { vault } = await fresh()
+    const archive = await vault.createNote('Archive', 'Name', 'archive')
+    await vault.createNote('Work', 'Name', 'work')
+    const ref = await vault.createNote('', 'Ref', 'see [[Name]]')
+    await vault.deleteNote(archive)
+    expect(vault.getRaw(ref)?.text).toBe('see [[Archive/Name]]')
+    expect(vault.resolveLink('Archive/Name')).toBeUndefined()
+  })
+
+  it('and at the root, where the path without .md is the name', async () => {
+    const { vault } = await fresh()
+    const root = await vault.createNote('', 'Name', 'root')
+    await vault.createNote('Work', 'Name', 'work')
+    const ref = await vault.createNote('', 'Ref', 'see [[Name]]')
+    await vault.deleteNote(root)
+    expect(vault.getRaw(ref)?.text).toBe('see [[Name.md]]')
+    // And back from the trash, it is that note's again.
+    const [trashed] = vault.trashItems()
+    await vault.restoreFromTrash(trashed.path)
+    expect(vault.resolveLink('Name.md')).toBe(root)
+  })
+
+  it('and when a note restored from the trash would take it', async () => {
+    const { vault } = await fresh()
+    const root = await vault.createNote('', 'Name', 'root')
+    await vault.deleteNote(root)
+    const work = await vault.createNote('Work', 'Name', 'work')
+    const ref = await vault.createNote('', 'Ref', 'see [[Name]]')
+    const [trashed] = vault.trashItems()
+    await vault.restoreFromTrash(trashed.path)
+    expect(vault.getRaw(ref)?.text).toBe('see [[Work/Name]]')
+    expect(vault.resolveLink('Work/Name')).toBe(work)
+  })
+
+  it('and when sync deletes the note it leads to', async () => {
+    const { vault } = await fresh()
+    const archive = await vault.createNote('Archive', 'Name', 'archive')
+    await vault.createNote('Work', 'Name', 'work')
+    const ref = await vault.createNote('', 'Ref', 'see [[Name]]')
+    await vault.forget(archive)
+    expect(vault.getRaw(ref)?.text).toBe('see [[Archive/Name]]')
+  })
+
+  it('leaves a link alone when the note it led to goes and nothing takes the name', async () => {
+    const { vault } = await fresh()
+    const only = await vault.createNote('Archive', 'Only', 'only')
+    const ref = await vault.createNote('', 'Ref', 'see [[Only]]')
+    await vault.deleteNote(only)
+    expect(vault.getRaw(ref)?.text).toBe('see [[Only]]')
+  })
+
+  it('follows a note renamed while something held its old path', async () => {
+    const { vault } = await fresh()
+    const a = await vault.createNote('', 'A', 'a')
+    const b = await vault.renameNote(a, 'B')
+    expect(vault.currentPath(a)).toBe(b)
+    const back = await vault.renameNote(b, 'A')
+    expect(vault.currentPath(a)).toBe(back)
+    expect(vault.currentPath(b)).toBe(back)
+    await vault.deleteNote(back)
+    expect(vault.currentPath(a)).toBeUndefined()
+  })
+
   it('keeps a conversation’s scope on its note, through arrivals and moves', async () => {
     const { vault, folders } = await fresh()
     await vault.createNote('Work', 'Name', 'work')
@@ -555,6 +640,36 @@ describe('a rename racing an edit', () => {
     spy.mockRestore()
     expect(raced).toBe(true)
     expect(vault.getRaw(ref)?.text).toBe('see [[B]] plus my edit')
+  })
+})
+
+describe('a rename racing an edit to another note it rewrites', () => {
+  /*
+   * The rewrites were held and persisted together at the end, so an edit saved
+   * to the first while the second was hashing stayed on screen and was then
+   * written over in the database: gone on reload.
+   */
+  it('keeps the edit through a reload', async () => {
+    const { vault } = await fresh()
+    const a = await vault.createNote('', 'A', 'a')
+    const one = await vault.createNote('', 'One', 'one [[A]]')
+    await vault.createNote('', 'Two', 'two [[A]]')
+    const digest = crypto.subtle.digest.bind(crypto.subtle)
+    let raced = false
+    const spy = vi.spyOn(crypto.subtle, 'digest').mockImplementation(async (alg, data) => {
+      const text = new TextDecoder().decode(data as ArrayBuffer)
+      if (!raced && text === 'two [[B]]') {
+        raced = true
+        await vault.saveNote(one, `${vault.getText(one)} plus my edit`)
+      }
+      return digest(alg, data as ArrayBuffer)
+    })
+    await vault.renameNote(a, 'B')
+    spy.mockRestore()
+    expect(raced).toBe(true)
+    expect(vault.getText(one)).toBe('one [[B]] plus my edit')
+    await vault.initVault()
+    expect(vault.getText(one)).toBe('one [[B]] plus my edit')
   })
 })
 
