@@ -197,21 +197,25 @@ export function folderPendingCount(): number {
  * sit in the database forever waiting for a folder that is never coming back.
  */
 export async function clearFolderMeta(): Promise<void> {
-  const touched: VaultFile[] = []
   const doomed: string[] = []
-  for (const f of files.values()) {
-    if (f.folder === undefined) continue
-    if (f.deleted && !f.dirty) doomed.push(f.path)
-    else touched.push({ ...f, folder: undefined })
+  const paths = [...files.values()].filter((f) => f.folder !== undefined).map((f) => f.path)
+  for (const path of paths) {
+    // Each from the file as it is under its lock, so no edit in between is undone.
+    await withPathLock(path, async () => {
+      const f = files.get(path)
+      if (!f || f.folder === undefined) return
+      if (f.deleted && !f.dirty) return void doomed.push(path)
+      // Durable before adopted, for the reason spelled out over `writeFile`: a
+      // forgetting that only happened in memory is a folder this device still
+      // believes it agreed with after the next reload — and if the next folder
+      // connected is a different one, believing that is how it would skip files.
+      const next = { ...f, folder: undefined }
+      await putFile(next)
+      setFile(path, next)
+    })
   }
-  // Durable before adopted, for the reason spelled out over `writeFile`: a
-  // forgetting that only happened in memory is a folder this device still
-  // believes it agreed with after the next reload — and if the next folder
-  // connected is a different one, believing that is how it would skip files.
-  if (touched.length) await putFiles(touched)
-  for (const f of touched) setFile(f.path, f)
   for (const p of doomed) await forget(p, 'folder')
-  if (touched.length || doomed.length) bump()
+  if (paths.length) bump()
 }
 
 /* ------------------------------------------------------------ other windows */
@@ -1135,26 +1139,35 @@ export async function markSynced(
   },
   slot: SyncSlot = 'cloud',
 ): Promise<void> {
-  const f = files.get(path)
-  if (!f) return
-  // Only clear `dirty` when the content that was pushed is still the current
-  // content. Otherwise the user typed during the upload and we'd drop the edit.
-  const stillCurrent = f.hash === patch.baseHash
-  const meta: SyncMeta = {
-    baseHash: patch.baseHash,
-    baseText: f.kind === 'note' ? patch.baseText : undefined,
-    remoteRev: patch.remoteRev,
-    remoteMtime: patch.remoteMtime,
-    lastSyncedAt: Date.now(),
-  }
-  const next: VaultFile =
-    slot === 'folder'
-      ? { ...f, folder: meta }
-      : { ...f, dirty: stillCurrent ? false : f.dirty, sync: meta }
-  // Durable before adopted, for the reason spelled out over `writeFile`.
-  await putFile(next)
-  setFile(path, next)
-  if (!stillCurrent) bump()
+  /*
+   * Under the file's lock, from the file as it is then, changing only the sync
+   * record. Made from a copy taken before the write, this put the whole copy
+   * back: an edit saved while the record was being written went, on screen and
+   * on disk, and the note was its last uploaded text again.
+   */
+  const stale = await withPathLock(path, async () => {
+    const f = files.get(path)
+    if (!f) return false
+    // Only clear `dirty` when the content that was pushed is still the current
+    // content. Otherwise the user typed during the upload and we'd drop the edit.
+    const stillCurrent = f.hash === patch.baseHash
+    const meta: SyncMeta = {
+      baseHash: patch.baseHash,
+      baseText: f.kind === 'note' ? patch.baseText : undefined,
+      remoteRev: patch.remoteRev,
+      remoteMtime: patch.remoteMtime,
+      lastSyncedAt: Date.now(),
+    }
+    const next: VaultFile =
+      slot === 'folder'
+        ? { ...f, folder: meta }
+        : { ...f, dirty: stillCurrent ? false : f.dirty, sync: meta }
+    // Durable before adopted, for the reason spelled out over `writeFile`.
+    await putFile(next)
+    setFile(path, next)
+    return !stillCurrent
+  })
+  if (stale) bump()
 }
 
 export function listAll(): VaultFile[] {
@@ -1211,31 +1224,61 @@ export async function createNote(
    * once — two quick adds, a template and a paste — both found `Same.md` free
    * before either was written, and the second write replaced the first.
    */
-  const { path, plan } = await withPathLock(folderKey(dir), async () => {
-    let n = 1
-    let path = joinPath(dir, `${nameFor(n)}.md`)
-    while (occupied(path)) path = joinPath(dir, `${nameFor(++n)}.md`)
-    const now = Date.now()
-    const f: VaultFile = {
-      path,
-      kind: 'note',
-      text,
-      mime: 'text/markdown',
-      size: text.length,
-      hash,
-      mtime: now,
-      ctime: now,
-      dirty: true,
-      ...inheritedSync(path),
-    }
-    const plan = planChange({ arrivals: [f] })
-    await writeFile(f)
-    reindex(path)
-    bump()
-    return { path, plan }
-  })
+  const { path, result: plan } = await claimPath(
+    dir,
+    (n) => joinPath(dir, `${nameFor(n)}.md`),
+    occupied,
+    async (path) => {
+      const now = Date.now()
+      const f: VaultFile = {
+        path,
+        kind: 'note',
+        text,
+        mime: 'text/markdown',
+        size: text.length,
+        hash,
+        mtime: now,
+        ctime: now,
+        dirty: true,
+        ...inheritedSync(path),
+      }
+      const plan = planChange({ arrivals: [f] })
+      await writeFile(f)
+      reindex(path)
+      bump()
+      return plan
+    },
+  )
   if (plan) await writePlanned(plan, (p) => p !== path, (p) => p)
   return path
+}
+
+/**
+ * Choose a free path in `dir` — `candidate(1)`, then `candidate(2)`, … — and
+ * write it, as one step.
+ *
+ * The folder's lock keeps two new files from choosing the same name; the path's
+ * own lock, taken before looking again and writing, keeps out anything that
+ * writes to that path without choosing one — a sync pull landing `Same.md`, say,
+ * which a note made at that moment used to be written under and then replaced
+ * by. Found taken on that second look, the next name is tried.
+ */
+async function claimPath<T>(
+  dir: string,
+  candidate: (n: number) => string,
+  taken: (path: string) => boolean,
+  write: (path: string) => Promise<T>,
+): Promise<{ path: string; result: T }> {
+  return withPathLock(folderKey(dir), async () => {
+    for (let n = 1; ; n++) {
+      const path = candidate(n)
+      if (taken(path)) continue
+      const claimed = await withPathLock(path, async () =>
+        taken(path) ? undefined : { path, result: await write(path) },
+      )
+      if (claimed) return claimed
+    }
+  })
 }
 
 /** The lock for choosing a name in `dir` — kept apart from every file path's. */
@@ -1989,22 +2032,26 @@ export async function emptyTrash(): Promise<number> {
  * remote has dropped it too, which is what stops a delete from bouncing back.
  */
 export async function tombstone(path: string): Promise<void> {
-  const f = files.get(path)
-  if (!f) return
-  const next: VaultFile = {
-    ...f,
-    text: undefined,
-    blob: undefined,
-    size: 0,
-    deleted: true,
-    deletedAt: Date.now(),
-    mtime: Date.now(),
-    dirty: true,
-  }
-  // Durable before adopted, for the reason spelled out over `writeFile`: a
-  // tombstone only in memory is a note that comes back on the next reload.
-  await putFile(next)
-  setFile(path, next)
+  const done = await withPathLock(path, async () => {
+    const f = files.get(path)
+    if (!f) return false
+    const next: VaultFile = {
+      ...f,
+      text: undefined,
+      blob: undefined,
+      size: 0,
+      deleted: true,
+      deletedAt: Date.now(),
+      mtime: Date.now(),
+      dirty: true,
+    }
+    // Durable before adopted, for the reason spelled out over `writeFile`: a
+    // tombstone only in memory is a note that comes back on the next reload.
+    await putFile(next)
+    setFile(path, next)
+    return true
+  })
+  if (!done) return
   indexMap.delete(path)
   dropFromSearchIndex(path)
   releaseUrl(path)
@@ -2022,27 +2069,32 @@ export async function tombstone(path: string): Promise<void> {
  * and pull it straight back into the vault.
  */
 export async function forget(path: string, slot: SyncSlot = 'cloud'): Promise<void> {
-  const f = files.get(path)
-  const plan = f && !f.deleted ? planChange({ departures: [path] }) : undefined
-  const cleared: VaultFile | undefined = f
-    ? slot === 'folder'
-      ? { ...f, folder: undefined }
-      : { ...f, dirty: false, sync: {} }
-    : undefined
+  const plan = await withPathLock(path, async () => {
+    const f = files.get(path)
+    // An edit beats a delete: one saved since the engine decided is kept.
+    if (f && !f.deleted && pendingFor(f, slot)) return undefined
+    const plan = f && !f.deleted ? planChange({ departures: [path] }) : undefined
+    const cleared: VaultFile | undefined = f
+      ? slot === 'folder'
+        ? { ...f, folder: undefined }
+        : { ...f, dirty: false, sync: {} }
+      : undefined
 
-  if (cleared?.deleted && pendingFor(cleared, slot === 'folder' ? 'cloud' : 'folder')) {
-    // Still owed elsewhere. Keep the tombstone; this target is simply done.
-    await putFile(cleared)
-    setFile(path, cleared)
-    return
-  }
+    if (cleared?.deleted && pendingFor(cleared, slot === 'folder' ? 'cloud' : 'folder')) {
+      // Still owed elsewhere. Keep the tombstone; this target is simply done.
+      await putFile(cleared)
+      setFile(path, cleared)
+      return undefined
+    }
 
-  dropFile(path)
-  indexMap.delete(path)
-  dropFromSearchIndex(path)
-  await deleteFileRow(path)
-  releaseUrl(path)
-  bump()
+    dropFile(path)
+    indexMap.delete(path)
+    dropFromSearchIndex(path)
+    await deleteFileRow(path)
+    releaseUrl(path)
+    bump()
+    return plan
+  })
   if (plan) await writePlanned(plan, () => true, (p) => p)
 }
 
@@ -2067,29 +2119,35 @@ export async function acceptDeletion(path: string, slot: SyncSlot): Promise<void
   if (!f) return
   const other: SyncSlot = slot === 'folder' ? 'cloud' : 'folder'
   if (metaFor(f, other).baseHash === undefined) return forget(path, slot)
-  const plan = f.deleted ? undefined : planChange({ departures: [path] })
 
-  const now = Date.now()
-  const next: VaultFile = {
-    ...f,
-    text: undefined,
-    blob: undefined,
-    size: 0,
-    deleted: true,
-    deletedAt: now,
-    mtime: now,
-    // Owed to `other`, and settled with `slot` — which has, after all, just
-    // told us the file is already gone there.
-    dirty: other === 'cloud',
-    sync: other === 'cloud' ? f.sync : {},
-    folder: other === 'folder' ? f.folder : undefined,
-  }
-  await putFile(next)
-  setFile(path, next)
-  indexMap.delete(path)
-  dropFromSearchIndex(path)
-  releaseUrl(path)
-  bump()
+  const plan = await withPathLock(path, async () => {
+    const f = files.get(path)
+    // Gone already, or edited since the engine decided: an edit beats a delete.
+    if (!f || (!f.deleted && pendingFor(f, slot))) return undefined
+    const plan = f.deleted ? undefined : planChange({ departures: [path] })
+    const now = Date.now()
+    const next: VaultFile = {
+      ...f,
+      text: undefined,
+      blob: undefined,
+      size: 0,
+      deleted: true,
+      deletedAt: now,
+      mtime: now,
+      // Owed to `other`, and settled with `slot` — which has, after all, just
+      // told us the file is already gone there.
+      dirty: other === 'cloud',
+      sync: other === 'cloud' ? f.sync : {},
+      folder: other === 'folder' ? f.folder : undefined,
+    }
+    await putFile(next)
+    setFile(path, next)
+    indexMap.delete(path)
+    dropFromSearchIndex(path)
+    releaseUrl(path)
+    bump()
+    return plan
+  })
   if (plan) await writePlanned(plan, () => true, (p) => p)
 }
 
@@ -2099,28 +2157,38 @@ export async function addAttachment(
   blob: Blob,
   path: string,
 ): Promise<string> {
-  const now = Date.now()
-  let dest = normPath(path)
-  let n = 2
-  while (files.has(dest)) {
-    const dot = dest.lastIndexOf('.')
-    const base = dot > 0 ? dest.slice(0, dot) : dest
-    const ext = dot > 0 ? dest.slice(dot) : ''
-    dest = `${base}-${n++}${ext}`
-  }
-  const f: VaultFile = {
-    path: dest,
-    kind: 'attachment',
-    blob,
-    mime: blob.type || mimeForPath(dest),
-    size: blob.size,
-    hash: await hashBlob(blob),
-    mtime: now,
-    ctime: now,
-    dirty: true,
-    sync: {},
-  }
-  await writeFile(f)
+  const wanted = normPath(path)
+  const dot = wanted.lastIndexOf('.')
+  const base = dot > 0 ? wanted.slice(0, dot) : wanted
+  const ext = dot > 0 ? wanted.slice(dot) : ''
+  /*
+   * Hashed first, and the name chosen and written in one step after. Chosen
+   * before the hash, two files pasted together with one name — two `image.png`s
+   * from the clipboard, two camera shots in the same second — both got it, and
+   * one replaced the other.
+   */
+  const hash = await hashBlob(blob)
+  const { path: dest } = await claimPath(
+    dirname(wanted),
+    (n) => (n === 1 ? wanted : `${base}-${n}${ext}`),
+    // Not over a deleted file's row either: that row is how sync removes it remotely.
+    (p) => files.has(p),
+    async (dest) => {
+      const now = Date.now()
+      await writeFile({
+        path: dest,
+        kind: 'attachment',
+        blob,
+        mime: blob.type || mimeForPath(dest),
+        size: blob.size,
+        hash,
+        mtime: now,
+        ctime: now,
+        dirty: true,
+        sync: {},
+      })
+    },
+  )
   bump()
   return dest
 }

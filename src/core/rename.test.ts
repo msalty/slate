@@ -531,6 +531,9 @@ describe('two notes with one name', () => {
     const archive = await vault.createNote('Archive', 'Name', 'archive')
     await vault.createNote('Work', 'Name', 'work')
     const ref = await vault.createNote('', 'Ref', 'see [[Name]]')
+    // Uploaded, so nothing here is owed and the deletion is taken as it comes.
+    const up = vault.getRaw(archive)!
+    await vault.markSynced(archive, { baseHash: up.hash, baseText: up.text })
     await vault.forget(archive)
     expect(vault.getRaw(ref)?.text).toBe('see [[Archive/Name]]')
   })
@@ -691,6 +694,82 @@ describe('two notes made at once with one name', () => {
     expect([vault.getText(one), vault.getText(two)].sort()).toEqual(['one', 'two'])
     await vault.initVault()
     expect([vault.getText(one), vault.getText(two)].sort()).toEqual(['one', 'two'])
+  })
+})
+
+describe('a note made while a pull of the same name lands', () => {
+  /*
+   * The pull held `Same.md`'s lock, the new note only its folder's: it was
+   * written to `Same.md` while the pull was part way through, and the pull then
+   * wrote over it.
+   */
+  it('is a note of its own, and the pulled one is kept', async () => {
+    const { vault } = await fresh()
+    const [, made] = await Promise.all([
+      vault.installFromRemote([pulled('Same.md', 'from elsewhere')]),
+      vault.createNote('', 'Same', 'made here'),
+    ])
+    expect(made).toBe('Same 2.md')
+    expect(vault.getText('Same.md')).toBe('from elsewhere')
+    expect(vault.getText(made)).toBe('made here')
+  })
+})
+
+describe('the record of an upload, and an edit saved meanwhile', () => {
+  /*
+   * The record was written from a copy of the whole file taken first, so an
+   * edit saved while it was being written was put back to the uploaded text —
+   * on screen and in the database.
+   */
+  it('keeps the edit, and it is still owed an upload', async () => {
+    vi.resetModules()
+    ;(globalThis as { __SLATE_DB__?: string }).__SLATE_DB__ = `slate-rename-${++seq}`
+    let vault!: typeof import('./vault')
+    let path = ''
+    let held = false
+    // The record's write is held long enough for an autosave to finish, if it can.
+    vi.doMock('./db', async (importOriginal) => {
+      const db = await importOriginal<typeof import('./db')>()
+      return {
+        ...db,
+        putFile: async (f: import('./types').VaultFile) => {
+          if (!held && f.sync?.remoteRev === 'r1') {
+            held = true
+            void vault.saveNote(path, 'local edit')
+            await new Promise((r) => setTimeout(r, 50))
+          }
+          return db.putFile(f)
+        },
+      }
+    })
+    try {
+      vault = await import('./vault')
+    } finally {
+      vi.doUnmock('./db')
+    }
+    await vault.initVault()
+    path = await vault.createNote('', 'Note', 'base')
+    const f = vault.getRaw(path)!
+    await vault.markSynced(path, { baseHash: f.hash, baseText: 'base', remoteRev: 'r1' })
+    await vi.waitFor(() => expect(vault.getText(path)).toBe('local edit'))
+    expect(held).toBe(true)
+    expect(vault.getRaw(path)?.dirty).toBe(true)
+    await vault.initVault()
+    expect(vault.getText(path)).toBe('local edit')
+    expect(vault.getRaw(path)?.dirty).toBe(true)
+  })
+})
+
+describe('two attachments added at once with one name', () => {
+  it('are two attachments', async () => {
+    const { vault } = await fresh()
+    const [a, b] = await Promise.all([
+      vault.addAttachment(new Blob(['one']), 'attachments/same.bin'),
+      vault.addAttachment(new Blob(['two']), 'attachments/same.bin'),
+    ])
+    expect(a).not.toBe(b)
+    const bodies = await Promise.all([a, b].map((p) => vault.getRaw(p)!.blob!.text()))
+    expect(bodies.sort()).toEqual(['one', 'two'])
   })
 })
 
