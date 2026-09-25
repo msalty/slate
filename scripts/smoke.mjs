@@ -7629,7 +7629,7 @@ try {
     ['Priya Natarajan.md', '# Priya Natarajan\n\nRuns the platform team.\n'],
     ['Notes on Priya.md', '# Notes on Priya\n\nAsk [[Priya Natarajan]] about the migration.\n'],
     [
-      'Calendar/Imported/Platform sync (a41b).md',
+      `Calendar/Subscribed/Fastmail/${isoDay(2).slice(0, 4)}/${isoDay(2).slice(5, 7)}/Platform sync (a41b).md`,
       `---\ntitle: Platform sync\nstart: ${isoDay(2)}T09:00\nend: ${isoDay(2)}T09:30\nattendees:\n  - "[[Priya Natarajan]]"\nsource: fastmail\nuid: a41b@fastmail.com\n---\n\n- [ ] Imported homework\n`,
     ],
   ])
@@ -7701,8 +7701,9 @@ try {
     (await page.locator('[aria-label="Edit note"]').count()) === 0 &&
       (await page.locator('.editor-title-input').getAttribute('readonly')) !== null,
   )
-  const importPath = 'Calendar/Imported/Platform sync (a41b).md'
-  const importedText = () =>
+  const importPath = `Calendar/Subscribed/Fastmail/${isoDay(2).slice(0, 4)}/${isoDay(2).slice(5, 7)}/Platform sync (a41b).md`
+  const ownFolder = `Calendar/${isoDay(2).slice(0, 4)}/${isoDay(2).slice(5, 7)}`
+  const importedText = (at = importPath) =>
     page.evaluate(async (path) => {
       const db = await new Promise((res) => {
         const r = indexedDB.open('slate')
@@ -7714,7 +7715,7 @@ try {
         q.onsuccess = () => res(q.result)
       })
       return f?.text ?? ''
-    }, importPath)
+    }, at)
   const importedBefore = await importedText()
   await page.locator('.editor-host .cm-content').click({ position: { x: 30, y: 10 } })
   await page.keyboard.type('typed over')
@@ -7724,12 +7725,64 @@ try {
     (await importedText()) === importedBefore &&
       (await page.locator('.editor-pane').getAttribute('data-reading')) === '1',
   )
-  await banner.locator('button', { hasText: 'Detach from fastmail' }).click()
+
+  /*
+   * Writing about it. The meeting stays the importer's; your notes are a note
+   * of your own, filed on its day beside the events you make by hand, linked
+   * back to it — and the second press opens them rather than making more.
+   */
+  await banner.locator('button', { hasText: 'Write notes' }).click()
   await page.waitForTimeout(700)
-  const detached = await importedText()
+  const notesPath = `${ownFolder}/Platform sync - ${isoDay(2)}.md`
+  const notesText = await importedText(notesPath)
   check(
-    'Detach takes the importer’s keys out and leaves the rest',
-    !/^source:/m.test(detached) && !/^uid:/m.test(detached) && detached.includes('title: Platform sync'),
+    'Write notes makes a note of your own on the meeting’s day, linked to it',
+    notesText.includes(`date: ${isoDay(2)}`) &&
+      notesText.includes('meeting: "[[Platform sync (a41b)]]"') &&
+      !/^(start|source|uid):/m.test(notesText),
+    notesText.split('\n').slice(0, 5).join(' / '),
+  )
+  check(
+    'and opens it ready to type in',
+    (await page.locator('.editor-title-input').inputValue()) === `Platform sync - ${isoDay(2)}` &&
+      (await page.locator('.editor-pane').getAttribute('data-reading')) === '0',
+  )
+  await page.keyboard.press('Escape')
+  await (await showDay(2)).click()
+  await page.waitForTimeout(400)
+  const meetingRows = await page.locator('.rail .agenda .agenda-row').allInnerTexts()
+  check(
+    'the meeting is still on the agenda once, not twice',
+    meetingRows.filter((r) => r.includes('Platform sync')).length === 1,
+    meetingRows.join(' | '),
+  )
+  await page.locator('.rail .agenda .agenda-notes').first().click()
+  await page.waitForTimeout(600)
+  check(
+    'and its agenda row opens the same notes rather than making more',
+    (await page.locator('.editor-title-input').inputValue()) === `Platform sync - ${isoDay(2)}` &&
+      (await importedText(`${ownFolder}/Platform sync - ${isoDay(2)} 2.md`)) === '',
+  )
+
+  await page.locator('.rail .agenda .agenda-row', { hasText: 'Platform sync' }).first().click()
+  await page.waitForTimeout(600)
+  await page
+    .locator('.source-banner button', { hasText: 'Detach from fastmail' })
+    .click()
+  await page.waitForTimeout(900)
+  /*
+   * Detached, it leaves the importer's folder for your own — the same folder
+   * and the same kind of name as an event made by hand. Its notes already have
+   * that name, so it takes the next one.
+   */
+  const detachedPath = `${ownFolder}/Platform sync - ${isoDay(2)} 2.md`
+  const detached = await importedText(detachedPath)
+  check(
+    'Detach takes the importer’s keys out and files it with your own events',
+    !/^source:/m.test(detached) &&
+      !/^uid:/m.test(detached) &&
+      detached.includes('title: Platform sync') &&
+      (await importedText()) === '',
     detached.split('\n').slice(0, 6).join(' / '),
   )
   check(
@@ -7737,11 +7790,20 @@ try {
     (await page.locator('.source-banner').count()) === 0 &&
       (await page.locator('[aria-label="Edit note"]').count()) === 1,
   )
+  check(
+    'and the notes about it follow it there',
+    (await importedText(notesPath)).includes(
+      `meeting: "[[${detachedPath.replace(/\.md$/, '')}]]"`,
+    ) || (await importedText(notesPath)).includes(`meeting: "[[Platform sync - ${isoDay(2)} 2]]"`),
+    (await importedText(notesPath)).split('\n').slice(0, 4).join(' / '),
+  )
   await page.locator('.side-row:has-text("All Notes")').first().click()
   await page.waitForTimeout(400)
+  const afterDetach = await page.locator('.note-row').allInnerTexts()
   check(
-    'and it joins the note list',
-    (await page.locator('.note-row').allInnerTexts()).join(' | ').includes('Platform sync'),
+    'and it joins the note list, beside its notes',
+    afterDetach.filter((r) => r.includes('Platform sync')).length === 2,
+    afterDetach.filter((r) => r.includes('Platform sync')).join(' | '),
   )
 
   /* ---- copying a table back out -----------------------------------------

@@ -63,7 +63,7 @@ export async function loadFolders(): Promise<void> {
   if (Array.isArray(list)) explicitFolders.value = list.map(normPath).filter(Boolean)
 }
 
-async function persistFolders() {
+export async function persistFolders(): Promise<void> {
   // Only empty ones need recording; the rest are implied by their notes and
   // would just be a second source of truth to drift out of sync.
   const implied = impliedFolders()

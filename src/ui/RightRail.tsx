@@ -47,6 +47,7 @@ import {
 import { DueChip } from './DueChip'
 import { openQuickAdd } from './QuickAdd'
 import { openNewEvent } from './newEvent'
+import { openMeetingNotes } from './meetingNotes'
 import { Highlight } from './Highlight'
 import {
   IconCheck,
@@ -55,6 +56,7 @@ import {
   IconClock,
   IconDots,
   IconNotes,
+  IconPencil,
   IconPlus,
 } from './Icons'
 
@@ -275,7 +277,7 @@ export function AgendaPanel({ big = false }: { big?: boolean } = {}) {
           // A `tz:` nothing can read is shown rather than swallowed: the row
           // would otherwise look like any other and be silently hours out.
           const broken = eventZoneProblem(ev)
-          return (
+          const row = (
             <button
               key={e.path}
               class="agenda-row"
@@ -292,6 +294,25 @@ export function AgendaPanel({ big = false }: { big?: boolean } = {}) {
                 zone && <em class="agenda-zone">{zone}</em>
               )}
             </button>
+          )
+          /*
+           * A meeting an importer keeps is a page, so the row carries the way
+           * to write about it — the same action as the note's own banner, and
+           * the one a day is most often opened for.
+           */
+          if (e.source === undefined) return row
+          return (
+            <div key={e.path} class="agenda-item">
+              {row}
+              <button
+                class="agenda-notes"
+                onClick={() => void openMeetingNotes(e.path)}
+                aria-label={`Notes on ${eventTitle(e.title, ev.title)}`}
+                title="Your notes on this meeting"
+              >
+                <IconPencil size={13} />
+              </button>
+            </div>
           )
         })
       )}

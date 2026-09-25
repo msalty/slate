@@ -2063,6 +2063,50 @@ button.property-kind:hover {
   white-space: nowrap;
   color: var(--text-faint);
 }
+/*
+ * A meeting an importer keeps, with the way to write about it beside it. The
+ * row keeps the whole width it had; the button sits in the space a title's
+ * ellipsis would have used, and like the section's own + it is quiet until the
+ * panel is being pointed at.
+ */
+.agenda-item {
+  display: flex;
+  align-items: center;
+}
+.agenda-item .agenda-row {
+  flex: 1;
+  min-width: 0;
+}
+.agenda-notes {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  color: var(--text-faint);
+  opacity: 0.55;
+  transition:
+    opacity var(--dur),
+    background var(--dur);
+}
+.rail-section:hover .agenda-notes,
+.agenda-notes:focus-visible {
+  opacity: 1;
+}
+.agenda-notes:hover {
+  background: var(--row-hover);
+  color: var(--text);
+}
+/* No hover on a phone: the button is simply there, and thumb-sized. */
+@media (hover: none) {
+  .agenda-notes {
+    opacity: 1;
+    width: 44px;
+    height: 44px;
+  }
+}
 .agenda-big .agenda-row {
   font-size: 15px;
   padding: 8px 6px;

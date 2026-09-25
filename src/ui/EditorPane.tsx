@@ -22,7 +22,6 @@ import {
   saveNote,
   deleteNote,
   createNote,
-  detachNote,
   purge,
   trashTitle,
 } from '../core/vault'
@@ -96,6 +95,7 @@ import { hasCamera, hasPhotoLibrary, pickAndInsert } from '../editor/pickImage'
 import { openFilePicker } from './pickFile'
 import { insertVaultFiles } from '../editor/paste'
 import { LinkedMentions } from './LinkedMentions'
+import { detachAndOpen, openMeetingNotes } from './meetingNotes'
 
 /**
  * A save that did not land.
@@ -984,19 +984,24 @@ export function EditorPane() {
         <div class="trash-banner source-banner">
           <span>Kept up to date from {owner}, so it can't be edited here.</span>
           <span class="spacer" />
+          {/*
+            * First, because it is what a meeting is usually opened for: your
+            * own notes about it, beside it on its day and linked to it, while
+            * the meeting itself keeps up with the calendar.
+            */}
+          {entry.event && (
+            <button
+              class="row-action"
+              title="Open your notes on this meeting, or start them"
+              onClick={() => void openMeetingNotes(path)}
+            >
+              Write notes
+            </button>
+          )}
           <button
             class="row-action"
-            title={`Stop ${owner} updating this note, and make it an ordinary note of your own`}
-            onClick={async () => {
-              try {
-                if (!(await detachNote(path))) return
-              } catch (e) {
-                reportSaveFailure(e)
-                return
-              }
-              syncSoon()
-              notify(`Detached from ${owner} — this note is yours now`)
-            }}
+            title={`Stop ${owner} updating this note, and file it with your own`}
+            onClick={() => void detachAndOpen(path, owner)}
           >
             Detach from {owner}
           </button>

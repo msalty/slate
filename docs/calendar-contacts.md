@@ -199,6 +199,31 @@ all, so `[[Lunch with Joe]]` resolves to nothing and a link names a date or goes
 through `aliases:`. That is a better trade than eleven notes reachable only by a
 number that starts over in October.
 
+**The importer's files go in a folder of their own**:
+`Calendar/Subscribed/<Account>/<year>/<month>/`, with `<Account>` the name the
+account already has (vdir stores a `displayname` per collection) —
+`Calendar/Subscribed/Fastmail/2026/09/Standup (a41b).md`. "Subscribed" because
+that is the word calendar apps already use for a calendar you can see and
+cannot edit, which is exactly what this is; "Imported" was considered and
+rejected for reading like an inbox, something waiting to be dealt with.
+
+Kept apart so that two things hold. Everything under `Calendar/Subscribed/` is
+the importer's, so emptying it clears the imports and nothing of yours — which
+is why your notes on a meeting and a meeting you detach are both filed in
+`Calendar/<year>/<month>/` (§5.5), never in there. And your own month folders
+stay yours to read, not buried under a few hundred meetings.
+
+The account level is there from the first account on, not added with the
+second: added later, it would move every file already written, which breaks
+links and the manifest's paths (§6.2) alike. The year and month levels are the
+same browsability argument as for hand-made events.
+
+**Slate reads none of these names**, and must not start to. What a note *is*
+comes from its frontmatter; where Slate files something — your notes, a
+detached meeting — is worked out from its `start:`. So the folders are the
+helper's setting to change, and principle 3 stands: origin is a property of the
+file, and the folder is only a convention for keeping it tidy.
+
 **The importer disambiguates differently**, and deliberately. It uses a short
 stable suffix derived from the `uid` — `Standup (a41b).md` — because it writes
 hundreds and *stability* is its requirement: a recurring series it re-syncs must
@@ -232,9 +257,20 @@ uid: a41b...
 Met at the Lisbon conference. Prefers email.
 ```
 
-**Filenames.** `Contacts/Jane Doe.md`, flat, because the filename *is* the link
-target and `[[Jane Doe]]` is the entire point. Collisions take a disambiguator
-from `org` or the email local-part: `Contacts/Jane Doe (Example Corp).md`.
+**Filenames.** `Contacts/Address Book/<Account>/Jane Doe.md` — flat within the
+account, because the filename *is* the link target and `[[Jane Doe]]` is the
+entire point. A link resolves by filename wherever the file is, so the folders
+above it cost nothing. "Address Book" because it says what the folder is; the
+calendar's word, "Subscribed", reads oddly for people. Contacts you keep by
+hand, and contacts you detach, live in `Contacts/` itself.
+
+Collisions take a disambiguator from `org` or the email local-part:
+`Jane Doe (Example Corp).md`. **The check is vault-wide, not per folder.** With
+one folder per account the same person can arrive from two, and two
+`Jane Doe.md` in different folders are a shared name — `[[Jane Doe]]` then
+means whichever sorts first by path, which is to say whichever account happens
+to be named earlier in the alphabet. So a name any other note in the vault
+already has, imported or yours, is disambiguated.
 
 No photos — an address book's worth of them is megabytes into a sync set that
 reaches your phone. No `#tags` derived from vCard categories, which would
@@ -486,8 +522,24 @@ No event editor and no date-picker widget. The frontmatter form in
 ### 5.5 Read-only, and Detach
 
 Any note with `source:` set opens read-only, with a banner naming the provider
-and one action: **Detach from `<source>`**, which strips `source:` and `uid:`
-and leaves an ordinary note you own.
+and, for a meeting, two actions.
+
+**Write notes** is the one a meeting is usually opened for. It makes a note of
+your own in `Calendar/<year>/<month>/`, named as a hand-made event would be
+(`Standup - 2026-09-21`), carrying `date:` — which files it on the meeting's
+day, in that day's list and under its dot — and `meeting: "[[Standup (a41b)]]"`,
+the link back, which puts it first in the meeting's Linked Mentions. No
+`start:`, and no `Calendar/` folder template, which opens with one: either would
+make your notes an event of their own and the meeting would be on the agenda
+twice. Pressed again, it opens the notes you already have, found by that
+`meeting:` link. The same action sits on the meeting's agenda row.
+
+**Detach from `<source>`** strips `source:` and `uid:` and leaves an ordinary
+note you own — and moves it out of the importer's folder, which is emptied
+wholesale and would take it along. A meeting goes to `Calendar/<year>/<month>/`
+under the name `>New event` would have given it; a contact goes to `Contacts/`
+under the name it had, which is its link target. The move goes through the
+same rename machinery as any other, so every link to it follows.
 
 Read-only means everything in Slate that would change the file or its path:
 the body and the properties form, ticking or dating its tasks from a list,
@@ -520,8 +572,8 @@ format is a contract with two sides.
 
 ```
 CalDAV / CardDAV ──vdirsyncer──┐
-                               ├──> vdir/ ──project──> <vault>/Calendar/
-macOS EventKit ──swift dumper──┘      .ics  .vcf       <vault>/Contacts/
+                               ├──> vdir/ ──project──> <vault>/Calendar/Subscribed/<Account>/
+macOS EventKit ──swift dumper──┘      .ics  .vcf       <vault>/Contacts/Address Book/<Account>/
 ```
 
 Two stages, and the split is the design. Stage one is **transport** — auth,
@@ -553,7 +605,7 @@ resident daemon.
 State lives **outside the vault**, in the helper's own directory:
 
 ```json
-{ "uid@provider": { "path": "Calendar/2026/09/….md", "hash": "sha256…", "gen": 41 } }
+{ "uid@provider": { "path": "Calendar/Subscribed/Fastmail/2026/09/….md", "hash": "sha256…", "gen": 41 } }
 ```
 
 A file is overwritten or deleted only when **all three** hold:
@@ -565,6 +617,18 @@ A file is overwritten or deleted only when **all three** hold:
 Fail (3) and the file has been edited by hand — leave it, log it, never touch it
 again. Fail (2) and it has been detached. This is what makes §5.5's Detach mean
 something durable rather than cosmetic.
+
+**A manifest entry whose file is gone is written afresh**, as a new file, if the
+record is still upstream. Gone means deleted in Slate, or detached — Detach
+moves the note out of the importer's folder (§5.5), so the helper finds nothing
+at the path it recorded. Chosen over remembering detached records and skipping
+them, so that a detached meeting does not take the live one with it: the copy
+you detached stops changing, and the one the calendar keeps goes on following
+it — moved, renamed, cancelled. The cost is that a detached meeting that is
+still upcoming is on the agenda twice, once as yours and once as the
+calendar's, which is the honest picture of two copies that can now disagree.
+For notes about a meeting that should keep following it, *Write notes* is the
+action, not Detach.
 
 **Deletion has two distinct paths, and conflating them is a bug:**
 
