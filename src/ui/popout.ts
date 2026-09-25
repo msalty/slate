@@ -32,7 +32,7 @@
  */
 
 import { signal } from '@preact/signals'
-import { adoptFromStorage, onVaultWrite } from '../core/vault'
+import { adoptFromStorage, adoptMove, onVaultMove, onVaultWrite } from '../core/vault'
 import { activeVaultId } from '../core/vaults'
 
 /** The URL a popout window opens with: `#note=<path>&w=<window id>`. */
@@ -138,6 +138,8 @@ export function canPopOut(): boolean {
 type Message =
   /** Paths this window has just written durably. */
   | { kind: 'wrote'; paths: string[] }
+  /** A file this window has just moved, so the note keeps its identity there too. */
+  | { kind: 'moved'; from: string; to: string }
   /** A popout naming the note it holds, or letting go of it as it closes. */
   | { kind: 'holds'; id: string; path?: string }
   /** A main window that has just reloaded, asking who is holding what. */
@@ -164,12 +166,14 @@ export function installMirror(): void {
     const msg = e.data
     if (!msg) return
     if (msg.kind === 'wrote') void adoptFromStorage(msg.paths)
+    else if (msg.kind === 'moved') adoptMove(msg.from, msg.to)
     else if (msg.kind === 'holds') held(msg.id, msg.path)
     else if (msg.kind === 'hello') reportHolding(holding)
     else if (msg.kind === 'release' && msg.path === holding) window.close()
   }
   // Adopting does not write, so this cannot bounce back and forth.
   onVaultWrite((paths) => channel?.postMessage({ kind: 'wrote', paths } satisfies Message))
+  onVaultMove((from, to) => channel?.postMessage({ kind: 'moved', from, to } satisfies Message))
 }
 
 /* ------------------------------------------- the main window's side of it */

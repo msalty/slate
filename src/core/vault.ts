@@ -243,6 +243,22 @@ export function onVaultWrite(fn: (paths: string[]) => void): void {
   onWrite = fn
 }
 
+/**
+ * Told when a file moves, for the same windows. A move reaches them as a new
+ * file and a deleted one, and the note's identity (`noteId`) cannot be read off
+ * either: it has to be told, before the deleted one is adopted.
+ */
+let onMove: ((from: string, to: string) => void) | undefined
+
+export function onVaultMove(fn: (from: string, to: string) => void): void {
+  onMove = fn
+}
+
+/** Another window moved a file: its identity here goes with it. */
+export function adoptMove(from: string, to: string): void {
+  carryId(from, to)
+}
+
 /*
  * The three durable writes, wrapped so every mutation below announces itself
  * without having to remember to. They shadow the imports of the same name, so
@@ -1294,9 +1310,10 @@ async function claimPath<T>(
   return withPathLock(folderKey(dir), async () => {
     for (let n = 1; ; n++) {
       const path = candidate(n)
-      if (taken(path)) continue
+      const busy = (p: string) => taken(p) || reservedPaths.has(p)
+      if (busy(path)) continue
       const claimed = await withPathLock(path, async () =>
-        taken(path) ? undefined : { path, result: await write(path) },
+        busy(path) ? undefined : { path, result: await write(path) },
       )
       if (claimed) return claimed
     }
@@ -1439,9 +1456,16 @@ export async function renameNote(path: string, newTitle: string): Promise<string
  * `Projects/Beta/Note.md`. Which references are affected is decided before
  * anything moves, against the vault as it stands — see `planReferences`.
  *
- * Notes staying where they are are rewritten then, while their links still
- * resolve. Notes that move are rewritten *after* they have moved, at the path
- * they moved to. Rewritten first, a note that linked to itself changed its text
+ * Nothing is rewritten until every move has been made. Rewritten first, a
+ * rename onto a name something else took in the meantime — a new note, a sync
+ * pull — failed at the move and left every `[[A]]` reading `[[B]]`, the other
+ * note. So the destinations are held (`reservedPaths`) against new files for
+ * the whole of it, a move that fails anyway puts back the ones already made,
+ * and only then are references rewritten: those in notes that stayed at their
+ * own paths, those in notes that moved at their new ones.
+ *
+ * Moved notes are rewritten *after* moving for a reason of their own. Rewritten
+ * first, a note that linked to itself changed its text
  * on the way out, so the tombstone left behind recorded the rewritten text's
  * hash — and the editor, which saves the buffer it still holds for the old path
  * once more as a rename lands, saved text whose hash no longer matched. A save
@@ -1453,13 +1477,31 @@ export async function relocate(moves: ReadonlyMap<string, string>): Promise<void
   if (!moves.size) return
   checkMoves(moves)
   const plan = planReferences({ moves })
-  await writePlanned(plan, (path) => !moves.has(path), (path) => path)
-  // Deepest first, so a parent's move cannot take a child's source out from under it.
-  for (const [from, to] of [...moves].sort((a, b) => b[0].length - a[0].length)) {
-    await movePath(from, to)
+  const landing = [...moves].filter(([from, to]) => from !== to).map(([, to]) => to)
+  for (const to of landing) reservedPaths.add(to)
+  try {
+    const made: Array<[string, string]> = []
+    try {
+      // Deepest first, so a parent's move cannot take a child's source out from under it.
+      for (const [from, to] of [...moves].sort((a, b) => b[0].length - a[0].length)) {
+        await movePath(from, to)
+        made.push([from, to])
+      }
+    } catch (e) {
+      for (const [from, to] of made.reverse()) await movePath(to, from).catch(() => undefined)
+      throw e
+    }
+  } finally {
+    for (const to of landing) reservedPaths.delete(to)
   }
-  await writePlanned(plan, (path) => moves.has(path), (path) => moves.get(path)!)
+  await writePlanned(plan, () => true, (path) => moves.get(path) ?? path)
 }
+
+/**
+ * Paths a move in progress is going to — not files yet, but not free either.
+ * A new note or attachment choosing a name passes over them.
+ */
+const reservedPaths = new Set<string>()
 
 /**
  * Refuse a set of moves that could not all land, before any of them is made.
@@ -1474,7 +1516,9 @@ function checkMoves(moves: ReadonlyMap<string, string>): void {
   const landing = new Set<string>()
   for (const [from, to] of moves) {
     if (from === to) continue
-    if (landing.has(to) || occupied(to)) throw new Error(`"${to}" already exists.`)
+    if (landing.has(to) || occupied(to) || reservedPaths.has(to)) {
+      throw new Error(`"${to}" already exists.`)
+    }
     landing.add(to)
   }
 }
@@ -1593,11 +1637,31 @@ async function moveHeld(from: string, to: string): Promise<boolean> {
     dirty: true,
     ...inheritedSync(to),
   }
+  /*
+   * Everything durable first, and only then believed — see `writeFile`. The
+   * destination was once adopted before it was written, so a write that failed
+   * left a `B.md` in memory that was nowhere on disk, in the way of a retry.
+   * Should a later step fail, what was written is put back as it was.
+   */
+  const was = files.get(to)
+  const gone = tombstoneOf(f)
+  await putFile(moved)
+  // Told before the source's tombstone is, so another window moves the note's
+  // identity to the new path rather than dropping it with the old one.
+  onMove?.(from, to)
+  try {
+    await renameVersions(from, to)
+    await putFile(gone)
+  } catch (e) {
+    await renameVersions(to, from).catch(() => undefined)
+    if (was) await putFile(was)
+    else await deleteFileRow(to)
+    onMove?.(to, from)
+    throw e
+  }
   setFile(to, moved)
   carryId(from, to)
-  await putFile(moved)
-  await renameVersions(from, to)
-  await tombstoneHeld(from)
+  setFile(from, gone)
   return true
 }
 
@@ -2108,21 +2172,27 @@ export async function tombstone(path: string): Promise<void> {
 async function tombstoneHeld(path: string): Promise<boolean> {
   const f = files.get(path)
   if (!f) return false
-  const next: VaultFile = {
-    ...f,
-    text: undefined,
-    blob: undefined,
-    size: 0,
-    deleted: true,
-    deletedAt: Date.now(),
-    mtime: Date.now(),
-    dirty: true,
-  }
+  const next = tombstoneOf(f)
   // Durable before adopted, for the reason spelled out over `writeFile`: a
   // tombstone only in memory is a note that comes back on the next reload.
   await putFile(next)
   setFile(path, next)
   return true
+}
+
+/** The record a file leaves behind at its path when it goes. */
+function tombstoneOf(f: VaultFile): VaultFile {
+  const now = Date.now()
+  return {
+    ...f,
+    text: undefined,
+    blob: undefined,
+    size: 0,
+    deleted: true,
+    deletedAt: now,
+    mtime: now,
+    dirty: true,
+  }
 }
 
 /**

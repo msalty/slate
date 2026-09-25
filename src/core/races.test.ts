@@ -17,10 +17,10 @@ type Hooks = {
   getFiles?: (paths: string[]) => Promise<void> | void
 }
 
-/** A vault whose database calls run `hooks` first. */
-async function vaultWith(hooks: Hooks) {
+/** A vault whose database calls run `hooks` first — a window of its own over `db`. */
+async function vaultWith(hooks: Hooks, db = `slate-races-${++seq}`) {
   vi.resetModules()
-  ;(globalThis as { __SLATE_DB__?: string }).__SLATE_DB__ = `slate-races-${++seq}`
+  ;(globalThis as { __SLATE_DB__?: string }).__SLATE_DB__ = db
   vi.doMock('./db', async (importOriginal) => {
     const db = await importOriginal<typeof import('./db')>()
     return {
@@ -113,5 +113,111 @@ describe('another window’s change, arriving as a note is saved here', () => {
     await vault.adoptFromStorage([path])
     await saving
     expect(vault.getText(path)).toBe('local edit')
+  })
+})
+
+describe('a rename onto a name something else takes meanwhile', () => {
+  /*
+   * The links were rewritten before the move found `B.md` taken: the rename
+   * failed, `A` stayed where it was, and every `[[A]]` read `[[B]]` — a link to
+   * the other note.
+   */
+  it('leaves every link to the note as it was', async () => {
+    const hooks: Hooks = {}
+    const vault = await vaultWith(hooks)
+    const a = await vault.createNote('', 'A', 'a')
+    const ref = await vault.createNote('', 'Ref', 'see [[A]]')
+    let renaming: Promise<unknown> | undefined
+    hooks.putFile = async (f) => {
+      if (renaming || f.path !== 'B.md') return
+      renaming = vault.renameNote(a, 'B').catch((e: Error) => e)
+      await settle()
+    }
+    await vault.createNote('', 'B', 'unrelated')
+    const outcome = await renaming
+    expect(outcome).toBeInstanceOf(Error)
+    expect(vault.getText(ref)).toBe('see [[A]]')
+    expect(vault.getText(a)).toBe('a')
+    expect(vault.getText('B.md')).toBe('unrelated')
+  })
+
+  it('and a note made while a rename is under way takes another name', async () => {
+    const hooks: Hooks = {}
+    const vault = await vaultWith(hooks)
+    const a = await vault.createNote('', 'A', 'a')
+    const ref = await vault.createNote('', 'Ref', 'see [[A]]')
+    let making: Promise<string> | undefined
+    hooks.putFile = async (f) => {
+      if (making || f.path !== 'B.md' || f.text !== 'a') return
+      making = vault.createNote('', 'B', 'unrelated')
+      await settle()
+    }
+    expect(await vault.renameNote(a, 'B')).toBe('B.md')
+    expect(await making).toBe('B 2.md')
+    expect(vault.getText(ref)).toBe('see [[B]]')
+    expect(vault.getText('B.md')).toBe('a')
+  })
+})
+
+describe('a move the database refuses', () => {
+  /*
+   * The destination was adopted before it was written: when the write failed,
+   * `B.md` stayed in memory — nowhere on disk, but in the way of a retry.
+   */
+  it('leaves nothing behind at the destination, and can be tried again', async () => {
+    const hooks: Hooks = {}
+    const vault = await vaultWith(hooks)
+    const a = await vault.createNote('', 'A', 'a')
+    let refused = false
+    hooks.putFile = (f) => {
+      if (refused || f.path !== 'B.md') return
+      refused = true
+      throw new Error('QuotaExceededError')
+    }
+    await expect(vault.renameNote(a, 'B')).rejects.toThrow('Quota')
+    expect(vault.getRaw('B.md')).toBeUndefined()
+    expect(vault.getText(a)).toBe('a')
+    expect(await vault.renameNote(a, 'B')).toBe('B.md')
+  })
+
+  it('part way through, puts back what it had written', async () => {
+    const hooks: Hooks = {}
+    const vault = await vaultWith(hooks)
+    const a = await vault.createNote('', 'A', 'a')
+    let refused = false
+    hooks.putFile = (f) => {
+      if (refused || f.path !== a || !f.deleted) return
+      refused = true
+      throw new Error('QuotaExceededError')
+    }
+    await expect(vault.renameNote(a, 'B')).rejects.toThrow('Quota')
+    expect(vault.getRaw('B.md')).toBeUndefined()
+    expect(vault.getText(a)).toBe('a')
+    await vault.initVault()
+    expect(vault.getRaw('B.md')).toBeUndefined()
+    expect(vault.getText(a)).toBe('a')
+  })
+})
+
+describe('a note renamed in another window', () => {
+  /*
+   * The other window saw a new `B.md` and a deleted `A.md`, dropped the note's
+   * identity with `A`, and an answer being written there about it could no
+   * longer find it.
+   */
+  it('is still the same note here', async () => {
+    const db = `slate-races-${++seq}`
+    const here = await vaultWith({}, db)
+    const there = await vaultWith({}, db)
+    there.onVaultWrite((paths) => void here.adoptFromStorage(paths))
+    // Optional here only so this reads as a failure, not a crash, against code without it.
+    there.onVaultMove?.((from, to) => here.adoptMove(from, to))
+    await there.createNote('', 'A', 'a')
+    await vi.waitFor(() => expect(here.getText('A.md')).toBe('a'))
+    const id = here.noteId('A.md')!
+    await there.renameNote('A.md', 'B')
+    await vi.waitFor(() => expect(here.getText('B.md')).toBe('a'))
+    await vi.waitFor(() => expect(here.occupied('A.md')).toBe(false))
+    expect(here.notePath(id)).toBe('B.md')
   })
 })
