@@ -45,16 +45,22 @@ describe('the note menu', () => {
     expect(items.find((i) => i.label.startsWith('Move to'))?.disabled).toBe(true)
   })
 
-  it('duplicates an imported note as one of your own', async () => {
+  /*
+   * A copy beside an import lands in the importer's folder, which is emptied
+   * wholesale, and keeps its `start:` — the meeting twice on the agenda.
+   */
+  it('offers no duplicate of an import', async () => {
     const { vault, noteMenu } = await fresh()
     const path = await vault.createNote('Calendar', 'Standup', IMPORTED)
-    await noteMenu(vault.getEntry(path)!)
-      .find((i) => i.label === 'Duplicate')!
-      .onSelect()
-    const copy = vault.notes.value.find((n) => n.title === 'Standup copy')!
-    expect(copy.source).toBeUndefined()
-    expect(vault.getText(copy.path)).not.toMatch(/^uid:/m)
-    expect(vault.getText(copy.path)).toContain('title: Standup')
+    expect(noteMenu(vault.getEntry(path)!).some((i) => i.label === 'Duplicate')).toBe(false)
+  })
+
+  it('will not move an import, from the menu, a swipe or anywhere else', async () => {
+    const { vault } = await fresh()
+    const folders = await import('../core/folders')
+    const path = await vault.createNote('Calendar', 'Standup', IMPORTED)
+    expect(await folders.moveNoteToFolder(path, 'Work')).toBe(path)
+    expect(vault.exists(path)).toBe(true)
   })
 })
 

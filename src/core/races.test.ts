@@ -276,3 +276,51 @@ describe('a note detached while the importer is rewriting it', () => {
     expect(vault.getText(path)).toBe('new\n')
   })
 })
+
+describe('a task ticked from a row drawn before the note changed', () => {
+  /*
+   * The line was checked against the note as it was when the tick was called,
+   * not as it was when the row was drawn — so a pull landing between the two
+   * moved the task down a line, and the tick went to whatever was there now.
+   */
+  it('ticks nothing when the row’s task is no longer on its line', async () => {
+    const vault = await vaultWith({})
+    const path = await vault.createNote('', 'Note', '- [ ] Task\n')
+    const [row] = vault.getEntry(path)!.tasks
+    await vault.saveNote(path, '- [ ] New\n- [ ] Task\n')
+    expect(await vault.toggleTask(path, row.line, row.text)).toBe(false)
+    expect(await vault.setDue(path, row.line, Date.now(), row.text)).toBe(false)
+    expect(vault.getText(path)).toBe('- [ ] New\n- [ ] Task\n')
+  })
+
+  it('ticks it when it is', async () => {
+    const vault = await vaultWith({})
+    const path = await vault.createNote('', 'Note', '- [ ] Task\n')
+    const [row] = vault.getEntry(path)!.tasks
+    expect(await vault.toggleTask(path, row.line, row.text)).toBe(true)
+    expect(vault.getText(path)).toBe('- [x] Task\n')
+  })
+})
+
+describe('an edit from a list, to a note deleted meanwhile', () => {
+  /*
+   * Every writer but the editor goes through `editNote`, and it wrote to a
+   * tombstone as readily as to a note — so pinning a row, or a Quick Add to a
+   * note deleted on another device a moment before, brought it back.
+   */
+  it('leaves it deleted', async () => {
+    const vault = await vaultWith({})
+    const path = await vault.createNote('', 'Note', 'Body\n')
+    await vault.deleteNote(path)
+    expect(await vault.editNote(path, (t) => `---\npinned: true\n---\n${t}`)).toBe(false)
+    expect(vault.occupied(path)).toBe(false)
+  })
+
+  it('while the editor’s own save still brings it back', async () => {
+    const vault = await vaultWith({})
+    const path = await vault.createNote('', 'Note', 'Body\n')
+    await vault.deleteNote(path)
+    await vault.saveNote(path, 'Body, kept\n')
+    expect(vault.occupied(path)).toBe(true)
+  })
+})

@@ -825,9 +825,15 @@ body.resizing .pane-resizer::after {
   background: color-mix(in srgb, var(--danger) 8%, transparent);
   border-bottom: 1px solid var(--border);
 }
-/* The same strip for a note another program owns — news, not a warning. */
+/*
+ * The same strip for a note another program owns — news, not a warning. It
+ * carries two actions beside its sentence, which is more than a phone's width,
+ * so the buttons wrap under the sentence rather than push the pane sideways.
+ */
 .source-banner {
   background: color-mix(in srgb, var(--accent) 8%, transparent);
+  flex-wrap: wrap;
+  row-gap: 6px;
 }
 
 /*

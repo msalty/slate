@@ -484,7 +484,7 @@ function TaskRow({
         checked={t.done}
         aria-label={t.text}
         onChange={() =>
-          void toggleTask(t.path, t.line).then((ok) => {
+          void toggleTask(t.path, t.line, t.text).then((ok) => {
             // A note can refuse: one whose own properties say it is read-only
             // is a form, and its tasks are part of the form rather than of the
             // list. Saying so beats a checkbox that springs back.
@@ -517,7 +517,7 @@ function TaskRow({
         due={t.due}
         label={t.text || 'this task'}
         onPick={(date) =>
-          void setDue(t.path, t.line, date).then((ok) => {
+          void setDue(t.path, t.line, date, t.text).then((ok) => {
             if (!ok) notify(`${t.noteTitle} is read-only`)
           })
         }

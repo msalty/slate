@@ -1020,6 +1020,15 @@ export function occupied(path: string): boolean {
 }
 
 /**
+ * Whether a move could land at `path` now: nothing lives there, and no move in
+ * progress is on its way there. `relocate` refuses both, so a caller choosing
+ * a name by `occupied` alone could pick one it was then refused.
+ */
+export function isFree(path: string): boolean {
+  return !occupied(path) && !reservedPaths.has(path)
+}
+
+/**
  * The sync record a new file at `path` takes over from the tombstone there.
  *
  * Reusing a freed name writes a live file where a tombstone was, and the
@@ -1358,7 +1367,7 @@ function folderKey(dir: string): string {
 
 /** Save note text. Called from the editor's debounced autosave. */
 export async function saveNote(path: string, text: string): Promise<void> {
-  await editNote(path, () => text)
+  await editNote(path, () => text, { revive: true })
 }
 
 /**
@@ -1376,11 +1385,20 @@ export async function saveNote(path: string, text: string): Promise<void> {
 export async function editNote(
   path: string,
   edit: (text: string) => string | undefined,
+  /**
+   * Whether a deleted note may come back through this write. Only the editor
+   * asks: its buffer is the note somebody is looking at, and a save of it is
+   * the note arriving again. Everything else edits a note it *remembers* — a
+   * task row, a pin, Quick Add's inbox — and a deletion that landed from
+   * another device in the meantime is the newer truth; ticking a task on it
+   * used to bring the note back, here and then everywhere.
+   */
+  opts: { revive?: boolean } = {},
 ): Promise<boolean> {
   let edited = false
   const plan = await withPathLock(path, async () => {
     const f = files.get(path)
-    if (!f) return undefined
+    if (!f || (f.deleted && !opts.revive)) return undefined
     const text = edit(f.text ?? '')
     if (text === undefined) return undefined
     edited = true
@@ -2631,18 +2649,24 @@ function snippetAt(text: string, at: number, len: number, from = 0): string {
  * button is pressed, and the version that arrived is the one to detach.
  */
 export async function detachNote(path: string): Promise<boolean> {
-  return editNote(path, (text) =>
-    externalSource(parseFrontmatter(text).data) === undefined ? undefined : withoutOwner(text),
-  )
+  return editNote(path, (text) => {
+    const next = withoutOwner(text)
+    return next === text ? undefined : next
+  })
 }
 
 /**
- * The note's text with the importer's two keys taken out — what Detach
- * writes, and what a copy of an imported note starts as: a copy is yours, and
- * one still carrying `uid:` would be a second file claiming to be the same
- * record.
+ * The note's text with the importer's two keys taken out — what Detach writes,
+ * and what an old version of a detached note is restored as: restored with
+ * them, it would be the importer's again, and a second file claiming the
+ * record the importer has since written afresh.
+ *
+ * Text nothing owns comes back as it was. `source:` alone is a conversation's
+ * scope or a clipping's page (see `externalSource`), and is not the
+ * importer's to take.
  */
 export function withoutOwner(text: string): string {
+  if (externalSource(parseFrontmatter(text).data) === undefined) return text
   let next = text
   for (const key of ['source', 'uid']) {
     // Every copy of the key: a block that says `source:` twice is still
@@ -2662,8 +2686,8 @@ export function withoutOwner(text: string): string {
  * a note whose own properties say it is read-only, or one an importer owns,
  * which the list has no other way to know.
  */
-export async function toggleTask(path: string, line: number): Promise<boolean> {
-  return editTaskLine(path, line, (l) => {
+export async function toggleTask(path: string, line: number, expect?: string): Promise<boolean> {
+  return editTaskLine(path, line, expect, (l) => {
     const m = /^(\s*(?:[-*+]|\d+[.)])\s+\[)([ xX])(\].*)$/.exec(l)
     return m ? `${m[1]}${m[2] === ' ' ? 'x' : ' '}${m[3]}` : undefined
   })
@@ -2682,8 +2706,9 @@ export async function setDue(
   path: string,
   line: number,
   date: number | undefined,
+  expect?: string,
 ): Promise<boolean> {
-  return editTaskLine(path, line, (l) => {
+  return editTaskLine(path, line, expect, (l) => {
     if (!isTaskLine(l)) return undefined
     const next = withDue(l, date)
     return next === l ? undefined : next
@@ -2695,22 +2720,33 @@ export async function setDue(
  *
  * The row was drawn from the note as it was when the list last rendered, and
  * the note may have changed since — a sync pull, the other window. So the line
- * has to still say what it said then: a pull that added a line above it moves
- * the task down one, and ticking "line 4" regardless ticks whatever is there
- * now. Refused instead, and the list redraws from the new text.
+ * has to still be the task the row showed: a pull that added a line above it
+ * moves the task down one, and ticking "line 4" regardless ticks whatever is
+ * there now. Refused instead, and the list redraws from the new text.
+ *
+ * `expect` is the row's own task text, which is the only record of what was
+ * on screen. Without it, the line as it is at the moment of the call stands in
+ * — which still catches a change that lands while the write waits for the
+ * lock, and not one that landed between the render and the click.
  */
 async function editTaskLine(
   path: string,
   line: number,
+  expect: string | undefined,
   change: (line: string) => string | undefined,
 ): Promise<boolean> {
-  const expected = files.get(path)?.text?.split('\n')[line]
-  if (expected === undefined) return false
+  const shown = (l: string) => {
+    const t = scanTasks(l)[0]
+    return t && stripInline(t.text)
+  }
+  const now = files.get(path)?.text?.split('\n')[line]
+  if (now === undefined) return false
+  if (expect !== undefined && shown(now) !== expect) return false
   return editNote(path, (text) => {
     if (isWriteProtected(parseFrontmatter(text).data)) return undefined
     const lines = text.split('\n')
-    if (lines[line] !== expected) return undefined
-    const next = change(expected)
+    if (lines[line] !== now) return undefined
+    const next = change(now)
     if (next === undefined) return undefined
     lines[line] = next
     return lines.join('\n')

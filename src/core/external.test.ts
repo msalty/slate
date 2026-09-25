@@ -180,6 +180,22 @@ describe('writing to an imported note from outside it', () => {
   })
 })
 
+describe('taking the owner out of a text', () => {
+  /*
+   * What restoring an old version of a detached note goes through: a version
+   * from before the Detach still names the importer, and restored as it was
+   * it handed the note straight back.
+   */
+  it('takes out the pair on an owned text, and leaves any other alone', async () => {
+    const vault = await fresh()
+    expect(vault.withoutOwner(`${fm('title: T', 'source: work', 'uid: u')}Body\n`)).toBe(
+      `${fm('title: T')}Body\n`,
+    )
+    const asked = `${fm('type: conversation', 'source: all')}# Q\n`
+    expect(vault.withoutOwner(asked)).toBe(asked)
+  })
+})
+
 describe('Detach', () => {
   it('takes out `source:` and `uid:` and leaves the rest as written', async () => {
     const vault = await fresh()

@@ -19,12 +19,14 @@ import { computed, signal } from '@preact/signals'
 import {
   contentNotes,
   deleteNote,
+  getEntry,
   getRaw,
+  isExternal,
+  isFree,
   isHidden,
   listAll,
   collisionNamesFor,
   notes,
-  occupied,
   relocate,
   relocateNote,
   readBackstage,
@@ -63,7 +65,7 @@ export async function loadFolders(): Promise<void> {
   if (Array.isArray(list)) explicitFolders.value = list.map(normPath).filter(Boolean)
 }
 
-export async function persistFolders(): Promise<void> {
+async function persistFolders() {
   // Only empty ones need recording; the rest are implied by their notes and
   // would just be a second source of truth to drift out of sync.
   const implied = impliedFolders()
@@ -239,16 +241,38 @@ export async function deleteFolder(path: string): Promise<number> {
  * everywhere. A move that has to rename also takes its links with it, since
  * `[[Foo]]` would otherwise go to the note that was there first.
  */
-export async function moveNoteToFolder(notePath: string, folder: string): Promise<string> {
+export async function moveNoteToFolder(
+  notePath: string,
+  folder: string,
+  /**
+   * The name to try on the `n`th attempt, for a move that renames as well —
+   * Detach, which files an imported meeting under the name a hand-made one
+   * would have. By default the name it has, then the collision names.
+   */
+  nameFor?: (n: number) => string,
+): Promise<string> {
   const f = getRaw(notePath)
   if (!f) return notePath
+  /*
+   * An imported note stays where the importer put it: it finds its files by
+   * path, and writes a moved one afresh where it was. Refused here rather than
+   * only at each button — the menu, a drag and the phone's swipe each once
+   * moved one, the swipe because it was the entry point nobody remembered.
+   */
+  const entry = getEntry(notePath)
+  if (entry && isExternal(entry)) return notePath
   const dir = normPath(folder)
-  let dest = joinPath(dir, basename(notePath))
-  if (dest === notePath) return notePath
   // An event keeps its date through the counter; see `nameAfterCollision`.
-  const nameFor = collisionNamesFor(notePath)
-  let n = 2
-  while (occupied(dest) && dest !== notePath) dest = joinPath(dir, nameFor(n++))
+  const again = collisionNamesFor(notePath)
+  const name = nameFor ?? ((n: number) => (n === 1 ? basename(notePath) : again(n)))
+  let dest = joinPath(dir, name(1))
+  /*
+   * Chosen and handed to `relocate` in the same tick: it checks and reserves
+   * the destination before its first await, so nothing can take the name in
+   * between.
+   */
+  for (let n = 2; dest !== notePath && !isFree(dest); n++) dest = joinPath(dir, name(n))
+  if (dest === notePath) return notePath
   await relocateNote(notePath, dest)
   await persistFolders()
   return dest

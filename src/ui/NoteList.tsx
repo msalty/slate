@@ -17,7 +17,7 @@ import {
 } from '../core/vault'
 import { dailyNoteFor } from '../core/daily'
 import { excerptOf, setFrontmatterKey } from '../core/markdown'
-import { editNote, getRaw, isExternal, withoutOwner } from '../core/vault'
+import { editNote, getRaw, isExternal } from '../core/vault'
 import type { AppSettings, NoteIndexEntry, VaultFile } from '../core/types'
 
 /** The three orders the list can take, named once for the menu below. */
@@ -166,6 +166,11 @@ function NoteRow({ entry }: { entry: NoteIndexEntry }) {
  * sheet on touch, so moving a note is two taps in the same place.
  */
 function openMoveMenu(entry: NoteIndexEntry) {
+  // The phone's swipe reaches this without the menu's disabled row in the way.
+  if (isExternal(entry)) {
+    notify(`"${entry.title}" is kept up to date from ${entry.source}. Detach it to move it.`)
+    return
+  }
   const folders = ['', ...allFolderPaths.value].filter((p) => p !== entry.folder)
   if (!folders.length) {
     notify('There are no other folders yet')
@@ -252,8 +257,8 @@ export function noteMenu(entry: NoteIndexEntry): MenuItem[] {
    * A note an importer owns shows up here only while browsing its folder, and
    * everything on this menu that writes to it or moves it is off: a pin is an
    * edit, written over on the importer's next run, and a moved file is one it
-   * no longer knows about and writes afresh beside the one you moved. Detach
-   * is on the note itself.
+   * no longer knows about and writes afresh beside the one you moved (the
+   * move itself refuses too — see `moveNoteToFolder`). Detach is on the note.
    */
   const imported = isExternal(entry)
 
@@ -273,20 +278,24 @@ export function noteMenu(entry: NoteIndexEntry): MenuItem[] {
             },
           },
         ]),
-    {
-      label: 'Duplicate',
-      onSelect: async () => {
-        if (!f) return
-        const text = f.text ?? ''
-        openNote(
-          await createNote(
-            entry.folder,
-            `${entry.title} copy`,
-            imported ? withoutOwner(text) : text,
-          ),
-        )
-      },
-    },
+    /*
+     * Not on an import either. A copy made beside it lands in the importer's
+     * folder, which is emptied wholesale, and still says `start:`, which puts
+     * the meeting on the agenda twice. What a copy would be for is covered by
+     * the note's own two actions: Write notes, for notes that stay with the
+     * meeting, and Detach, to make the meeting itself yours.
+     */
+    ...(imported
+      ? []
+      : [
+          {
+            label: 'Duplicate',
+            onSelect: async () => {
+              if (!f) return
+              openNote(await createNote(entry.folder, `${entry.title} copy`, f.text ?? ''))
+            },
+          },
+        ]),
     {
       /*
        * One item, two behaviours, and the label says which you are getting:

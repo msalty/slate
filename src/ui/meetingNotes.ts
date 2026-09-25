@@ -27,16 +27,26 @@ export async function openMeetingNotes(meeting: string): Promise<void> {
 
 /** Detach a note, file it with your own, and follow it there. */
 export async function detachAndOpen(path: string, owner: string): Promise<void> {
-  let dest: string | undefined
+  let r: Awaited<ReturnType<typeof detachAndFile>>
   try {
-    dest = await detachAndFile(path)
+    r = await detachAndFile(path)
   } catch (e) {
     console.error('[slate] could not detach note', e)
     notify('This note could not be detached on this device.', 'error')
     return
   }
-  if (!dest) return
+  if (!r) return
   syncSoon()
-  if (dest !== path) openNote(dest)
-  notify(`Detached from ${owner} — this note is yours now`)
+  if (r.path !== path) openNote(r.path)
+  /*
+   * Detached either way — the keys are gone first. What can fail after that is
+   * only the move out of the importer's folder, and a note of yours left in
+   * there goes with it the day the folder is emptied, so that is worth saying.
+   */
+  if (r.filed) notify(`Detached from ${owner} — this note is yours now`)
+  else
+    notify(
+      `Detached from ${owner}, but it could not be moved out of ${owner}'s folder — move it somewhere of your own.`,
+      'error',
+    )
 }

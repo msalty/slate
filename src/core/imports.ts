@@ -21,22 +21,19 @@ import { eventFor, parseFrontmatter, type FrontmatterValue } from './markdown'
 import { setPropertyValue } from './properties'
 import { eventFolderFor, eventNoteName } from './eventnote'
 import { eventTitle } from './eventname'
-import { persistFolders } from './folders'
+import { moveNoteToFolder } from './folders'
 import { splitWikiInner, formatWikiLink } from './wikilink'
 import {
   backlinkMap,
-  collisionNamesFor,
   createNote,
   detachNote,
   getEntry,
   getText,
   isExternal,
   linkNameFor,
-  occupied,
-  relocateNote,
   resolveLink,
 } from './vault'
-import { basename, joinPath, ymd } from './util'
+import { ymd } from './util'
 import type { NoteIndexEntry } from './types'
 
 /** Where a detached contact goes: beside the ones you keep by hand (§2.2). */
@@ -64,7 +61,8 @@ function meetingTitle(entry: NoteIndexEntry): string {
 
 /**
  * Detach a note and file it where your own notes of its kind live. Resolves to
- * where it ended up, or undefined when there was nothing to detach.
+ * where it ended up and whether it got there, or undefined when there was
+ * nothing to detach.
  *
  * An event goes to `Calendar/<year>/<month>/` under the name `>New event` would
  * have given it — `Standup - 2026-09-21` rather than the importer's
@@ -74,45 +72,38 @@ function meetingTitle(entry: NoteIndexEntry): string {
  * Detached first and moved second. The other way round, a move that landed
  * and a detach that did not would leave a note the importer still claims in
  * the middle of your own; this way round, the worst case is a note that is
- * yours but still sitting in the importer's folder.
+ * yours but still sitting in the importer's folder — which is reported as
+ * exactly that (`filed: false`), not as a detach that failed, because the
+ * detach did not.
  *
  * The move goes through `relocate`, so every link to the note follows it. The
  * importer, finding its file gone, writes the meeting afresh where it was
  * (docs/calendar-contacts.md, §6.2): the copy you detached stops changing, and
  * the live one keeps up with the calendar.
  */
-export async function detachAndFile(path: string): Promise<string | undefined> {
+export async function detachAndFile(
+  path: string,
+): Promise<{ path: string; filed: boolean } | undefined> {
   if (!(await detachNote(path))) return undefined
   const entry = getEntry(path)
   const text = getText(path)
-  if (!entry || text === undefined) return path
+  if (!entry || text === undefined) return { path, filed: false }
 
   const data = parseFrontmatter(text).data
   const event = eventFor(data)
-  let folder: string
-  let nameFor: (n: number) => string
-  if (event) {
-    const title = meetingTitle(entry)
-    const day = startDate(data, event)
-    folder = eventFolderFor(event.start)
-    nameFor = (n) => `${eventNoteName(title, day, n)}.md`
-  } else {
-    folder = CONTACTS_FOLDER
-    const again = collisionNamesFor(path)
-    nameFor = (n) => (n === 1 ? basename(path) : again(n))
+  try {
+    const dest = event
+      ? await moveNoteToFolder(
+          path,
+          eventFolderFor(event.start),
+          (n) => `${eventNoteName(meetingTitle(entry), startDate(data, event), n)}.md`,
+        )
+      : await moveNoteToFolder(path, CONTACTS_FOLDER)
+    return { path: dest, filed: true }
+  } catch (e) {
+    console.error('[slate] detached, but could not move the note', e)
+    return { path, filed: false }
   }
-
-  /*
-   * Chosen and handed to `relocate` in the same tick: it checks and reserves
-   * the destination before its first await, so nothing can take the name in
-   * between. A note already where it would go stays put.
-   */
-  let dest = joinPath(folder, nameFor(1))
-  for (let n = 2; dest !== path && occupied(dest); n++) dest = joinPath(folder, nameFor(n))
-  if (dest === path) return path
-  await relocateNote(path, dest)
-  await persistFolders()
-  return dest
 }
 
 /* ------------------------------------------------------------- write notes */
@@ -144,7 +135,25 @@ export function notesForMeeting(meeting: string): string[] {
  * `start:`, and that would make your notes an event of their own — the same
  * meeting twice on the agenda.
  */
-export async function notesAboutMeeting(
+export function notesAboutMeeting(
+  meeting: string,
+): Promise<{ path: string; created: boolean } | undefined> {
+  /*
+   * One at a time per meeting. The look for existing notes and the note made
+   * when there are none are an await apart, so a double press — or the banner
+   * and the agenda pencil in quick succession — both found none and made two.
+   * A press while one is under way gets that one's answer.
+   */
+  const running = inFlight.get(meeting)
+  if (running) return running
+  const p = findOrMake(meeting).finally(() => inFlight.delete(meeting))
+  inFlight.set(meeting, p)
+  return p
+}
+
+const inFlight = new Map<string, Promise<{ path: string; created: boolean } | undefined>>()
+
+async function findOrMake(
   meeting: string,
 ): Promise<{ path: string; created: boolean } | undefined> {
   const entry = getEntry(meeting)

@@ -12,7 +12,7 @@
 
 import { useEffect, useState } from 'preact/hooks'
 import { versionsFor, type Version } from '../core/db'
-import { getRaw, saveNote } from '../core/vault'
+import { getRaw, saveNote, withoutOwner } from '../core/vault'
 import { externalSource, parseFrontmatter } from '../core/markdown'
 import { activePath, historyOpen, notify } from './state'
 import { formatBytes } from '../core/util'
@@ -149,7 +149,14 @@ export function VersionHistory() {
             disabled={!sel || sel.text === current?.text || !!owner}
             onClick={async () => {
               if (!sel) return
-              await saveNote(path, sel.text)
+              /*
+               * A version from before a Detach still names the importer, and
+               * restored as it was it would hand the note straight back —
+               * read-only, off the list, and a second file claiming the uid
+               * of the meeting the importer has since written afresh. What is
+               * restored is the text; whose it is was settled by the Detach.
+               */
+              await saveNote(path, withoutOwner(sel.text))
               historyOpen.value = false
               notify('Restored earlier version')
             }}

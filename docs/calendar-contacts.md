@@ -545,10 +545,17 @@ Read-only means everything in Slate that would change the file or its path:
 the body and the properties form, ticking or dating its tasks from a list,
 Quick Add and transcripts, *Change this passage*, restoring a version, pinning,
 and renaming or moving it — an importer finds its files by path, so a moved one
-is written afresh where it was. Reading, linking, searching, asking about it and
-duplicating it all still work; a duplicate is yours, so it is made without
-`source:` and `uid:`. Deleting still works too; whether the file comes back is the
-importer's business.
+is written afresh where it was. The move is refused in the move itself, not only
+at the buttons, so no way in (a menu, a drag, the phone's swipe) can do it.
+Duplicate is off as well: a copy beside an import lands in the importer's
+folder and keeps its `start:`, so the meeting would be on the agenda twice —
+*Write notes* and *Detach* are what a copy would have been for. Reading,
+linking, searching and asking about it all still work. Deleting still works
+too; whether the file comes back is the importer's business.
+
+Restoring an old version of a note you have detached restores its text
+without `source:` and `uid:` — a version from before the Detach still carries
+them, and would otherwise hand the note straight back to the importer.
 
 What stays deliberately open is **link repointing**: renaming a note you own
 rewrites `[[links]]` to it wherever they are, imported files included (§4.3,

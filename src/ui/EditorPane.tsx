@@ -116,6 +116,28 @@ function reportSaveFailure(e: unknown) {
   )
 }
 
+/**
+ * A buffer that could not have been typed in: the note is an import in the
+ * buffer *and* in the vault. Such a buffer holds nothing to save, and saving it
+ * anyway is how a stale copy goes back over a newer one — the importer's next
+ * rewrite, arriving while an earlier one's save was still pending or as the
+ * note was left, was written over by the version before it, source and all.
+ *
+ * Both sides, not only the buffer: someone typing `source:` and `uid:` into a
+ * note of their own has a buffer that says "imported" and a vault that does
+ * not yet, and that keystroke is an edit like any other. That is the only
+ * case, though — a live note of their own under the buffer. Over a path with
+ * nothing live at it, an imported buffer is always stale: Detach moves the
+ * note away before the buffer has caught up, and the flush as the editor
+ * follows it saved the import back over the tombstone it left, reviving it.
+ */
+export function importerOwns(path: string, text: string): boolean {
+  if (externalSource(parseFrontmatter(text).data) === undefined) return false
+  const f = getRaw(path)
+  if (!f || f.deleted) return true
+  return externalSource(parseFrontmatter(f.text ?? '').data) !== undefined
+}
+
 export function EditorPane() {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -173,6 +195,7 @@ export function EditorPane() {
    */
   const saveRef = useRef(
     debounce((p: string, text: string) => {
+      if (importerOwns(p, text)) return
       baseRef.current = text
       void saveNote(p, text).then(() => {
         syncSoon()
@@ -192,14 +215,7 @@ export function EditorPane() {
     if (!view || !p || isTrashed(p)) return Promise.resolve()
     saveRef.current.flush()
     const text = view.state.doc.toString()
-    /*
-     * An imported note's buffer cannot have been typed in, so it holds nothing
-     * to save — and saving it anyway is how a stale copy goes back over the
-     * newer one: the importer's rewrite, or Detach, lands in the vault a render
-     * before the buffer is brought up to date, and a note switch in between
-     * wrote the old text back, source and all.
-     */
-    if (externalSource(parseFrontmatter(text).data) !== undefined) return Promise.resolve()
+    if (importerOwns(p, text)) return Promise.resolve()
     baseRef.current = text
     return saveNote(p, text).catch(reportSaveFailure)
   }
@@ -247,11 +263,9 @@ export function EditorPane() {
      * where the tap landed. A brand new note is the exception — see
      * `opensForWriting`, which is the whole of the rule.
      */
-    const writing = opensForWriting(
-      path,
-      text,
-      isTrashed(path) || externalSource(parseFrontmatter(text).data) !== undefined,
-    )
+    const data = parseFrontmatter(text).data
+    const imported = externalSource(data)
+    const writing = opensForWriting(path, text, isTrashed(path) || imported !== undefined)
     // Consumed with the request, whether or not it carried one.
     const caret = takeOpenCaret()
     readingMode.value = !writing
@@ -260,8 +274,8 @@ export function EditorPane() {
     // as well, and start hidden on every one of them.
     formatSheetOpen.value = false
     propertiesOpen.value = false
-    setLocked(isLocked(parseFrontmatter(text).data))
-    setOwner(externalSource(parseFrontmatter(text).data))
+    setLocked(isLocked(data))
+    setOwner(imported)
 
     /*
      * The note's footer — what links here — built per editor and rendered into
