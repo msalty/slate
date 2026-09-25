@@ -126,6 +126,7 @@ let dirtyFiles = 0
 let folderPendingFiles = 0
 
 function setFile(path: string, f: VaultFile): void {
+  mustHold(path)
   const prev = files.get(path)
   if (prev?.dirty) dirtyFiles--
   if (prev && pendingFor(prev, 'folder')) folderPendingFiles--
@@ -137,6 +138,7 @@ function setFile(path: string, f: VaultFile): void {
 }
 
 function dropFile(path: string): void {
+  mustHold(path)
   const prev = files.get(path)
   if (prev?.dirty) dirtyFiles--
   if (prev && pendingFor(prev, 'folder')) folderPendingFiles--
@@ -304,6 +306,19 @@ let queuedPaths: Set<string> | undefined
 let queuedRun: Promise<void> | undefined
 
 async function adoptBatch(paths: string[]): Promise<void> {
+  /*
+   * Read and adopted holding every path's lock. Read first, a save made here
+   * between the read and the adopting was replaced on screen by the row from
+   * before it; the save was durable, but the editor and the sync engine were
+   * then working from the old text. Anything written elsewhere after this read
+   * announces itself again.
+   */
+  const sorted = [...new Set(paths)].sort()
+  const changed = await withPathLocks(sorted, () => adoptRows(sorted))
+  if (changed) bump()
+}
+
+async function adoptRows(paths: string[]): Promise<boolean> {
   // One transaction for the lot. Per-path reads were the whole cost here: a
   // round trip to IndexedDB is mostly the trip.
   const rows = await getFiles(paths)
@@ -332,7 +347,7 @@ async function adoptBatch(paths: string[]): Promise<void> {
     reindex(path)
     changed = true
   }
-  if (changed) bump()
+  return changed
 }
 
 /** True for anything under backstage/ — hidden from every UI surface. */
@@ -1029,7 +1044,12 @@ export async function initVault(): Promise<void> {
   files.clear()
   dirtyFiles = 0
   folderPendingFiles = 0
-  for (const f of rows) setFile(f.path, f)
+  loading = true
+  try {
+    for (const f of rows) setFile(f.path, f)
+  } finally {
+    loading = false
+  }
   loadDeviceRecords(rows)
   reindexAll()
   ready.value = true
@@ -1189,6 +1209,8 @@ export function listAll(): VaultFile[] {
  * agreeing, and the next keystroke tries again.
  */
 async function writeFile(f: VaultFile): Promise<void> {
+  // Checked before the database write, not only when adopting after it.
+  mustHold(f.path)
   await putFile(f)
   setFile(f.path, f)
 }
@@ -1342,6 +1364,24 @@ function mayRename(before: string | undefined, after: string): boolean {
  */
 const pathLocks = new Map<string, Promise<unknown>>()
 
+/** The paths whose lock is held right now. */
+const heldPaths = new Set<string>()
+
+/**
+ * Every change to a file's record is made holding that path's lock — `setFile`
+ * and `dropFile` check, and refuse. Each writer that skipped the lock was a way
+ * for two writes to one file to interleave, and each was found by losing an
+ * edit to it: a move, the sync stamp, settings, a pull, another window. Loading
+ * the vault at start-up is the one exception: nothing else is running.
+ */
+let loading = false
+
+function mustHold(path: string): void {
+  if (!loading && !heldPaths.has(path)) {
+    throw new Error(`Slate bug: ${path} changed without holding its lock.`)
+  }
+}
+
 /** Several paths' locks, taken in order so two holders can never wait on each other. */
 async function withPathLocks<T>(paths: readonly string[], fn: () => Promise<T>): Promise<T> {
   if (!paths.length) return fn()
@@ -1351,7 +1391,16 @@ async function withPathLocks<T>(paths: readonly string[], fn: () => Promise<T>):
 
 async function withPathLock<T>(path: string, fn: () => Promise<T>): Promise<T> {
   const before = pathLocks.get(path) ?? Promise.resolve()
-  const mine = before.catch(() => undefined).then(fn)
+  const mine = before
+    .catch(() => undefined)
+    .then(async () => {
+      heldPaths.add(path)
+      try {
+        return await fn()
+      } finally {
+        heldPaths.delete(path)
+      }
+    })
   pathLocks.set(path, mine)
   try {
     return await mine
@@ -1503,8 +1552,25 @@ function carryId(from: string, to: string): void {
 
 /** Move a file to a new path, preserving history and sync bookkeeping. */
 export async function movePath(from: string, to: string): Promise<void> {
+  if (from === to) return
+  /*
+   * Both paths locked, in one order, and the source read under them: read
+   * before, a save still being made to it finished after the copy was taken,
+   * so the note arrived without it and the edited source was then deleted.
+   */
+  const moved = await withPathLocks([from, to].sort(), () => moveHeld(from, to))
+  if (!moved) return
+  indexMap.delete(from)
+  dropFromSearchIndex(from)
+  releaseUrl(from)
+  reindex(to)
+  bump()
+  for (const fn of moveListeners) await fn(from, to)
+}
+
+async function moveHeld(from: string, to: string): Promise<boolean> {
   const f = files.get(from)
-  if (!f || from === to) return
+  if (!f) return false
   /*
    * Never onto a file that is there. This wrote the moved file over whatever
    * held the path, and `moveNoteToFolder` never looked first — so dragging
@@ -1531,10 +1597,8 @@ export async function movePath(from: string, to: string): Promise<void> {
   carryId(from, to)
   await putFile(moved)
   await renameVersions(from, to)
-  await tombstone(from)
-  reindex(to)
-  bump()
-  for (const fn of moveListeners) await fn(from, to)
+  await tombstoneHeld(from)
+  return true
 }
 
 interface Rewrite {
@@ -2032,30 +2096,33 @@ export async function emptyTrash(): Promise<number> {
  * remote has dropped it too, which is what stops a delete from bouncing back.
  */
 export async function tombstone(path: string): Promise<void> {
-  const done = await withPathLock(path, async () => {
-    const f = files.get(path)
-    if (!f) return false
-    const next: VaultFile = {
-      ...f,
-      text: undefined,
-      blob: undefined,
-      size: 0,
-      deleted: true,
-      deletedAt: Date.now(),
-      mtime: Date.now(),
-      dirty: true,
-    }
-    // Durable before adopted, for the reason spelled out over `writeFile`: a
-    // tombstone only in memory is a note that comes back on the next reload.
-    await putFile(next)
-    setFile(path, next)
-    return true
-  })
+  const done = await withPathLock(path, () => tombstoneHeld(path))
   if (!done) return
   indexMap.delete(path)
   dropFromSearchIndex(path)
   releaseUrl(path)
   bump()
+}
+
+/** `tombstone`, for a caller already holding the path's lock. */
+async function tombstoneHeld(path: string): Promise<boolean> {
+  const f = files.get(path)
+  if (!f) return false
+  const next: VaultFile = {
+    ...f,
+    text: undefined,
+    blob: undefined,
+    size: 0,
+    deleted: true,
+    deletedAt: Date.now(),
+    mtime: Date.now(),
+    dirty: true,
+  }
+  // Durable before adopted, for the reason spelled out over `writeFile`: a
+  // tombstone only in memory is a note that comes back on the next reload.
+  await putFile(next)
+  setFile(path, next)
+  return true
 }
 
 /**
@@ -2237,23 +2304,26 @@ export async function readBackstage<T>(name: string): Promise<T | undefined> {
 export async function writeBackstage(name: string, value: unknown): Promise<void> {
   const path = joinPath(BACKSTAGE, name)
   const text = JSON.stringify(value, null, 2)
-  const existing = files.get(path)
-  if (existing?.text === text) return
-  const now = Date.now()
-  const f: VaultFile = {
-    path,
-    kind: 'note',
-    text,
-    mime: 'application/json',
-    size: text.length,
-    hash: await hashText(text),
-    mtime: now,
-    ctime: existing?.ctime ?? now,
-    dirty: true,
-    sync: existing?.sync ?? {},
-    folder: existing?.folder,
-  }
-  await writeFile(f)
+  const hash = await hashText(text)
+  // Compared and merged with the file as it is under its lock, like any other write.
+  await withPathLock(path, async () => {
+    const existing = files.get(path)
+    if (existing?.text === text) return
+    const now = Date.now()
+    await writeFile({
+      path,
+      kind: 'note',
+      text,
+      mime: 'application/json',
+      size: text.length,
+      hash,
+      mtime: now,
+      ctime: existing?.ctime ?? now,
+      dirty: true,
+      sync: existing?.sync ?? {},
+      folder: existing?.folder,
+    })
+  })
 }
 
 /* ------------------------------------------------------------------ search */
