@@ -404,6 +404,28 @@ describe('a rule in the search box', () => {
     expect(st.visibleNotes.value.map((n) => n.title)).toContain('Weekly review')
   })
 
+  /*
+   * The same rule for an imported note: `#work` over your own material is a
+   * Tag Folder, and the importer's meetings are kept out of Tag Folders — so a
+   * word typed after the rule must not bring them back in.
+   */
+  it('keeps imported notes out of a rule with words beside it, as the rule alone does', async () => {
+    const { v, st } = await vault()
+    await v.createNote(
+      'Calendar',
+      'Budget sync',
+      '---\nsource: fastmail\nuid: u1\n---\n\n#work budget\n',
+    )
+
+    st.query.value = '#work'
+    expect(st.visibleNotes.value.map((n) => n.title).sort()).toEqual(['Quarterly review', 'Roof'])
+    st.query.value = '#work budget'
+    expect(st.visibleNotes.value.map((n) => n.title).sort()).toEqual(['Quarterly review', 'Roof'])
+    // Searched for by its words, it is found: kept out of roll-ups, not out of reach.
+    st.query.value = 'budget'
+    expect(st.visibleNotes.value.map((n) => n.title)).toContain('Budget sync')
+  })
+
   it('reaches folders and the other keys the language knows', async () => {
     const { st } = await vault()
     st.query.value = 'folder:Home'

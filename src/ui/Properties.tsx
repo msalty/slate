@@ -99,9 +99,15 @@ interface PanelProps {
    */
   getText: () => string
   getView: () => EditorView | null
+  /**
+   * Shown and not editable: an imported note's properties are the importer's,
+   * the same as its body, and changing one is the same conflict copy on its
+   * next run. Detach is the way to make them yours.
+   */
+  readOnly?: boolean
 }
 
-export function Properties({ path, getText, getView }: PanelProps) {
+export function Properties({ path, getText, getView, readOnly = false }: PanelProps) {
   /*
    * Writing into the buffer is not something Preact hears about, so the panel
    * re-renders itself after each edit. Everything shown is derived from the
@@ -114,7 +120,7 @@ export function Properties({ path, getText, getView }: PanelProps) {
   const props = readProperties(getText())
 
   const write = (next: string) => {
-    if (next === getText()) return
+    if (readOnly || next === getText()) return
     const view = getView()
     if (view) setDoc(view, next, path)
     else void saveNote(path, next).then(() => syncSoon())
@@ -147,7 +153,12 @@ export function Properties({ path, getText, getView }: PanelProps) {
           <option key={z} value={z} />
         ))}
       </datalist>
-      <div class="properties-inner">
+      {/*
+        * A disabled fieldset rather than a flag threaded into every row: it
+        * turns off each input and button inside it, including the ones a row
+        * adds later, which is the lock holding by construction.
+        */}
+      <fieldset class="properties-inner" disabled={readOnly}>
         {props.length === 0 && !adding && (
           <p class="properties-empty">
             No properties yet — they are optional. Add one to file this note by
@@ -168,11 +179,13 @@ export function Properties({ path, getText, getView }: PanelProps) {
 
         {adding && <NewRow onCommit={add} onCancel={() => setAdding(false)} />}
 
-        <button class="property-add" onClick={() => setAdding(true)} disabled={adding}>
-          <IconPlus size={14} />
-          Add property
-        </button>
-      </div>
+        {!readOnly && (
+          <button class="property-add" onClick={() => setAdding(true)} disabled={adding}>
+            <IconPlus size={14} />
+            Add property
+          </button>
+        )}
+      </fieldset>
     </div>
   )
 }

@@ -17,7 +17,7 @@ import {
 } from '../core/vault'
 import { dailyNoteFor } from '../core/daily'
 import { excerptOf, setFrontmatterKey } from '../core/markdown'
-import { getRaw, saveNote } from '../core/vault'
+import { editNote, getRaw, isExternal, withoutOwner } from '../core/vault'
 import type { AppSettings, NoteIndexEntry, VaultFile } from '../core/types'
 
 /** The three orders the list can take, named once for the menu below. */
@@ -244,26 +244,47 @@ function listMenu(compact: boolean): MenuItem[] {
 }
 
 /** Actions on a note row, shared by right-click and long-press. */
-function noteMenu(entry: NoteIndexEntry): MenuItem[] {
+export function noteMenu(entry: NoteIndexEntry): MenuItem[] {
   const f = getRaw(entry.path)
   const folders = ['', ...allFolderPaths.value].filter((p) => p !== entry.folder)
 
+  /*
+   * A note an importer owns shows up here only while browsing its folder, and
+   * everything on this menu that writes to it or moves it is off: a pin is an
+   * edit, written over on the importer's next run, and a moved file is one it
+   * no longer knows about and writes afresh beside the one you moved. Detach
+   * is on the note itself.
+   */
+  const imported = isExternal(entry)
+
   return [
-    {
-      label: entry.pinned ? 'Unpin' : 'Pin to top',
-      onSelect: async () => {
-        if (!f) return
-        await saveNote(
-          entry.path,
-          setFrontmatterKey(f.text ?? '', 'pinned', entry.pinned ? 'false' : 'true'),
-        )
-      },
-    },
+    ...(imported
+      ? []
+      : [
+          {
+            label: entry.pinned ? 'Unpin' : 'Pin to top',
+            onSelect: async () => {
+              // From the text as it is when the write happens, not as it was
+              // when the menu opened: a note that changed in between had the
+              // change written back over by the pin.
+              await editNote(entry.path, (text) =>
+                setFrontmatterKey(text, 'pinned', entry.pinned ? 'false' : 'true'),
+              )
+            },
+          },
+        ]),
     {
       label: 'Duplicate',
       onSelect: async () => {
         if (!f) return
-        openNote(await createNote(entry.folder, `${entry.title} copy`, f.text ?? ''))
+        const text = f.text ?? ''
+        openNote(
+          await createNote(
+            entry.folder,
+            `${entry.title} copy`,
+            imported ? withoutOwner(text) : text,
+          ),
+        )
       },
     },
     {
@@ -277,8 +298,12 @@ function noteMenu(entry: NoteIndexEntry): MenuItem[] {
       onSelect: () => shareNote(entry.path),
     },
     {
-      label: folders.length ? 'Move to…' : 'Move to… (no other folders)',
-      disabled: !folders.length,
+      label: imported
+        ? 'Move to… (detach it first)'
+        : folders.length
+          ? 'Move to…'
+          : 'Move to… (no other folders)',
+      disabled: imported || !folders.length,
       separated: true,
       onSelect: () => openMoveMenu(entry),
     },

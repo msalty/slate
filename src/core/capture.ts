@@ -17,10 +17,10 @@
  * the behaviour actually is — the writing half is two lines of `saveNote`.
  */
 
-import { contentNotes, createNote, getRaw, saveNote, UNTITLED } from './vault'
+import { contentNotes, createNote, editNote, UNTITLED } from './vault'
 import { DAILY_FOLDER, dailyNoteFor, dailyNoteName, dailyNotePath } from './daily'
 import { settings } from './settings'
-import { codeRegions, inRegions, isLocked, parseFrontmatter, withDue } from './markdown'
+import { codeRegions, inRegions, isWriteProtected, parseFrontmatter, withDue } from './markdown'
 import { templateBodyFor } from './templates'
 import { joinPath, startOfDay } from './util'
 
@@ -231,10 +231,20 @@ export async function captureTasks(input: {
       ? await inboxPath()
       : (await dailyNotePath(day)).path
 
-  const text = getRaw(path)?.text ?? ''
-  if (isLocked(parseFrontmatter(text).data)) return { ok: false, reason: 'locked' }
-
-  await saveNote(path, insertLines(text, settings.value.quickAddTaskHeading, lines))
+  /*
+   * Read under the note's lock rather than before it: the day's note is the one
+   * most likely to be arriving from another device at the moment it is added
+   * to, and text read before waiting for the lock was written back over that.
+   */
+  let refused = false
+  await editNote(path, (text) => {
+    if (isWriteProtected(parseFrontmatter(text).data)) {
+      refused = true
+      return undefined
+    }
+    return insertLines(text, settings.value.quickAddTaskHeading, lines)
+  })
+  if (refused) return { ok: false, reason: 'locked' }
   return { ok: true, path, count: lines.length }
 }
 

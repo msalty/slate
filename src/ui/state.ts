@@ -5,7 +5,7 @@ import {
   contentNotes,
   getEntry,
   getText,
-  isTemplatePath,
+  isContent,
   notes,
   notesByDay,
   search,
@@ -306,13 +306,15 @@ export function takeOpenCaret(): number | undefined {
  * new as an empty one even though the file is not empty.
  *
  * A note in Deleted always opens as a page. There is nothing to be
- * done to it until it is restored.
+ * done to it until it is restored. So does one an importer owns, until it is
+ * detached — asked for or not, it would be a caret in a page that takes
+ * nothing, with Done and Insert around it.
  */
-export function opensForWriting(path: string, text: string, trashed: boolean): boolean {
+export function opensForWriting(path: string, text: string, readOnly: boolean): boolean {
   // Consumed either way: a request left lying around would answer for whichever
   // note happened to be opened next.
   const asked = takeEditRequest(path)
-  return !trashed && (asked || text.trim() === '')
+  return !readOnly && (asked || text.trim() === '')
 }
 
 /**
@@ -624,11 +626,12 @@ export const visibleNotes = computed<NoteIndexEntry[]>(() => {
      * defines it would be worse than finding it — so without this the corpus
      * changed underneath the rule, and typing a word after `#work` to narrow
      * the answer widened it with templates `#work` had correctly left out.
+     * Imported notes are left out for the same reason: a Tag Folder is over
+     * your own material, and six hundred meetings tagged by an importer would
+     * otherwise come back the moment a word was typed after the rule.
      */
     return node
-      ? hits
-          .filter((n) => !isTemplatePath(n.path) && evaluateQuery(node, contextFor(n)))
-          .slice(0, LIST_LIMIT)
+      ? hits.filter((n) => isContent(n) && evaluateQuery(node, contextFor(n))).slice(0, LIST_LIMIT)
       : hits
   }
 

@@ -221,3 +221,58 @@ describe('a note renamed in another window', () => {
     expect(here.notePath(id)).toBe('B.md')
   })
 })
+
+describe('a task ticked from a list while the note is being written', () => {
+  /*
+   * The tick read the note, worked out the new text and handed it to
+   * `saveNote`, which then waited for the lock — so a pull holding it at that
+   * moment landed, and the tick wrote the text from before the pull back over
+   * it.
+   */
+  it('keeps what was written meanwhile', async () => {
+    const hooks: Hooks = {}
+    const vault = await vaultWith(hooks)
+    const path = await vault.createNote('', 'Note', '- [ ] Task\nbase\n')
+    let ticking: Promise<boolean> | undefined
+    hooks.putFile = async (f) => {
+      if (ticking || f.path !== path || !f.text?.includes('pulled')) return
+      ticking = vault.toggleTask(path, 0)
+      await settle()
+    }
+    await vault.saveNote(path, '- [ ] Task\nbase\npulled\n')
+    expect(await ticking).toBe(true)
+    expect(vault.getText(path)).toBe('- [x] Task\nbase\npulled\n')
+  })
+
+  it('ticks nothing when the line it was shown has moved', async () => {
+    const hooks: Hooks = {}
+    const vault = await vaultWith(hooks)
+    const path = await vault.createNote('', 'Note', '- [ ] Task\n- [ ] Other\n')
+    let ticking: Promise<boolean> | undefined
+    hooks.putFile = async (f) => {
+      if (ticking || f.path !== path || !f.text?.startsWith('- [ ] New')) return
+      ticking = vault.toggleTask(path, 0)
+      await settle()
+    }
+    await vault.saveNote(path, '- [ ] New\n- [ ] Task\n- [ ] Other\n')
+    expect(await ticking).toBe(false)
+    expect(vault.getText(path)).toBe('- [ ] New\n- [ ] Task\n- [ ] Other\n')
+  })
+})
+
+describe('a note detached while the importer is rewriting it', () => {
+  it('detaches the version that arrived, not the one before it', async () => {
+    const hooks: Hooks = {}
+    const vault = await vaultWith(hooks)
+    const path = await vault.createNote('', 'Standup', '---\nsource: work\nuid: u1\n---\n\nold\n')
+    let detaching: Promise<boolean> | undefined
+    hooks.putFile = async (f) => {
+      if (detaching || f.path !== path || !f.text?.includes('new')) return
+      detaching = vault.detachNote(path)
+      await settle()
+    }
+    await vault.saveNote(path, '---\nsource: work\nuid: u1\n---\n\nnew\n')
+    expect(await detaching).toBe(true)
+    expect(vault.getText(path)).toBe('new\n')
+  })
+})

@@ -22,6 +22,7 @@ import {
   saveNote,
   deleteNote,
   createNote,
+  detachNote,
   purge,
   trashTitle,
 } from '../core/vault'
@@ -65,7 +66,7 @@ import { beginEditing, endEditing, installTapToEdit } from '../editor/reading'
 import { templateBodyFor } from '../core/templates'
 import { offerTitleFromHeading } from './titleDrift'
 import { UNTITLED } from '../core/vault'
-import { isLocked, parseFrontmatter } from '../core/markdown'
+import { externalSource, isLocked, parseFrontmatter } from '../core/markdown'
 import { layoutMode, railState, toggleRail } from './layout'
 import { debounce, longDateTime } from '../core/util'
 import {
@@ -136,6 +137,17 @@ export function EditorPane() {
    * form without the vault having caught up.
    */
   const [locked, setLocked] = useState(false)
+  /**
+   * The program that owns this note (`source:`), if one does.
+   *
+   * Held the same way as `locked` and for the same reason, and stricter than
+   * it: a locked note is a form whose properties are yours to fill in, and an
+   * imported one is not yours at all. Whatever is typed into it is written over
+   * on the importer's next run — or, since a folder has no conditional write,
+   * turned into a conflict copy of a meeting you do not own, every week. So it
+   * is a page with a banner, and the one thing to do is Detach it.
+   */
+  const [owner, setOwner] = useState<string | undefined>(undefined)
   const popped = !!path && isPoppedOut(path)
   /** True in a popped-out window, which is one note and no app around it. */
   const detached = isPopoutWindow()
@@ -180,6 +192,14 @@ export function EditorPane() {
     if (!view || !p || isTrashed(p)) return Promise.resolve()
     saveRef.current.flush()
     const text = view.state.doc.toString()
+    /*
+     * An imported note's buffer cannot have been typed in, so it holds nothing
+     * to save — and saving it anyway is how a stale copy goes back over the
+     * newer one: the importer's rewrite, or Detach, lands in the vault a render
+     * before the buffer is brought up to date, and a note switch in between
+     * wrote the old text back, source and all.
+     */
+    if (externalSource(parseFrontmatter(text).data) !== undefined) return Promise.resolve()
     baseRef.current = text
     return saveNote(p, text).catch(reportSaveFailure)
   }
@@ -227,7 +247,11 @@ export function EditorPane() {
      * where the tap landed. A brand new note is the exception — see
      * `opensForWriting`, which is the whole of the rule.
      */
-    const writing = opensForWriting(path, text, isTrashed(path))
+    const writing = opensForWriting(
+      path,
+      text,
+      isTrashed(path) || externalSource(parseFrontmatter(text).data) !== undefined,
+    )
     // Consumed with the request, whether or not it carried one.
     const caret = takeOpenCaret()
     readingMode.value = !writing
@@ -237,6 +261,7 @@ export function EditorPane() {
     formatSheetOpen.value = false
     propertiesOpen.value = false
     setLocked(isLocked(parseFrontmatter(text).data))
+    setOwner(externalSource(parseFrontmatter(text).data))
 
     /*
      * The note's footer — what links here — built per editor and rendered into
@@ -270,7 +295,9 @@ export function EditorPane() {
         // The lock lives in the note's own properties, so it can be put on and
         // taken off from the form while the note is open. Read from the buffer
         // rather than from the vault, which is a debounce behind it.
-        setLocked(isLocked(parseFrontmatter(text).data))
+        const data = parseFrontmatter(text).data
+        setLocked(isLocked(data))
+        setOwner(externalSource(data))
       },
     })
     const view = new EditorView({ state, parent: hostRef.current })
@@ -645,9 +672,15 @@ export function EditorPane() {
           class="editor-title-input"
           value={entry.title}
           aria-label="Note title"
+          /*
+           * The filename is the importer's too: it finds its files by path, so
+           * a renamed one is a file it no longer knows about and a fresh copy
+           * written beside it on the next run.
+           */
+          readOnly={!!owner}
           onBlur={async (e) => {
             const next = (e.target as HTMLInputElement).value.trim()
-            if (!next || next === entry.title) return
+            if (owner || !next || next === entry.title) return
             flush()
             const p = await renameNote(path, next)
             // The note reopens under its new path, which would otherwise put
@@ -667,7 +700,7 @@ export function EditorPane() {
         />
         )}
         <span class="spacer" />
-        {reading && !trashed && !locked && (
+        {reading && !trashed && !locked && !owner && (
           <button
             class="icon-btn"
             aria-label="Edit note"
@@ -682,7 +715,7 @@ export function EditorPane() {
           * and the same button is the way in to the only part of it that can
           * be changed — including the checkbox that locked it.
           */}
-        {!trashed && locked && (
+        {!trashed && locked && !owner && (
           <button
             class="icon-btn"
             aria-label="Read-only note"
@@ -941,6 +974,35 @@ export function EditorPane() {
         </div>
       )}
 
+      {/*
+        * An imported note says whose it is, where the trash says a note is
+        * deleted, and offers the one way to change it: take it off the
+        * importer's hands. Named after the provider because "an external
+        * source" is not something anybody can go and look at.
+        */}
+      {!trashed && owner && (
+        <div class="trash-banner source-banner">
+          <span>Kept up to date from {owner}, so it can't be edited here.</span>
+          <span class="spacer" />
+          <button
+            class="row-action"
+            title={`Stop ${owner} updating this note, and make it an ordinary note of your own`}
+            onClick={async () => {
+              try {
+                if (!(await detachNote(path))) return
+              } catch (e) {
+                reportSaveFailure(e)
+                return
+              }
+              syncSoon()
+              notify(`Detached from ${owner} — this note is yours now`)
+            }}
+          >
+            Detach from {owner}
+          </button>
+        </div>
+      )}
+
       {rich && !compact && !trashed && !reading && (
         <FormatBar variant="bar" getView={() => viewRef.current} />
       )}
@@ -979,6 +1041,7 @@ export function EditorPane() {
           path={path}
           getText={() => viewRef.current?.state.doc.toString() ?? getRaw(path)?.text ?? ''}
           getView={() => viewRef.current}
+          readOnly={!!owner}
         />
       )}
 
@@ -1019,7 +1082,7 @@ export function EditorPane() {
         * under the phone's Format sheet, which is already competing with the
         * keyboard.
         */}
-      {!trashed && canAsk() && isConversation(noteText) &&
+      {!trashed && !owner && canAsk() && isConversation(noteText) &&
         !(compact && formatSheetOpen.value) && (
           <Composer getView={() => viewRef.current} text={noteText} path={path} />
         )}

@@ -223,6 +223,23 @@ describe('a note its own properties lock', () => {
     view.destroy()
   })
 
+  /*
+   * An imported note is a page for the same reason and through the same facet:
+   * whatever is typed into it the importer writes over, or turns into a
+   * conflict copy. And Detach, a programmatic dispatch like the form's, lets go.
+   */
+  it('refuses an imported note, and lets go once it is detached', async () => {
+    const view = await open(
+      ['---', 'source: fastmail', 'uid: abc', '---', '', 'Standup', ''].join('\n'),
+    )
+    expect(view.state.readOnly).toBe(true)
+    const doc = view.state.doc.toString()
+    const at = doc.indexOf('source: fastmail\n')
+    view.dispatch({ changes: { from: at, to: at + 'source: fastmail\n'.length } })
+    expect(view.state.readOnly).toBe(false)
+    view.destroy()
+  })
+
   it('is not locked by a note that merely has properties', async () => {
     const view = await open(FM + 'Hello $(first_name).\n')
     expect(view.state.readOnly).toBe(false)

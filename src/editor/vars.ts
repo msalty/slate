@@ -26,7 +26,7 @@ import type { Completion, CompletionContext, CompletionResult } from '@codemirro
 import { EditorState, type Extension } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import {
-  isLocked,
+  isWriteProtected,
   parseFrontmatter,
   resolveVars,
   varText,
@@ -94,9 +94,16 @@ export function frontmatterOf(
  * note under your hand, and clearing it hands it back. `always` folds in the
  * other reason a note refuses edits — it was deleted — because the facet takes
  * the first value it is given and two of them would mean one is never heard.
+ * For the same reason an imported note (`source:`) is read here too rather
+ * than by a second facet: a program owns it and will write over whatever is
+ * typed, so it is a page until it is detached — and Detach, dropping the key
+ * with a dispatch of its own, unlocks it under your hand the same way.
  */
 export function propertyLock(always = false): Extension {
-  return EditorState.readOnly.compute(['doc'], (state) => always || isLocked(frontmatterOf(state)))
+  return EditorState.readOnly.compute(
+    ['doc'],
+    (state) => always || isWriteProtected(frontmatterOf(state)),
+  )
 }
 
 /**

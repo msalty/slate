@@ -13,8 +13,11 @@
  */
 
 import { signal } from '@preact/signals'
+import { useState } from 'preact/hooks'
 import type { NoteIndexEntry } from '../core/types'
 import { backlinkMap, getEntry } from '../core/vault'
+import { groupMentions } from '../core/mentions'
+import { eventTitle } from '../core/eventname'
 import { openNote } from './state'
 import { IconChevron } from './Icons'
 
@@ -62,7 +65,15 @@ export function LinkedMentions({ path }: { path: string }) {
   const mentions = (backlinkMap.value.get(path) ?? [])
     .map((p) => getEntry(p))
     .filter((e): e is NoteIndexEntry => !!e)
+  /*
+   * Which importers' groups are open — none, to begin with, and only for this
+   * note: the footer is rendered afresh for each one, so a group opened on
+   * Jane's note is not open on Sam's. Your own notes are never folded away
+   * under a group; the outer disclosure is the one switch for the whole list.
+   */
+  const [openSources, setOpenSources] = useState<ReadonlySet<string>>(() => new Set())
   if (!mentions.length) return null
+  const { own, external } = groupMentions(mentions)
 
   const shown = open.value
   return (
@@ -85,17 +96,62 @@ export function LinkedMentions({ path }: { path: string }) {
       </button>
       {shown && (
         <div class="mentions-list">
-          {mentions.map((e) => (
-            // `openNote`, not a bare assignment to the active path: this is an
-            // ordinary navigation, and it has to move the phone to the editor
-            // and leave a trail for Back exactly like every other one.
-            <button key={e.path} class="mention-row" onClick={() => openNote(e.path)}>
-              <span class="mention-title">{e.title}</span>
-              {!!e.excerpt && <span class="mention-excerpt">{e.excerpt}</span>}
-            </button>
+          {own.map((e) => (
+            <MentionRow key={e.path} entry={e} />
           ))}
+          {external.map((g) => {
+            const expanded = openSources.has(g.source)
+            return (
+              <div key={`source:${g.source}`} class="mentions-source">
+                <button
+                  class="mentions-source-head"
+                  aria-expanded={expanded}
+                  onClick={() => {
+                    const next = new Set(openSources)
+                    if (expanded) next.delete(g.source)
+                    else next.add(g.source)
+                    setOpenSources(next)
+                  }}
+                >
+                  <span class="disclose" data-open={expanded}>
+                    <IconChevron size={11} />
+                  </span>
+                  <span class="mentions-source-name">From {g.source}</span>{' '}
+                  <span class="mentions-count">{g.notes.length}</span>
+                </button>
+                {expanded && g.notes.map((e) => <MentionRow key={e.path} entry={e} />)}
+              </div>
+            )
+          })}
         </div>
       )}
     </div>
+  )
+}
+
+/**
+ * One note that links here. An event reads as its name and its day, which is
+ * what tells two hundred occurrences of the same standup apart — the filename
+ * of an imported one ends in a disambiguator nobody chose.
+ */
+function MentionRow({ entry: e }: { entry: NoteIndexEntry }) {
+  const ev = e.event
+  const title = ev ? eventTitle(e.title, ev.title) : e.title
+  const day = ev
+    ? new Date(ev.start).toLocaleDateString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+      })
+    : ''
+  const detail = [day, e.excerpt].filter(Boolean).join(' · ')
+  return (
+    // `openNote`, not a bare assignment to the active path: this is an
+    // ordinary navigation, and it has to move the phone to the editor
+    // and leave a trail for Back exactly like every other one.
+    <button class="mention-row" onClick={() => openNote(e.path)}>
+      <span class="mention-title">{title}</span>
+      {!!detail && <span class="mention-excerpt">{detail}</span>}
+    </button>
   )
 }

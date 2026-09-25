@@ -151,6 +151,16 @@ export interface NoteIndexEntry {
    * and a name is worth being able to show back to somebody.
    */
   aliases: string[]
+  /**
+   * The provider slug from `source:`, when a program outside Slate owns this
+   * note — an imported meeting or contact, which carries `uid:` beside it (see
+   * `externalSource` for why the pair). Undefined on everything you wrote.
+   *
+   * Its presence is the whole signal: such a note can be searched, linked and
+   * shown on the agenda, and is kept out of everything that counts your own
+   * material. See `contentNotes`.
+   */
+  source?: string
   hasTasks: boolean
   /**
    * This note's tasks, already parsed.

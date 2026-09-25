@@ -7598,6 +7598,152 @@ try {
   await page.locator('.side-row:has-text("All Notes")').first().click()
   await page.waitForTimeout(400)
 
+  /* ---- notes an importer owns --------------------------------------------
+   * A `source:` key says a program outside Slate keeps this note up to date.
+   * Such a note is on the agenda and in a person's mentions, and it is not
+   * your material: it stays off the note list, and it opens as a page with a
+   * banner and one way out — Detach. Seeded straight into the database, the
+   * way an importer's files arrive: never opened, never typed.
+   */
+  await page.evaluate(async (seed) => {
+    const hash = async (t) => {
+      const d = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)))
+      return [...d.slice(0, 16)].map((b) => b.toString(16).padStart(2, '0')).join('')
+    }
+    const hashes = await Promise.all(seed.map(([, t]) => hash(t)))
+    const db = await new Promise((res, rej) => {
+      const r = indexedDB.open('slate')
+      r.onsuccess = () => res(r.result)
+      r.onerror = () => rej(r.error)
+    })
+    const tx = db.transaction('files', 'readwrite')
+    seed.forEach(([path, text], i) => {
+      tx.objectStore('files').put({
+        path, kind: 'note', text, mime: 'text/markdown', size: text.length,
+        hash: hashes[i], mtime: Date.now() - 60_000 - i * 100, ctime: Date.now(),
+        dirty: true, dirtyFlag: 1, sync: {},
+      })
+    })
+    await new Promise((res) => { tx.oncomplete = res })
+  }, [
+    ['Priya Natarajan.md', '# Priya Natarajan\n\nRuns the platform team.\n'],
+    ['Notes on Priya.md', '# Notes on Priya\n\nAsk [[Priya Natarajan]] about the migration.\n'],
+    [
+      'Calendar/Imported/Platform sync (a41b).md',
+      `---\ntitle: Platform sync\nstart: ${isoDay(2)}T09:00\nend: ${isoDay(2)}T09:30\nattendees:\n  - "[[Priya Natarajan]]"\nsource: fastmail\nuid: a41b@fastmail.com\n---\n\n- [ ] Imported homework\n`,
+    ],
+  ])
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForSelector('.note-row')
+  await page.locator('.side-row:has-text("All Notes")').first().click()
+  await page.waitForTimeout(400)
+  const importListed = await page.locator('.note-row').allInnerTexts()
+  check(
+    'an imported note stays off the note list',
+    !importListed.join(' | ').includes('Platform sync') && importListed.join(' | ').includes('Notes on Priya'),
+    importListed.slice(0, 6).join(' | '),
+  )
+  const importDay = await showDay(2)
+  await importDay.click()
+  await page.waitForTimeout(400)
+  const importAgenda = await page.locator('.rail .agenda .agenda-row').allInnerTexts()
+  check(
+    'and is on the agenda all the same',
+    importAgenda.join(' | ').includes('Platform sync'),
+    importAgenda.join(' | '),
+  )
+  await page.locator('.side-row:has-text("All Notes")').first().click()
+  await page.waitForTimeout(400)
+
+  await page.locator('.note-row', { hasText: 'Priya Natarajan' }).first().click()
+  await page.waitForTimeout(600)
+  const grouped = await page.evaluate(() => {
+    const m = document.querySelector('.mentions')
+    if (!m) return undefined
+    return {
+      own: [...m.querySelectorAll('.mentions-list > .mention-row')].map((r) => r.textContent),
+      head: m.querySelector('.mentions-source-head')?.textContent?.replace(/\s+/g, ' ').trim(),
+      hidden: m.querySelectorAll('.mentions-source .mention-row').length,
+    }
+  })
+  check(
+    'a person’s mentions put your own notes first, and fold an importer’s under a count',
+    !!grouped &&
+      grouped.own.length === 1 &&
+      grouped.own[0].includes('Notes on Priya') &&
+      grouped.head === 'From fastmail 1' &&
+      grouped.hidden === 0,
+    JSON.stringify(grouped),
+  )
+  await page.locator('.mentions-source-head').click()
+  await page.waitForTimeout(200)
+  const importedRow = page.locator('.mentions-source .mention-row')
+  /*
+   * By its name, not yet without the importer's disambiguator: reading
+   * `(a41b)` off the end is the second filename shape §2.1 of the design says
+   * `eventTitle` needs once the helper settles how it writes one.
+   */
+  check(
+    'and the group opens to the meeting, by its name',
+    (await importedRow.count()) === 1 &&
+      (await importedRow.locator('.mention-title').innerText()).startsWith('Platform sync'),
+    await importedRow.allInnerTexts().then((t) => t.join(' | ')),
+  )
+  await importedRow.click()
+  await page.waitForTimeout(600)
+  const banner = page.locator('.source-banner')
+  check(
+    'an imported note opens with a banner naming who keeps it',
+    (await banner.count()) === 1 && (await banner.innerText()).includes('fastmail'),
+  )
+  check(
+    'and nothing that would start editing it — no pencil, a title that cannot be renamed',
+    (await page.locator('[aria-label="Edit note"]').count()) === 0 &&
+      (await page.locator('.editor-title-input').getAttribute('readonly')) !== null,
+  )
+  const importPath = 'Calendar/Imported/Platform sync (a41b).md'
+  const importedText = () =>
+    page.evaluate(async (path) => {
+      const db = await new Promise((res) => {
+        const r = indexedDB.open('slate')
+        r.onsuccess = () => res(r.result)
+      })
+      const tx = db.transaction('files', 'readonly')
+      const f = await new Promise((res) => {
+        const q = tx.objectStore('files').get(path)
+        q.onsuccess = () => res(q.result)
+      })
+      return f?.text ?? ''
+    }, importPath)
+  const importedBefore = await importedText()
+  await page.locator('.editor-host .cm-content').click({ position: { x: 30, y: 10 } })
+  await page.keyboard.type('typed over')
+  await page.waitForTimeout(700)
+  check(
+    'and a click and some typing change nothing',
+    (await importedText()) === importedBefore &&
+      (await page.locator('.editor-pane').getAttribute('data-reading')) === '1',
+  )
+  await banner.locator('button', { hasText: 'Detach from fastmail' }).click()
+  await page.waitForTimeout(700)
+  const detached = await importedText()
+  check(
+    'Detach takes the importer’s keys out and leaves the rest',
+    !/^source:/m.test(detached) && !/^uid:/m.test(detached) && detached.includes('title: Platform sync'),
+    detached.split('\n').slice(0, 6).join(' / '),
+  )
+  check(
+    'and the note is yours: no banner, and the pencil is back',
+    (await page.locator('.source-banner').count()) === 0 &&
+      (await page.locator('[aria-label="Edit note"]').count()) === 1,
+  )
+  await page.locator('.side-row:has-text("All Notes")').first().click()
+  await page.waitForTimeout(400)
+  check(
+    'and it joins the note list',
+    (await page.locator('.note-row').allInnerTexts()).join(' | ').includes('Platform sync'),
+  )
+
   /* ---- copying a table back out -----------------------------------------
    * The return trip. Only the HTML flavour is added: spreadsheets read it in
    * preference to plain text, so Excel gets cells while the plain flavour

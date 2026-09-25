@@ -108,12 +108,13 @@ Short description, if any.
 | `url` | string | Optional. The join link, lifted out of the description. Kept apart from `location` because on a video meeting the "where" is a link: you click one and read the other. |
 | `attendees` | list | Wikilinks where a contact matched, plain strings otherwise. |
 | `calendar` | string | Optional. Which source calendar it came from — Work, Personal, Family. Nothing reads it yet; reserved because colouring the agenda by it is the obvious next thing, and vdir stores a `displayname` per collection so the importer gets it free. |
-| `source` | string | Provider slug. **Its presence means the file is externally owned.** |
-| `uid` | string | The source system's identity key. Helper-owned; Slate only round-trips it. |
+| `source` | string | Provider slug. **With `uid`, its presence means the file is externally owned** — see §2.3. |
+| `uid` | string | The source system's identity key. Helper-owned; Slate reads only whether it is there. |
 
 **Only the first four are read by code.** `start` (with `end` and `tz`) is the
 whole of what Slate parses for *when*, `title` is read for what a row is called,
-and `source` and `uid` join them from §2.3 onward. Everything
+and `source` and `uid` — read together, see §2.3 — join them from §2.3
+onward. Everything
 else in the table is a *blessed name* — frontmatter is open, so any key already
 works and shows in the properties form; naming these buys nothing but the
 guarantee that a hand-written event and an imported one use the same words.
@@ -241,9 +242,19 @@ inflate tag counts with somebody else's taxonomy.
 
 ### 2.3 The `source:` marker
 
-One key, one meaning: *a program owns this file and will overwrite it*. It
-drives the read-only banner (§5.5), the roll-up exclusions (§4.3), and the
-helper's own delete-safety check (§6.2). It means nothing else.
+One meaning: *a program owns this file and will overwrite it*. It drives the
+read-only banner (§5.5), the roll-up exclusions (§4.3), and the helper's own
+delete-safety check (§6.2).
+
+**Slate reads it only beside `uid:`.** `source:` on its own was already taken
+before this design reached the code: an Ask conversation keeps the rule it
+searches over there (`source: all`, `source: "#work"`), an AI summary records
+what it summarised, and notes clipped from the web conventionally name their
+page with it. Read alone, every conversation became a locked page its own
+composer could not write to, and every summary and clipping vanished from the
+note list. The helper writes both keys on every file anyway, and nothing else
+writes `uid:`, so the pair is unambiguous where the one key is not. Detach
+removes both.
 
 ---
 
@@ -477,6 +488,20 @@ No event editor and no date-picker widget. The frontmatter form in
 Any note with `source:` set opens read-only, with a banner naming the provider
 and one action: **Detach from `<source>`**, which strips `source:` and `uid:`
 and leaves an ordinary note you own.
+
+Read-only means everything in Slate that would change the file or its path:
+the body and the properties form, ticking or dating its tasks from a list,
+Quick Add and transcripts, *Change this passage*, restoring a version, pinning,
+and renaming or moving it — an importer finds its files by path, so a moved one
+is written afresh where it was. Reading, linking, searching, asking about it and
+duplicating it all still work; a duplicate is yours, so it is made without
+`source:` and `uid:`. Deleting still works too; whether the file comes back is the
+importer's business.
+
+What stays deliberately open is **link repointing**: renaming a note you own
+rewrites `[[links]]` to it wherever they are, imported files included (§4.3,
+last row). The importer sees a file that no longer matches its hash and leaves
+it alone from then on (§6.2) rather than putting the dead link back.
 
 Without this the failure is concrete rather than theoretical. You fix a typo;
 the helper rewrites the file on its next run; the folder adapter has no

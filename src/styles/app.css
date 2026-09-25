@@ -825,6 +825,10 @@ body.resizing .pane-resizer::after {
   background: color-mix(in srgb, var(--danger) 8%, transparent);
   border-bottom: 1px solid var(--border);
 }
+/* The same strip for a note another program owns — news, not a warning. */
+.source-banner {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
 
 /*
  * The searched-for words, wherever a row shows them.
@@ -1032,6 +1036,11 @@ body.resizing .pane-resizer::after {
   margin: 0 auto;
 }
 .properties-inner {
+  /* A <fieldset>, for its `disabled`; none of its own frame. */
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -1040,6 +1049,16 @@ body.resizing .pane-resizer::after {
    * would be a text box the size of a paragraph holding the word "draft".
    */
   max-width: 640px;
+}
+/*
+ * An imported note's properties: to be read, so they are drawn as text rather
+ * than as the greyed-out controls a disabled form defaults to — those say
+ * "unavailable", and the values are the most available thing on the page.
+ */
+.properties-inner:disabled :is(input, button, select) {
+  color: inherit;
+  opacity: 1;
+  cursor: default;
 }
 .properties-empty {
   margin: 2px 2px 8px;
@@ -1460,6 +1479,31 @@ button.property-kind:hover {
 }
 .mention-row:hover {
   background: var(--row-hover);
+}
+/*
+ * An importer's mentions, folded under one row that says how many. Row-sized
+ * and in the rows' own type rather than the heading's, so it reads as one more
+ * thing in the list — the list's own heading is the only label up there.
+ */
+.mentions-source-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 6px 8px 6px 6px;
+  border-radius: 7px;
+  font-size: 13px;
+  color: var(--text-muted);
+  text-align: left;
+}
+.mentions-source-head:hover {
+  background: var(--row-hover);
+}
+.mentions-source-head .mentions-count {
+  color: var(--text-faint);
+}
+.mentions-source .mention-row {
+  padding-left: 22px;
 }
 /* Long titles and excerpts end in an ellipsis; nothing here scrolls sideways. */
 .mention-title,
@@ -3665,6 +3709,7 @@ button.property-kind:hover {
    * header and every row are given the full 44px target.
    */
   .mentions-head,
+  .mentions-source-head,
   .mention-row {
     min-height: 44px;
   }

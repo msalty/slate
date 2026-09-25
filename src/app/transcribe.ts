@@ -8,9 +8,9 @@ import { askAboutImage } from '../adapters/llm'
 import { toWireImage } from '../core/images'
 import { LlmError } from '../core/llm'
 import { cleanTranscript, foundNothing, insertTranscript, TRANSCRIBE_PROMPT } from '../core/ocr'
-import { isLocked, parseFrontmatter } from '../core/markdown'
+import { isWriteProtected, parseFrontmatter } from '../core/markdown'
 import { settings } from '../core/settings'
-import { getRaw, resolveEmbed, saveNote } from '../core/vault'
+import { editNote, getRaw, resolveEmbed } from '../core/vault'
 
 export interface Transcript {
   text: string
@@ -45,10 +45,10 @@ export async function transcribeAttachment(path: string): Promise<Transcript> {
 /**
  * Write a transcription into `notePath`, after the picture it came from.
  *
- * Goes through `saveNote` like any other edit, so it takes a version-history
- * snapshot and can be undone from the same place. A locked note refuses, the
- * same as quick capture refuses one — a note marked `lock: true` means it, and
- * an AI feature is the last thing that should be the exception.
+ * Goes through `editNote` like any other edit, so it takes a version-history
+ * snapshot and can be undone from the same place. A locked or imported note
+ * refuses, the same as quick capture refuses one — a note marked `lock: true`
+ * means it, and an AI feature is the last thing that should be the exception.
  */
 export async function insertIntoNote(
   notePath: string,
@@ -57,13 +57,22 @@ export async function insertIntoNote(
 ): Promise<void> {
   const note = getRaw(notePath)
   if (note?.text === undefined) throw new Error('That note is not available on this device.')
-  if (isLocked(parseFrontmatter(note.text).data))
-    throw new Error('That note is locked, so nothing was written to it.')
-
-  const next = insertTranscript(note.text, transcript, {
-    target: attachmentPath,
-    resolve: (ref) => resolveEmbed(ref, notePath),
+  /*
+   * Worked out from the note as it is once its lock is held. The transcription
+   * takes seconds to come back, and the note can be edited in that time — the
+   * text read before it would have been written back over the edit.
+   */
+  let refused = false
+  await editNote(notePath, (text) => {
+    if (isWriteProtected(parseFrontmatter(text).data)) {
+      refused = true
+      return undefined
+    }
+    const next = insertTranscript(text, transcript, {
+      target: attachmentPath,
+      resolve: (ref) => resolveEmbed(ref, notePath),
+    })
+    return next === text ? undefined : next
   })
-  if (next === note.text) return
-  await saveNote(notePath, next)
+  if (refused) throw new Error('That note is read-only, so nothing was written to it.')
 }
