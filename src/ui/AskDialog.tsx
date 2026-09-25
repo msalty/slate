@@ -17,9 +17,11 @@ import { signal } from '@preact/signals'
 import { canAsk, startConversation } from '../app/ask'
 import { ALL, noteScopeRule, sourceDescription } from '../core/ask'
 import { settings } from '../core/settings'
+import { titleFromPath } from '../core/util'
 import { notify, openNote, scope, scopeLabel, scopeRule, visibleNotes } from './state'
 import { pendingQuestion } from './Composer'
 import { IconClose } from './Icons'
+import { claimEscape, useModalLayer } from './modal'
 
 interface Draft {
   /** The rule the conversation starts scoped to. */
@@ -28,11 +30,16 @@ interface Draft {
   label: string
   /** How many notes it covers right now, for the line under the field. */
   count: number
-  /** A note the conversation starts pinned to — what "ask about this note" sets. */
+  /**
+   * A note the conversation starts pinned to — what "ask about this note" sets.
+   * Its path, so it stays that note if another of the same name turns up while
+   * the dialog is open; `pinLabel` is only what it is called on screen.
+   */
   pin?: string
+  pinLabel?: string
 }
 
-const draft = signal<Draft | undefined>(undefined)
+export const draft = signal<Draft | undefined>(undefined)
 
 export { canAsk }
 
@@ -43,7 +50,7 @@ export { canAsk }
  * the same thing, so they start from the whole vault — and the dialog says so
  * rather than implying a narrower conversation than it is about to have.
  */
-export function openAsk(opts: { pin?: string } = {}) {
+export function openAsk(opts: { path?: string } = {}) {
   const rule = scopeRule(scope.value)
   /*
    * Asking *about* a note starts scoped to that note's own neighbourhood, not
@@ -53,12 +60,14 @@ export function openAsk(opts: { pin?: string } = {}) {
    * word with your question. What is nearby in the graph is what the note is
    * actually connected to — and "and nothing else" is one option along.
    */
-  const about = !!opts.pin
+  const pin = opts.path?.replace(/\.md$/i, '')
+  const about = !!pin
   draft.value = {
-    source: about ? noteScopeRule('links', opts.pin!) : (rule ?? ALL),
+    source: about ? noteScopeRule('links', pin) : (rule ?? ALL),
     label: !about && rule ? scopeLabel(scope.value) : 'All notes',
     count: !about && rule ? visibleNotes.value.length : 0,
-    pin: opts.pin,
+    pin,
+    pinLabel: opts.path && titleFromPath(opts.path),
   }
 }
 
@@ -74,12 +83,13 @@ export function openAsk(opts: { pin?: string } = {}) {
  * the first question is what the conversation is named after and that is worth
  * being asked for.
  */
-export function askAboutNote(title: string) {
-  openAsk({ pin: title })
+export function askAboutNote(path: string) {
+  openAsk({ path })
 }
 
 export function AskDialog() {
   const d = draft.value
+  const { isTop, root } = useModalLayer(!!d)
   const [question, setQuestion] = useState('')
   const [source, setSource] = useState(ALL)
   const [busy, setBusy] = useState(false)
@@ -95,7 +105,7 @@ export function AskDialog() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
+      if (e.key === 'Escape' && isTop() && claimEscape(e)) {
         e.stopPropagation()
         draft.value = undefined
       }
@@ -132,7 +142,7 @@ export function AskDialog() {
   const onlyTheNote = !!d.pin && source === noteScopeRule('note', d.pin)
 
   return (
-    <div class="scrim" onClick={close}>
+    <div class="scrim" ref={root} onClick={close}>
       <div
         class="dialog"
         style={{ width: 'min(560px, 100%)' }}
@@ -142,7 +152,7 @@ export function AskDialog() {
         aria-label="Ask your notes"
       >
         <div class="dialog-head">
-          <h2>{d.pin ? `Ask about “${d.pin}”` : 'Ask your notes'}</h2>
+          <h2>{d.pin ? `Ask about “${d.pinLabel}”` : 'Ask your notes'}</h2>
           <span style={{ flex: 1 }} />
           <button class="icon-btn" onClick={close} aria-label="Close">
             <IconClose />
@@ -208,7 +218,7 @@ export function AskDialog() {
           <div class="callout">
             {d.pin && (
               <>
-                <strong>{d.pin}</strong> is pinned to the conversation, so every question has it in
+                <strong>{d.pinLabel}</strong> is pinned to the conversation, so every question has it in
                 front of it{onlyTheNote ? ' — and nothing else is searched at all' : ''}. Both the
                 pin and the scope can be changed from the composer later.{' '}
               </>

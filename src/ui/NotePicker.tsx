@@ -18,12 +18,14 @@ import { Highlight } from './Highlight'
 import { IconClose, IconSearch } from './Icons'
 import { closeNotePicker, notePick } from './pickNote'
 import { rankFiles } from './pickFile'
+import { claimEscape, useModalLayer } from './modal'
 
 /** As in the file picker: past this, typing is the way through, not scrolling. */
 const MAX_ROWS = 200
 
 export function NotePicker() {
   const req = notePick.value
+  const { isTop, root } = useModalLayer(!!req)
   const [q, setQ] = useState('')
   const [sel, setSel] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -50,11 +52,13 @@ export function NotePicker() {
   }, [sel, hits.length])
 
   // Captured, because this opens over the editor and over other dialogs, and
-  // Escape here should close this rather than whatever is behind it.
+  // Escape here should close this rather than whatever is behind it. The
+  // capture was this file's own answer to that before there was a modal stack;
+  // it keeps it, and now says so to everyone else as well — see ./modal.
   useEffect(() => {
     if (!req) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
+      if (e.key !== 'Escape' || !isTop() || !claimEscape(e)) return
       e.preventDefault()
       e.stopPropagation()
       closeNotePicker()
@@ -79,7 +83,7 @@ export function NotePicker() {
   }
 
   return (
-    <div class="scrim" onClick={dismiss}>
+    <div class="scrim" ref={root} onClick={dismiss}>
       <div
         class="palette file-picker"
         onClick={(e) => e.stopPropagation()}

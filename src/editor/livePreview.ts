@@ -57,6 +57,8 @@ import { frontmatterEnd, frontmatterLines, frontmatterOf } from './vars'
 import { noteContext } from './context'
 import { normalizeUri, scanUris } from './links'
 import { resolveEmbed, resolveLink } from '../core/vault'
+import { decodeLinkPath } from '../core/util'
+import { escapePositions, splitWikiInner, unescapeWiki } from '../core/wikilink'
 import { revision } from '../core/vault'
 
 /** Which of the two rendering modes the preview extensions are running in. */
@@ -492,16 +494,16 @@ function buildDecorations(view: EditorView): DecorationSet {
         if (name === 'WikiLink') {
           const raw = state.doc.sliceString(node.from, node.to)
           const inner = raw.slice(2, -2)
-          const [targetPart, alias] = splitPipe(inner)
           /*
            * `[[Note#Costs]]`: the note is the target, the heading is where in
-           * it to land. Split rather than sliced, so a `#` inside the heading
-           * — `[[Notes#C# bindings]]` — stays part of it, and carried on the
-           * element because the click handler has nothing else to work from.
+           * it to land, and a `#` inside the heading — `[[Notes#C# bindings]]`
+           * — stays part of it. Read by the same splitter the index uses, so
+           * an escaped `[[C\# Notes]]` is one note here too, and not the note
+           * `C`; carried on the element because the click handler has nothing
+           * else to work from. `head` is the text before the `|` as written,
+           * escapes and all, which is the length there is to hide.
            */
-          const hash = targetPart.split('#')
-          const target = hash[0].trim()
-          const anchor = hash.slice(1).join('#').trim()
+          const { target, anchor = '', alias, head: targetPart } = splitWikiInner(inner)
           /*
            * `[[#Costs]]` — an anchor with no note in front of it is a heading
            * in this one. It always resolves, because the note it points at is
@@ -516,8 +518,20 @@ function buildDecorations(view: EditorView): DecorationSet {
             // Hide the brackets and, when there is an alias, the target too.
             out.push(hidden.range(node.from, open))
             out.push(hidden.range(close, node.to))
+            /*
+             * And the backslashes that escape whatever is shown — the name when
+             * there is no display text, the display text when there is — so the
+             * link reads as `C# Notes` or `Status [draft]` and not with its
+             * escapes in. They come back with the brackets when the caret is in
+             * the link.
+             */
+            const shownFrom = alias !== undefined ? open + targetPart.length + 1 : open
+            const shown = state.doc.sliceString(shownFrom, close)
             if (alias !== undefined) {
-              out.push(hidden.range(open, open + targetPart.length + 1))
+              out.push(hidden.range(open, shownFrom))
+            }
+            for (const i of escapePositions(shown)) {
+              out.push(hidden.range(shownFrom + i, shownFrom + i + 1))
             }
           }
           const textFrom = !active && alias !== undefined ? open + targetPart.length + 1 : open
@@ -555,8 +569,10 @@ function buildDecorations(view: EditorView): DecorationSet {
           if (composingEmbed(state, node.from + 3, node.to - 2)) return
           const raw = state.doc.sliceString(node.from, node.to)
           const inner = raw.slice(3, -2)
-          const [targetPart, sizePart] = splitPipe(inner)
-          const target = targetPart.trim()
+          // Not split at `#`: an embed names a file, and a file can be
+          // `C# notes.pdf`, written `![[C\# notes.pdf]]`.
+          const { head, alias: sizePart } = splitWikiInner(inner)
+          const target = unescapeWiki(head.trim())
           const width = sizePart && /^\d+$/.test(sizePart.trim()) ? Number(sizePart) : undefined
           out.push(
             Decoration.replace({
@@ -599,9 +615,9 @@ function buildDecorations(view: EditorView): DecorationSet {
           out.push(
             Decoration.replace({
               widget: new EmbedWidget({
-                path: external ? undefined : resolveEmbed(decodeURI(clean), ctx.path),
+                path: external ? undefined : resolveEmbed(decodeLinkPath(clean), ctx.path),
                 href: external ? clean : undefined,
-                label: decodeURI(clean) || m[1],
+                label: decodeLinkPath(clean) || m[1],
                 width,
                 alt: m[1],
               }),
@@ -914,11 +930,6 @@ function isInsideCodeOrLink(
     n = n.parent as { name: string; parent: unknown } | null
   }
   return false
-}
-
-function splitPipe(s: string): [string, string | undefined] {
-  const i = s.indexOf('|')
-  return i < 0 ? [s, undefined] : [s.slice(0, i), s.slice(i + 1)]
 }
 
 function splitWidth(url: string): [string, number | undefined] {

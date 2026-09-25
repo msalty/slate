@@ -53,10 +53,12 @@ import { matchesAll, relativeTime, searchTerms, startOfDay } from '../core/util'
 import { newNoteInFolder } from './EditorPane'
 import { canShareFiles, shareNote } from './shareNote'
 import { openQuickAdd } from './QuickAdd'
+import { openNewEvent } from './newEvent'
 import { canTransform, openTransform } from './TransformDialog'
 import { canSummarise, openSummary } from './SummaryDialog'
 import { askAboutNote, openAsk } from './AskDialog'
 import { canAsk } from '../app/ask'
+import { claimEscape, useModalLayer } from './modal'
 
 interface Cmd {
   id: string
@@ -113,6 +115,7 @@ function rowSub(row: Row): string {
 }
 
 export function CommandPalette() {
+  const { root } = useModalLayer(paletteOpen.value)
   const [q, setQ] = useState('')
   const [sel, setSel] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -239,7 +242,7 @@ export function CommandPalette() {
             {
               id: 'ask-note',
               label: `Ask about this note — ${openEntry.title}`,
-              run: () => askAboutNote(openEntry.title),
+              run: () => askAboutNote(openEntry.path),
             },
           ] satisfies Cmd[])
         : []),
@@ -252,6 +255,17 @@ export function CommandPalette() {
             },
           ] satisfies Cmd[])
         : []),
+      {
+        id: 'new-event',
+        label:
+          day !== undefined && day !== startOfDay(Date.now())
+            ? `New event on ${new Date(day).toLocaleDateString(undefined, {
+                month: 'long',
+                day: 'numeric',
+              })}…`
+            : 'New event…',
+        run: () => openNewEvent(),
+      },
       {
         id: 'daily',
         label: "Open today's note",
@@ -526,7 +540,7 @@ export function CommandPalette() {
   }
 
   return (
-    <div class="scrim" onClick={() => (paletteOpen.value = false)}>
+    <div class="scrim" ref={root} onClick={() => (paletteOpen.value = false)}>
       <div class="palette" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         <input
           ref={inputRef}
@@ -554,7 +568,7 @@ export function CommandPalette() {
             } else if (e.key === 'Enter') {
               e.preventDefault()
               void choose(sel)
-            } else if (e.key === 'Escape') {
+            } else if (e.key === 'Escape' && claimEscape(e)) {
               paletteOpen.value = false
             }
           }}

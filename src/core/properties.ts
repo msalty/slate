@@ -19,15 +19,18 @@
  * the only safe way to hold one.
  */
 
-import { ymd } from './util'
+import { roundUpToHalfHour, splitInlineList, unquote, ymd } from './util'
 
 /**
  * How a value is written, and so how the form offers to edit it. Inferred from
  * the value itself rather than stored anywhere: there is no schema in a
  * markdown file, and a type that lived only in the app would be a promise the
  * file could not keep.
+ *
+ * With one exception, for the one case a value cannot answer: a property that
+ * has just been added and is still empty. See `TIME_KEYS`.
  */
-export type PropertyKind = 'text' | 'list' | 'number' | 'checkbox' | 'date'
+export type PropertyKind = 'text' | 'list' | 'number' | 'checkbox' | 'date' | 'datetime'
 
 export interface Property {
   key: string
@@ -42,7 +45,39 @@ const FM_RE = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/
 const KEY_RE = /^([A-Za-z0-9_.-]+)\s*:\s*(.*)$/
 const ITEM_RE = /^\s*-\s+(.*)$/
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+/*
+ * Only the `T` spelling. `eventFor` also reads `2026-09-21 09:30`, but a
+ * `datetime-local` field cannot hold that string — it would show the row as
+ * blank, which reads as the value having been lost. So the space form stays
+ * text until somebody asks for it to be a time, and `coerceValue` converts it
+ * then; the file is never quietly rewritten to suit the widget.
+ */
+const DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/
+const LOOSE_DATETIME_RE = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(:\d{2})?$/
 const NUMBER_RE = /^-?\d+(\.\d+)?$/
+
+/**
+ * Keys the app itself gives a time to, for the one case the value cannot
+ * answer: a property that has just been added and is still empty.
+ *
+ * This is the single place a key is allowed to suggest a kind, and it is
+ * narrow on purpose. An empty value is not a promise about anything, so
+ * guessing at one costs nothing — and the moment there *is* a value, the value
+ * decides again, which is what keeps a `start: chapter three` in somebody's
+ * novel a piece of text rather than a broken date field.
+ *
+ * `start` and `end` guess at a time rather than a day because most events have
+ * one; an all-day event writes a bare date, and a bare date reads as a date
+ * without anything here being consulted.
+ */
+const TIME_KEYS: Record<string, PropertyKind> = {
+  // Spelled the way the app reads them, and matched that way.
+
+  start: 'datetime',
+  end: 'datetime',
+  date: 'date',
+  due: 'date',
+}
 
 /** One `key:` and everything written under it. */
 interface Entry {
@@ -64,12 +99,6 @@ interface Block {
   body: string
 }
 
-function unquote(s: string): string {
-  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'")))
-    return s.slice(1, -1)
-  return s
-}
-
 /**
  * Values that would not survive being written bare: YAML would read them as
  * something else, or lose the spaces around them. Numbers keep their minus
@@ -77,23 +106,42 @@ function unquote(s: string): string {
  */
 const NEEDS_QUOTE = /^$|^\s|\s$|^[>|*&!%@`'"[\]{},#?:]|^-(?!\d)|:\s|\s#/
 
+/**
+ * The same, for an item written inside `[ ... ]`.
+ *
+ * A comma is only a separator out here, so a value carrying one has to be
+ * quoted even though it would be perfectly safe on a line of its own. Without
+ * this, reading `"Doe, Jane"` correctly and then writing it back produced two
+ * items — the parser fixed and the writer still breaking it on the way out.
+ */
+function inlineScalar(v: string): string {
+  return /[,[\]]/.test(v) ? JSON.stringify(v) : scalar(v)
+}
+
 function scalar(v: string): string {
   return NEEDS_QUOTE.test(v) ? JSON.stringify(v) : v
 }
 
 function splitInline(inner: string): string[] {
-  return inner
-    .split(',')
-    .map((s) => unquote(s.trim()))
+  return splitInlineList(inner)
+    .map(unquote)
     .filter((s) => s !== '')
 }
 
-/** Split what somebody typed into a list field: "a, b" → ["a", "b"]. */
+/**
+ * Split what somebody typed into a list field: `a, b` → `["a", "b"]`.
+ *
+ * Quote-aware, and so is `joinList` going the other way, because the field
+ * shows what the file holds: an alias of `"Doe, Jane"` was displayed as
+ * `Doe, Jane`, and the next keystroke in that field turned one name into two.
+ */
 export function splitList(v: string): string[] {
-  return v
-    .split(',')
-    .map((s) => s.trim())
-    .filter((s) => s !== '')
+  return splitInlineList(v).map(unquote).filter((s) => s !== '')
+}
+
+/** The items as one line for the form, quoting any that carry a comma. */
+export function joinList(items: string[]): string {
+  return items.map(inlineScalar).join(', ')
 }
 
 function parseBlock(text: string): Block {
@@ -143,7 +191,7 @@ function linesFor(e: Entry): string[] {
   const written = e.items
     ? e.block
       ? [`${e.key}:`, ...e.items.map((i) => `  - ${scalar(i)}`)]
-      : [`${e.key}: [${e.items.map(scalar).join(', ')}]`]
+      : [`${e.key}: [${e.items.map(inlineScalar).join(', ')}]`]
     : [e.value === '' ? `${e.key}:` : `${e.key}: ${scalar(e.value)}`]
   return [...written, ...extras]
 }
@@ -161,11 +209,44 @@ function serialize(b: Block): string {
   return `---\n${lines.join('\n')}\n---\n${b.exists ? b.body : `\n${b.body}`}`
 }
 
-function kindOf(value: string, items: string[] | null): PropertyKind {
+/**
+ * True for a date that exists, not merely one that is spelled like one.
+ *
+ * `2026-13-01T09:00` is the right shape and no day at all, and a date field
+ * handed one shows *nothing* — so the row reads as empty while the file still
+ * holds the value, and the next thing typed overwrites something the form had
+ * said was not there.
+ */
+export function isRealDate(value: string): boolean {
+  /*
+   * Both separators, because `eventFor` reads both. Only the `T` spelling is
+   * offered a date field — a `datetime-local` cannot hold the other one — but
+   * "cannot be edited with a picker" and "is not a date" are different things,
+   * and the form was telling people a value the app reads perfectly well did
+   * not exist.
+   */
+  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?$/.exec(value.trim())
+  if (!m) return false
+  const [y, mo, d] = [+m[1], +m[2], +m[3]]
+  const probe = new Date(y, mo - 1, d)
+  if (probe.getFullYear() !== y || probe.getMonth() !== mo - 1 || probe.getDate() !== d) return false
+  return +(m[4] ?? 0) < 24 && +(m[5] ?? 0) < 60 && +(m[6] ?? 0) < 60
+}
+
+function kindOf(key: string, value: string, items: string[] | null): PropertyKind {
   if (items) return 'list'
   if (value === 'true' || value === 'false') return 'checkbox'
+  // A date that does not exist stays text, where it is at least visible.
+  if ((DATETIME_RE.test(value) || DATE_RE.test(value)) && !isRealDate(value)) return 'text'
+  if (DATETIME_RE.test(value)) return 'datetime'
   if (DATE_RE.test(value)) return 'date'
   if (value !== '' && NUMBER_RE.test(value)) return 'number'
+  /*
+   * The key exactly as written. Frontmatter is case-sensitive and so is every
+   * reader of it — `eventFor` looks for `start`, not for `Start` — so offering
+   * a time field for `Start:` was offering a picker for a key nothing reads.
+   */
+  if (value === '') return TIME_KEYS[key] ?? 'text'
   return 'text'
 }
 
@@ -173,9 +254,9 @@ function kindOf(value: string, items: string[] | null): PropertyKind {
 export function readProperties(text: string): Property[] {
   return parseBlock(text).entries.map((e) => ({
     key: e.key,
-    value: e.items ? e.items.join(', ') : e.value,
+    value: e.items ? joinList(e.items) : e.value,
     items: e.items,
-    kind: kindOf(e.value, e.items),
+    kind: kindOf(e.key, e.value, e.items),
   }))
 }
 
@@ -261,11 +342,37 @@ export function coerceValue(p: Property, kind: PropertyKind): string | string[] 
       return /^(true|yes|on|1)$/i.test(v) ? 'true' : 'false'
     case 'number':
       return NUMBER_RE.test(v) ? v : '0'
-    case 'date':
-      return DATE_RE.test(v) ? v : ymd(Date.now())
+    /*
+     * Both directions keep the day somebody already chose. Switching a time to
+     * a date used to throw the whole value away and hand back today, which is
+     * a date picker losing the date — the one thing it is there to hold.
+     */
+    case 'date': {
+      if (DATE_RE.test(v)) return v
+      const loose = LOOSE_DATETIME_RE.exec(v)
+      return loose ? loose[1] : ymd(Date.now())
+    }
+    case 'datetime': {
+      const loose = LOOSE_DATETIME_RE.exec(v)
+      if (loose) return `${loose[1]}T${loose[2]}${loose[3] ?? ''}`
+      /*
+       * The same suggestion the New Event dialog opens with, off the same
+       * helper — two answers to "what time, then?" that drifted apart would be
+       * two answers to the same question.
+       */
+      const at = new Date(roundUpToHalfHour())
+      const p = (n: number) => `${n}`.padStart(2, '0')
+      const day = DATE_RE.test(v) ? v : ymd(at)
+      return `${day}T${p(at.getHours())}:${p(at.getMinutes())}`
+    }
     default:
       return p.items ? p.items.join(', ') : p.value
   }
+}
+
+/** True when a value carries seconds, which a time field has to be told to show. */
+export function hasSeconds(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(value)
 }
 
 /**

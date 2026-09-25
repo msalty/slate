@@ -23,6 +23,8 @@ import type { EditorView } from '@codemirror/view'
 import {
   addProperty,
   coerceValue,
+  hasSeconds,
+  isRealDate,
   hasProperty,
   readProperties,
   removeProperty,
@@ -38,15 +40,33 @@ import { saveNote } from '../core/vault'
 import { syncSoon } from '../core/sync'
 import { notify } from './state'
 import { openMenu } from './Menu'
-import { IconCalendar, IconCheckbox, IconClose, IconHash, IconListBullet, IconPlus, IconText } from './Icons'
+import { isKnownZone } from '../core/markdown'
+import { knownZones, setEventStart } from '../core/eventnote'
+import {
+  IconCalendar,
+  IconCheckbox,
+  IconClock,
+  IconClose,
+  IconHash,
+  IconListBullet,
+  IconPlus,
+  IconText,
+} from './Icons'
 
 const KINDS: Array<{ id: PropertyKind; label: string }> = [
   { id: 'text', label: 'Text' },
   { id: 'list', label: 'List' },
   { id: 'number', label: 'Number' },
   { id: 'date', label: 'Date' },
+  { id: 'datetime', label: 'Date & time' },
   { id: 'checkbox', label: 'Checkbox' },
 ]
+
+/** What kind of `<input>` each kind is edited with. Text where it isn't said. */
+const FIELD_TYPE: Partial<Record<PropertyKind, string>> = {
+  date: 'date',
+  datetime: 'datetime-local',
+}
 
 function kindLabel(kind: PropertyKind): string {
   return KINDS.find((k) => k.id === kind)?.label ?? 'Text'
@@ -60,6 +80,8 @@ function KindIcon({ kind }: { kind: PropertyKind }) {
       return <IconHash size={14} />
     case 'date':
       return <IconCalendar size={14} />
+    case 'datetime':
+      return <IconClock size={14} />
     case 'checkbox':
       return <IconCheckbox size={14} />
     default:
@@ -119,6 +141,12 @@ export function Properties({ path, getText, getView }: PanelProps) {
 
   return (
     <div class="properties">
+      {/* One list for the panel; every `tz` row points at it by name. */}
+      <datalist id="slate-zones">
+        {knownZones().map((z) => (
+          <option key={z} value={z} />
+        ))}
+      </datalist>
       <div class="properties-inner">
         {props.length === 0 && !adding && (
           <p class="properties-empty">
@@ -183,7 +211,26 @@ function PropertyRow({
 
   const setValue = (v: string) => {
     setDraft(v)
-    write(setPropertyValue(getText(), p.key, p.kind === 'list' ? splitList(v) : v))
+    const text = getText()
+    /*
+     * Moving an event's start moves its end with it. The one pair of keys this
+     * form edits together, and only because leaving the end behind does not
+     * leave it behind — `eventFor` replaces an end that precedes its start with
+     * an hour, so a two-hour meeting dragged to the afternoon quietly became a
+     * one-hour one. See `setEventStart`.
+     */
+    /*
+     * `start`, exactly. Matching case-insensitively meant editing a `Start:`
+     * ran the event path, which writes the key it knows — so the note came back
+     * with `Start:` *and* `start:`, two keys where there was one, and an
+     * ordinary property quietly turned into an event beside itself.
+     * Frontmatter is case-sensitive and every reader of it agrees.
+     */
+    if (p.key === 'start' && p.kind !== 'list') {
+      write(setEventStart(text, v))
+      return
+    }
+    write(setPropertyValue(text, p.key, p.kind === 'list' ? splitList(v) : v))
   }
 
   /*
@@ -212,6 +259,20 @@ function PropertyRow({
   }
 
   const shown = draft ?? p.value
+  /*
+   * Only once it has been typed into — a half-finished `Europ` is not a mistake
+   * yet, and underlining it while somebody is still typing is nagging.
+   */
+  const badZone =
+    p.key === 'tz' && draft === null && !!p.value.trim() && !isKnownZone(p.value)
+  /*
+   * A value shaped like a date that is not one. It stays a *text* field — a
+   * date field handed `2026-13-01` shows nothing at all, so the row would read
+   * as empty over a file that still held the value — and it is marked, because
+   * a text field is where it now looks like it belongs.
+   */
+  const badDate =
+    draft === null && /^\d{4}-\d{2}-\d{2}([T ]|$)/.test(p.value.trim()) && !isRealDate(p.value)
 
   return (
     <div class="property-row">
@@ -266,7 +327,29 @@ function PropertyRow({
         <input
           ref={valueRef}
           class="property-value"
-          type={p.kind === 'date' ? 'date' : 'text'}
+          /*
+           * `tz` is the one key where a free-typed value fails silently: a zone
+           * the browser cannot read resolves to exactly the same instant as no
+           * zone at all. A list of the real ones makes the typo hard to make,
+           * and the mark below says so when one has been made anyway.
+           */
+          list={p.key === 'tz' ? 'slate-zones' : undefined}
+          data-invalid={badZone || badDate ? '1' : undefined}
+          title={
+            badZone
+              ? `${p.value} is not a time zone this browser knows`
+              : badDate
+                ? `${p.value} is not a date that exists`
+                : undefined
+          }
+          type={FIELD_TYPE[p.kind] ?? 'text'}
+          /*
+           * A time field shows seconds only when the value has them. Told to
+           * always, every event picks up a `:00` it never asked for; told
+           * never, a value that *does* carry seconds is rejected by the field
+           * and the row reads as empty.
+           */
+          step={p.kind === 'datetime' && hasSeconds(p.value) ? 1 : undefined}
           inputMode={p.kind === 'number' ? 'decimal' : undefined}
           value={shown}
           aria-label={`${p.key} value`}

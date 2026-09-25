@@ -1,12 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import {
   addDays,
+  decodeLinkPath,
   dueLabel,
+  encodeLinkPath,
   duePresets,
   dueTone,
+  fitSegment,
   matchRanges,
   matchesAll,
   monthGrid,
+  numberedFile,
+  numberedSegment,
+  safeSegment,
   searchTerms,
   startOfDay,
 } from './util'
@@ -180,5 +186,82 @@ describe('matchRanges', () => {
   it('caps separated matches too', () => {
     const text = 'e '.repeat(500)
     expect(matchRanges(text, ['e'], 20)).toHaveLength(20)
+  })
+})
+
+describe('a segment that has to fit', () => {
+  const lone = /[\uD800-\uDBFF]$/
+
+  it('never cuts a character in half', () => {
+    // An emoji is two UTF-16 units. A cut between them is not a character in
+    // any encoding, and a sync backend writes it back as U+FFFD — so the name
+    // on the other device is not the name here.
+    const odd = `a${'🎉'.repeat(70)}`
+    expect(lone.test(safeSegment(odd))).toBe(false)
+    expect(safeSegment(odd).length).toBeLessThanOrEqual(120)
+    expect(lone.test(fitSegment(odd, 100))).toBe(false)
+  })
+
+  it('leaves no trailing space or dot where the cut lands', () => {
+    expect(fitSegment('abc def', 4)).toBe('abc')
+    expect(fitSegment('abc.def', 4)).toBe('abc')
+  })
+
+  it('makes room for a counter rather than running past the limit', () => {
+    const full = 'M'.repeat(120)
+    expect(numberedSegment(full, 1)).toBe(full)
+    expect(numberedSegment(full, 2)).toBe(`${'M'.repeat(118)} 2`)
+    expect(numberedSegment(full, 13)).toBe(`${'M'.repeat(117)} 13`)
+    // A short name is untouched apart from the counter.
+    expect(numberedSegment('Standup', 2)).toBe('Standup 2')
+  })
+
+  it('puts a file’s counter before its extension, inside the limit', () => {
+    expect(numberedFile('receipt.pdf', 1)).toBe('receipt.pdf')
+    expect(numberedFile('receipt.pdf', 2)).toBe('receipt 2.pdf')
+    const long = `${'M'.repeat(116)}.pdf`
+    expect(numberedFile(long, 2)).toBe(`${'M'.repeat(114)} 2.pdf`)
+    expect(numberedFile(long, 2).length).toBe(120)
+    // No extension to keep, so it is a plain counter.
+    expect(numberedFile('README', 3)).toBe('README 3')
+  })
+})
+
+describe('a path as a link address', () => {
+  /*
+   * Every path comes back as itself. `%23` in a path used to be read as `#`
+   * whether it had been one or not: a file literally called `receipt%23.pdf`
+   * is written `receipt%2523.pdf`, and came back as `receipt#.pdf`.
+   */
+  const PATHS = [
+    'receipt.pdf',
+    'receipt#2.pdf',
+    'receipt%23.pdf',
+    'x %2523 y.png',
+    'a%2Fb.png',
+    '50% off.png',
+    '%',
+    '%%23',
+    'café.png',
+    'emoji 🎉.png',
+    '(paren) [bracket].png',
+    'attachments/2026/09/Scan #3 — final.pdf',
+    "&=+$,;:@'!~*.png",
+    'half \uD800 a character.png',
+  ]
+
+  it('decodes to exactly what was encoded, for every path', () => {
+    for (const p of PATHS) expect(decodeLinkPath(encodeLinkPath(p)), p).toBe(p)
+  })
+
+  it('never writes a # an address would take for a fragment', () => {
+    for (const p of PATHS) expect(encodeLinkPath(p), p).not.toContain('#')
+  })
+
+  it('still reads one written by hand', () => {
+    expect(decodeLinkPath('receipt%232.pdf')).toBe('receipt#2.pdf')
+    expect(decodeLinkPath('My%20Photo.png')).toBe('My Photo.png')
+    // Half-encoded, and read as written rather than thrown.
+    expect(decodeLinkPath('50%off.png')).toBe('50%off.png')
   })
 })

@@ -12,6 +12,7 @@ import {
   ALL,
   answerSystem,
   citedWithoutReading,
+  settleCitations,
   isDerived,
   newConversation,
   noteScope,
@@ -32,7 +33,17 @@ import { parseFrontmatter } from '../core/markdown'
 import { settings } from '../core/settings'
 import { estimateTokens } from '../core/summary'
 import { parseQuery } from '../core/tagquery'
-import { backlinkMap, createNote, getEntry, getText, resolveLink, search } from '../core/vault'
+import {
+  backlinkMap,
+  createNote,
+  getEntry,
+  getText,
+  linkNameFor,
+  noteId,
+  notePath,
+  resolveLink,
+  search,
+} from '../core/vault'
 import type { NoteIndexEntry } from '../core/types'
 
 /** Is there anywhere to send a question? The composer is absent without one. */
@@ -228,8 +239,11 @@ export function resolvePins(titles: string[], self: string): ResolvedPins {
   return { entries, missing }
 }
 
-/** A gathered note, carrying the path so the caller can tell pins from hits. */
-type Gathered = AskSource & { path: string }
+/**
+ * A gathered note, carrying the path so the caller can tell pins from hits, and
+ * which note it is (`noteId`) so the answer can find it wherever it has gone.
+ */
+type Gathered = AskSource & { path: string; id: number | undefined }
 
 /** Fill the budget with whole notes, best first. */
 function gather(
@@ -248,7 +262,8 @@ function gather(
     if (!body) continue
     const cost = estimateTokens(body) + 8
     if (sources.length && tokens + cost > room) break
-    sources.push({ title: entry.title, body, path: entry.path })
+    const { path, title } = entry
+    sources.push({ title, cite: linkNameFor(path), body, path, id: noteId(path) })
     tokens += cost
   }
   return { sources, tokens }
@@ -317,12 +332,25 @@ export async function askTurn(
       : 'Nothing matched — answering anyway…',
   )
 
-  const answer = await streamText(
+  const said = await streamText(
     ai,
     answerSystem(sourceDescription(source), pinsSent.length),
     answerUser(question, sources, history),
     { signal: opts.signal, onChunk: opts.onChunk },
   )
+  /*
+   * Cited by the names they were sent under, which may since mean other notes —
+   * or none, if a note was renamed while the model was answering. Each is
+   * followed to where it is now: by which note it is, since its old path may
+   * even be another note's by now.
+   */
+  const now = (s: Gathered) => (s.id === undefined ? undefined : notePath(s.id))
+  const sent = new Map(sources.map((s) => [s.cite.toLowerCase(), s]))
+  const answer = settleCitations(said, sent, (s) => {
+    const at = now(s)
+    return at && linkNameFor(at)
+  })
+  const sentNow = sources.map((s) => now(s) ?? s.path)
 
   /*
    * `matched` stays what the *search* found, so the number keeps meaning what
@@ -337,18 +365,22 @@ export async function askTurn(
    * title; this is the only thing that finds out whether it was obeyed, and it
    * costs one scan of text already in hand.
    */
-  const unread = citedWithoutReading(answer, sources.map((s) => s.title))
+  const unread = citedWithoutReading(
+    answer,
+    sentNow,
+    resolveLink,
+  )
   return {
     answer: answer.trim(),
     provenance: {
       terms,
       matched: found.length,
-      read: sources.map((s) => s.title),
+      read: sentNow.map(linkNameFor),
       tokens,
       dropped: Math.max(0, Math.min(candidates, limit) - sources.length),
       beyondLimit: Math.max(0, candidates - limit),
       limit,
-      pinned: pinsSent.map((e) => e.title),
+      pinned: pinsSent.map((e) => linkNameFor(e.path)),
       missingPins: pins.missing,
       pinsSkipped: pins.entries.length - pinsSent.length,
       citedNotRead: unread.filter((t) => !!resolveLink(t)),

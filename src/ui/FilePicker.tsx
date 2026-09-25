@@ -19,6 +19,7 @@ import { familyName, fileFamily, fileIconSvg } from '../core/filetypes'
 import { Highlight } from './Highlight'
 import { IconClose, IconSearch, IconUpload } from './Icons'
 import { closeFilePicker, filePick, rankFiles } from './pickFile'
+import { claimEscape, useModalLayer } from './modal'
 
 /**
  * How many rows are drawn at once. A vault with a thousand attachments would
@@ -29,6 +30,7 @@ const MAX_ROWS = 200
 
 export function FilePicker() {
   const req = filePick.value
+  const { isTop, root } = useModalLayer(!!req)
   const [q, setQ] = useState('')
   const [sel, setSel] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -56,7 +58,7 @@ export function FilePicker() {
   useEffect(() => {
     if (!req) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
+      if (e.key !== 'Escape' || !isTop() || !claimEscape(e)) return
       e.preventDefault()
       closeFilePicker()
       req.onCancel?.()
@@ -86,7 +88,7 @@ export function FilePicker() {
   }
 
   return (
-    <div class="scrim" onClick={dismiss}>
+    <div class="scrim" ref={root} onClick={dismiss}>
       <div
         class="palette file-picker"
         onClick={(e) => e.stopPropagation()}

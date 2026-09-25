@@ -38,6 +38,7 @@ import {
 } from './db'
 import {
   calendarDateFor,
+  eventFor,
   codeRegions,
   excerptOf,
   isLocked,
@@ -53,6 +54,10 @@ import {
   stripInline,
   withDue,
 } from './markdown'
+import type { WikiLink } from './markdown'
+import { formatWikiLink } from './wikilink'
+import { noteScope, noteScopeRule, quoteRule } from './ask'
+import { nameAfterCollision } from './eventname'
 import {
   loadDeviceRecords,
   localDeviceName,
@@ -70,15 +75,19 @@ import {
   startSearchIndex,
 } from './searchindex'
 import {
+  addDays,
   basename,
+  decodeLinkPath,
   dirname,
+  encodeLinkPath,
   extname,
   hashBlob,
   hashText,
-
   joinPath,
   mimeForPath,
   normPath,
+  numberedFile,
+  numberedSegment,
   safeSegment,
   startOfDay,
   titleFromPath,
@@ -117,19 +126,24 @@ let dirtyFiles = 0
 let folderPendingFiles = 0
 
 function setFile(path: string, f: VaultFile): void {
+  mustHold(path)
   const prev = files.get(path)
   if (prev?.dirty) dirtyFiles--
   if (prev && pendingFor(prev, 'folder')) folderPendingFiles--
   if (f.dirty) dirtyFiles++
   if (pendingFor(f, 'folder')) folderPendingFiles++
   files.set(path, f)
+  // A file gone from a path takes its identity with it; see `noteId`.
+  if (f.deleted) dropId(path)
 }
 
 function dropFile(path: string): void {
+  mustHold(path)
   const prev = files.get(path)
   if (prev?.dirty) dirtyFiles--
   if (prev && pendingFor(prev, 'folder')) folderPendingFiles--
   files.delete(path)
+  dropId(path)
 }
 
 /** Files with local content the remote has not confirmed. Drives the status pill. */
@@ -185,21 +199,25 @@ export function folderPendingCount(): number {
  * sit in the database forever waiting for a folder that is never coming back.
  */
 export async function clearFolderMeta(): Promise<void> {
-  const touched: VaultFile[] = []
   const doomed: string[] = []
-  for (const f of files.values()) {
-    if (f.folder === undefined) continue
-    if (f.deleted && !f.dirty) doomed.push(f.path)
-    else touched.push({ ...f, folder: undefined })
+  const paths = [...files.values()].filter((f) => f.folder !== undefined).map((f) => f.path)
+  for (const path of paths) {
+    // Each from the file as it is under its lock, so no edit in between is undone.
+    await withPathLock(path, async () => {
+      const f = files.get(path)
+      if (!f || f.folder === undefined) return
+      if (f.deleted && !f.dirty) return void doomed.push(path)
+      // Durable before adopted, for the reason spelled out over `writeFile`: a
+      // forgetting that only happened in memory is a folder this device still
+      // believes it agreed with after the next reload — and if the next folder
+      // connected is a different one, believing that is how it would skip files.
+      const next = { ...f, folder: undefined }
+      await putFile(next)
+      setFile(path, next)
+    })
   }
-  // Durable before adopted, for the reason spelled out over `writeFile`: a
-  // forgetting that only happened in memory is a folder this device still
-  // believes it agreed with after the next reload — and if the next folder
-  // connected is a different one, believing that is how it would skip files.
-  if (touched.length) await putFiles(touched)
-  for (const f of touched) setFile(f.path, f)
   for (const p of doomed) await forget(p, 'folder')
-  if (touched.length || doomed.length) bump()
+  if (paths.length) bump()
 }
 
 /* ------------------------------------------------------------ other windows */
@@ -223,6 +241,22 @@ let onWrite: ((paths: string[]) => void) | undefined
 
 export function onVaultWrite(fn: (paths: string[]) => void): void {
   onWrite = fn
+}
+
+/**
+ * Told when a file moves, for the same windows. A move reaches them as a new
+ * file and a deleted one, and the note's identity (`noteId`) cannot be read off
+ * either: it has to be told, before the deleted one is adopted.
+ */
+let onMove: ((from: string, to: string) => void) | undefined
+
+export function onVaultMove(fn: (from: string, to: string) => void): void {
+  onMove = fn
+}
+
+/** Another window moved a file: its identity here goes with it. */
+export function adoptMove(from: string, to: string): void {
+  carryId(from, to)
 }
 
 /*
@@ -288,6 +322,19 @@ let queuedPaths: Set<string> | undefined
 let queuedRun: Promise<void> | undefined
 
 async function adoptBatch(paths: string[]): Promise<void> {
+  /*
+   * Read and adopted holding every path's lock. Read first, a save made here
+   * between the read and the adopting was replaced on screen by the row from
+   * before it; the save was durable, but the editor and the sync engine were
+   * then working from the old text. Anything written elsewhere after this read
+   * announces itself again.
+   */
+  const sorted = [...new Set(paths)].sort()
+  const changed = await withPathLocks(sorted, () => adoptRows(sorted))
+  if (changed) bump()
+}
+
+async function adoptRows(paths: string[]): Promise<boolean> {
   // One transaction for the lot. Per-path reads were the whole cost here: a
   // round trip to IndexedDB is mostly the trip.
   const rows = await getFiles(paths)
@@ -316,7 +363,7 @@ async function adoptBatch(paths: string[]): Promise<void> {
     reindex(path)
     changed = true
   }
-  if (changed) bump()
+  return changed
 }
 
 /** True for anything under backstage/ — hidden from every UI surface. */
@@ -337,6 +384,24 @@ export function isTemplatePath(path: string): boolean {
 
 /* ------------------------------------------------------------------- index */
 
+/**
+ * Other names a note answers to. Read the same way tags are — a bare string is
+ * one alias, a list is several — because frontmatter somebody typed by hand is
+ * written both ways and neither is wrong.
+ */
+function aliasesIn(value: unknown): string[] {
+  const aliases: string[] = []
+  if (Array.isArray(value)) {
+    for (const a of value) {
+      const s = String(a).trim()
+      if (s) aliases.push(s)
+    }
+  } else if (typeof value === 'string' && value.trim()) {
+    aliases.push(value.trim())
+  }
+  return aliases
+}
+
 function buildEntry(f: VaultFile): NoteIndexEntry | undefined {
   if (f.kind !== 'note' || f.deleted) return undefined
   const text = f.text ?? ''
@@ -345,6 +410,8 @@ function buildEntry(f: VaultFile): NoteIndexEntry | undefined {
   const fmTags = fm.data.tags
   if (Array.isArray(fmTags)) for (const t of fmTags) tags.add(String(t).replace(/^#/, ''))
   else if (typeof fmTags === 'string' && fmTags) tags.add(fmTags.replace(/^#/, ''))
+
+  const aliases = aliasesIn(fm.data.aliases)
 
   const links: string[] = []
   const embeds: string[] = []
@@ -363,11 +430,12 @@ function buildEntry(f: VaultFile): NoteIndexEntry | undefined {
   for (const l of scanMdLinks(text)) {
     if (!l.embed) continue
     const [clean] = splitSizeFragment(l.url)
-    if (!/^[a-z]+:/i.test(clean)) embeds.push(decodeURI(clean))
+    if (!/^[a-z]+:/i.test(clean)) embeds.push(decodeLinkPath(clean))
   }
 
   const title = titleFromPath(f.path)
   const folder = dirname(f.path)
+  const event = eventFor(fm.data)
   const raw = scanTasks(text)
   /*
    * What the note says about itself, which every task on it inherits.
@@ -385,11 +453,25 @@ function buildEntry(f: VaultFile): NoteIndexEntry | undefined {
     excerpt: excerptOf(text, fm.bodyStart, fm.data),
     mtime: f.mtime,
     ctime: f.ctime,
-    calendarDate: calendarDateFor(f.path, fm.data, f.ctime),
+    /*
+     * An event is filed on the day it happens, whatever its name or when the
+     * file was made. `calendarDateFor` reads the name and the `date:` key and
+     * falls back to the file's own age, which is right for an ordinary note and
+     * wrong for a meeting: one written up on Saturday about Thursday belongs to
+     * Thursday, and its `start:` is the only thing that knows that.
+     *
+     * Taken off the parsed event rather than off the text, so the day the
+     * calendar marks is the same day the agenda lists it under — including for
+     * a zoned event, where the wall clock in its own zone and the day it lands
+     * on here are not always the same date.
+     */
+    calendarDate: event ? startOfDay(event.start) : calendarDateFor(f.path, fm.data, f.ctime),
     tags: [...tags],
     links,
     embeds,
     pinned: fm.data.pinned === true,
+    event,
+    aliases,
     hasTasks: raw.length > 0,
     tasks: raw.map((t) => ({
       id: `${f.path}:${t.line}`,
@@ -525,31 +607,41 @@ export const notes = computed<NoteIndexEntry[]>(() => {
 })
 
 /**
- * The notes that are your own material — `notes` without the templates.
+ * Every note that stands for itself — `notes` without the templates.
  *
  * A template is boilerplate for a note that does not exist yet, so counting it
  * as one makes the app answer questions about your work with data from a form:
  * a `- [ ]` waiting to be filled in becomes a task you owe somebody, a `#work`
  * describing future notes inflates the tag it is written in, and a Tag Folder
- * of everything tagged `#work` contains the template that says so.
+ * of everything tagged `#work` contains the template that says so. A `start:`
+ * in one would put a meeting that is not happening on the agenda.
  *
- * This is what every *roll-up* reads: tasks, tag counts, the calendar, Tag
- * Folder matches, backlinks, and the note list outside the Templates folder
- * itself. Things that look at one named thing keep using `notes` — searching
- * for `#meeting` and not finding the template that defines it would be worse
- * than finding it, browsing `Templates/` has to show them, wikilink
- * autocomplete may legitimately target one, and the orphan scan and rename
- * repointing MUST see them or an image only a template uses is reported
- * unused and a template's links break on a rename.
+ * Things that look at one named thing keep using `notes` — searching for
+ * `#meeting` and not finding the template that defines it would be worse than
+ * finding it, browsing `Templates/` has to show them, wikilink autocomplete may
+ * legitimately target one, and the orphan scan and rename repointing MUST see
+ * them or an image only a template uses is reported unused and a template's
+ * links break on a rename.
  *
  * The same array comes back when there are no templates, so a vault that never
  * made the folder pays nothing and every downstream memo keeps its identity.
  */
-export const contentNotes = computed<NoteIndexEntry[]>(() => {
+export const linkableNotes = computed<NoteIndexEntry[]>(() => {
   const all = notes.value
   const out = all.filter((e) => !isTemplatePath(e.path))
   return out.length === all.length ? all : out
 })
+
+/**
+ * The notes that are *your own material*.
+ *
+ * Every roll-up reads this. Today it is `linkableNotes` exactly — the only
+ * thing excluded is the templates, for the reasons above — and it is a separate
+ * memo rather than the same one because the two answer different questions and
+ * are going to stop agreeing: a note a program keeps up to date on your behalf
+ * is a note you can link to and search for, and is not work you did.
+ */
+export const contentNotes = computed<NoteIndexEntry[]>(() => linkableNotes.value)
 
 /** Non-note files the user can link to: images, PDFs, video, audio, etc. */
 export const attachments = computed(() => {
@@ -567,15 +659,101 @@ export const allTags = computed<Array<{ tag: string; count: number }>>(() => {
 })
 
 /** title (lowercased) -> path, for wikilink resolution. */
-export const titleIndex = computed(() => {
+/** What a name index is built from: where a note is, and what it answers to. */
+interface Named {
+  path: string
+  title: string
+  aliases: readonly string[]
+}
+
+/**
+ * Which of two notes a name means, when both have it: the one first by path.
+ *
+ * The list this was chosen from was once sorted by when each note was last
+ * *edited*, under a comment promising that the first writer won so link targets
+ * stayed stable — so `[[Name]]` meant whichever of `Work/Name` and `Home/Name`
+ * had been touched most recently, and editing either moved every such link in
+ * the vault to it.
+ *
+ * Creation time was tried next, and is the wrong clock for a synced vault: it
+ * is local. A note arriving by sync is dated by the remote's modified time on
+ * the day a device first sees it, so two devices could each be sure a
+ * different note was the older, and one link meant two notes. A path is the one
+ * thing every device already agrees on, compared as plain code units so no
+ * locale can reorder it.
+ *
+ * What a path costs is that a move, or a new note that sorts earlier, would
+ * change the answer. That is paid where it happens: `relocate` and `createNote`
+ * work out what every bare link would mean afterwards and write the path into
+ * any whose meaning would change — so which note a name means is decided the
+ * same way everywhere, and nothing done on one device quietly moves a link.
+ */
+function preferred(a: Named, b: Named): boolean {
+  return a.path < b.path
+}
+
+/**
+ * The name → note map, for any set of notes — the vault as it is, or as it
+ * will be once some files have moved.
+ */
+function buildTitleIndex(entries: Iterable<Named>): Map<string, string> {
+  const list = [...entries]
+  const held = new Map<string, Named>()
+  for (const e of list) {
+    const k = e.title.toLowerCase()
+    const other = held.get(k)
+    if (!other || preferred(e, other)) held.set(k, e)
+  }
+  /*
+   * Aliases afterwards, in a pass of their own, so that every note's real name
+   * is already claimed before any of them are offered.
+   *
+   * One pass would let a note whose `aliases:` happens to name *another* note
+   * take that name, purely by being the one the walk reached first — and the
+   * note it stole it from is the one with it written on the file. A name on
+   * disk beats a name in a list, always; among aliases the same order decides.
+   */
+  const byAlias = new Map<string, Named>()
+  for (const e of list) {
+    for (const a of e.aliases) {
+      const k = a.trim().toLowerCase()
+      if (!k || held.has(k)) continue
+      const other = byAlias.get(k)
+      if (!other || preferred(e, other)) byAlias.set(k, e)
+    }
+  }
   const m = new Map<string, string>()
+  for (const [k, e] of held) m.set(k, e.path)
+  for (const [k, e] of byAlias) m.set(k, e.path)
+  return m
+}
+
+export const titleIndex = computed(() => buildTitleIndex(notes.value))
+
+/** Titles more than one note has, lowercased. */
+export const sharedTitles = computed(() => {
+  const seen = new Set<string>()
+  const shared = new Set<string>()
   for (const e of notes.value) {
     const k = e.title.toLowerCase()
-    // First writer wins so link targets stay stable when titles collide.
-    if (!m.has(k)) m.set(k, e.path)
+    if (seen.has(k)) shared.add(k)
+    else seen.add(k)
   }
-  return m
+  return shared
 })
+
+/**
+ * What a new link to the note at `path` should say: its title, or — when
+ * another note has that title too — its path.
+ *
+ * A bare title two notes share means one of them by a rule (see `preferred`),
+ * and a link written by *picking* a note should mean that note whatever the
+ * rule says. `[[Work/Name]]` does, on every device and after any move.
+ */
+export function linkNameFor(path: string): string {
+  const title = titleFromPath(path)
+  return sharedTitles.value.has(title.toLowerCase()) ? path.replace(/\.md$/i, '') : title
+}
 
 export const pathSet = computed(() => {
   revision.value
@@ -615,6 +793,54 @@ export const notesByDay = computed(() => {
 })
 
 /**
+ * How many days an event is allowed to cover.
+ *
+ * A guard on the walk below rather than a rule about calendars. An `end:` typed
+ * with the wrong year is one file asking for four hundred thousand map entries,
+ * and a rail that never paints again; past this the event is filed on the day
+ * it starts and left alone.
+ */
+const MAX_EVENT_DAYS = 400
+
+/**
+ * date (local midnight ms) -> the events on that day, in the order they read.
+ *
+ * An event is on every day it covers, so a conference files under all four of
+ * its days rather than only the morning it opened. A timed event that ends
+ * exactly at midnight stops the night before: 21:00 to 00:00 is an evening, and
+ * putting it on tomorrow as well would be a meeting nobody is at.
+ *
+ * All-day first and then by start, which is the order a day is read in — the
+ * things that are true of the whole day, and then the day itself.
+ */
+export const eventsByDay = computed(() => {
+  const m = new Map<number, NoteIndexEntry[]>()
+  for (const e of linkableNotes.value) {
+    const ev = e.event
+    if (!ev) continue
+    const first = startOfDay(ev.start)
+    let last = startOfDay(ev.end)
+    // Midnight closes the day before it, unless that is the day it opened.
+    if (!ev.allDay && ev.end === last && last > first) last = addDays(last, -1)
+    for (let day = first, n = 0; day <= last && n < MAX_EVENT_DAYS; day = addDays(day, 1), n++) {
+      const arr = m.get(day)
+      if (arr) arr.push(e)
+      else m.set(day, [e])
+    }
+  }
+  for (const arr of m.values()) {
+    arr.sort((a, b) => {
+      const x = a.event!
+      const y = b.event!
+      if (x.allDay !== y.allDay) return x.allDay ? -1 : 1
+      if (x.start !== y.start) return x.start - y.start
+      return a.title.localeCompare(b.title)
+    })
+  }
+  return m
+})
+
+/**
  * date (local midnight ms) -> how many *open* tasks are due that day.
  *
  * What the calendar draws its second signal from. Open only, whatever the
@@ -630,12 +856,20 @@ export const openTasksByDueDay = computed(() => {
   return m
 })
 
-/** Reverse link map: path -> paths that link to it. */
+/**
+ * Reverse link map: path -> paths that link to it.
+ *
+ * Sources are `linkableNotes` rather than `contentNotes`, which is the one
+ * roll-up where that distinction matters. A note kept up to date by a program
+ * is not your material and has no business in a tag count or a task list — but
+ * the links *written in* it are still links, and dropping them would empty the
+ * mentions panel of exactly the note you wanted them on.
+ */
 export const backlinkMap = computed(() => {
   const titles = titleIndex.value
   const paths = pathSet.value
   const m = new Map<string, string[]>()
-  for (const e of contentNotes.value) {
+  for (const e of linkableNotes.value) {
     for (const target of e.links) {
       const resolved = resolveTarget(target, titles, paths)
       if (!resolved || resolved === e.path) continue
@@ -701,11 +935,7 @@ export const orphanFiles = computed<Set<string>>(() => {
   const claim = (ref: string, from: string) => {
     let clean = ref.trim()
     if (!clean || /^[a-z]+:/i.test(clean)) return
-    try {
-      clean = decodeURI(clean)
-    } catch {
-      // A half-encoded link is still a link; match it as written.
-    }
+    clean = decodeLinkPath(clean)
     ;[clean] = splitSizeFragment(clean)
     for (const c of [normPath(clean), joinPath(dirname(from), clean)]) {
       if (unused.delete(c)) return
@@ -739,6 +969,61 @@ export function getRaw(path: string): VaultFile | undefined {
   return files.get(path)
 }
 
+/**
+ * Whether a file that is actually there has `path` — what every "is this name
+ * taken" means.
+ *
+ * Not merely whether the path is in the map. Deleting or moving a file leaves a
+ * tombstone at the path it came from, the row that tells sync the remote copy
+ * has to go, and counting that as occupied gave a phantom counter everywhere a
+ * name was reused: a note dragged into a folder and straight back came home as
+ * `Retro 2`, renaming a note away and back did the same, and so did making a
+ * note again after deleting one of that name. Nothing called `Retro` was
+ * anywhere for it to have collided with. `restoreFromTrash` found this first
+ * and wrote the rule inline; it lives here now so every caller asks the same
+ * question.
+ */
+export function occupied(path: string): boolean {
+  const f = files.get(path)
+  return !!f && !f.deleted
+}
+
+/**
+ * The sync record a new file at `path` takes over from the tombstone there.
+ *
+ * Reusing a freed name writes a live file where a tombstone was, and the
+ * tombstone was not only "a file was here": it held what each remote last
+ * confirmed about this path — the base three-way merge starts from. A file
+ * written over it with no record looked, to the next sync, like one that had
+ * never been synced sitting beside a remote copy with different text — which is
+ * a conflict — so deleting a note and making another of the same name raised a
+ * conflict copy nobody had caused. With the record carried across, the new text
+ * is simply this path's next edit. A remote that really did change in the
+ * meantime still differs from the base, and still conflicts, as it should.
+ */
+/**
+ * The filename to try on the `n`th attempt when the file at `path` is going
+ * somewhere its name is taken — into another folder, or back out of the trash.
+ *
+ * An event's is made again rather than cut short — `nameAfterCollision` says
+ * why — reading the record from the file itself, since a note in the trash is
+ * not one the index lists. `file` is the name it is going by, which for a
+ * trashed file is not the one it is stored under.
+ */
+export function collisionNamesFor(path: string, file = basename(path)): (n: number) => string {
+  if (!/\.md$/i.test(file)) return (n) => numberedFile(file, n)
+  const text = files.get(path)?.text
+  const recorded = text ? eventFor(parseFrontmatter(text).data)?.title : undefined
+  const next = nameAfterCollision(file.slice(0, -'.md'.length), recorded)
+  return (n) => `${next(n)}.md`
+}
+
+function inheritedSync(path: string): Pick<VaultFile, 'sync' | 'folder'> {
+  const was = files.get(path)
+  if (!was?.deleted) return { sync: {}, folder: undefined }
+  return { sync: was.sync, folder: was.folder }
+}
+
 export function getText(path: string): string | undefined {
   return files.get(path)?.text
 }
@@ -754,7 +1039,7 @@ export function resolveLink(target: string): string | undefined {
 
 /** Resolve an embed reference relative to the note that contains it. */
 export function resolveEmbed(ref: string, fromPath: string): string | undefined {
-  const clean = decodeURI(ref.trim())
+  const clean = decodeLinkPath(ref.trim())
   if (!clean || /^[a-z]+:/i.test(clean)) return undefined
   const candidates = [
     normPath(clean),
@@ -775,7 +1060,12 @@ export async function initVault(): Promise<void> {
   files.clear()
   dirtyFiles = 0
   folderPendingFiles = 0
-  for (const f of rows) setFile(f.path, f)
+  loading = true
+  try {
+    for (const f of rows) setFile(f.path, f)
+  } finally {
+    loading = false
+  }
   loadDeviceRecords(rows)
   reindexAll()
   ready.value = true
@@ -794,10 +1084,46 @@ export async function initVault(): Promise<void> {
  * devices. That is the whole mechanism by which an edit made in Obsidian
  * reaches a phone.
  */
-export async function installFromRemote(list: VaultFile[]): Promise<void> {
+export async function installFromRemote(
+  list: VaultFile[],
+  /**
+   * Asked once more of each path, under its lock, immediately before anything is
+   * written: true means something has happened here since the rows were made —
+   * an edit saved while they were being downloaded, say — and nothing is
+   * installed. The engine checked before; this is the check that nothing can
+   * slip in behind.
+   */
+  changedSince?: (path: string) => boolean,
+): Promise<boolean> {
+  const paths = [...new Set(list.map((f) => f.path))].sort()
+  const plan = await withPathLocks(paths, async () => {
+    if (changedSince && paths.some(changedSince)) return false
+    return install(list)
+  })
+  if (plan === false) return false
+  if (plan) {
+    const incoming = new Set(paths)
+    await writePlanned(plan, (p) => !incoming.has(p), (p) => p)
+  }
+  return true
+}
+
+async function install(list: VaultFile[]): Promise<Plan | undefined> {
   // Device files first: a note pulled in the same batch can then be credited to
   // whoever pushed it, rather than to "somewhere else".
   loadDeviceRecords(list)
+  /*
+   * A note pulled in can take a name, or give one up — see `planChange`. One
+   * made or deleted here always pinned the links it would move; one made on
+   * another device did not, here: `[[Name]]` meant `Work/Name` until
+   * `Archive/Name` was pulled. Written after, and never to the pulled notes
+   * themselves, whose links were written by whoever wrote them, against a vault
+   * that already had them.
+   */
+  const plan = planChange({
+    arrivals: list,
+    departures: list.filter((f) => f.deleted).map((f) => f.path),
+  })
   for (const f of list) {
     if (f.kind === 'note') {
       await pushVersion({
@@ -814,6 +1140,7 @@ export async function installFromRemote(list: VaultFile[]): Promise<void> {
   await putFiles(list)
   for (const f of list) reindex(f.path)
   bump()
+  return plan
 }
 
 /**
@@ -848,26 +1175,35 @@ export async function markSynced(
   },
   slot: SyncSlot = 'cloud',
 ): Promise<void> {
-  const f = files.get(path)
-  if (!f) return
-  // Only clear `dirty` when the content that was pushed is still the current
-  // content. Otherwise the user typed during the upload and we'd drop the edit.
-  const stillCurrent = f.hash === patch.baseHash
-  const meta: SyncMeta = {
-    baseHash: patch.baseHash,
-    baseText: f.kind === 'note' ? patch.baseText : undefined,
-    remoteRev: patch.remoteRev,
-    remoteMtime: patch.remoteMtime,
-    lastSyncedAt: Date.now(),
-  }
-  const next: VaultFile =
-    slot === 'folder'
-      ? { ...f, folder: meta }
-      : { ...f, dirty: stillCurrent ? false : f.dirty, sync: meta }
-  // Durable before adopted, for the reason spelled out over `writeFile`.
-  await putFile(next)
-  setFile(path, next)
-  if (!stillCurrent) bump()
+  /*
+   * Under the file's lock, from the file as it is then, changing only the sync
+   * record. Made from a copy taken before the write, this put the whole copy
+   * back: an edit saved while the record was being written went, on screen and
+   * on disk, and the note was its last uploaded text again.
+   */
+  const stale = await withPathLock(path, async () => {
+    const f = files.get(path)
+    if (!f) return false
+    // Only clear `dirty` when the content that was pushed is still the current
+    // content. Otherwise the user typed during the upload and we'd drop the edit.
+    const stillCurrent = f.hash === patch.baseHash
+    const meta: SyncMeta = {
+      baseHash: patch.baseHash,
+      baseText: f.kind === 'note' ? patch.baseText : undefined,
+      remoteRev: patch.remoteRev,
+      remoteMtime: patch.remoteMtime,
+      lastSyncedAt: Date.now(),
+    }
+    const next: VaultFile =
+      slot === 'folder'
+        ? { ...f, folder: meta }
+        : { ...f, dirty: stillCurrent ? false : f.dirty, sync: meta }
+    // Durable before adopted, for the reason spelled out over `writeFile`.
+    await putFile(next)
+    setFile(path, next)
+    return !stillCurrent
+  })
+  if (stale) bump()
 }
 
 export function listAll(): VaultFile[] {
@@ -889,6 +1225,8 @@ export function listAll(): VaultFile[] {
  * agreeing, and the next keystroke tries again.
  */
 async function writeFile(f: VaultFile): Promise<void> {
+  // Checked before the database write, not only when adopting after it.
+  mustHold(f.path)
   await putFile(f)
   setFile(f.path, f)
 }
@@ -907,62 +1245,190 @@ export async function createNote(
   folder = '',
   title: string = UNTITLED,
   body = '',
+  /**
+   * The name to try on the `n`th attempt, for a caller whose names have to end
+   * in something. The default is the title, then the title with ` 2`, ` 3` — cut
+   * to leave room for the counter, which appending it to a name already at the
+   * limit did not. An event passes its own, because its date has to survive a
+   * collision too and a counter tacked on after this made it would cut it off.
+   */
+  nameFor: (n: number) => string = (n) => numberedSegment(safeSegment(title), n),
 ): Promise<string> {
   const dir = normPath(folder)
-  let name = safeSegment(title)
-  let path = joinPath(dir, `${name}.md`)
-  let n = 2
-  while (files.has(path)) {
-    name = `${safeSegment(title)} ${n++}`
-    path = joinPath(dir, `${name}.md`)
-  }
-  const now = Date.now()
   const text = body
-  const f: VaultFile = {
-    path,
-    kind: 'note',
-    text,
-    mime: 'text/markdown',
-    size: text.length,
-    hash: await hashText(text),
-    mtime: now,
-    ctime: now,
-    dirty: true,
-    sync: {},
-  }
-  await writeFile(f)
-  reindex(path)
-  bump()
+  const hash = await hashText(text)
+  /*
+   * A free name is chosen and taken in one step per folder. Two notes made at
+   * once — two quick adds, a template and a paste — both found `Same.md` free
+   * before either was written, and the second write replaced the first.
+   */
+  const { path, result: plan } = await claimPath(
+    dir,
+    (n) => joinPath(dir, `${nameFor(n)}.md`),
+    occupied,
+    async (path) => {
+      const now = Date.now()
+      const f: VaultFile = {
+        path,
+        kind: 'note',
+        text,
+        mime: 'text/markdown',
+        size: text.length,
+        hash,
+        mtime: now,
+        ctime: now,
+        dirty: true,
+        ...inheritedSync(path),
+      }
+      const plan = planChange({ arrivals: [f] })
+      await writeFile(f)
+      reindex(path)
+      bump()
+      return plan
+    },
+  )
+  if (plan) await writePlanned(plan, (p) => p !== path, (p) => p)
   return path
+}
+
+/**
+ * Choose a free path in `dir` — `candidate(1)`, then `candidate(2)`, … — and
+ * write it, as one step.
+ *
+ * The folder's lock keeps two new files from choosing the same name; the path's
+ * own lock, taken before looking again and writing, keeps out anything that
+ * writes to that path without choosing one — a sync pull landing `Same.md`, say,
+ * which a note made at that moment used to be written under and then replaced
+ * by. Found taken on that second look, the next name is tried.
+ */
+async function claimPath<T>(
+  dir: string,
+  candidate: (n: number) => string,
+  taken: (path: string) => boolean,
+  write: (path: string) => Promise<T>,
+): Promise<{ path: string; result: T }> {
+  return withPathLock(folderKey(dir), async () => {
+    for (let n = 1; ; n++) {
+      const path = candidate(n)
+      const busy = (p: string) => taken(p) || reservedPaths.has(p)
+      if (busy(path)) continue
+      const claimed = await withPathLock(path, async () =>
+        busy(path) ? undefined : { path, result: await write(path) },
+      )
+      if (claimed) return claimed
+    }
+  })
+}
+
+/** The lock for choosing a name in `dir` — kept apart from every file path's. */
+function folderKey(dir: string): string {
+  return `\u0000folder:${dir}`
 }
 
 /** Save note text. Called from the editor's debounced autosave. */
 export async function saveNote(path: string, text: string): Promise<void> {
-  const f = files.get(path)
-  if (!f) return
-  if (f.text === text) return
-  const hash = await hashText(text)
-  if (hash === f.hash) return
-  await pushVersion({
-    path,
-    at: Date.now(),
-    text: f.text ?? '',
-    hash: f.hash,
-    reason: 'edit',
-    device: localDeviceName(),
+  const plan = await withPathLock(path, async () => {
+    const f = files.get(path)
+    if (!f) return undefined
+    if (f.text === text) return undefined
+    const hash = await hashText(text)
+    if (hash === f.hash) return undefined
+    await pushVersion({
+      path,
+      at: Date.now(),
+      text: f.text ?? '',
+      hash: f.hash,
+      reason: 'edit',
+      device: localDeviceName(),
+    })
+    const next: VaultFile = {
+      ...files.get(path)!,
+      text,
+      hash,
+      size: text.length,
+      mtime: Date.now(),
+      dirty: true,
+      deleted: false,
+    }
+    /*
+     * An edit to `aliases:` can take a name from another note, or give one up —
+     * and so can a save that brings a deleted note back (the editor saving what
+     * it held as the note went), which is a note arriving like any other.
+     */
+    const renames = f.deleted || mayRename(f.text, text)
+    const plan = renames ? planChange({ arrivals: [next] }) : undefined
+    await writeFile(next)
+    reindex(path)
+    bump()
+    return plan
   })
-  const next: VaultFile = {
-    ...f,
-    text,
-    hash,
-    size: text.length,
-    mtime: Date.now(),
-    dirty: true,
-    deleted: false,
+  // Outside the lock: the plan takes other notes' locks, one at a time.
+  if (plan) await writePlanned(plan, (p) => p !== path, (p) => p)
+}
+
+/** Whether an edit could have changed the note's `aliases:` — cheaply, as this is every save. */
+function mayRename(before: string | undefined, after: string): boolean {
+  const fm = (t: string | undefined) => {
+    const end = t?.startsWith('---') ? t.indexOf('\n---', 3) : -1
+    return end < 0 ? '' : t!.slice(0, end)
   }
-  await writeFile(next)
-  reindex(path)
-  bump()
+  return fm(before) !== fm(after)
+}
+
+/**
+ * One writer at a time for each path.
+ *
+ * A save and a link rewrite for the same note each read it, work out the new
+ * text, and write — and interleaved, the second wrote over the first. The
+ * rewrite once held its results to persist as a batch at the end, so an edit
+ * saved to one note while another was being hashed stayed on screen and then
+ * went on reload, written over in the database by the batch's copy.
+ */
+const pathLocks = new Map<string, Promise<unknown>>()
+
+/** The paths whose lock is held right now. */
+const heldPaths = new Set<string>()
+
+/**
+ * Every change to a file's record is made holding that path's lock — `setFile`
+ * and `dropFile` check, and refuse. Each writer that skipped the lock was a way
+ * for two writes to one file to interleave, and each was found by losing an
+ * edit to it: a move, the sync stamp, settings, a pull, another window. Loading
+ * the vault at start-up is the one exception: nothing else is running.
+ */
+let loading = false
+
+function mustHold(path: string): void {
+  if (!loading && !heldPaths.has(path)) {
+    throw new Error(`Slate bug: ${path} changed without holding its lock.`)
+  }
+}
+
+/** Several paths' locks, taken in order so two holders can never wait on each other. */
+async function withPathLocks<T>(paths: readonly string[], fn: () => Promise<T>): Promise<T> {
+  if (!paths.length) return fn()
+  const [first, ...rest] = paths
+  return withPathLock(first, () => withPathLocks(rest, fn))
+}
+
+async function withPathLock<T>(path: string, fn: () => Promise<T>): Promise<T> {
+  const before = pathLocks.get(path) ?? Promise.resolve()
+  const mine = before
+    .catch(() => undefined)
+    .then(async () => {
+      heldPaths.add(path)
+      try {
+        return await fn()
+      } finally {
+        heldPaths.delete(path)
+      }
+    })
+  pathLocks.set(path, mine)
+  try {
+    return await mine
+  } finally {
+    if (pathLocks.get(path) === mine) pathLocks.delete(path)
+  }
 }
 
 /**
@@ -972,16 +1438,99 @@ export async function saveNote(path: string, text: string): Promise<void> {
 export async function renameNote(path: string, newTitle: string): Promise<string> {
   const f = files.get(path)
   if (!f || f.kind !== 'note') return path
-  const oldTitle = titleFromPath(path)
   const clean = safeSegment(newTitle)
-  if (!clean || clean === oldTitle) return path
+  if (!clean || clean === titleFromPath(path)) return path
   let next = joinPath(dirname(path), `${clean}.md`)
   let n = 2
-  while (files.has(next) && next !== path) next = joinPath(dirname(path), `${clean} ${n++}.md`)
+  while (occupied(next) && next !== path) {
+    next = joinPath(dirname(path), `${numberedSegment(clean, n++)}.md`)
+  }
 
-  await movePath(path, next)
-  await rewriteLinksTo(oldTitle, clean)
+  await relocateNote(path, next)
   return next
+}
+
+/**
+ * Move files, taking every reference to them along — the one way anything in
+ * the vault is renamed or moved: a note, an attachment, a note into a folder,
+ * a whole folder.
+ *
+ * Built as one map of every move and one pass over every note, which a folder
+ * needs: renaming `Projects/Alpha` moved its notes and rewrote nothing, so
+ * `[[Projects/Alpha/Note]]` pointed at nothing while the note sat at
+ * `Projects/Beta/Note.md`. Which references are affected is decided before
+ * anything moves, against the vault as it stands — see `planReferences`.
+ *
+ * Nothing is rewritten until every move has been made. Rewritten first, a
+ * rename onto a name something else took in the meantime — a new note, a sync
+ * pull — failed at the move and left every `[[A]]` reading `[[B]]`, the other
+ * note. So the destinations are held (`reservedPaths`) against new files for
+ * the whole of it, a move that fails anyway puts back the ones already made,
+ * and only then are references rewritten: those in notes that stayed at their
+ * own paths, those in notes that moved at their new ones.
+ *
+ * Moved notes are rewritten *after* moving for a reason of their own. Rewritten
+ * first, a note that linked to itself changed its text
+ * on the way out, so the tombstone left behind recorded the rewritten text's
+ * hash — and the editor, which saves the buffer it still holds for the old path
+ * once more as a rename lands, saved text whose hash no longer matched. A save
+ * that does not match a tombstone resurrects it: the note came back under its
+ * old name, on this device and every other. Moved with its text untouched, the
+ * tombstone matches that save and it does nothing.
+ */
+export async function relocate(moves: ReadonlyMap<string, string>): Promise<void> {
+  if (!moves.size) return
+  checkMoves(moves)
+  const plan = planReferences({ moves })
+  const landing = [...moves].filter(([from, to]) => from !== to).map(([, to]) => to)
+  for (const to of landing) reservedPaths.add(to)
+  try {
+    const made: Array<[string, string]> = []
+    try {
+      // Deepest first, so a parent's move cannot take a child's source out from under it.
+      for (const [from, to] of [...moves].sort((a, b) => b[0].length - a[0].length)) {
+        await movePath(from, to)
+        made.push([from, to])
+      }
+    } catch (e) {
+      for (const [from, to] of made.reverse()) await movePath(to, from).catch(() => undefined)
+      throw e
+    }
+  } finally {
+    for (const to of landing) reservedPaths.delete(to)
+  }
+  await writePlanned(plan, () => true, (path) => moves.get(path) ?? path)
+}
+
+/**
+ * Paths a move in progress is going to — not files yet, but not free either.
+ * A new note or attachment choosing a name passes over them.
+ */
+const reservedPaths = new Set<string>()
+
+/**
+ * Refuse a set of moves that could not all land, before any of them is made.
+ *
+ * `movePath` refuses a taken path too, but one at a time: a folder moved onto
+ * one that already held an attachment of the same name had its links rewritten
+ * and some of its notes moved before the one that collided threw, and was left
+ * half in each place. Checked here, as a whole, nothing is touched unless every
+ * file has somewhere to go.
+ */
+function checkMoves(moves: ReadonlyMap<string, string>): void {
+  const landing = new Set<string>()
+  for (const [from, to] of moves) {
+    if (from === to) continue
+    if (landing.has(to) || occupied(to) || reservedPaths.has(to)) {
+      throw new Error(`"${to}" already exists.`)
+    }
+    landing.add(to)
+  }
+}
+
+/** Move one note to `to`, taking every reference to it along. */
+export async function relocateNote(from: string, to: string): Promise<void> {
+  await relocate(new Map([[from, to]]))
 }
 
 /**
@@ -1002,61 +1551,455 @@ export function onPathMoved(fn: (from: string, to: string) => void | Promise<voi
   return () => moveListeners.delete(fn)
 }
 
+/**
+ * Which note is which, for this session — a number that goes where the note
+ * goes, and is never given to another.
+ *
+ * For whatever holds on to a note across a wait: a question sent to a model
+ * with `A.md` in it can come back after `A` was renamed `B` and a new `A` made.
+ * A path cannot tell those apart; this can. Numbered on first asking, carried
+ * by every move (the trash and back included), and dropped when the file goes.
+ */
+let nextNoteId = 1
+const idAt = new Map<string, number>()
+const pathOfId = new Map<number, string>()
+
+/** The note at `path`, as something that stays that note. Nothing if there is none. */
+export function noteId(path: string): number | undefined {
+  const f = files.get(path)
+  if (!f || f.deleted) return undefined
+  let id = idAt.get(path)
+  if (id === undefined) {
+    id = nextNoteId++
+    idAt.set(path, id)
+    pathOfId.set(id, path)
+  }
+  return id
+}
+
+/** Where the note `noteId` gave `id` to is now — nothing if it has gone. */
+export function notePath(id: number): string | undefined {
+  const at = pathOfId.get(id)
+  return at && getEntry(at) && !isHidden(at) ? at : undefined
+}
+
+function dropId(path: string): void {
+  const id = idAt.get(path)
+  if (id === undefined) return
+  idAt.delete(path)
+  pathOfId.delete(id)
+}
+
+function carryId(from: string, to: string): void {
+  dropId(to)
+  const id = idAt.get(from)
+  if (id === undefined) return
+  idAt.delete(from)
+  idAt.set(to, id)
+  pathOfId.set(id, to)
+}
+
 /** Move a file to a new path, preserving history and sync bookkeeping. */
 export async function movePath(from: string, to: string): Promise<void> {
+  if (from === to) return
+  /*
+   * Both paths locked, in one order, and the source read under them: read
+   * before, a save still being made to it finished after the copy was taken,
+   * so the note arrived without it and the edited source was then deleted.
+   */
+  const moved = await withPathLocks([from, to].sort(), () => moveHeld(from, to))
+  if (!moved) return
+  indexMap.delete(from)
+  dropFromSearchIndex(from)
+  releaseUrl(from)
+  reindex(to)
+  bump()
+  for (const fn of moveListeners) await fn(from, to)
+}
+
+async function moveHeld(from: string, to: string): Promise<boolean> {
   const f = files.get(from)
-  if (!f || from === to) return
+  if (!f) return false
+  /*
+   * Never onto a file that is there. This wrote the moved file over whatever
+   * held the path, and `moveNoteToFolder` never looked first — so dragging
+   * `Home/Foo` into a `Work/` that had a `Foo` of its own replaced it, and the
+   * next sync carried the loss to every other device. Every caller now finds a
+   * free name before it gets here; this is so the next one to forget fails
+   * loudly instead of deleting a note. A tombstone is not in the way: it is the
+   * record of a file that has gone, and `restoreFromTrash` writes over one on
+   * purpose.
+   */
+  if (occupied(to)) throw new Error(`Cannot move ${from}: ${to} already exists.`)
   // A move is a delete + create as far as any target is concerned, so the old
-  // path gets a tombstone and the new one starts fresh and owed to both.
+  // path gets a tombstone and the new one is owed to both — starting from the
+  // record of whatever was last at that path, if anything was.
   const now = Date.now()
   const moved: VaultFile = {
     ...f,
     path: to,
     mtime: now,
     dirty: true,
-    sync: {},
-    folder: undefined,
+    ...inheritedSync(to),
+  }
+  /*
+   * Everything durable first, and only then believed — see `writeFile`. The
+   * destination was once adopted before it was written, so a write that failed
+   * left a `B.md` in memory that was nowhere on disk, in the way of a retry.
+   * Should a later step fail, what was written is put back as it was.
+   */
+  const was = files.get(to)
+  const gone = tombstoneOf(f)
+  await putFile(moved)
+  // Told before the source's tombstone is, so another window moves the note's
+  // identity to the new path rather than dropping it with the old one.
+  onMove?.(from, to)
+  try {
+    await renameVersions(from, to)
+    await putFile(gone)
+  } catch (e) {
+    await renameVersions(to, from).catch(() => undefined)
+    if (was) await putFile(was)
+    else await deleteFileRow(to)
+    onMove?.(to, from)
+    throw e
   }
   setFile(to, moved)
-  await putFile(moved)
-  await renameVersions(from, to)
-  await tombstone(from)
-  reindex(to)
-  bump()
-  for (const fn of moveListeners) await fn(from, to)
+  carryId(from, to)
+  setFile(from, gone)
+  return true
 }
 
-async function rewriteLinksTo(oldTitle: string, newTitle: string): Promise<void> {
-  const lower = oldTitle.toLowerCase()
-  const touched: VaultFile[] = []
+interface Rewrite {
+  from: number
+  to: number
+  insert: string
+}
+
+interface Planned {
+  /** The text the plan was made from — written over only if it still is. */
+  was: string
+  text: string
+}
+
+/**
+ * Anything that changes which note a name or path leads to: files moving, notes
+ * arriving or taking new names (an arrival at a path already held is that note
+ * with its new `aliases:`), and notes going.
+ */
+interface Change {
+  moves?: ReadonlyMap<string, string>
+  arrivals?: readonly Named[]
+  departures?: ReadonlySet<string>
+}
+
+/** The vault as it will be after `change`: what each name will mean, which paths there will be. */
+function afterState(change: Change) {
+  const moves = change.moves ?? new Map<string, string>()
+  const moved = (path: string) => moves.get(path) ?? path
+  const arrivals = change.arrivals ?? []
+  const gone = change.departures ?? new Set<string>()
+  const arriving = new Set(arrivals.map((a) => a.path))
+  const later: Named[] = notes.value
+    .filter((e) => !arriving.has(e.path) && !gone.has(e.path))
+    .map((e) => ({ path: moved(e.path), title: titleFromPath(moved(e.path)), aliases: e.aliases }))
+  later.push(...arrivals)
+  const paths = new Set([...pathSet.value].filter((p) => !gone.has(p)).map(moved))
+  for (const a of arrivals) paths.add(a.path)
+  return { later, titles: buildTitleIndex(later), paths }
+}
+
+/** A note's names, lowercased: its title and its aliases. */
+function namesOf(path: string, aliases: readonly string[]): Set<string> {
+  return new Set([titleFromPath(path), ...aliases].map((n) => n.trim().toLowerCase()))
+}
+
+/** A note as the name index sees it. */
+function named(f: VaultFile): Named {
+  return {
+    path: f.path,
+    title: titleFromPath(f.path),
+    aliases: aliasesIn(parseFrontmatter(f.text ?? '').data.aliases),
+  }
+}
+
+/**
+ * The plan that keeps every link meaning what it does through `change` — or
+ * nothing, when no name would change hands.
+ *
+ * One rule for everything that is not a move (`relocate` plans those itself):
+ * a link that leads to one note now and would lead to a *different* note
+ * afterwards is written as the path of the note it leads to now. A note made
+ * or pulled in that sorts first would take a shared name; one deleted would
+ * hand its name to the next; an alias added would take links from a note
+ * later by path, and an alias removed would hand its links to the next note
+ * with it. A link that would lead nowhere afterwards is left as it is.
+ *
+ * Checked cheaply first, since this is on the path of every save, pull and
+ * delete: only when some name the change touches is one the index hands out
+ * is the vault's name index rebuilt to compare, and only when that shows a
+ * name changing hands are the notes read.
+ */
+function planChange(change: {
+  arrivals?: readonly VaultFile[]
+  departures?: readonly string[]
+}): Plan | undefined {
+  const index = titleIndex.value
+  const arrivals = (change.arrivals ?? [])
+    .filter((f) => f.kind === 'note' && !f.deleted && !isHidden(f.path))
+    .map(named)
+  const departures = new Set(
+    (change.departures ?? []).filter((p) => !isHidden(p) && getEntry(p) !== undefined),
+  )
+  let touches = false
+  for (const a of arrivals) {
+    const had = getEntry(a.path)
+    const now = namesOf(a.path, a.aliases)
+    const was = had ? namesOf(a.path, had.aliases) : new Set<string>()
+    for (const k of now) if (!was.has(k) && index.has(k) && index.get(k) !== a.path) touches = true
+    for (const k of was) if (!now.has(k) && index.get(k) === a.path) touches = true
+  }
+  for (const p of departures) {
+    for (const k of namesOf(p, getEntry(p)!.aliases)) if (index.get(k) === p) touches = true
+  }
+  if (!touches) return undefined
+  const full: Change = { arrivals, departures }
+  const after = afterState(full)
+  for (const [k, p] of index) {
+    const q = after.titles.get(k)
+    if (q !== undefined && q !== p) return planReferences(full, after)
+  }
+  return undefined
+}
+
+interface Plan {
+  notes: Map<string, Planned>
+  /**
+   * The same rewrite, for a note's text as it is now — decided against the
+   * vault as it was when the plan was made, so a note edited while the plan
+   * was being written can be planned again rather than skipped or overwritten.
+   */
+  rewrite: (path: string, text: string) => string | undefined
+}
+
+/**
+ * The text every note should have once `moves` has happened, for the notes in
+ * which a reference changes. Decided before anything moves, against the vault
+ * as it stands, which is the only time the old paths still resolve.
+ *
+ * Which references are affected is decided by *resolving* them, not by
+ * comparing their text with the old name — which was once the whole of the
+ * rule, and wrong both ways. Renaming a note onto a name already taken sends it
+ * to `Foo 2.md` while its links were rewritten to `[[Foo]]`, the note that was
+ * already there; and of two notes both called `A`, `[[A]]` can only mean one,
+ * yet renaming the *other* rewrote it too.
+ *
+ * Each is rewritten in the shape it was written in, so a rename does not change
+ * how somebody chose to link:
+ *
+ *  - **A path from the vault root** stays one, with or without its `.md`, and
+ *    changes only if the file moved.
+ *  - **A path relative to the note** stays relative — worked out again from
+ *    wherever the note now is, so a note moved to another folder does not point
+ *    its `![](img.png)` at a file that is not there. Nothing it could name from
+ *    there, it becomes a path from the root.
+ *  - **A name alone** — a note's title, a file's name — changes only if the name
+ *    did. A new title another note already has is written as a path: `[[B]]`
+ *    would mean whichever of the two the index prefers, and a path cannot land
+ *    on the wrong note.
+ *  - **A link that arrived through `aliases:`** is left as it is, since the alias
+ *    is written in the note and goes where the note goes.
+ *  - **Any link by name that would mean a different note afterwards** — a title
+ *    two notes share goes to the first by path, so a move, or a note arriving
+ *    in `arrivals`, can hand it over — is written as the path of the note it
+ *    meant, whether or not that note is one of the ones moving.
+ *
+ * Headings, display text and embeds come through unchanged; a markdown link's
+ * width suffix too.
+ */
+function planReferences(change: Change, after = afterState(change)): Plan {
+  const titles = titleIndex.value
+  const paths = pathSet.value
+  const moves = change.moves ?? new Map<string, string>()
+  const moved = (path: string) => moves.get(path) ?? path
+  const { later, titles: titlesAfter, paths: pathsAfter } = after
+
+  /* How many notes will have each title, once everything has moved. */
+  const titleCount = new Map<string, number>()
+  for (const e of later) {
+    const t = e.title.toLowerCase()
+    titleCount.set(t, (titleCount.get(t) ?? 0) + 1)
+  }
+  const nameFor = (to: string) =>
+    (titleCount.get(titleFromPath(to).toLowerCase()) ?? 0) > 1
+      ? to.replace(/\.md$/i, '')
+      : titleFromPath(to)
+
+  /** A file named by its path, from the root or from the note, or by its name. */
+  const retargetFile = (ref: string, notePath: string, newDir: string): string | undefined => {
+    const bare = ref.trim()
+    if (!bare) return undefined
+    const fromRoot = normPath(bare)
+    if (paths.has(fromRoot)) {
+      const to = moved(fromRoot)
+      return to === fromRoot ? undefined : to
+    }
+    const oldDir = dirname(notePath)
+    const fromNote = joinPath(oldDir, bare)
+    if (oldDir && paths.has(fromNote)) {
+      const to = moved(fromNote)
+      const again = newDir && to.startsWith(`${newDir}/`) ? to.slice(newDir.length + 1) : to
+      return again === bare ? undefined : again
+    }
+    const found = resolveEmbed(bare, notePath)
+    if (found && basename(bare).toLowerCase() === basename(found).toLowerCase()) {
+      const to = moved(found)
+      return basename(to) === basename(found) ? undefined : basename(to)
+    }
+    return undefined
+  }
+
+  /** Where a wikilink should point: a note by path or name, or a file. */
+  const retargetWiki = (l: WikiLink, notePath: string, newDir: string): string | undefined => {
+    const t = l.target.trim()
+    // `[[#Heading]]` is this note, wherever it goes.
+    if (!t) return undefined
+    const at = resolveTarget(t, titles, paths)
+    if (!at) return retargetFile(t, notePath, newDir)
+    return retargetNote(t, at)
+  }
+
+  /** Where a name or path that leads to the note at `at` should lead instead. */
+  const retargetNote = (t: string, at: string): string | undefined => {
+    const to = moved(at)
+    const np = normPath(t)
+    if (np === at) return to === at ? undefined : to
+    // A path without `.md` — but at the root that is the title too, so it is read as one.
+    if (`${np}.md` === at && np.includes('/')) {
+      return to === at ? undefined : to.replace(/\.md$/i, '')
+    }
+    // Reached by name — the note's title, or one of its `aliases:`.
+    const byTitle = t.toLowerCase() === titleFromPath(at).toLowerCase()
+    if (byTitle && titleFromPath(to) !== titleFromPath(at)) return nameFor(to)
+    /*
+     * Still the same note afterwards, or pinned to it by its path. A name two
+     * notes share means the first by path, so a move — of this note or another
+     * — or a new note can hand it to a different one; wherever that would
+     * happen the link is written as the path of the note it meant.
+     */
+    const then = resolveTarget(t, titlesAfter, pathsAfter)
+    // Leading nowhere afterwards is not leading somewhere else: that is left be.
+    if (then === undefined || then === to) return undefined
+    /*
+     * At the root a note's path without `.md` is its title, which leads to the
+     * next note of that name once this one has gone; with it, only this one.
+     */
+    return to.includes('/') ? to.replace(/\.md$/i, '') : to
+  }
+
+  const rewrite = (path: string, was: string): string | undefined => {
+    const newDir = dirname(moved(path))
+    const regions = codeRegions(was)
+    const edits: Rewrite[] = []
+    for (const l of scanWikiLinks(was, regions)) {
+      const target = retargetWiki(l, path, newDir)
+      if (target === undefined) continue
+      /*
+       * Through the one writer the syntax has. Renamed to `C# Notes`, a link
+       * written out by hand as `[[C# Notes]]` is the note `C` and its heading
+       * `Notes`, so every link to the note pointed somewhere else afterwards.
+       */
+      const insert = formatWikiLink({ target, anchor: l.anchor, alias: l.alias, embed: l.embed })
+      edits.push({ from: l.from, to: l.to, insert })
+    }
+    /*
+     * A conversation's scope names a note too — `source: "links:Work/Name"` —
+     * and is kept pointing at it the same way a link is.
+     */
+    const scope = /^source:.*$/m.exec(was.startsWith('---') ? was : '')
+    const fm = scope ? parseFrontmatter(was) : undefined
+    const rule = fm && typeof fm.data.source === 'string' ? noteScope(fm.data.source) : undefined
+    if (scope && fm && rule && scope.index < fm.bodyStart) {
+      const at = resolveTarget(rule.title, titles, paths)
+      const target = at && retargetNote(rule.title, at)
+      if (target) {
+        const insert = `source: ${quoteRule(noteScopeRule(rule.kind, target))}`
+        edits.push({ from: scope.index, to: scope.index + scope[0].length, insert })
+      }
+    }
+    for (const l of scanMdLinks(was, regions)) {
+      const url = l.url.trim()
+      if (!url || /^[a-z]+:/i.test(url)) continue
+      const [bare] = splitSizeFragment(decodeLinkPath(url))
+      const [, width] = splitSizeFragment(l.url)
+      const next = retargetFile(bare, path, newDir)
+      if (next === undefined) continue
+      // Encoded the way every address is — see `encodeLinkPath`.
+      edits.push({
+        from: l.urlFrom,
+        to: l.urlTo,
+        insert: encodeLinkPath(next) + (width ? `#w=${width}` : ''),
+      })
+    }
+    if (!edits.length) return undefined
+    // Right to left, so earlier offsets stay valid.
+    let text = was
+    for (const ed of edits.sort((a, b) => b.from - a.from)) {
+      text = `${text.slice(0, ed.from)}${ed.insert}${text.slice(ed.to)}`
+    }
+    return text
+  }
+
+  const planned = new Map<string, Planned>()
   for (const f of files.values()) {
     if (f.kind !== 'note' || f.deleted || !f.text) continue
-    const links = scanWikiLinks(f.text)
-    const hits = links.filter((l) => l.target.toLowerCase() === lower)
-    if (!hits.length) continue
-    let text = f.text
-    // Apply right-to-left so earlier offsets stay valid.
-    for (const l of hits.reverse()) {
-      const inner = [newTitle, l.anchor ? `#${l.anchor}` : '', l.alias !== undefined ? `|${l.alias}` : '']
-        .join('')
-      text = `${text.slice(0, l.from)}${l.embed ? '!' : ''}[[${inner}]]${text.slice(l.to)}`
-    }
-    const next: VaultFile = {
-      ...f,
-      text,
-      hash: await hashText(text),
-      size: text.length,
-      mtime: Date.now(),
-      dirty: true,
-    }
-    setFile(f.path, next)
-    touched.push(next)
+    const text = rewrite(f.path, f.text)
+    if (text !== undefined) planned.set(f.path, { was: f.text, text })
   }
-  if (touched.length) {
-    await putFiles(touched)
-    for (const f of touched) reindex(f.path)
-    bump()
+  return { notes: planned, rewrite }
+}
+
+/**
+ * Write the planned texts of the notes `which` picks, at the path `where` says
+ * each now has — over the text the plan was made from, and nothing else.
+ *
+ * The check comes after the last `await` and before the write, with nothing in
+ * between. It came before hashing once, so an edit saved while the hash was
+ * being worked out was checked for too early and then written over: `see [[A]]
+ * plus my edit` became `see [[B]]`. A note that has changed is planned again from
+ * what it says now, so it keeps both the edit and the rewrite.
+ */
+async function writePlanned(
+  plan: Plan,
+  which: (path: string) => boolean,
+  where: (path: string) => string,
+): Promise<void> {
+  let wrote = false
+  for (const [path, first] of plan.notes) {
+    if (!which(path)) continue
+    const at = where(path)
+    let { was, text } = first
+    // Bounded, so a note being rewritten continuously cannot hold this forever.
+    for (let tries = 0; tries < 8; tries++) {
+      const hash = await hashText(text)
+      // Checked, written and made durable under the note's lock, one note at a time.
+      const done = await withPathLock(at, async () => {
+        const f = files.get(at)
+        if (!f || f.deleted) return true
+        if (f.text !== was) return false
+        await writeFile({ ...f, text, hash, size: text.length, mtime: Date.now(), dirty: true })
+        reindex(at)
+        wrote = true
+        return true
+      })
+      if (done) break
+      was = files.get(at)?.text ?? ''
+      const again = plan.rewrite(path, was)
+      if (again === undefined) break
+      text = again
+    }
   }
+  if (wrote) bump()
 }
 
 /**
@@ -1082,92 +2025,11 @@ export async function renameAttachment(path: string, newName: string): Promise<s
 
   let dest = joinPath(dir, name)
   let n = 2
-  while (files.has(dest) && dest !== path) {
-    const dot = name.lastIndexOf('.')
-    dest = joinPath(dir, dot > 0 ? `${name.slice(0, dot)} ${n++}${name.slice(dot)}` : `${name} ${n++}`)
-  }
+  while (occupied(dest) && dest !== path) dest = joinPath(dir, numberedFile(name, n++))
   if (dest === path) return path
 
-  // Rewrite while the old file is still in place, so references still resolve.
-  await repointReferences(path, dest)
-  await movePath(path, dest)
+  await relocate(new Map([[path, dest]]))
   return dest
-}
-
-/** Rewrite every reference to `from` so it points at `to`. */
-async function repointReferences(from: string, to: string): Promise<void> {
-  const touched: VaultFile[] = []
-
-  for (const e of notes.value) {
-    const f = files.get(e.path)
-    if (!f?.text) continue
-    const regions = codeRegions(f.text)
-    interface Rewrite {
-      from: number
-      to: number
-      insert: string
-    }
-    const edits: Rewrite[] = []
-
-    /** The new reference, written the way the old one was. */
-    const reshape = (ref: string): string | undefined => {
-      let clean = ref.trim()
-      if (!clean || /^[a-z]+:/i.test(clean)) return undefined
-      let decoded = clean
-      try {
-        decoded = decodeURI(clean)
-      } catch {
-        /* a half-encoded link is matched as written */
-      }
-      const [bare] = splitSizeFragment(decoded)
-      if (normPath(bare) === from) return to
-      const noteDir = dirname(e.path)
-      if (noteDir && joinPath(noteDir, bare) === from) {
-        return to.startsWith(`${noteDir}/`) ? to.slice(noteDir.length + 1) : to
-      }
-      if (basename(bare).toLowerCase() === basename(from).toLowerCase() && resolveEmbed(bare, e.path) === from)
-        return basename(to)
-      return undefined
-    }
-
-    for (const l of scanWikiLinks(f.text, regions)) {
-      const next = reshape(l.target)
-      if (next === undefined) continue
-      const inner = [next, l.anchor ? `#${l.anchor}` : '', l.alias !== undefined ? `|${l.alias}` : ''].join('')
-      edits.push({ from: l.from, to: l.to, insert: `${l.embed ? '!' : ''}[[${inner}]]` })
-    }
-    for (const l of scanMdLinks(f.text, regions)) {
-      const [, width] = splitSizeFragment(l.url)
-      const next = reshape(l.url)
-      if (next === undefined) continue
-      // Spaces have to be encoded or the parens close the link early.
-      const url = encodeURI(next) + (width ? `#w=${width}` : '')
-      edits.push({ from: l.urlFrom, to: l.urlTo, insert: url })
-    }
-    if (!edits.length) continue
-
-    // Right to left, so earlier offsets stay valid.
-    let text = f.text
-    for (const ed of edits.sort((a, b) => b.from - a.from)) {
-      text = `${text.slice(0, ed.from)}${ed.insert}${text.slice(ed.to)}`
-    }
-    const next: VaultFile = {
-      ...f,
-      text,
-      hash: await hashText(text),
-      size: text.length,
-      mtime: Date.now(),
-      dirty: true,
-    }
-    setFile(f.path, next)
-    touched.push(next)
-  }
-
-  if (touched.length) {
-    await putFiles(touched)
-    for (const f of touched) reindex(f.path)
-    bump()
-  }
 }
 
 /**
@@ -1192,13 +2054,20 @@ export async function deleteNote(path: string): Promise<void> {
   let dest = joinPath(TRASH, `${stamp}--${basename(path)}`)
   let n = 2
   while (files.has(dest)) dest = joinPath(TRASH, `${stamp}--${n++}--${basename(path)}`)
+  // Its links stay its own: a name it shared goes to the next note, and they must not.
+  const plan = planChange({ departures: [path] })
   await movePath(path, dest)
+  if (plan) await writePlanned(plan, () => true, (p) => p)
 }
 
 export async function restoreFromTrash(trashPath: string, to?: string): Promise<string> {
   const name = trashDisplayName(trashPath)
-  let dest = to ?? name
+  const target = to ?? name
+  let dest = target
   let n = 2
+  // Counted in the folder it is going back to, which a counter built from the
+  // bare name dropped — and inside the length budget, which it ran past.
+  const nameFor = collisionNamesFor(trashPath, basename(target))
   /*
    * Only a file that is actually there counts as being in the way. Deleting
    * something leaves a tombstone at the path it came from — the row that tells
@@ -1206,11 +2075,12 @@ export async function restoreFromTrash(trashPath: string, to?: string): Promise<
    * note deleted and restored came back as "Note 2", every time, with nothing
    * called "Note" anywhere for it to have collided with.
    */
-  while (files.has(dest) && !files.get(dest)!.deleted) {
-    const dot = name.lastIndexOf('.')
-    dest = dot > 0 ? `${name.slice(0, dot)} ${n++}${name.slice(dot)}` : `${name} ${n++}`
-  }
+  while (occupied(dest)) dest = joinPath(dirname(target), nameFor(n++))
+  const f = files.get(trashPath)
+  // Back under a name another note may have now — see `planChange`.
+  const plan = f && planChange({ arrivals: [{ ...f, path: dest }] })
   await movePath(trashPath, dest)
+  if (plan) await writePlanned(plan, (p) => p !== dest, (p) => p)
   return dest
 }
 
@@ -1295,26 +2165,39 @@ export async function emptyTrash(): Promise<number> {
  * remote has dropped it too, which is what stops a delete from bouncing back.
  */
 export async function tombstone(path: string): Promise<void> {
+  const done = await withPathLock(path, () => tombstoneHeld(path))
+  if (!done) return
+  indexMap.delete(path)
+  dropFromSearchIndex(path)
+  releaseUrl(path)
+  bump()
+}
+
+/** `tombstone`, for a caller already holding the path's lock. */
+async function tombstoneHeld(path: string): Promise<boolean> {
   const f = files.get(path)
-  if (!f) return
-  const next: VaultFile = {
+  if (!f) return false
+  const next = tombstoneOf(f)
+  // Durable before adopted, for the reason spelled out over `writeFile`: a
+  // tombstone only in memory is a note that comes back on the next reload.
+  await putFile(next)
+  setFile(path, next)
+  return true
+}
+
+/** The record a file leaves behind at its path when it goes. */
+function tombstoneOf(f: VaultFile): VaultFile {
+  const now = Date.now()
+  return {
     ...f,
     text: undefined,
     blob: undefined,
     size: 0,
     deleted: true,
-    deletedAt: Date.now(),
-    mtime: Date.now(),
+    deletedAt: now,
+    mtime: now,
     dirty: true,
   }
-  // Durable before adopted, for the reason spelled out over `writeFile`: a
-  // tombstone only in memory is a note that comes back on the next reload.
-  await putFile(next)
-  setFile(path, next)
-  indexMap.delete(path)
-  dropFromSearchIndex(path)
-  releaseUrl(path)
-  bump()
 }
 
 /**
@@ -1328,26 +2211,33 @@ export async function tombstone(path: string): Promise<void> {
  * and pull it straight back into the vault.
  */
 export async function forget(path: string, slot: SyncSlot = 'cloud'): Promise<void> {
-  const f = files.get(path)
-  const cleared: VaultFile | undefined = f
-    ? slot === 'folder'
-      ? { ...f, folder: undefined }
-      : { ...f, dirty: false, sync: {} }
-    : undefined
+  const plan = await withPathLock(path, async () => {
+    const f = files.get(path)
+    // An edit beats a delete: one saved since the engine decided is kept.
+    if (f && !f.deleted && pendingFor(f, slot)) return undefined
+    const plan = f && !f.deleted ? planChange({ departures: [path] }) : undefined
+    const cleared: VaultFile | undefined = f
+      ? slot === 'folder'
+        ? { ...f, folder: undefined }
+        : { ...f, dirty: false, sync: {} }
+      : undefined
 
-  if (cleared?.deleted && pendingFor(cleared, slot === 'folder' ? 'cloud' : 'folder')) {
-    // Still owed elsewhere. Keep the tombstone; this target is simply done.
-    await putFile(cleared)
-    setFile(path, cleared)
-    return
-  }
+    if (cleared?.deleted && pendingFor(cleared, slot === 'folder' ? 'cloud' : 'folder')) {
+      // Still owed elsewhere. Keep the tombstone; this target is simply done.
+      await putFile(cleared)
+      setFile(path, cleared)
+      return undefined
+    }
 
-  dropFile(path)
-  indexMap.delete(path)
-  dropFromSearchIndex(path)
-  await deleteFileRow(path)
-  releaseUrl(path)
-  bump()
+    dropFile(path)
+    indexMap.delete(path)
+    dropFromSearchIndex(path)
+    await deleteFileRow(path)
+    releaseUrl(path)
+    bump()
+    return plan
+  })
+  if (plan) await writePlanned(plan, () => true, (p) => p)
 }
 
 /**
@@ -1372,27 +2262,35 @@ export async function acceptDeletion(path: string, slot: SyncSlot): Promise<void
   const other: SyncSlot = slot === 'folder' ? 'cloud' : 'folder'
   if (metaFor(f, other).baseHash === undefined) return forget(path, slot)
 
-  const now = Date.now()
-  const next: VaultFile = {
-    ...f,
-    text: undefined,
-    blob: undefined,
-    size: 0,
-    deleted: true,
-    deletedAt: now,
-    mtime: now,
-    // Owed to `other`, and settled with `slot` — which has, after all, just
-    // told us the file is already gone there.
-    dirty: other === 'cloud',
-    sync: other === 'cloud' ? f.sync : {},
-    folder: other === 'folder' ? f.folder : undefined,
-  }
-  await putFile(next)
-  setFile(path, next)
-  indexMap.delete(path)
-  dropFromSearchIndex(path)
-  releaseUrl(path)
-  bump()
+  const plan = await withPathLock(path, async () => {
+    const f = files.get(path)
+    // Gone already, or edited since the engine decided: an edit beats a delete.
+    if (!f || (!f.deleted && pendingFor(f, slot))) return undefined
+    const plan = f.deleted ? undefined : planChange({ departures: [path] })
+    const now = Date.now()
+    const next: VaultFile = {
+      ...f,
+      text: undefined,
+      blob: undefined,
+      size: 0,
+      deleted: true,
+      deletedAt: now,
+      mtime: now,
+      // Owed to `other`, and settled with `slot` — which has, after all, just
+      // told us the file is already gone there.
+      dirty: other === 'cloud',
+      sync: other === 'cloud' ? f.sync : {},
+      folder: other === 'folder' ? f.folder : undefined,
+    }
+    await putFile(next)
+    setFile(path, next)
+    indexMap.delete(path)
+    dropFromSearchIndex(path)
+    releaseUrl(path)
+    bump()
+    return plan
+  })
+  if (plan) await writePlanned(plan, () => true, (p) => p)
 }
 
 /* ------------------------------------------------------------- attachments */
@@ -1401,28 +2299,38 @@ export async function addAttachment(
   blob: Blob,
   path: string,
 ): Promise<string> {
-  const now = Date.now()
-  let dest = normPath(path)
-  let n = 2
-  while (files.has(dest)) {
-    const dot = dest.lastIndexOf('.')
-    const base = dot > 0 ? dest.slice(0, dot) : dest
-    const ext = dot > 0 ? dest.slice(dot) : ''
-    dest = `${base}-${n++}${ext}`
-  }
-  const f: VaultFile = {
-    path: dest,
-    kind: 'attachment',
-    blob,
-    mime: blob.type || mimeForPath(dest),
-    size: blob.size,
-    hash: await hashBlob(blob),
-    mtime: now,
-    ctime: now,
-    dirty: true,
-    sync: {},
-  }
-  await writeFile(f)
+  const wanted = normPath(path)
+  const dot = wanted.lastIndexOf('.')
+  const base = dot > 0 ? wanted.slice(0, dot) : wanted
+  const ext = dot > 0 ? wanted.slice(dot) : ''
+  /*
+   * Hashed first, and the name chosen and written in one step after. Chosen
+   * before the hash, two files pasted together with one name — two `image.png`s
+   * from the clipboard, two camera shots in the same second — both got it, and
+   * one replaced the other.
+   */
+  const hash = await hashBlob(blob)
+  const { path: dest } = await claimPath(
+    dirname(wanted),
+    (n) => (n === 1 ? wanted : `${base}-${n}${ext}`),
+    // Not over a deleted file's row either: that row is how sync removes it remotely.
+    (p) => files.has(p),
+    async (dest) => {
+      const now = Date.now()
+      await writeFile({
+        path: dest,
+        kind: 'attachment',
+        blob,
+        mime: blob.type || mimeForPath(dest),
+        size: blob.size,
+        hash,
+        mtime: now,
+        ctime: now,
+        dirty: true,
+        sync: {},
+      })
+    },
+  )
   bump()
   return dest
 }
@@ -1471,23 +2379,26 @@ export async function readBackstage<T>(name: string): Promise<T | undefined> {
 export async function writeBackstage(name: string, value: unknown): Promise<void> {
   const path = joinPath(BACKSTAGE, name)
   const text = JSON.stringify(value, null, 2)
-  const existing = files.get(path)
-  if (existing?.text === text) return
-  const now = Date.now()
-  const f: VaultFile = {
-    path,
-    kind: 'note',
-    text,
-    mime: 'application/json',
-    size: text.length,
-    hash: await hashText(text),
-    mtime: now,
-    ctime: existing?.ctime ?? now,
-    dirty: true,
-    sync: existing?.sync ?? {},
-    folder: existing?.folder,
-  }
-  await writeFile(f)
+  const hash = await hashText(text)
+  // Compared and merged with the file as it is under its lock, like any other write.
+  await withPathLock(path, async () => {
+    const existing = files.get(path)
+    if (existing?.text === text) return
+    const now = Date.now()
+    await writeFile({
+      path,
+      kind: 'note',
+      text,
+      mime: 'application/json',
+      size: text.length,
+      hash,
+      mtime: now,
+      ctime: existing?.ctime ?? now,
+      dirty: true,
+      sync: existing?.sync ?? {},
+      folder: existing?.folder,
+    })
+  })
 }
 
 /* ------------------------------------------------------------------ search */

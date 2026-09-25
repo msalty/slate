@@ -1,7 +1,7 @@
 /** Arranging a task list into groups. */
 
 import { describe, expect, it } from 'vitest'
-import { dueByToday, groupTasks, tasksDueOn } from './taskgroups'
+import { dueBeyond, dueByToday, groupTasks, tasksDueOn } from './taskgroups'
 import { startOfDay } from './util'
 import type { TaskItem } from './types'
 
@@ -198,5 +198,44 @@ describe('tasks due on a day', () => {
 
   it('says nothing about a day with nothing due', () => {
     expect(tasksDueOn(list, TODAY + 99 * DAY)).toEqual([])
+  })
+})
+
+/**
+ * Which of the rail's two task lists yields to the other.
+ *
+ * The selected day's section keeps what is due on it; Due shows the rest. The
+ * other way round is what made "Nothing due on this day" appear on a day that
+ * had something due on it — on today, where everything due is also owed.
+ */
+describe('dueBeyond', () => {
+  const late = task({ text: 'late', due: TODAY - DAY })
+  const today = task({ text: 'today', due: TODAY })
+  const soon = task({ text: 'soon', due: TODAY + DAY })
+  const all = [late, today, soon]
+  const texts = (items: TaskItem[]) => items.map((t) => t.text)
+
+  it('leaves today’s tasks to the day section when today is the day shown', () => {
+    expect(texts(dueBeyond(all, TODAY, TODAY))).toEqual(['late'])
+  })
+
+  it('keeps them when the day shown is some other day', () => {
+    expect(texts(dueBeyond(all, TODAY + DAY, TODAY))).toEqual(['late', 'today'])
+  })
+
+  it('hands over a late task too, when its own day is the one being looked at', () => {
+    expect(texts(dueBeyond(all, TODAY - DAY, TODAY))).toEqual(['today'])
+  })
+
+  it('never reaches forward: a task due later is neither list’s business', () => {
+    expect(texts(dueBeyond(all, TODAY, TODAY))).not.toContain('soon')
+  })
+
+  it('and between them the two lists say every owed task exactly once', () => {
+    for (const day of [TODAY - DAY, TODAY, TODAY + DAY]) {
+      const shown = [...texts(tasksDueOn(all, day)), ...texts(dueBeyond(all, day, TODAY))]
+      expect(new Set(shown).size).toBe(shown.length)
+      expect(shown).toEqual(expect.arrayContaining(texts(dueByToday(all, TODAY))))
+    }
   })
 })

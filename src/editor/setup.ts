@@ -1,3 +1,4 @@
+import { escapeWikiTarget } from '../core/wikilink'
 import { navTargetExtension } from './navTarget'
 /**
  * Editor assembly: the extension set, the keymap, and the compartments that
@@ -96,7 +97,9 @@ export const fontCompartment = new Compartment()
 /** Turn the selection into a wikilink, or open the link autocomplete. */
 function makeWikiLink(view: EditorView): boolean {
   const changes = view.state.changeByRange((range) => {
-    const text = view.state.doc.sliceString(range.from, range.to)
+    // Escaped, so that selecting "C# Notes" links to that note and not to the
+    // note `C` and its heading `Notes`.
+    const text = escapeWikiTarget(view.state.doc.sliceString(range.from, range.to))
     const insert = `[[${text}]]`
     return {
       changes: { from: range.from, to: range.to, insert },

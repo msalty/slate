@@ -376,6 +376,139 @@ describe('sync round trips', () => {
     expect(a.vault.resolveLink('New Name')).toBeDefined()
   })
 
+  /*
+   * A name can be reused while the tombstone its last owner left is still
+   * there — a note moved out and straight back, renamed away and back, or made
+   * again after one of the name was deleted. Counting the tombstone as a taken
+   * name gave all three a phantom ` 2`; reusing the path writes a live file
+   * over it. These pin down that the second device then sees exactly one note
+   * with the right text: no ` 2`, no stray copy where it passed through, and no
+   * conflict copy from a path the server had seen before.
+   */
+  const conflicts = (d: Device) => d.vault.notes.value.filter((n) => /conflict/i.test(n.path))
+
+  it('keeps a note moved out and straight back under its own name, on both devices', async () => {
+    const server = new MemoryServer()
+    const a = await makeDevice(server, 'mac')
+    const folders = await import('./folders')
+    const p = await a.vault.createNote('', 'Retro', 'what went well\n')
+    await run(a)
+    const b = await makeDevice(server, 'phone')
+    await run(b)
+
+    const out = await folders.moveNoteToFolder(p, 'Work')
+    const back = await folders.moveNoteToFolder(out, '')
+    expect(back).toBe(p)
+    await run(a)
+    await run(b)
+
+    expect(b.vault.getText(p)).toBe('what went well\n')
+    expect(b.vault.exists('Work/Retro.md')).toBe(false)
+    expect(b.vault.exists('Retro 2.md')).toBe(false)
+    expect(conflicts(a)).toEqual([])
+    expect(conflicts(b)).toEqual([])
+  })
+
+  it('keeps a note renamed away and back under its own name, on both devices', async () => {
+    const server = new MemoryServer()
+    const a = await makeDevice(server, 'mac')
+    const p = await a.vault.createNote('', 'Retro', 'what went well\n')
+    await run(a)
+    const b = await makeDevice(server, 'phone')
+    await run(b)
+
+    const away = await a.vault.renameNote(p, 'Other')
+    const back = await a.vault.renameNote(away, 'Retro')
+    expect(back).toBe(p)
+    await run(a)
+    await run(b)
+
+    expect(b.vault.getText(p)).toBe('what went well\n')
+    expect(b.vault.exists('Other.md')).toBe(false)
+    expect(conflicts(a)).toEqual([])
+    expect(conflicts(b)).toEqual([])
+  })
+
+  it('lets a deleted note’s name be used again, on both devices', async () => {
+    const server = new MemoryServer()
+    const a = await makeDevice(server, 'mac')
+    const p = await a.vault.createNote('', 'Retro', 'the old one\n')
+    await run(a)
+    const b = await makeDevice(server, 'phone')
+    await run(b)
+
+    await a.vault.deleteNote(p)
+    const again = await a.vault.createNote('', 'Retro', 'the new one\n')
+    expect(again).toBe(p)
+    await run(a)
+    await run(b)
+
+    // The new one, under the name, everywhere — and the old one still in the
+    // trash, since a delete is only ever recoverable.
+    expect(b.vault.getText(p)).toBe('the new one\n')
+    expect(b.vault.exists('Retro 2.md')).toBe(false)
+    expect(b.vault.trashItems().length).toBe(1)
+    expect(conflicts(a)).toEqual([])
+    expect(conflicts(b)).toEqual([])
+  })
+
+  it('keeps it a plain edit when a note is moved out, changed, and moved back', async () => {
+    const server = new MemoryServer()
+    const a = await makeDevice(server, 'mac')
+    const folders = await import('./folders')
+    const p = await a.vault.createNote('', 'Retro', 'what went well\n')
+    await run(a)
+    const b = await makeDevice(server, 'phone')
+    await run(b)
+
+    // Unchanged, the round trip above could pass on matching hashes alone.
+    // Changed, only the record carried across the path makes it an edit.
+    const out = await folders.moveNoteToFolder(p, 'Work')
+    await a.vault.saveNote(out, 'what went well\nwhat to change\n')
+    await folders.moveNoteToFolder(out, '')
+    await run(a)
+    await run(b)
+
+    expect(b.vault.getText(p)).toBe('what went well\nwhat to change\n')
+    expect(conflicts(a)).toEqual([])
+    expect(conflicts(b)).toEqual([])
+  })
+
+  it('still keeps both when the name is reused while another device was editing it', async () => {
+    const server = new MemoryServer()
+    const a = await makeDevice(server, 'mac')
+    const p = await a.vault.createNote('', 'Retro', 'the old one\n')
+    await run(a)
+    const b = await makeDevice(server, 'phone')
+    await run(b)
+
+    // The phone edits the note the laptop is about to delete and replace.
+    await b.vault.saveNote(p, 'the old one, edited on the phone\n')
+    await run(b)
+    await a.vault.deleteNote(p)
+    await a.vault.createNote('', 'Retro', 'the new one\n')
+    // Until both have settled: the conflict copy is pushed by the run that
+    // finds the conflict, so the phone sees it one run later.
+    await run(a)
+    await run(b)
+    await run(a)
+    await run(b)
+
+    /*
+     * Carrying the record across must not hide a real disagreement: the base
+     * is the old text, both sides moved away from it, and neither may be lost.
+     * The phone's edit survives as a conflict copy, which is the right answer
+     * — nobody decided between them.
+     */
+    const everywhere = (d: Device) =>
+      d.vault.notes.value.map((n) => d.vault.getText(n.path) ?? '').join('\n')
+    for (const d of [a, b]) {
+      expect(everywhere(d)).toContain('the new one')
+      expect(everywhere(d)).toContain('edited on the phone')
+      expect(conflicts(d).length).toBe(1)
+    }
+  })
+
   it('converges after a burst of interleaved edits', async () => {
     const server = new MemoryServer()
     const a = await makeDevice(server, 'mac')
@@ -466,6 +599,36 @@ describe('sync round trips', () => {
     const remote = (await server.readText(p))!
     expect(remote).toContain('remote addition')
     expect(remote).toContain('local addition')
+  })
+})
+
+describe('a name taken on another device', () => {
+  /*
+   * `[[Name]]` meant `Work/Name` on both; `Archive/Name` made on one of them
+   * took it on the other once pulled, since only the maker pinned its links.
+   */
+  it('leaves every link on both devices meaning what it did, without conflicts', async () => {
+    const server = new MemoryServer()
+    const a = await makeDevice(server, 'a')
+    await a.vault.createNote('Work', 'Name', 'work')
+    await a.vault.createNote('', 'Ref', 'see [[Name]]')
+    await run(a)
+    const b = await makeDevice(server, 'b')
+    await run(b)
+    // Written on b before it has heard of the newcomer.
+    await b.vault.createNote('', 'Mine', 'also [[Name]]')
+    await a.vault.createNote('Archive', 'Name', 'archive')
+    await run(a)
+    await run(b)
+    expect(b.vault.getText('Mine.md')).toBe('also [[Work/Name]]')
+    // b's rewrite of its own note goes up with its next run.
+    await run(b)
+    await run(a)
+    for (const d of [a, b]) {
+      expect(d.vault.getText('Ref.md')).toBe('see [[Work/Name]]')
+      expect(d.vault.getText('Mine.md')).toBe('also [[Work/Name]]')
+      expect(d.vault.listAll().filter((f) => f.path.includes('conflict'))).toEqual([])
+    }
   })
 })
 

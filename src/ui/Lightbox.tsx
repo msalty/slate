@@ -11,6 +11,7 @@ import { IconClose, IconDownload, IconTextScan } from './Icons'
 import { PdfView } from './PdfView'
 import { clampZoom } from './pdfLayout'
 import { clampView, FIT, pan, pinch, zoomTo, type Box, type Point, type View } from './zoom'
+import { claimEscape, useModalLayer } from './modal'
 
 /** A finger or the mouse pointer, and where it was when we last heard from it. */
 type Pointers = Map<number, Point>
@@ -33,6 +34,7 @@ const TAP_MS = 400
 const TAP_SLOP = 8
 
 export function Lightbox() {
+  const { root } = useModalLayer(!!lightboxPath.value)
   const path = lightboxPath.value
   /*
    * Known before the hooks below, because the zoom keys and the toolbar have
@@ -89,8 +91,15 @@ export function Lightbox() {
     setView(FIT)
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        /*
+         * `stopPropagation` does not stop the other listeners already bound to
+         * this same window — that needs the immediate kind — so the rule that
+         * Escape leaves focus mode used to run too, and one keypress both shut
+         * the picture and threw the panels back up behind it. Claiming the
+         * event says it has been dealt with, whoever is listening.
+         */
         e.stopPropagation()
-        lightboxPath.value = undefined
+        if (claimEscape(e)) lightboxPath.value = undefined
       }
       if (e.key === '0') setView(FIT)
       if (e.key === '+' || e.key === '=') zoomBy(1.25)
@@ -197,6 +206,7 @@ export function Lightbox() {
 
   return (
     <div
+      ref={root}
       class="lightbox"
       role="dialog"
       aria-modal="true"

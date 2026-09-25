@@ -9,6 +9,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks'
 import { signal } from '@preact/signals'
 import { keyboardInset, layoutMode } from './layout'
+import { Z_MENU, claimEscape, useModalLayer } from './modal'
 import { IconCheck } from './Icons'
 
 export interface MenuItem {
@@ -120,6 +121,13 @@ export function ContextMenu() {
   const ref = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
   const sheet = layoutMode.value === 'compact'
+  /*
+   * A menu is modal too, even though its scrim is called something else.
+   * `Z_MENU` is the floor it has always had, so the due-date picker still comes
+   * up over the quick-add sheet that opened it; anything opened after the menu
+   * is still drawn over the menu.
+   */
+  const { isTop, root } = useModalLayer(!!state, Z_MENU)
 
   // Flip the popover back on-screen once its real size is known. "On screen"
   // stops where the keyboard starts: a tablet's keyboard covers the bottom of
@@ -141,7 +149,13 @@ export function ContextMenu() {
   useEffect(() => {
     if (!state) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') closeMenu()
+      /*
+       * And the Escape that closes it is *only* the Escape that closes it. A
+       * menu raised over a dialog used to take the dialog with it, and one
+       * raised in focus mode threw the panels back up behind itself.
+       */
+      if (e.key !== 'Escape' || !isTop() || !claimEscape(e)) return
+      closeMenu()
     }
     /*
      * A menu is anchored to a point on screen, so anything scrolling out from
@@ -219,7 +233,15 @@ export function ContextMenu() {
   )
 
   return (
-    <div class={sheet ? 'menu-scrim menu-scrim-sheet' : 'menu-scrim'} onClick={closeMenu} onContextMenu={(e) => { e.preventDefault(); closeMenu() }}>
+    <div
+      ref={root}
+      class={sheet ? 'menu-scrim menu-scrim-sheet' : 'menu-scrim'}
+      onClick={closeMenu}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        closeMenu()
+      }}
+    >
       {body}
     </div>
   )

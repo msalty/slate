@@ -14,6 +14,8 @@ import { FilePicker } from './FilePicker'
 import { NotePicker } from './NotePicker'
 import { PromptDialog } from './PromptDialog'
 import { ConfirmDialog } from './ConfirmDialog'
+import { escapeClaimed, modalOpen } from './modal'
+import { NewEventDialog } from './NewEventDialog'
 import { TranscribeDialog } from './TranscribeDialog'
 import { TransformDialog, canTransform, openTransform } from './TransformDialog'
 import { SummaryDialog } from './SummaryDialog'
@@ -46,7 +48,6 @@ import {
   closeMobileEditor,
   editorMaximized,
   goToScope,
-  historyOpen,
   lightboxPath,
   mobileEditorOpen,
   mobileTab,
@@ -286,8 +287,34 @@ export function App() {
          * lightbox — is likewise still busy with this one.
          */
         const inEditor = !!(e.target as HTMLElement | null)?.closest?.('.cm-editor')
+        /*
+         * Asked of the page rather than of a list of signals.
+         *
+         * It used to name four — the palette, settings, history, the lightbox —
+         * and there are fourteen. Every one of them but the lightbox draws a
+         * scrim, because that is what being modal *is* here, so asking whether
+         * one is on screen asks the question directly and cannot fall behind a
+         * list somebody has to remember to add to. The New Event dialog was the
+         * one that noticed: Escape closed it and left focus mode in the same
+         * keypress, and during a save, when it rightly refused to close, Escape
+         * still threw the panels back up.
+         *
+         * Three questions, cheapest and most certain first. Has anything
+         * already *claimed* this Escape — the lightbox does, and so does every
+         * dialog that closes on it — in which case it is spoken for. Is a modal
+         * layer on the stack at all. And failing both, does the element the key
+         * was pressed in sit inside a scrim: a dialog answers Escape by closing
+         * itself, so the scrim can be gone from the page by the time this runs,
+         * but the target still has it as an ancestor, detached or not. A
+         * context menu's scrim is called something else, and being left out of
+         * that last question is how one of them used to close and drop out of
+         * focus mode on the same key.
+         */
         const dialog =
-          paletteOpen.value || settingsOpen.value || historyOpen.value || !!lightboxPath.value
+          escapeClaimed(e) ||
+          modalOpen() ||
+          !!(e.target as HTMLElement | null)?.closest?.('.scrim, .menu-scrim') ||
+          !!lightboxPath.value
         if (editorMaximized.value && !inEditor && !dialog) editorMaximized.value = false
         return
       }
@@ -599,6 +626,7 @@ export function App() {
       <NotePicker />
       <PromptDialog />
       <ConfirmDialog />
+      <NewEventDialog />
       <Lightbox />
       <TranscribeDialog />
       <TransformDialog />

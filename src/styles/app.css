@@ -1646,8 +1646,105 @@ button.property-kind:hover {
   background: var(--text-on-accent);
 }
 
+/*
+ * The day, and the three things there are to say about it.
+ *
+ * The rail used to be four sections of equal weight stacked in a column, one of
+ * which happened to be wearing the date — so nothing said which of them were
+ * about the selected day and which were not, and the eye had to read the
+ * headings to find out. Two tiers fix it without drawing a single box: the day
+ * is named once, above a group that is indented under it, and Due sits outside
+ * that indent because it is the one list here that is not about the day.
+ *
+ * Hairlines only at the two structural joins — under the month, and before Due.
+ * Inside the group the small-caps headings and the space around them do the
+ * separating, which is the quieter half of how a settings screen is grouped.
+ */
+/*
+ * Starts and ends, side by side. Two fields rather than one line of prose,
+ * because an event is at a time that is not now and the guess is usually wrong
+ * — which made the one-field version one field plus an immediate edit.
+ */
+.event-when {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+.event-when .field {
+  flex: 1;
+  min-width: 0;
+}
+/*
+ * A value that is doing nothing. Used by `tz:`, where a name the browser cannot
+ * read resolves to the same instant as no zone at all — the one case in the
+ * form where being wrong and being right look identical.
+ */
+.property-value[data-invalid='1'],
+.agenda-zone[data-invalid='1'],
+.field small[data-invalid='1'] {
+  color: var(--danger);
+}
+.property-value[data-invalid='1'] {
+  border-bottom: 1px dashed var(--danger);
+}
+
+.event-lands {
+  display: block;
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.event-lands code {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  /* A name can be any length somebody wants to type, and this line is under a
+     form whose width is not negotiable. */
+  overflow-wrap: anywhere;
+}
+
+.rail-day {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.rail-day-head {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 0 6px 2px;
+}
+.rail-day-head strong {
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+.rail-day-head span {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.rail-day-head-big strong {
+  font-size: 17px;
+}
+/*
+ * Everything in the group hangs off the day above it, so the first section
+ * needs less air over it than the ones that follow — it is already under its
+ * own heading.
+ */
+.rail-day > .rail-section {
+  margin-top: 14px;
+}
+.rail-day > .rail-section:first-of-type {
+  margin-top: 8px;
+}
 .rail-section {
   margin-top: 18px;
+}
+/* Due is a peer of the whole group, not a fourth member of it. */
+.rail-scroll > .rail-due {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
 }
 .rail-section h3 {
   font-size: 11px;
@@ -1662,6 +1759,17 @@ button.property-kind:hover {
 }
 .rail-section h3 .spacer {
   flex: 1;
+}
+/*
+ * The count, wherever a heading carries one. Tabular so a list going from 9 to
+ * 10 does not move the button beside it, and quieter than the label because it
+ * is an answer rather than a name.
+ */
+.rail-section h3 > span:not(.spacer) {
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--text-faint);
 }
 /* Faint until wanted: it is chrome on a list, not part of the list. */
 .rail-group-btn {
@@ -1712,6 +1820,7 @@ button.property-kind:hover {
 .day-note-row + .task-row,
 .day-create-row + .task-row,
 .day-add-row + .task-row,
+.agenda-row + .task-row,
 .rail-empty + .task-row {
   margin-top: 6px;
 }
@@ -1851,6 +1960,72 @@ button.property-kind:hover {
 }
 .shell[data-mode='compact'] .due-chip[data-set='0'] {
   opacity: 0.6;
+}
+
+/*
+ * A day's events. Two columns rather than a grid: the time is scanned down and
+ * the title is read across, and a fixed gutter is what lets the first of those
+ * happen without the eye hunting for where each row starts.
+ */
+.agenda-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  width: 100%;
+  text-align: left;
+  padding: 5px 6px;
+  border-radius: 7px;
+  font-size: 13px;
+}
+.agenda-row:hover {
+  background: var(--row-hover);
+}
+/* What has already happened is still part of the day, just behind it. */
+.agenda-row[data-past='1'] {
+  opacity: 0.5;
+}
+/*
+ * Wide enough for "07:00 AM" on one line. A time that wraps takes the row with
+ * it and the column stops being a column, which is the whole reason it is one.
+ * Right-aligned so the gap between a time and its title is always the same one,
+ * whatever the locale writes in there.
+ */
+.agenda-when {
+  flex: none;
+  width: 62px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  white-space: nowrap;
+  color: var(--text-faint);
+}
+.agenda-what {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/*
+ * The meeting's own clock, where it disagrees with the reader's — beside the
+ * title rather than inside it, so a long name ellipsises against the zone
+ * instead of swallowing it. It is the half of the row you cannot infer.
+ */
+.agenda-zone {
+  flex: none;
+  margin-left: 6px;
+  font-size: 11.5px;
+  font-style: normal;
+  white-space: nowrap;
+  color: var(--text-faint);
+}
+.agenda-big .agenda-row {
+  font-size: 15px;
+  padding: 8px 6px;
+}
+.agenda-big .agenda-when {
+  width: 76px;
+  font-size: 13.5px;
 }
 
 .day-note-row {
@@ -2301,6 +2476,13 @@ button.property-kind:hover {
 .field input[type='password'],
 .field input[type='url'],
 .field input[type='number'],
+/*
+ * A date field is a field. Left off this list it keeps the browser's own
+ * border, and — worse — its own intrinsic width, which is wider than the box it
+ * is in and runs off the edge of the dialog.
+ */
+.field input[type='date'],
+.field input[type='datetime-local'],
 .field select {
   width: 100%;
   padding: 8px 10px;

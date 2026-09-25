@@ -355,6 +355,24 @@ export function calendarDayIntent(
   return day.isSelected ? 'clear' : 'filter'
 }
 
+/**
+ * Whether the rail's day panel should list that day's notes, or leave them to
+ * the column already showing them.
+ *
+ * Clicking a day in the default mode scopes the middle column to it, off the
+ * same map the panel reads, so the two become the identical list side by side.
+ * In the mode where a click opens the daily note instead, nothing scopes and
+ * the panel is the only place those notes appear; and browsing a folder with
+ * today still selected, the middle column is showing the folder. So what is
+ * dropped is the coincidence, not the panel.
+ *
+ * Pure, and here rather than in the panel, for the same reason `calendarDayIntent`
+ * is: a rule about two columns agreeing should be readable without either.
+ */
+export function dayNotesDuplicated(s: Scope, day: number): boolean {
+  return s.kind === 'day' && startOfDay(s.date) === startOfDay(day)
+}
+
 export function closeMobileEditor() {
   mobileEditorOpen.value = false
   // Leaving the note leaves formatting too; otherwise the sheet is waiting,

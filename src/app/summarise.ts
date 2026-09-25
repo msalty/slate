@@ -21,7 +21,8 @@ import {
   type SummarySource,
 } from '../core/summary'
 import { settings } from '../core/settings'
-import { createNote, getText } from '../core/vault'
+import { createNote, getText, linkNameFor, noteId, notePath } from '../core/vault'
+import { settleCitations } from '../core/ask'
 import type { NoteIndexEntry } from '../core/types'
 
 /** Read the notes and work out what it would take, without sending anything. */
@@ -29,7 +30,9 @@ export function planFor(entries: NoteIndexEntry[]): Plan {
   const sources: SummarySource[] = []
   for (const e of entries) {
     const text = getText(e.path)
-    if (text !== undefined) sources.push(sourceFor(e, text))
+    if (text !== undefined) {
+      sources.push({ ...sourceFor(e, text, linkNameFor(e.path)), id: noteId(e.path) })
+    }
   }
   return planSummary(sources, settings.value.ai.contextTokens)
 }
@@ -71,7 +74,16 @@ export async function runSummary(
     partials.push(unfence(text))
   }
 
-  if (partials.length === 1) return partials[0]
+  /*
+   * Cited by the names they were sent under, which may since mean other notes —
+   * see `settleCitations`.
+   */
+  const sent = new Map(plan.batches.flat().map((s) => [s.cite.toLowerCase(), s]))
+  const nameFor = (s: SummarySource) => {
+    const at = s.id === undefined ? undefined : notePath(s.id)
+    return at && linkNameFor(at)
+  }
+  if (partials.length === 1) return settleCitations(partials[0], sent, nameFor)
 
   opts.onProgress?.(total - 1, total)
   const combined = await streamText(
@@ -80,7 +92,7 @@ export async function runSummary(
     combineUser(partials),
     { onChunk: opts.onChunk, signal: opts.signal },
   )
-  return unfence(combined)
+  return settleCitations(unfence(combined), sent, nameFor)
 }
 
 /** Write the summary into a new note and answer with its path. */

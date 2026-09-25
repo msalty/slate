@@ -778,7 +778,7 @@ export function EditorPane() {
                       ]),
                   {
                     label: 'Ask about this note…',
-                    onSelect: () => askAboutNote(entry.title),
+                    onSelect: () => askAboutNote(entry.path),
                   },
                 ],
                 entry.title,
@@ -815,7 +815,7 @@ export function EditorPane() {
                         {
                           label: 'Ask about this note…',
                           separated: true,
-                          onSelect: () => askAboutNote(entry.title),
+                          onSelect: () => askAboutNote(entry.path),
                         },
                       ]
                     : []),

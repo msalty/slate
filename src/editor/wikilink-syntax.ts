@@ -16,13 +16,26 @@ export const wikiEmbedTag = Tag.define(tags.link)
 const OPEN = 91 // [
 const BANG = 33 // !
 const CLOSE = 93 // ]
+const ESCAPE = 92 // \
 
 function findClose(cx: InlineContext, from: number): number {
   const limit = Math.min(cx.end, from + 1024)
   for (let i = from; i < limit - 1; i++) {
-    if (cx.char(i) === CLOSE && cx.char(i + 1) === CLOSE) return i + 2
     // A newline ends the candidate: wikilinks never span lines.
     if (cx.char(i) === 10) return -1
+    /*
+     * A backslash takes the next character with it, as `WIKI_INNER` in
+     * core/wikilink.ts does — so a note called `A]` is `[[A\]]]`, and the
+     * link closes at the last two brackets rather than one early. Everything
+     * else in the editor reads the inside through that module; this is the one
+     * place that has to find the end of it character by character.
+     */
+    if (cx.char(i) === ESCAPE) {
+      if (cx.char(i + 1) === 10) return -1
+      i++
+      continue
+    }
+    if (cx.char(i) === CLOSE && cx.char(i + 1) === CLOSE) return i + 2
   }
   return -1
 }

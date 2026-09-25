@@ -35,6 +35,7 @@ import {
 import { STARTER_TEMPLATES } from '../core/starters'
 import { hasSnippets, snippets, SNIPPETS_NOTE } from '../core/snippets'
 import { openNote } from './state'
+import { claimEscape, useModalLayer } from './modal'
 
 type Tab = 'vaults' | 'sync' | 'editor' | 'files' | 'ai' | 'about'
 
@@ -128,6 +129,7 @@ async function startSnippets() {
 }
 
 export function Settings() {
+  const { isTop, root } = useModalLayer(settingsOpen.value)
   const [tab, setTab] = useState<Tab>('sync')
   const [testing, setTesting] = useState(false)
   const [aiTesting, setAiTesting] = useState(false)
@@ -155,7 +157,7 @@ export function Settings() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') settingsOpen.value = false
+      if (e.key === 'Escape' && isTop() && claimEscape(e)) settingsOpen.value = false
     }
     if (settingsOpen.value) addEventListener('keydown', onKey)
     return () => removeEventListener('keydown', onKey)
@@ -224,7 +226,7 @@ export function Settings() {
   }
 
   return (
-    <div class="scrim" onClick={() => (settingsOpen.value = false)}>
+    <div class="scrim" ref={root} onClick={() => (settingsOpen.value = false)}>
       <div class="dialog" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         <div class="dialog-head">
           <h2>Settings</h2>

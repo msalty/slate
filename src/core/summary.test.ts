@@ -26,6 +26,7 @@ import type { NoteIndexEntry } from './types'
 const src = (title: string, body: string): SummarySource => ({
   path: `${title}.md`,
   title,
+  cite: title,
   body,
   tokens: estimateTokens(body) + 8,
 })
@@ -115,8 +116,8 @@ describe('the prompts', () => {
 
   it('sends each note under its own title, separated', () => {
     const body = batchUser([src('One', 'first'), src('Two', 'second')])
-    expect(body).toContain('## One')
-    expect(body).toContain('## Two')
+    expect(body).toContain('## [[One]]')
+    expect(body).toContain('## [[Two]]')
     expect(body).toContain('---')
   })
 

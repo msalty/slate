@@ -6,6 +6,7 @@
  * drag) each time a character is typed elsewhere in the note.
  */
 
+import { WIKI_INNER, splitWikiInner } from '../core/wikilink'
 import { EditorView, WidgetType } from '@codemirror/view'
 import { ChangeSet, EditorSelection, type EditorState, type Line } from '@codemirror/state'
 import { attachmentUrl, getRaw } from '../core/vault'
@@ -1377,11 +1378,13 @@ function applyWidth(view: EditorView, dom: HTMLElement, width: number | undefine
   const text = line.text
   const rel = pos - line.from
 
-  const wiki = /!\[\[([^\]\n|]+)(?:\|([^\]\n]*))?\]\]/g
+  const wiki = new RegExp(String.raw`!\[\[(${WIKI_INNER})\]\]`, 'g')
   let m: RegExpExecArray | null
   while ((m = wiki.exec(text))) {
     if (rel < m.index || rel > m.index + m[0].length) continue
-    const target = m[1]
+    // The name exactly as it was written, escapes and all: only the width is
+    // this function's to change.
+    const target = splitWikiInner(m[1]).head
     const inner = width ? `${target}|${width}` : target
     view.dispatch({
       changes: { from: line.from + m.index, to: line.from + m.index + m[0].length, insert: `![[${inner}]]` },

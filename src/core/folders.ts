@@ -22,21 +22,32 @@ import {
   getRaw,
   isHidden,
   listAll,
-  movePath,
+  collisionNamesFor,
   notes,
+  occupied,
+  relocate,
+  relocateNote,
   readBackstage,
   revision,
   tasks,
   writeBackstage,
 } from './vault'
-import { basename, dirname, joinPath, normPath, safeSegment, startOfDay, uid } from './util'
+import {
+  basename,
+  dirname,
+  joinPath,
+  normPath,
+  safeSegment,
+  startOfDay,
+  uid,
+} from './util'
 import {
   evaluateQuery,
   parseQuery,
   type QueryContext,
   type QueryNode,
 } from './tagquery'
-import type { NoteIndexEntry, TaskItem } from './types'
+import type { NoteIndexEntry, TaskItem, VaultFile } from './types'
 import { forgetFolder, forgetTagFolders, renameOpenFolder } from './disclosure'
 import { clearTemplateFolders, repointTemplateFolders } from './templates'
 import { mediaClass } from './util'
@@ -155,23 +166,33 @@ export async function createFolder(parent: string, name: string): Promise<string
   return path
 }
 
-/** Rename a folder, moving every note beneath it. Wikilinks are unaffected. */
+/**
+ * Rename a folder, moving every file beneath it and every reference to one.
+ *
+ * "Wikilinks are unaffected", this used to say, and it was half right: a link
+ * by a note's name does not care what folder the note is in, and a link by its
+ * path does. `[[Projects/Alpha/Note]]` pointed at nothing after `Alpha` became
+ * `Beta`. The whole move is handed to `relocate` as one map, which rewrites every
+ * reference into the folder in one pass before anything moves.
+ */
 export async function renameFolder(from: string, name: string): Promise<string> {
   const src = normPath(from)
   const clean = safeSegment(name)
   if (!src || !clean) return src
   const dest = joinPath(dirname(src), clean)
   if (dest === src) return src
-  if (folderExists(dest)) throw new Error(`"${clean}" already exists here.`)
-
-  // Deepest paths first so a parent move can't invalidate a child's source.
-  const moving = listAll()
-    .filter((f) => !f.deleted && (f.path.startsWith(`${src}/`) || dirname(f.path) === src))
-    .sort((a, b) => b.path.length - a.path.length)
-
-  for (const f of moving) {
-    await movePath(f.path, `${dest}${f.path.slice(src.length)}`)
+  // Anything already there — a folder, or a file of any kind at or under it.
+  const taken = (f: VaultFile) => f.path === dest || f.path.startsWith(`${dest}/`)
+  if (folderExists(dest) || listAll().some((f) => !f.deleted && taken(f))) {
+    throw new Error(`"${clean}" already exists here.`)
   }
+
+  const moves = new Map<string, string>()
+  for (const f of listAll()) {
+    if (f.deleted || !f.path.startsWith(`${src}/`)) continue
+    moves.set(f.path, `${dest}${f.path.slice(src.length)}`)
+  }
+  await relocate(moves)
 
   explicitFolders.value = explicitFolders.value.map((p) =>
     p === src || p.startsWith(`${src}/`) ? `${dest}${p.slice(src.length)}` : p,
@@ -208,16 +229,31 @@ export async function deleteFolder(path: string): Promise<number> {
   return inside.length
 }
 
-/** Move one note into a folder (`''` for the vault root). */
+/**
+ * Move one note into a folder (`''` for the vault root).
+ *
+ * Into a folder that already holds a note of the same name, it takes the next
+ * free one — `Foo 2` — the way making or renaming a note does. It used to move
+ * straight onto the path, and the note that was there was overwritten: a drag
+ * into the wrong folder deleted something, and sync took the deletion
+ * everywhere. A move that has to rename also takes its links with it, since
+ * `[[Foo]]` would otherwise go to the note that was there first.
+ */
 export async function moveNoteToFolder(notePath: string, folder: string): Promise<string> {
   const f = getRaw(notePath)
   if (!f) return notePath
-  const dest = joinPath(normPath(folder), basename(notePath))
+  const dir = normPath(folder)
+  let dest = joinPath(dir, basename(notePath))
   if (dest === notePath) return notePath
-  await movePath(notePath, dest)
+  // An event keeps its date through the counter; see `nameAfterCollision`.
+  const nameFor = collisionNamesFor(notePath)
+  let n = 2
+  while (occupied(dest) && dest !== notePath) dest = joinPath(dir, nameFor(n++))
+  await relocateNote(notePath, dest)
   await persistFolders()
   return dest
 }
+
 
 /* ------------------------------------------------------------ tag folders */
 

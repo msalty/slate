@@ -19,8 +19,8 @@ npm install
 npm run dev            # http://localhost:5173
 npm run build          # typecheck + production build into dist/
 npm run preview        # serve the production build
-npm test               # 1189 unit, two-device sync and folder round-trip tests
-node scripts/smoke.mjs # 806-check browser smoke test against dist/
+npm test               # 1412 unit, two-device sync and folder round-trip tests
+node scripts/smoke.mjs # 869-check browser smoke test against dist/
 ```
 
 The app works immediately with no configuration — it just stays on one device
@@ -122,12 +122,43 @@ else.
 top of a file — the `date:`, `tags:` and `pinned:` the rest of the app reads —
 is hidden in rich text, and the date under the title is what opens it: click
 that and the block becomes one row per property, with its name, its value, and
-an icon saying what kind of value it is. Text, list, number, date or checkbox —
-pick a different one from that icon and the value in the file is rewritten to
-match, so a date gets a date field and a checkbox gets a checkbox. **Add
-property** adds one, the name is edited in place, and the **×** takes it away.
+an icon saying what kind of value it is. Text, list, number, date, date and
+time, or checkbox — pick a different one from that icon and the value in the
+file is rewritten to match, so a date gets a date field and a checkbox gets a
+checkbox. **Add property** adds one, the name is edited in place, and the **×**
+takes it away.
+
+**The kind is read off the value, not off a schema**, because there is no schema
+in a markdown file and a type that lived only in the app would be a promise the
+file could not keep. `2026-09-21` is a date, `2026-09-21T09:30` is a date and a
+time, `true` is a checkbox. Which leaves one case a value cannot answer — a
+property just added and still empty — and there, and only there, four names are
+allowed to guess: `start` and `end` offer a time, `date` and `due` a day. An
+empty value is not a promise about anything, and the moment something is written
+the value decides again, so `start: chapter three` in somebody's novel stays a
+piece of text rather than becoming a broken date field.
+
+Two rules keep the widget from rewriting the file behind you. A value a picker
+cannot hold — `2026-09-21 09:30`, with a space where the `T` goes, which the
+calendar reads perfectly well — stays a text field rather than showing as blank,
+and converts only when you pick the kind by name. And seconds appear in the
+field only when the value has them: always, and every event collects a `:00` it
+never asked for; never, and a value that has them is rejected and the row reads
+as empty.
 Live preview and source still show the block exactly as it is written; they are
 the modes for looking at the file.
+
+**Two keys move together**, and they are the only ones that do. An event's
+`start:` takes its `end:` with it, keeping the length — because leaving the end
+behind does not leave it behind: an end that precedes its start is replaced by
+an hour when the note is read, so a two-hour meeting dragged to the afternoon
+quietly became a one-hour one. Everything else in this form edits exactly the
+key you touched.
+
+**A value shaped like a date that is not one stays a text field**, marked. A
+date control handed `2026-13-01` shows nothing at all, so the row would read as
+empty over a file that still held the value — and the next thing typed would
+overwrite something the form had said was not there.
 
 **No note needs any of it.** Frontmatter is optional in a markdown file and
 optional here: a note that has none opens the form empty, nothing is written
@@ -258,7 +289,62 @@ from a shared vault is untrusted input.
 **Linking.** `[[Note Title]]` links notes to each other. Typing `[[` opens an
 autocomplete over every note; picking one that doesn't exist yet offers to create
 it. Clicking a broken link creates the note on the spot. Renaming a note rewrites
-every link that pointed at it.
+every link that pointed at it — and only those. Which links those are is worked
+out by following each one, not by matching its text, so of two notes called `A`
+renaming one leaves the `[[A]]`s that meant the other alone. A link written as a
+path stays a path; one that reached the note through an alias is left as it is,
+since the alias goes with the note. Renamed onto a name another note already
+has, the note becomes `Foo 2` and its links say `Foo 2`; if its new title is one
+another folder's note also has, its links are written as a path, the one form
+that cannot land on the wrong note.
+
+Moving a note into a folder that already has one by the same name does the
+same: the note you moved becomes `Foo 2`, the toast says so, and nothing is
+overwritten. An event keeps its date through that: `Standup - 2026-09-21 2`,
+never a counter cut into the date.
+
+**Two notes with one name.** `[[Name]]` means the first of them by path —
+`Home/Name` before `Work/Name` — on every device, whatever order they were made
+or edited in. A link made by *picking* one of them — from autocomplete, pinning,
+*Ask about this note*, or an AI citation — is written with its path:
+`[[Work/Name]]` means that note wherever it is. And whenever something would
+hand an existing `[[Name]]` to a different note — a move, a note of that name
+made, restored or pulled in by sync, one deleted here or on another device, an
+alias added or removed — that link is rewritten to the path of the note it led
+to, so nothing moves under it. A link that would simply lead nowhere is left as
+it is. A conversation's note scope is kept the same
+way, and an AI answer's citations are written to lead to the notes that were
+actually sent, even if another of the same name arrived, or the note was
+renamed — or a new note took its old name — while it was thinking.
+
+**A name can use the characters a link does.** `#`, `|` and `]` all mean
+something inside `[[…]]` — `[[C# Notes]]` is the note `C` and its heading
+`Notes` — so a backslash escapes them: `[[C\# Notes]]` links to `C# Notes`.
+Nobody has to type that. Autocomplete, *make a link from the selection*, paste,
+pins and renaming all write it, live preview hides the backslash until the caret
+is in the link, and a heading with a `|` or `]` in it can be linked to the same
+way — as can display text: `[[Plan|Status [draft\]]]` shows `Status [draft]`.
+Obsidian allows none of these characters in a filename and has no escape for
+them, so a note named with one cannot be linked to from there whatever is
+written; a name without them links identically in both.
+
+**And a note can answer to more than the name on the file.** `aliases:` in the
+frontmatter — one name or a list of them — files the note under those names too,
+so `[[Jane Smith]]` reaches `Jane Doe.md` and shows up in her linked mentions
+like any other link. A maiden name, an acronym, what somebody is called rather
+than what they are filed as: without this, every one of them is a link that
+looks right, saves fine, and quietly points at nothing.
+
+A comma inside quotes is part of a name: `aliases: ["Doe, Jane", JD]` is two
+aliases, not three, and the form shows it back with its quotes so that editing
+the field does not split it.
+
+A name written on a file always beats the same name written in somebody else's
+alias list. Aliases are claimed in a pass of their own, after every real name,
+because doing it in one pass lets a note whose alias list happens to name
+*another* note take that name — decided by whichever the walk reached first,
+which is to say by modified time, which is to say at random. The note that loses
+a contested alias still answers to the rest of its own.
 
 **And `#` points inside one.** Type `[[Trip#` and the list stops being about
 notes and becomes that note's headings, in the order they appear, each saying
@@ -751,7 +837,7 @@ Templates/
 | template | for | what it carries |
 | --- | --- | --- |
 | **Daily Note** | `Daily/`, and the calendar's *Create daily note* | the day's date in `date:` and in the heading, today's tasks, a timestamped log, habits, tomorrow |
-| **Meeting** | the folder your meetings live in | date, time, client, project, attendees, location; agenda, notes, a decisions callout, actions |
+| **Meeting** | the folder your meetings live in | `start` and `end`, so the note is an event and lands on that day's agenda; client, project, attendees, location; agenda, notes, a decisions callout, actions |
 | **Person** | a folder of people, or the vault root, so a `[[Ana Ruiz]]` fills one in | the fields a vCard carries — name, nickname, org, department, role, emails, phones, website, the address split the way `ADR` is, timezone, birthday, anniversary, social, assistant, partner |
 | **Project** | the note a folder of notes hangs off | status, owner, client, started, due, stakeholders; outcome, a milestone table, tasks, risks, a log |
 | **Decision** | anywhere a choice is worth outliving the room it was made in | status, owner, supersedes; the question, the options with their fors and againsts, what was chosen, what it costs |
@@ -766,7 +852,9 @@ anybody owes: none of them arrives ticked, and none of them arrives with a due
 date, so a new note adds nothing to Due until you put it there. And the
 frontmatter carries what the note *is* while the body carries what happened —
 `attendees: []` is typed as "Ana, Bo" in the properties form, so an empty list
-is an invitation rather than a puzzle.
+is an invitation rather than a puzzle. A `[[Ana Ruiz]]` among those names is a
+real link and puts the meeting in her linked mentions: wikilinks are read from
+the whole file, and frontmatter is part of the file.
 
 The fields a template can fill in are deliberately few: `{{title}}`, `{{date}}`,
 `{{time}}`, `{{year}}`, `{{month}}`, `{{day}}`, `{{weekday}}`, and `{{cursor}}`
@@ -866,14 +954,188 @@ The **daily note** is the case this was built for. Point `Daily/` at a template
 and every day's note starts from it, dated for *the day it is filed under* rather
 than for today — so Thursday's note, started on Saturday, still says Thursday.
 
-**Calendar and tasks.** An optional right column (⌘⇧R) shows a month calendar
-with a dot per note, filed by frontmatter `date:`, a `YYYY-MM-DD` filename, or
-creation time. Click a day to filter the list. Any day without a daily note
-offers to make one — **Create daily note**, at the top of that day's list and
-under the day in the rail — which writes `Daily/YYYY-MM-DD.md` and opens it, so
-Thursday's note can be started on Saturday and still lands on Thursday. Below
-it, **Due**: the tasks that are due today and the ones already late. Ticking a
-box there edits the source note.
+**Calendar, agenda and tasks.** An optional right column (⌘⇧R) shows a month
+calendar with a dot per note, filed by an event's `start:`, then frontmatter
+`date:`, a `YYYY-MM-DD` filename, or creation time. Click a day to filter the
+list.
+
+Under the month the column has **two tiers rather than four sections in a row**.
+The selected day is named once — `September 21`, with *Today* beside it when it
+is — and under that name sit the three things there are to say about that day:
+**Agenda**, what is happening; **Notes**, what you wrote; and **Tasks**, what it
+asks of you. Each carries its count, and the two that can be added to carry a
+**+** in the same place. Hairlines mark only the two structural joins, under the
+month and before Due; inside the group the small-caps headings and the space
+around them do the separating.
+
+**Due** sits outside that group, because it is the one list here that is not
+about the selected day at all: what is late and what is owed today, whichever
+day you are looking at — minus whatever the day above has already said. The two
+lists overlap whenever you are looking at today, which is most of the time, and
+the specific one wins: the day keeps what is due on it and Due shows the rest.
+Ticking a box either place edits the source note.
+
+An **event is not in the Notes list**, being in the Agenda directly above it — a
+meeting said twice in one column is the thing this arrangement exists to stop.
+It keeps its dot on the month and it is still in the middle column when the list
+is scoped to a day, because those two answer *what is filed here*, which an
+event is. Notes answers *what did you write*, which it is not.
+
+Any day without a daily note offers to make one — **Create daily note**, which
+writes `Daily/YYYY-MM-DD.md` and opens it, so Thursday's note can be started on
+Saturday and still lands on Thursday. It is offered once: at the top of that
+day's list when the list is scoped to that day, and in the rail's Notes section
+when it is not.
+
+**An event is a note that says when it happens.** One key does it: `start:` in
+the frontmatter, and the note is on that day's agenda. There is no event format,
+no event editor and nothing to import — a note with a `start:` is an event and a
+note without one is a note, which is the same bargain templates and tags already
+make.
+
+```yaml
+---
+start: 2026-09-21T09:30    # a bare date instead, and it is an all-day event
+end: 2026-09-21T10:00      # optional; an hour is assumed
+tz: America/New_York       # optional; start and end are written in this zone
+---
+```
+
+The three shapes `start:` takes are iCalendar's three rather than three of our
+own, because that is what a calendar's data already is. A bare date is a whole
+day. A time with no zone is a wall clock — half nine wherever you are. A time
+with `tz:` is that zone's wall clock, so the file reads as the meeting was
+described to you, "two o'clock in New York", and the app does the conversion
+rather than you doing it before typing. Zones are resolved through the browser's
+own `Intl`, so there is no timezone library here and nothing to keep up to date.
+
+**A time with no zone floats, and that is the default.** `09:30` with nothing on
+it means half nine wherever it is being read — which is what you want for a run
+or a haircut, and not for a call with somebody in another country. Naming a zone
+pins it to an instant instead. Both are useful and only one can be the default,
+so the default is the one that adds no line to the file; the New Event dialog
+has a zone list for when you want the other, and a template on `Calendar/`
+carrying a `tz:` has it *offered* in that list rather than applied behind the
+times you just typed.
+
+**Twice a year a wall clock names no instant, or two.** An hour is skipped in
+spring and repeated in autumn, and both need a rule: a skipped time moves
+forward by the gap, a repeated one means the first of the two. That is what
+every calendar settles on, and it is what makes naming the zone you are already
+in a statement that changes nothing — which it has to be, since it says nothing
+new.
+
+The repeated hour is the one place the format gives something up, and it is
+worth saying where. `01:30` is one spelling for two moments, so a file cannot
+name the second of them — which means an hour-long event moved onto that
+morning is written **01:30 to 02:30** rather than 01:30 to the other 01:30. An
+hour on the clock face, which is what it reads as and what the file can say,
+rather than an hour of elapsed time that would have to be stored as a moment
+the format has no words for. Everywhere the spelling *can* name the exact
+instant — the skipped hour included — it is kept.
+
+**A `tz:` the browser cannot read is shown as broken** rather than quietly
+ignored. A mistyped zone resolves to exactly the same instant as no zone at all,
+so without this a typo and a correct file look identical on screen while the
+event is hours out. The agenda row says the name it could not use, the
+properties form underlines it and offers the real ones as you type, and the New
+Event dialog says which zone its template asked for and why it was left off.
+
+**And the dialog does all its arithmetic in the zone you picked.** Whether the
+end comes after the start, how long the event stays when you move it, and which
+folder the note will land in are all answered through the same parser the note
+itself is read by. Answered device-locally instead, they disagree with the file
+being written: 02:30 to 03:00 in Tokyo looked like an end before its start on a
+New York morning the clocks went forward, and a Tokyo midnight previewed
+October while saving into September.
+
+Two places part with iCalendar deliberately. **An all-day `end:` is inclusive**,
+where `DTEND` is exclusive — copy that through literally and every one-day event
+draws itself two days long. And **an all-day event ignores `tz:`**: the 21st is
+the 21st wherever the calendar came from, and converting it would slide it onto
+the 20th for anybody far enough west. A date that does not exist is refused
+rather than rolled over, because `Date` takes the 31st of September and hands
+back the 1st of October — so a mistyped day would not be an error, it would be
+the wrong day.
+
+**The agenda is a list, not a grid.** A time grid needs vertical space the rail
+has not got and spends most of it drawing the hours nothing happens in; this is
+a surface for reading a day rather than scheduling one. All-day rows come first
+and say *all day* rather than leaving the column empty: saying nothing was the
+first answer, since the heading already names the day, but on screen an empty
+cell does not read as "no time" — it reads as a title come loose from the column
+beside it. A row that has already
+finished is dimmed rather than dropped, because what you did this morning is
+part of what the day was. An event's own zone is named only where it disagrees
+with the clock you are reading, and compared by offset rather than by name: a
+meeting written `tz: Europe/London`, read in London, is just a meeting, and
+Dublin is the same afternoon. An event that covers several days is on all of
+them, and an evening that ends at midnight ends on the evening.
+
+**Making one.** `>New event` in the palette, or the **+** on the agenda's
+header, asks for a name and when it is. The day comes from the calendar you are
+looking at and the time from the next round half hour — nobody schedules
+anything for 14:07, and rounding up is never a time that has already gone — and
+both are on the dialog rather than only in the hint under it, because an event
+is by definition at a time that is *not now*. "The next half hour" is the right
+guess for something you are starting this minute, which a daily note is and a
+meeting is not, so it is wrong most times it is offered.
+
+It costs nothing when the guess happens to be right: **Enter in the name still
+makes the event and closes**. Moving the start takes the end with it, keeping
+the length it had, and **All day** swaps both fields for plain dates — unticking
+it gives back the times that were there rather than guessing again. An end
+before its start is corrected to an hour rather than refused, which is what the
+file would have done with it anyway.
+
+The note lands in `Calendar/`, under the year and month **of the start you
+chose** — so making next month's meeting no longer means clicking the calendar
+into next month first. Nested because this is the one folder that fills up on
+its own, and a directory with hundreds of files in it is one nobody opens twice.
+
+It is called **what you called it, and then the day it is on** — `Lunch with
+Joe - 2026-09-22.md`. The date goes on the end and never on the front, which is
+what this was first built as and what had to come out again: a prefix pushes the
+name out of every list that shows one, and the agenda rail is a single line
+ending in an ellipsis, so it showed the date and then ran out of room before
+reaching the thing you named. The agenda strips the date back off, since the
+row already sits under a heading naming the day.
+
+The objection to putting *when* in a filename is real and stands: a filename
+does not follow the frontmatter, so that date stops being true the moment the
+event moves, and moving one is a two-second job now the properties form has a
+picker on it. It is left stale rather than chased, because a rename breaks every
+`[[link]]` pointing at the note and nothing reads the date anyway — the agenda
+takes both the clock and the day off `start:`.
+
+What makes it worth paying is the alternative. Name collisions are resolved per
+*folder*, and an event's folder is a month, so a weekly lunch was `Lunch with
+Joe`, `Lunch with Joe 2`, `Lunch with Joe 3` through September — and then began
+again at `Lunch with Joe` in October, a different directory with a fresh
+counter. The same series, numbered differently every month, with nothing in any
+of the names saying which occurrence it was. A date means something, sorts the
+way the folder already sorts, and leaves the name you typed at the front where
+prefix search and every alphabetical list expect it.
+
+It still costs the bare name: no occurrence holds `Lunch with Joe.md`, so
+`[[Lunch with Joe]]` resolves to nothing and a link names a date — `[[Lunch with
+Joe - 2026-09-22]]` — or goes through `aliases:`.
+
+The note also records **what you typed** in `title:`, because the filename
+cannot: it has had characters a filename cannot hold swapped out, been cut to
+length, and had a date put on the end, and afterwards nothing in it says which
+parts were yours. The agenda shows the recorded title while the filename is
+still the one made from it — so an event you called `1:1 - Ana` or `Postmortem -
+2026-09-22` reads exactly that way. **Rename the note to rename the event**: the
+agenda then follows the filename, like every other surface does. Editing
+`title:` by hand renames nothing; it is a record of what was typed, not a second
+name.
+
+A template on `Calendar/` is picked up the way one on `Daily/` is, and the walk
+goes up: a template assigned to `Calendar/` reaches `Calendar/2026/09`, which is
+not a folder anybody chose. A template that writes its own `start:` keeps it —
+what it does not write is supplied, and a key it left deliberately empty counts
+as written.
 
 **A calendar you can write in.** Settings → Editor → **Clicking a day in the
 calendar** switches the click from *shows what is filed on that day* to *opens
@@ -883,10 +1145,22 @@ with nothing on it is usually starting to write about it, not looking for what
 isn't there. So on an empty day the click asks — one dialog naming the file it
 would write, `Daily/YYYY-MM-DD.md` — rather than creating it, because a note
 written on a guess is a note somebody has to go and delete. The day is selected
-and its notes are listed either way, in both modes, so the setting changes what
-a click *adds* and never what it takes away; the difference is that only the
-filtering mode lets a second click on the same day take the filter back off,
-since where a click means "open this day's note" a second one means it again.
+either way, so the setting changes what a click *adds* and never what it takes
+away; the difference is that only the filtering mode lets a second click on the
+same day take the filter back off, since where a click means "open this day's
+note" a second one means it again.
+
+**And the rail stops repeating the column beside it.** In the filtering mode a
+click scopes the middle column to that day, off the same map the rail's day
+panel reads — so the two were the identical list, side by side, saying nothing
+new. The panel keeps its heading, its offer of a daily note and that day's
+tasks, and hands over only the list of notes, and only in the mode that causes
+the duplication. In the daily-note mode nothing is scoped and the panel is the
+only place those notes appear, so it keeps them; browsing a folder with today
+still selected, the middle column is showing the folder, so it keeps them there
+too. What is dropped is the coincidence, not the panel. The phone's calendar tab
+is a screen of its own with no second column to agree with, and keeps
+everything.
 
 The rail's list is narrowed on purpose. Every `- [ ]` in the vault is rolled up
 under **Tasks** in the sidebar, and repeating that list under a calendar made
@@ -1315,7 +1589,9 @@ question into an unpredictable number of requests. This works on everything.
 
 **The citations are checked, not trusted.** The instruction says never to invent
 a note title, and every answer is read back to find out whether it was obeyed:
-each `[[citation]]` is compared against the notes actually sent, and anything
+each `[[citation]]` is followed to the note it leads to and compared against the
+notes actually sent — so of two notes called `Name`, citing the one that was not
+sent is caught — and anything
 else is named in the callout — linked if a note by that name exists, quoted as
 *invented* if none does. This costs no extra request; it is a scan of text
 already in hand. It matters because a fabricated citation renders identically to
@@ -1635,8 +1911,9 @@ to go looking for.
 subfolder…* on any folder, and renamed from its own menu — each of them a
 one-field dialog in the app rather than a browser `prompt()`, which on a phone
 is a system alert thrown over the whole screen. Renaming moves every note
-underneath and says so before you commit to it; wikilinks are unaffected,
-because they point at a note's name rather than its path.
+underneath and says so before you commit to it, and every link into the folder
+follows: a link by name needs nothing, and one by path — `[[Projects/Alpha/Plan]]`
+— is rewritten to the new path, with its heading and display text kept.
 
 Long-press or right-click a Tag Folder for *New folder inside…*, *Move up* and
 *Move down*, *Move…*, and the two delete variants. Siblings sit in the order
@@ -2074,6 +2351,9 @@ Vault/
 ├─ Work/
 │  ├─ Call with TAC.md
 │  └─ Highway 9.md
+├─ Calendar/                  ← where a new event lands, by year and month
+│  └─ 2026/09/
+│     └─ Design review - 2026-09-21.md
 ├─ attachments/
 │  └─ 2026/08/pasted-a3f9.webp
 └─ backstage/                 ← app's own files, hidden in the UI
@@ -2251,6 +2531,11 @@ src/
 │  │                  and the three things that look like a heading and are
 │  │                  not: a `#tag`, a `#` in a code fence, a YAML comment
 │  ├─ properties.ts   the same frontmatter as an ordered, editable list
+│  ├─ agenda.ts       how an event reads on a day: the time to put in front of
+│  │                  it, and the zone worth naming only where it disagrees
+│  ├─ eventnote.ts    making an event by hand — where it goes, what it is
+│  │                  called, and how a template's frontmatter and its own
+│  │                  meet without writing `start:` twice
 │  ├─ tagquery.ts     the rule language behind Tag Folders, over notes or tasks
 │  ├─ folders.ts      nested folders + the Tag Folder tree and inheritance
 │  ├─ searchindex.ts  what stops a search from reading every note
@@ -2314,6 +2599,13 @@ src/
    │                 each other so one vault stays one vault
    ├─ PopoutWindow.tsx  the one-note shell that window boots into
    ├─ Properties.tsx the frontmatter form the note's date opens
+   ├─ modal.ts       which layer owns the Escape key: a stack, because mount
+   │                 order is not stacking order; a claim, because knowing you
+   │                 are on top does not stop the handler that ran first; and a
+   │                 z-index off that same stack, so the layer with the
+   │                 keyboard is the one you can see — with a floor for the
+   │                 two that have to be drawn high, which recency still beats;
+   │                 and where the caret goes back to when a layer closes
    ├─ Menu.tsx       popover on a pointer, bottom sheet on a phone
    ├─ tableMenu.ts   what a table offers, shared by the toolbar's ⊞ and by
    │                 the handles on the table itself
@@ -2378,6 +2670,17 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
   honest version is that they are absent rather than half-present: to move a
   note, open it, copy it, switch, paste — or use Export, which is two clicks
   and keeps the file.
+- **The month's dots do not say which are events.** An event is out of the
+  rail's Notes list, since it is on the Agenda above — but its dot on the month
+  is the same dot a note gets, so a day with four meetings and nothing written
+  on it looks, from the grid alone, like a day somebody wrote four notes. A mark
+  of its own is the answer and the dots already carry one meaning each, so it is
+  a third channel rather than a tweak; the pips that say *work is due here*
+  took one, and a third would need to earn its space against both.
+- **An event is still among the day's notes in the middle column.** Scoping the
+  list to a day lists everything filed on it, meetings included, which is right
+  for a list whose job is "what is filed here" and repetitive next to an agenda
+  that just said the same thing in a narrower column.
 - **Vaults share one browser storage allowance.** The figure under About is the
   origin's total, not the vault's, and a browser low on space evicts by origin —
   so a large vault is a risk to a small one beside it. Settings › Vaults says
@@ -2483,14 +2786,12 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
   same reason: offering them there would be completing somebody into an embed
   that resolves to nothing.
 
-- **A heading with a `|` or a `]` in it cannot be linked to.** `[[Note#Anchor]]`
-  ends its anchor at a `]` and splits it at a `|`, and the syntax has no escape
-  for either: `[[#Revenue | costs]]` reads as the anchor "Revenue" with the
-  alias "costs", and `[[#Status [draft]]]` truncates to "Status [draft". So the
-  completion leaves those headings out rather than offering a link that could
-  never resolve. The outline still reaches them — ⌘⇧O navigates rather than
-  writing a link — so what is missing is linking to them, which was never
-  possible.
+- **A heading with a `|` or a `]` in it is written escaped.** `[[Note#Anchor]]`
+  ends its anchor at a `]` and splits it at a `|`, so `## Revenue | costs` is
+  completed as `[[Note#Revenue \| costs]]` rather than as the anchor "Revenue"
+  with the display text "costs". These headings were left out of the completion
+  until the syntax had an escape; see *A name can use the characters a link
+  does*, above.
 
 - **A heading completion is over one note, not over the vault.** `[[#` and
   `[[Trip#` both need the note named first — there is no "find me the section
@@ -2587,6 +2888,14 @@ Being honest about what isn't done, roughly in the order I'd tackle it:
 - **Encrypted vaults**, as above — a clean fit behind `RemoteAdapter`.
 - **Tag Folder rules over dates** — `created:<2026-01-01`, `due:overdue` — which
   the parser is already shaped to accept.
+- **Calendar and contacts from the systems that already own them.** Events are
+  half of it and they are here; the other half is a helper *outside this
+  repository* that projects CalDAV and CardDAV into markdown Slate reads, so
+  `[[Jane Doe]]` resolves and her note shows every meeting she was in — with no
+  CalDAV in this codebase and no second address book to maintain. The format, the
+  argument for keeping it out of `backstage/`, and what the helper has to
+  guarantee about deletion and idempotence are written up in
+  [`docs/calendar-contacts.md`](docs/calendar-contacts.md).
 
 **And one idea deliberately not taken.** The outline was going to live in the
 right rail, which would have become a switcher between *Today* (the calendar
@@ -2608,8 +2917,8 @@ and that is a better argument for the rail than the outline ever was.
 ## Testing
 
 ```bash
-npm test                # 1189 unit + two-device sync + folder round-trip tests
-node scripts/smoke.mjs  # 806 checks in headless Chromium against dist/
+npm test                # 1412 unit + two-device sync + folder round-trip tests
+node scripts/smoke.mjs  # 869 checks in headless Chromium against dist/
 node scripts/shots.mjs  # regenerate screenshots/
 ```
 

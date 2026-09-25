@@ -15,7 +15,8 @@
 
 import { attachmentUrl, resolveEmbed, resolveLink } from '../core/vault'
 import { resolveVars, varText, type FrontmatterValue } from '../core/markdown'
-import { mediaClass } from '../core/util'
+import { decodeLinkPath, mediaClass } from '../core/util'
+import { WIKI_INNER, splitWikiInner, unescapeWiki } from '../core/wikilink'
 import { requestLightbox } from './context'
 import { MD_URL } from './links'
 
@@ -48,8 +49,18 @@ const RULES: Array<{
   },
   // Embeds before links, so "![[x]]" isn't read as "!" + "[[x]]".
   {
-    re: /^!\[\[([^\]\n|]+)(?:\|([^\]\n]*))?\]\]/,
-    build: (m, ctx) => embedNode(m[1].trim(), m[2], ctx),
+    re: new RegExp(String.raw`^!\[\[(${WIKI_INNER})\]\]`),
+    build: (m, ctx) => {
+      // A file, not split at `#` — `![[C\# notes.pdf]]` — as in live preview.
+      const { head, alias } = splitWikiInner(m[1])
+      const target = unescapeWiki(head.trim())
+      if (!target) {
+        const el = document.createElement('span')
+        el.textContent = m[0]
+        return el
+      }
+      return embedNode(target, alias, ctx)
+    },
   },
   {
     re: /^!\[([^\]\n]*)\]\(\s*([^)\s]*)\s*\)/,
@@ -58,12 +69,12 @@ const RULES: Array<{
   {
     // The target may be empty — `[[#Costs]]` is a heading in this note — but
     // not both halves at once, which the guard below rejects.
-    re: /^\[\[([^\]\n|#]*)(?:#([^\]\n|]+))?(?:\|([^\]\n]*))?\]\]/,
+    re: new RegExp(String.raw`^\[\[(${WIKI_INNER})\]\]`),
     build: (m, ctx) => {
-      const target = m[1].trim()
       // The `#Heading` half, kept for the same reason live preview keeps it:
       // a link in a table cell is still a link, and still lands somewhere.
-      const anchor = m[2]?.trim()
+      // Read by the splitter everything shares, escapes and all.
+      const { target, anchor, alias } = splitWikiInner(m[1])
       const el = document.createElement('span')
       if (!target && !anchor) {
         el.textContent = m[0]
@@ -81,7 +92,7 @@ const RULES: Array<{
           : target
             ? `${resolved} — ${anchor}`
             : `${anchor} — in this note`
-      el.textContent = m[3] ?? (target ? target : `#${anchor}`)
+      el.textContent = alias ?? (target ? target : `#${anchor}`)
       return el
     },
   },
@@ -183,7 +194,7 @@ function wrap(tag: string, inner: string, ctx: Ctx): Node {
 
 function embedNode(ref: string, size: string | undefined, ctx: Ctx, alt = ''): Node {
   const external = /^(https?|data):/i.test(ref)
-  const path = external ? undefined : resolveEmbed(decodeURI(ref), ctx.notePath)
+  const path = external ? undefined : resolveEmbed(decodeLinkPath(ref), ctx.notePath)
   const src = external ? ref : path ? attachmentUrl(path) : undefined
 
   if (!src || (path && mediaClass(path) !== 'image')) {

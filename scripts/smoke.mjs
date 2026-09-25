@@ -133,6 +133,37 @@ function check(name, ok, detail = '') {
   console.log(`${ok ? '  PASS' : '  FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`)
 }
 
+/**
+ * Whether the palette, opened over something else, is really on top of it.
+ *
+ * Both halves matter and they used to disagree. `ui/modal.ts` knows which layer
+ * opened last and hands the keyboard to it; the stylesheet decided what was
+ * painted, and gave every scrim the same height — so the palette could be the
+ * layer taking the keys while something else covered it. Asking only how many
+ * layers are up is what let that through twice, so this asks the page what it
+ * would actually hit at the palette's own input.
+ */
+async function paletteOnTop(page) {
+  return await page.evaluate(() => {
+    const palette = document.querySelector('.palette')
+    if (!palette) return { layers: 0 }
+    /* Everything fixed and full-window: the scrims, the sheet, a menu. */
+    const layers = [
+      ...document.querySelectorAll('.scrim, .lightbox, .qa-root[data-open="1"], .menu-scrim'),
+    ]
+    const mine = layers.find((l) => l.contains(palette))
+    const z = (el) => Number(getComputedStyle(el).zIndex) || 0
+    const box = palette.querySelector('input').getBoundingClientRect()
+    const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2)
+    return {
+      layers: layers.length,
+      above: !!mine && layers.every((l) => l === mine || z(mine) > z(l)),
+      hit: !!hit && palette.contains(hit),
+      z: layers.map(z),
+    }
+  })
+}
+
 await mkdir(SHOTS, { recursive: true })
 await new Promise((r) => server.listen(PORT, r))
 
@@ -774,6 +805,42 @@ try {
 
     await page.keyboard.press('Escape')
     await page.waitForTimeout(300)
+
+    /*
+     * And a picture's Escape is its own. The lightbox closes itself from a
+     * *capture* listener and called `stopPropagation`, which does not stop the
+     * other listeners already bound to that same window — so the rule that
+     * Escape leaves focus mode ran too, and one keypress both shut the picture
+     * and threw the panels back up behind it.
+     */
+    await page.keyboard.press('Meta+Shift+f')
+    await page.waitForTimeout(300)
+    if ((await page.getAttribute('.shell', 'data-zen')) === '1') {
+      await page.locator('.cm-embed img').first().click()
+      await page.waitForTimeout(500)
+      const shown = (await page.locator('.lightbox').count()) === 1
+      await page.keyboard.press('Escape')
+      await page.waitForTimeout(350)
+      check(
+        'closing a picture with Escape leaves focus mode alone',
+        shown &&
+          (await page.locator('.lightbox').count()) === 0 &&
+          (await page.getAttribute('.shell', 'data-zen')) === '1',
+        `opened ${shown}, zen ${await page.getAttribute('.shell', 'data-zen')}`,
+      )
+      /*
+       * And out again by the shortcut rather than by Escape: the focus is in
+       * the editor here, where Escape hands the caret back before it does
+       * anything else, so leaving takes two and neither of them is what this
+       * block is about. The palette case above checks that half.
+       */
+      await page.keyboard.press('Meta+Shift+f')
+      await page.waitForTimeout(300)
+      check(
+        'and focus mode is still there to be left in the ordinary way',
+        (await page.getAttribute('.shell', 'data-zen')) === '0',
+      )
+    }
   }
 
   /* ---- transcribing a picture -------------------------------------------
@@ -1324,7 +1391,7 @@ try {
     check('a pinned note is sent whatever the search found', /Quorum is four, and decisions/.test(material))
     check(
       'and goes first, ahead of anything the search turned up',
-      material.indexOf('## Team Charter') === material.indexOf('## '),
+      material.indexOf('## [[Team Charter]]') === material.indexOf('## [['),
       material.slice(0, 60).replace(/\n/g, ' · '),
     )
 
@@ -1475,8 +1542,8 @@ try {
      * version of this check pointed at a note with no links at all, so it
      * proved the scope kept the vault out while never once expanding.
      */
-    check('a note the scope reached by a link out of it is sent', /^## Decision Log$/m.test(scopedMaterial), sentHeadings)
-    check('and one it reached by a link back to it', /^## Retro Notes$/m.test(scopedMaterial), sentHeadings)
+    check('a note the scope reached by a link out of it is sent', /^## \[\[Decision Log\]\]$/m.test(scopedMaterial), sentHeadings)
+    check('and one it reached by a link back to it', /^## \[\[Retro Notes\]\]$/m.test(scopedMaterial), sentHeadings)
     /*
      * The note that makes the check mean something: it matches the same search
      * as the two above and is connected to nothing, so the only thing that can
@@ -1484,7 +1551,7 @@ try {
      */
     check(
       'but not one that matched the search and is linked to nothing',
-      !/^## Quorum Elsewhere$/m.test(scopedMaterial),
+      !/^## \[\[Quorum Elsewhere\]\]$/m.test(scopedMaterial),
       sentHeadings,
     )
     llm.replyFor = null
@@ -1545,7 +1612,8 @@ try {
     const onlyMaterial = onlyAnswer?.messages?.[1]?.content ?? ''
     check(
       'and exactly one note goes with the question',
-      (onlyMaterial.match(/^## /gm) ?? []).length === 1 && /## Working Agreements/.test(onlyMaterial),
+      (onlyMaterial.match(/^## \[\[/gm) ?? []).length === 1 &&
+        /## \[\[Working Agreements\]\]/.test(onlyMaterial),
       (onlyMaterial.match(/^## .*$/gm) ?? []).join(' · '),
     )
     const narrowFile = (await savedConvo('And how is it recorded')) ?? ''
@@ -1807,7 +1875,16 @@ try {
   await otherDay.click()
   await page.waitForTimeout(300)
   check('an empty day offers a daily note', (await page.locator('.list-pane .daily-row').count()) === 1, otherLabel)
-  check('the rail offers it too', (await page.locator('.rail .day-create-row').count()) === 1)
+  /*
+   * And exactly once. Clicking a day scopes the list to it, which is the case
+   * where the rail hands its whole notes section — the list and the offer under
+   * it — to the column already showing them. The offer is on screen either way;
+   * what it must not be is on screen twice, side by side.
+   */
+  check(
+    'and the rail leaves it to that list rather than making the same offer twice',
+    (await page.locator('.rail .day-create-row').count()) === 0,
+  )
   const dailyName = await page.locator('.list-pane .daily-row-name').innerText()
   await page.locator('.list-pane .daily-row').click()
   await page.waitForTimeout(500)
@@ -3861,6 +3938,234 @@ try {
   )
   await page.locator('.side-row:has-text("All Notes")').first().click()
   await page.waitForTimeout(350)
+  /*
+   * Under its own name. Leaving a folder leaves a tombstone where the note was,
+   * and a collision check that counted it came back as `Retro 2` — nothing
+   * called Retro anywhere for it to have collided with. The check above only
+   * asked whether the folder was empty, which is how that got past it.
+   */
+  const home = await page.locator('.note-row-title').allInnerTexts()
+  check(
+    'and comes home under the name it left with',
+    home.includes('Retro') && !home.includes('Retro 2'),
+    home.filter((t) => t.startsWith('Retro')).join(', '),
+  )
+
+  /*
+   * Onto a folder that already has a note by that name. The move went straight
+   * onto the path and the note that was there was overwritten — one drag into
+   * the wrong folder deleted something, and sync took the loss to every other
+   * device. The one being moved takes the next free name instead, and says so.
+   *
+   * Seeded rather than made through the UI so the pair is known exactly; the
+   * next section reloads the page for its own seeding either way.
+   */
+  await page.evaluate(async () => {
+    const seed = [
+      ['Clients/Dupe.md', '# Dupe\n\nAlready in Clients, and must survive.\n'],
+      ['Dupe.md', '# Dupe\n\nThe one being moved.\n'],
+    ]
+    const db = await new Promise((res, rej) => {
+      const r = indexedDB.open('slate')
+      r.onsuccess = () => res(r.result)
+      r.onerror = () => rej(r.error)
+    })
+    const tx = db.transaction('files', 'readwrite')
+    seed.forEach(([path, text], i) => {
+      tx.objectStore('files').put({
+        path, kind: 'note', text, mime: 'text/markdown', size: text.length,
+        hash: `dupe${i}`, mtime: Date.now() + 20_000 - i * 100, ctime: Date.now(),
+        dirty: true, dirtyFlag: 1, sync: {},
+      })
+    })
+    await new Promise((res) => { tx.oncomplete = res })
+  })
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForSelector('.note-row')
+  await page.locator('.side-row:has-text("All Notes")').first().click()
+  await page.waitForTimeout(350)
+  await page
+    .locator('.note-row', { hasText: 'The one being moved' })
+    .first()
+    .dragTo(folderRow('Clients'))
+  await page.waitForTimeout(600)
+  const dupeToast = (await page.locator('.toast').innerText().catch(() => '')) || 'no toast'
+  await folderRow('Clients').click()
+  await page.waitForTimeout(400)
+  const inClients = await page.locator('.note-row').allInnerTexts()
+  check(
+    'a note dragged into a folder that has one by its name leaves that one alone',
+    inClients.some((t) => t.includes('Already in Clients')) &&
+      inClients.some((t) => t.includes('The one being moved')),
+    inClients.map((t) => t.split('\n')[0]).join(' | '),
+  )
+  check(
+    'and takes the next free name, and says so',
+    (await page.locator('.note-row-title').allInnerTexts()).includes('Dupe 2') &&
+      dupeToast.includes('as Dupe 2'),
+    `${(await page.locator('.note-row-title').allInnerTexts()).join(', ')} — "${dupeToast}"`,
+  )
+  await page.locator('.side-row:has-text("All Notes")').first().click()
+  await page.waitForTimeout(350)
+
+  /*
+   * Renamed to a name the link syntax uses. `[[C# Notes]]` is the note `C`
+   * and its heading `Notes`, so renaming a note to `C# Notes` used to turn
+   * every link to it into a link to somewhere else. The rename writes
+   * `[[C\# Notes]]` now, and everything that reads a link — the editor
+   * included — reads that as the note. Through the header, as a person would.
+   */
+  await page.evaluate(async () => {
+    const seed = [
+      // It links to itself, which is the case a rename has to take most care
+      // over: see the check on the old name below.
+      ['Hash target.md', '# Hash target\n\nThe note being renamed. [[Hash target#Hash target]]\n'],
+      [
+        'Hash linker.md',
+        '# Hash linker\n\nSee [[Hash target]] for more.\n\nAnd [[Hash target|Status [draft\\]]] too.\n',
+      ],
+    ]
+    /*
+     * With the hash the app would have given them. Seeded with a made-up one,
+     * a note renamed in the editor comes back under its old name: the editor
+     * saves the old path once more as the rename lands, and a save whose hash
+     * does not match the tombstone there brings the note back. No real note has
+     * a hash that does not match its text, so this is the only honest seed.
+     */
+    const hash = async (t) => {
+      const d = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)))
+      return [...d.slice(0, 16)].map((b) => b.toString(16).padStart(2, '0')).join('')
+    }
+    const hashes = await Promise.all(seed.map(([, t]) => hash(t)))
+    const db = await new Promise((res, rej) => {
+      const r = indexedDB.open('slate')
+      r.onsuccess = () => res(r.result)
+      r.onerror = () => rej(r.error)
+    })
+    const tx = db.transaction('files', 'readwrite')
+    seed.forEach(([path, text], i) => {
+      tx.objectStore('files').put({
+        path, kind: 'note', text, mime: 'text/markdown', size: text.length,
+        hash: hashes[i], mtime: Date.now() + 30_000 - i * 100, ctime: Date.now(),
+        dirty: true, dirtyFlag: 1, sync: {},
+      })
+    })
+    await new Promise((res) => { tx.oncomplete = res })
+  })
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForSelector('.note-row')
+  await page.locator('.side-row:has-text("All Notes")').first().click()
+  await page.waitForTimeout(350)
+  await page.locator('.note-row', { hasText: 'The note being renamed' }).first().click()
+  await page.waitForTimeout(500)
+  await page.locator('.editor-title-input').fill('C# Notes')
+  await page.locator('.editor-title-input').press('Enter')
+  await page.waitForTimeout(700)
+  /*
+   * And only under its new name. Rewriting its own link to itself before it
+   * moved left the tombstone at the old name expecting different text from
+   * the save the editor makes as a rename lands, and that save brought the old
+   * note back: two notes, one under each name.
+   */
+  const hashRenamed = await page.locator('.note-row-title').allInnerTexts()
+  check(
+    'a note renamed from its header is gone from its old name, even one that links to itself',
+    hashRenamed.includes('C# Notes') && !hashRenamed.includes('Hash target'),
+    hashRenamed.filter((t) => /Hash|C#/.test(t)).join(', '),
+  )
+  await page.locator('.note-row', { hasText: 'Hash linker' }).first().click()
+  await page.waitForTimeout(700)
+  const hashLink = page.locator('.cm-content .cm-wikilink').first()
+  const hashSeen = {
+    to: await hashLink.getAttribute('data-wikilink'),
+    exists: await hashLink.getAttribute('data-exists'),
+    // What is on screen, with the caret elsewhere: the name, not its escape.
+    shown: await hashLink.evaluate((el) => el.innerText),
+  }
+  check(
+    'a link to a note renamed to C# Notes still goes to it, and reads as its name',
+    hashSeen.to === 'C# Notes' && hashSeen.exists === '1' && hashSeen.shown === 'C# Notes',
+    JSON.stringify(hashSeen),
+  )
+  // Display text with a `]` in it: carried through the rename escaped, and
+  // shown without the escape.
+  const draftLink = page.locator('.cm-content .cm-wikilink').nth(1)
+  const draftSeen = {
+    to: await draftLink.getAttribute('data-wikilink'),
+    shown: await draftLink.evaluate((el) => el.innerText),
+  }
+  check(
+    'and display text with a ] in it survives the rename, shown as written',
+    draftSeen.to === 'C# Notes' && draftSeen.shown === 'Status [draft]',
+    JSON.stringify(draftSeen),
+  )
+  await hashLink.click()
+  await page.waitForTimeout(700)
+  check(
+    'and following it opens that note',
+    (await page.locator('.editor-title-input').inputValue()) === 'C# Notes',
+    await page.locator('.editor-title-input').inputValue(),
+  )
+  await page.locator('.side-row:has-text("All Notes")').first().click()
+  await page.waitForTimeout(350)
+
+  /*
+   * Renaming a folder. It moved every note and rewrote nothing, so a link by
+   * path into it — `[[Alpha/Plan]]` — pointed at nothing once `Alpha` was
+   * `Beta`. Through the folder's own menu and dialog, as a person would.
+   */
+  await page.evaluate(async () => {
+    const seed = [
+      ['Alpha/Plan.md', '# Plan\n\nThe plan.\n'],
+      ['Folder linker.md', '# Folder linker\n\nSee [[Alpha/Plan#Plan|the plan]] here.\n'],
+    ]
+    const hash = async (t) => {
+      const d = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)))
+      return [...d.slice(0, 16)].map((b) => b.toString(16).padStart(2, '0')).join('')
+    }
+    const hashes = await Promise.all(seed.map(([, t]) => hash(t)))
+    const db = await new Promise((res, rej) => {
+      const r = indexedDB.open('slate')
+      r.onsuccess = () => res(r.result)
+      r.onerror = () => rej(r.error)
+    })
+    const tx = db.transaction('files', 'readwrite')
+    seed.forEach(([path, text], i) => {
+      tx.objectStore('files').put({
+        path, kind: 'note', text, mime: 'text/markdown', size: text.length,
+        hash: hashes[i], mtime: Date.now() + 40_000 - i * 100, ctime: Date.now(),
+        dirty: true, dirtyFlag: 1, sync: {},
+      })
+    })
+    await new Promise((res) => { tx.oncomplete = res })
+  })
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForSelector('.note-row')
+  await folderRow('Alpha').first().click({ button: 'right' })
+  await page.waitForTimeout(300)
+  await page.locator('.menu-item:has-text("Rename")').first().click()
+  await nameFolder('Beta')
+  await page.locator('.side-row:has-text("All Notes")').first().click()
+  await page.waitForTimeout(350)
+  await page.locator('.note-row', { hasText: 'Folder linker' }).first().click()
+  await page.waitForTimeout(700)
+  const folderLink = page.locator('.cm-content .cm-wikilink').first()
+  const folderSeen = {
+    to: await folderLink.getAttribute('data-wikilink'),
+    anchor: await folderLink.getAttribute('data-anchor'),
+    exists: await folderLink.getAttribute('data-exists'),
+    shown: await folderLink.evaluate((el) => el.innerText),
+  }
+  check(
+    'a link by path into a renamed folder follows it, heading and display text kept',
+    folderSeen.to === 'Beta/Plan' &&
+      folderSeen.anchor === 'Plan' &&
+      folderSeen.exists === '1' &&
+      folderSeen.shown === 'the plan',
+    JSON.stringify(folderSeen),
+  )
+  await page.locator('.side-row:has-text("All Notes")').first().click()
+  await page.waitForTimeout(350)
 
 
 
@@ -4790,6 +5095,149 @@ try {
     await page.getAttribute('.editor-pane', 'data-width'),
   )
   await page.screenshot({ path: join(SHOTS, '30-focus-mode.png') })
+
+  /*
+   * One Escape does one thing.
+   *
+   * Escape leaves focus mode, and a dialog has an Escape of its own — so the
+   * keypress that closes a dialog must not also throw the panels back up
+   * behind it. The rule was written against a list of four dialogs and there
+   * are fourteen, so every one it had not been told about did both at once.
+   *
+   * All keyboard, and it hands back the mode it was given: focus mode is on
+   * here and the line after this one is about turning it off.
+   */
+  const zen = async () => await page.getAttribute('.shell', 'data-zen')
+  await page.keyboard.press('Meta+k')
+  await page.waitForTimeout(350)
+  const paletteUp = (await page.locator('.scrim').count()) === 1
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(300)
+  check(
+    'a dialog’s Escape closes the dialog and leaves focus mode alone',
+    paletteUp && (await page.locator('.scrim').count()) === 0 && (await zen()) === '1',
+    `palette opened ${paletteUp}, zen ${await zen()}`,
+  )
+  /*
+   * A context menu is a layer too, and for a long time it was the one nobody
+   * counted: its scrim is `.menu-scrim`, which the question above was not
+   * asking about, and it answered Escape without telling anyone. Closing one
+   * in focus mode therefore did both things at once.
+   *
+   * Opened and dismissed, so the editor mode this picks from is left as found.
+   */
+  await page.locator('.editor-head [aria-label="Editor mode"]').click()
+  await page.waitForTimeout(300)
+  const menuUp = (await page.locator('.menu').count()) === 1
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(300)
+  check(
+    'a menu\u2019s Escape closes the menu and leaves focus mode alone too',
+    menuUp && (await page.locator('.menu').count()) === 0 && (await zen()) === '1',
+    `menu opened ${menuUp}, zen ${await zen()}`,
+  )
+
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(300)
+  check('and the next Escape leaves it', (await zen()) === '0')
+
+  /*
+   * And the two layers that sit above the rest of the ladder.
+   *
+   * The capture sheet is drawn at 70 and a context menu at 80, each for a
+   * reason of its own, and the first pass at ordering left them out of the
+   * stack to keep those numbers. Which put the hole back one rung up: the
+   * palette opened over the sheet was the layer holding the keyboard at 51 and
+   * the sheet painted over it at 70, so an invisible prompt took an Enter and
+   * threw away the draft underneath. The numbers are floors now, and a floor
+   * does not outrank being opened last.
+   */
+  await page.keyboard.press('Meta+k')
+  await page.waitForTimeout(350)
+  await page.keyboard.type('>quick add task')
+  await page.waitForTimeout(400)
+  await page.keyboard.press('Enter')
+  await page.waitForSelector('.qa-root[data-open="1"]', { timeout: 10_000 })
+  /*
+   * The sheet empties its field in an effect as it opens, and Preact flushes
+   * effects a frame after the commit — so a draft written the instant the sheet
+   * appears can be wiped by the sheet's own opening. Wait for that to have
+   * happened, then make sure what was typed actually stuck, so the race shows
+   * up here as a failure rather than as an empty draft three checks later.
+   */
+  await page.waitForTimeout(400)
+  await page.locator('.qa-field').fill('Ring the dentist')
+  await page.waitForFunction(
+    () => document.querySelector('.qa-field')?.value === 'Ring the dentist',
+    { timeout: 5_000 },
+  )
+  await page.keyboard.press('Meta+k')
+  await page.waitForTimeout(400)
+  const overSheet = await paletteOnTop(page)
+  check(
+    'the palette opens over the capture sheet, and over means over',
+    overSheet.above && overSheet.hit,
+    JSON.stringify(overSheet),
+  )
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(350)
+  check(
+    'and its Escape leaves the sheet, and the draft in it, standing',
+    (await page.locator('.qa-root[data-open="1"]').count()) === 1 &&
+      (await page.locator('.qa-field').inputValue()) === 'Ring the dentist',
+    `sheet ${await page.locator('.qa-root[data-open="1"]').count()}, draft ${JSON.stringify(
+      await page.locator('.qa-field').inputValue(),
+    )}`,
+  )
+  /*
+   * And the caret goes back where it was. Every dialog here takes the focus
+   * when it opens and none of them used to give it back, so dismissing the
+   * palette left it on `<body>`: the draft survived, and the next thing typed
+   * into it went nowhere — or worse, was read as a shortcut.
+   */
+  await page.keyboard.type(' tomorrow')
+  await page.waitForTimeout(250)
+  check(
+    'and hands the caret back to the field it took it from',
+    (await page.evaluate(() => document.activeElement?.classList.contains('qa-field'))) === true &&
+      (await page.locator('.qa-field').inputValue()) === 'Ring the dentist tomorrow',
+    `focus ${await page.evaluate(() => document.activeElement?.className)}, draft ${JSON.stringify(
+      await page.locator('.qa-field').inputValue(),
+    )}`,
+  )
+
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(350)
+  check(
+    'and the next one puts the sheet away, nothing captured',
+    (await page.locator('.qa-root[data-open="1"]').count()) === 0,
+  )
+
+  /* The same over a context menu, which is drawn higher still. */
+  await page.locator('.editor-head [aria-label="Editor mode"]').click()
+  await page.waitForTimeout(300)
+  await page.keyboard.press('Meta+k')
+  await page.waitForTimeout(400)
+  const overMenu = await paletteOnTop(page)
+  check(
+    'the palette opens over a context menu, and over means over there too',
+    overMenu.above && overMenu.hit,
+    JSON.stringify(overMenu),
+  )
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(300)
+  const menuKept = (await page.locator('.menu').count()) === 1
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(300)
+  check(
+    'and they come away one at a time, newest first',
+    menuKept && (await page.locator('.menu').count()) === 0 && (await zen()) === '0',
+    `menu kept ${menuKept}, menus ${await page.locator('.menu').count()}`,
+  )
+
+  await page.keyboard.press('Meta+Shift+f')
+  await page.waitForTimeout(250)
+
   await page.keyboard.press('Meta+Shift+f')
   await page.waitForTimeout(250)
   check('⌘⇧F puts them back', (await page.getAttribute('.shell', 'data-zen')) === '0')
@@ -6586,43 +7034,567 @@ try {
   const laterDay = await showDay(1)
   await laterDay.click()
   await page.waitForTimeout(500)
-  const dayPanel = page.locator('.rail .rail-section').nth(0)
+  // Named rather than counted: the rail grows sections, and the day's tasks are
+  // not "the first one" so much as the one about what the day asks of you.
+  const dayPanel = page.locator('.rail .day-tasks')
   check(
     'clicking a day shows what it asks of you, under what is filed on it',
     (await dayPanel.locator('.task-row').allInnerTexts()).join(' | ').includes('Renew passport'),
     (await dayPanel.locator('.task-row').allInnerTexts()).join(' | '),
   )
   check(
-    'with no heading over them — a checkbox already says which rows are tasks',
+    'ungrouped, because one day is not long enough to need bands inside it',
     (await dayPanel.locator('.task-group').count()) === 0,
   )
 
   /*
-   * And never the same task twice in one column. The Due list below already
-   * holds everything overdue and everything due today, so a day the list has
-   * covered keeps its notes and hands the tasks to it.
+   * And never the same task twice in one column, with the *day* keeping what is
+   * due on it and the Due list showing the rest.
+   *
+   * These used to assert the other direction and passed, which is how the bug
+   * shipped: they were written against the behaviour rather than against the
+   * rule it was for. So each one now says both halves — which section has the
+   * row, and that the other does not — because "once, not twice" is satisfied
+   * just as well by the wrong section keeping it and the right one lying.
    */
+  const railRow = (text) => page.locator('.rail .task-row', { hasText: text })
   const overdueAgain = await showDay(-2)
   await overdueAgain.click()
   await page.waitForTimeout(500)
   check(
-    'a day whose work is already late leaves it to the Due list below',
-    (await dayPanel.locator('.task-row').count()) === 0,
+    'a day with late work on it keeps that work under its own heading',
+    (await dayPanel.locator('.task-row').allInnerTexts()).join(' | ').includes('Order the tiles'),
     (await dayPanel.locator('.task-row').allInnerTexts()).join(' | '),
   )
   check(
-    'so the task is in the rail once, not twice',
-    (await page.locator('.rail .task-row', { hasText: 'Order the tiles' }).count()) === 1,
+    'and it is in the rail once, not twice',
+    (await railRow('Order the tiles').count()) === 1,
   )
 
   await page.locator('.cal-today').click()
   await page.waitForTimeout(500)
   check(
-    'and today says it once too, in the Due list rather than in both',
-    (await dayPanel.locator('.task-row').count()) === 0,
-    `${await dayPanel.locator('.task-row').count()} rows in the day panel`,
+    'today keeps its own work too, rather than reporting it has none',
+    !(await page.locator('.rail .day-tasks .rail-empty').count()) ||
+      (await dayPanel.locator('.task-row').count()) > 0,
+    (await page.locator('.rail .day-tasks').innerText()).replace(/\n/g, ' / '),
+  )
+  check(
+    'and Due below it shows what is left rather than repeating the day',
+    (await railRow('Book the tram tickets').count()) === 1,
+    (await page.locator('.rail .rail-due').innerText()).replace(/\n/g, ' / '),
   )
 
+  /* ---- the agenda ---------------------------------------------------------
+   * A day is not only what is filed on it and what it owes you; it is also
+   * what is *happening*. An event is an ordinary note with a `start:` on it, so
+   * this writes two of them by hand — which is the whole feature at this point,
+   * and the format the importer will later have to match.
+   */
+  await page.locator('.side-row:has-text("All Notes")').first().click()
+  await page.waitForTimeout(400)
+
+  /*
+   * Written into the database rather than typed, the way the kitchen sink is —
+   * and for a second reason here: an event file is going to arrive from
+   * *outside* the editor when there is an importer, so a note that was never
+   * opened is the case worth proving.
+   */
+  await page.evaluate(async (days) => {
+    const db = await new Promise((res, rej) => {
+      const r = indexedDB.open('slate')
+      r.onsuccess = () => res(r.result)
+      r.onerror = () => rej(r.error)
+    })
+    const tx = db.transaction('files', 'readwrite')
+    for (const [path, text] of days) {
+      tx.objectStore('files').put({
+        path,
+        kind: 'note',
+        text,
+        mime: 'text/markdown',
+        size: text.length,
+        hash: path,
+        mtime: Date.now(),
+        ctime: Date.now(),
+        dirty: true,
+        dirtyFlag: 1,
+        sync: {},
+      })
+    }
+    await new Promise((res) => {
+      tx.oncomplete = res
+    })
+  }, [
+    ['Design review.md', `---\nstart: ${isoDay(1)}T14:30\nend: ${isoDay(1)}T15:30\n---\n\nThe quarterly one.\n`],
+    ['Office closed.md', `---\nstart: ${isoDay(1)}\n---\n\nBank holiday.\n`],
+  ])
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForSelector('.note-row')
+
+  await page.locator('.cal-today').click()
+  await page.waitForTimeout(400)
+  const agenda = page.locator('.rail .agenda')
+  check(
+    'a day with nothing on it says so rather than showing an empty panel',
+    (await agenda.locator('.rail-empty').innerText()).includes('Nothing scheduled'),
+  )
+
+  const eventDay = await showDay(1)
+  await eventDay.click()
+  await page.waitForTimeout(500)
+  const rows = await agenda.locator('.agenda-row').allInnerTexts()
+  check(
+    'an event written by hand turns up on that day’s agenda',
+    rows.join(' | ').includes('Design review'),
+    rows.join(' | '),
+  )
+  check(
+    'reading as its name, without the date stamp its filename carries',
+    !rows.join(' | ').includes(isoDay(1)),
+    rows.join(' | '),
+  )
+  check(
+    'and the whole-day one is read first, before anything with a clock on it',
+    rows.length === 2 && rows[0].includes('Office closed'),
+    rows.join(' | '),
+  )
+  check(
+    'the all-day row says so rather than leaving the column empty',
+    (await agenda.locator('.agenda-row').nth(0).locator('.agenda-when').innerText()).trim() ===
+      'all day',
+    await agenda.locator('.agenda-row').nth(0).locator('.agenda-when').innerText(),
+  )
+  check(
+    'while the timed one says when',
+    /\d{1,2}.\d{2}/.test(
+      await agenda.locator('.agenda-row').nth(1).locator('.agenda-when').innerText(),
+    ),
+    await agenda.locator('.agenda-row').nth(1).locator('.agenda-when').innerText(),
+  )
+  check(
+    'an event opens its note like anything else in the rail',
+    await (async () => {
+      await agenda.locator('.agenda-row').nth(1).click()
+      await page.waitForTimeout(500)
+      return (await page.locator('.editor-title-input').inputValue()) === 'Design review'
+    })(),
+  )
+
+  /*
+   * And the rail stops repeating the column beside it. Clicking a day filters
+   * the middle column to that day, so the day panel's copy of the same list is
+   * the one thing in the rail that was saying nothing new.
+   */
+  /*
+   * Rows *or* the line that says there are none: either one is the list being
+   * there. Counting only rows would call an empty day a hidden list and pass
+   * for the wrong reason.
+   */
+  const dayList = () => page.locator('.rail .day-notes')
+  check(
+    'the day is named once, over everything that is about it',
+    (await page.locator('.rail .rail-day-head').innerText()).includes('September') ||
+      /\d/.test(await page.locator('.rail .rail-day-head').innerText()),
+    await page.locator('.rail .rail-day-head').innerText(),
+  )
+  check(
+    'and its agenda and tasks keep their own headings under it',
+    (await page.locator('.rail .rail-day .agenda h3').count()) === 1 &&
+      (await page.locator('.rail .rail-day .day-tasks h3').count()) === 1,
+  )
+  check(
+    'but the notes go entirely, handed to the column already showing them',
+    (await dayList().count()) === 0,
+    (await dayList().allInnerTexts()).join(' | '),
+  )
+
+  await page.locator('.side-row:has-text("All Notes")').first().click()
+  await page.waitForTimeout(400)
+  check(
+    'and takes it back as soon as the column is showing something else',
+    (await dayList().count()) === 1,
+    (await dayList().allInnerTexts()).join(' | '),
+  )
+  check(
+    'bringing the offer of a daily note back with it',
+    (await page.locator('.rail .day-notes .day-create-row').count()) === 1,
+  )
+  check(
+    'and an event is not in that list, being on the agenda directly above it',
+    !(await page.locator('.rail .day-notes .day-note-row').allInnerTexts())
+      .join(' | ')
+      .includes('Design review'),
+    (await page.locator('.rail .day-notes .day-note-row').allInnerTexts()).join(' | '),
+  )
+
+  /*
+   * Making one. The `+` on the agenda asks for a name and when it is: the day
+   * comes from the calendar and the time from the next half hour, and both are
+   * on the dialog because an event is at a time that is not now, so the guess is
+   * usually wrong. Naming it and pressing Enter still makes it, so the fields
+   * cost nothing when the guess happens to be right.
+   */
+  const madeOn = await showDay(2)
+  await madeOn.click()
+  await page.waitForTimeout(400)
+  await page.locator('.rail .agenda [aria-label="New event"]').click()
+  await page.waitForTimeout(350)
+  const titleField = page.locator('.dialog .field:has(> span:text-is("What is it?")) .prompt-input')
+  const startField = page.locator('.dialog [aria-label="Starts"]')
+  const endField = page.locator('.dialog [aria-label="Ends"]')
+  check(
+    'the dialog offers a start and an end, not just a name',
+    (await startField.getAttribute('type')) === 'datetime-local' &&
+      (await endField.getAttribute('type')) === 'datetime-local',
+  )
+  check(
+    'filled in for the day on screen, at the next half hour',
+    (await startField.inputValue()).startsWith(`${isoDay(2)}T`) &&
+      /:(00|30)$/.test(await startField.inputValue()),
+    await startField.inputValue(),
+  )
+  check(
+    'and an hour long, so the common case needs nothing typed into it',
+    (new Date(await endField.inputValue()) - new Date(await startField.inputValue())) / 60000 ===
+      60,
+    `${await startField.inputValue()} → ${await endField.inputValue()}`,
+  )
+
+  /* Moving the start takes the end with it, keeping the length it had. */
+  await startField.fill(`${isoDay(2)}T14:00`)
+  await page.waitForTimeout(250)
+  check(
+    'moving the start carries the end along at the same length',
+    (await endField.inputValue()) === `${isoDay(2)}T15:00`,
+    await endField.inputValue(),
+  )
+
+  check(
+    'a zone can be chosen, and none at all is the default',
+    (await page.locator('.dialog select').count()) === 1 &&
+      (await page.locator('.dialog select').inputValue()) === '' &&
+      (await page.locator('.dialog select option').count()) > 50,
+    `${await page.locator('.dialog select option').count()} zones offered`,
+  )
+
+  /* All day swaps both fields for plain dates, and unticking puts them back. */
+  await page.locator('.event-allday input').check()
+  await page.waitForTimeout(250)
+  check(
+    'all day turns both into dates, one day long',
+    (await startField.getAttribute('type')) === 'date' &&
+      (await startField.inputValue()) === isoDay(2) &&
+      (await endField.inputValue()) === isoDay(2),
+    `${await startField.inputValue()} → ${await endField.inputValue()}`,
+  )
+  check(
+    'and takes the zone away with the clock, a whole day having none to move',
+    (await page.locator('.dialog select').count()) === 0,
+  )
+  await page.locator('.event-allday input').uncheck()
+  await page.waitForTimeout(250)
+  check(
+    'and unticking it gives back the times that were there, not a fresh guess',
+    (await startField.inputValue()) === `${isoDay(2)}T14:00` &&
+      (await endField.inputValue()) === `${isoDay(2)}T15:00`,
+    `${await startField.inputValue()} → ${await endField.inputValue()}`,
+  )
+
+  /*
+   * A dialog over a dialog. Opening the palette on top of a half-filled form
+   * and pressing Escape used to close *both* — the palette because it was
+   * asked to, and this because it could not tell that it had not been — so the
+   * draft went with it. Escape belongs to whatever is on top.
+   */
+  await titleField.fill('Design review')
+  await page.waitForTimeout(200)
+  await page.keyboard.press('Meta+k')
+  await page.waitForTimeout(400)
+  const stacked = await paletteOnTop(page)
+  check(
+    'the palette opens over the event dialog, and over means over',
+    stacked.layers === 2 && stacked.above && stacked.hit,
+    JSON.stringify(stacked),
+  )
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(400)
+  check(
+    'and Escape closes the palette without taking the draft with it',
+    (await page.locator('.scrim').count()) === 1 && (await titleField.inputValue()) === 'Design review',
+    `${await page.locator('.scrim').count()} layers, title ${JSON.stringify(
+      await titleField.inputValue().catch(() => null),
+    )}`,
+  )
+
+  await titleField.fill('Budget call')
+  await page.waitForTimeout(300)
+  /*
+   * The name the note will have, before it has it. The date goes on the end
+   * rather than the front — a prefix pushed the name off the end of the agenda
+   * row, which is one line wide and ends in an ellipsis — and it is shown here
+   * because a name is easier to argue with in the dialog than in the note list.
+   */
+  check(
+    'the dialog says what the note will be called, date and all',
+    (await page.locator('.event-lands').innerText()).includes(`Budget call - ${isoDay(2)}.md`),
+    await page.locator('.event-lands').innerText(),
+  )
+
+  /*
+   * Twice, quickly. The dialog used to close before the note was written, so a
+   * second Enter landed on a form that was already gone — and a write that
+   * failed took the whole draft with it. It stays up until the note is on disk
+   * and refuses the second press while it is getting there.
+   */
+  await page.keyboard.press('Enter')
+  await page.keyboard.press('Enter')
+  await page.waitForTimeout(1200)
+  check(
+    'and Enter in the name is still the whole of making one',
+    (await page.locator('.dialog').count()) === 0,
+  )
+  await page.locator('.side-row:has-text("All Notes")').first().click()
+  await page.waitForTimeout(400)
+  check(
+    'pressed twice, it makes one event and not two',
+    (await page.locator('.note-row', { hasText: 'Budget call' }).count()) === 1,
+    `${await page.locator('.note-row', { hasText: 'Budget call' }).count()} notes named it`,
+  )
+  await page.locator('.note-row', { hasText: 'Budget call' }).first().click()
+  await page.waitForTimeout(600)
+  check(
+    'the new event opens ready to be written in',
+    (await page.locator('.editor-title-input').inputValue()).includes('Budget call'),
+    await page.locator('.editor-title-input').inputValue(),
+  )
+  check(
+    'called what was typed, with the day it is on after it and nothing before',
+    (await page.locator('.editor-title-input').inputValue()) === `Budget call - ${isoDay(2)}`,
+    await page.locator('.editor-title-input').inputValue(),
+  )
+  check(
+    'carrying the times the dialog was given, not the ones it guessed',
+    (await page.locator('.cm-content').innerText()).includes(`start: ${isoDay(2)}T14:00`) &&
+      (await page.locator('.cm-content').innerText()).includes(`end: ${isoDay(2)}T15:00`),
+    (await page.locator('.cm-content').innerText()).split('\n').slice(0, 4).join(' / '),
+  )
+  check(
+    'and it is on the agenda it was made from',
+    (await agenda.locator('.agenda-row').allInnerTexts()).join(' | ').includes('Budget call'),
+    (await agenda.locator('.agenda-row').allInnerTexts()).join(' | '),
+  )
+  check(
+    'reading as its name, the date the file carries left off',
+    (await agenda.locator('.agenda-row .agenda-what').allInnerTexts()).includes('Budget call'),
+    (await agenda.locator('.agenda-row .agenda-what').allInnerTexts()).join(' | '),
+  )
+
+  /*
+   * And the two keys nobody should have to spell from memory get a picker.
+   * `start:` and `end:` are written `2026-09-21T09:30`, which is a format to
+   * be remembered rather than typed — so the properties form offers the
+   * platform's own date-and-time field, and what it writes back is the format
+   * the agenda reads.
+   */
+  let modeHops = 0
+  for (; modeHops < 3 && (await page.locator('.editor-date-button').count()) === 0; modeHops++) {
+    await page.keyboard.press('Control+Shift+m')
+    await page.waitForTimeout(400)
+  }
+  await page.locator('.editor-date-button').click()
+  await page.waitForTimeout(600)
+  check(
+    'a start is edited with a date and time picker, not a text field',
+    (await page.locator('[aria-label="start value"]').getAttribute('type')) === 'datetime-local',
+    (await page.locator('[aria-label="start value"]').getAttribute('type')) ?? 'missing',
+  )
+  check(
+    'and so is an end',
+    (await page.locator('[aria-label="end value"]').getAttribute('type')) === 'datetime-local',
+  )
+  check(
+    'while a property the app knows nothing about is still text',
+    (await page.locator('[aria-label="location value"]').count()) === 0 ||
+      (await page.locator('[aria-label="location value"]').getAttribute('type')) === 'text',
+  )
+  await page.locator('[aria-label="start value"]').fill(`${isoDay(2)}T16:45`)
+  await page.waitForTimeout(900)
+  await page.locator('[aria-label="start value"]').blur()
+  await page.waitForTimeout(900)
+  check(
+    'and what the picker writes is what the agenda reads',
+    (await agenda.locator('.agenda-row').allInnerTexts()).join(' | ').includes('16:45') ||
+      (await agenda.locator('.agenda-row').allInnerTexts()).join(' | ').includes('4:45'),
+    (await agenda.locator('.agenda-row').allInnerTexts()).join(' | '),
+  )
+  check(
+    'while the name it was given stays as it was, so no link to it breaks',
+    (await page.locator('.editor-title-input').inputValue()) === `Budget call - ${isoDay(2)}`,
+    await page.locator('.editor-title-input').inputValue(),
+  )
+  check(
+    'landing in the file as a bare value, not a quoted one',
+    (await page.locator('[aria-label="start value"]').inputValue()) === `${isoDay(2)}T16:45`,
+    await page.locator('[aria-label="start value"]').inputValue(),
+  )
+  // Leave the editor in the mode this section found it in.
+  for (let i = modeHops; i > 0 && i < 3; i++) {
+    await page.keyboard.press('Control+Shift+m')
+    await page.waitForTimeout(300)
+  }
+
+  /*
+   * The same meeting, next time round — which is what the date on the end is
+   * for.
+   *
+   * Name collisions are resolved per *folder* and an event's folder is a
+   * month, so a weekly lunch used to be `Lunch with Joe`, `Lunch with Joe 2`,
+   * `Lunch with Joe 3` through September and then start again at `Lunch with
+   * Joe` in October: the same series, numbered differently every month, with
+   * nothing in any name saying which occurrence it was. Each one now carries
+   * its own day, so they are told apart by something that means something and
+   * they sort the way the calendar does.
+   *
+   * The two days here may fall either side of a month end, which is the case
+   * that had no collision to resolve and so produced two files with one name.
+   * Either way the claim is the same: each name carries its own date.
+   */
+  const againOn = await showDay(3)
+  await againOn.click()
+  await page.waitForTimeout(400)
+  await page.locator('.rail .agenda [aria-label="New event"]').click()
+  await page.waitForTimeout(350)
+  await titleField.fill('Budget call')
+  await page.waitForTimeout(250)
+  await page.keyboard.press('Enter')
+  await page.waitForTimeout(1200)
+  check(
+    'the agenda row for the second one reads as the meeting, not as a filename',
+    (await agenda.locator('.agenda-row .agenda-what').allInnerTexts()).includes('Budget call'),
+    (await agenda.locator('.agenda-row .agenda-what').allInnerTexts()).join(' | '),
+  )
+
+  await page.locator('.side-row:has-text("All Notes")').first().click()
+  await page.waitForTimeout(500)
+  const calls = (await page.locator('.note-row-title').allInnerTexts())
+    .map((t) => t.trim())
+    .filter((t) => t.startsWith('Budget call'))
+  check(
+    'and the week before it is still there, under a name of its own',
+    calls.length === 2 &&
+      new Set(calls).size === 2 &&
+      calls.includes(`Budget call - ${isoDay(2)}`) &&
+      calls.includes(`Budget call - ${isoDay(3)}`),
+    calls.join(' | '),
+  )
+  check(
+    'told apart by the day rather than by a number that starts over each month',
+    calls.every((t) => !/ \d+$/.test(t)),
+    calls.join(' | '),
+  )
+
+  /*
+   * And renamed, it reads as its new name.
+   *
+   * A new event records what it was called in `title:`, because a filename
+   * cannot say which of its parts somebody typed. That record is only believed
+   * while the filename is still exactly what it would have been named — so a
+   * rename from the header, which is how anything in this app is renamed, has
+   * the agenda follow the file rather than go on showing the old name.
+   */
+  await page.locator('.note-row', { hasText: `Budget call - ${isoDay(3)}` }).first().click()
+  await page.waitForTimeout(500)
+  await page.locator('.editor-title-input').fill('Quarterly budget review')
+  await page.locator('.editor-title-input').press('Enter')
+  await page.waitForTimeout(600)
+  const renamedOn = await showDay(3)
+  await renamedOn.click()
+  await page.waitForTimeout(400)
+  const afterRename = await agenda.locator('.agenda-row .agenda-what').allInnerTexts()
+  check(
+    'an event renamed from its header is called its new name on the agenda',
+    afterRename.includes('Quarterly budget review') && !afterRename.includes('Budget call'),
+    afterRename.join(' | '),
+  )
+
+  /*
+   * And a key that only looks like one the app knows.
+   *
+   * `Start:` is not `start:` — frontmatter is case-sensitive and so is every
+   * reader of it. Matching the event path case-insensitively meant editing that
+   * field wrote the key it knew, leaving the note with both: two keys where
+   * there was one, and an ordinary property turned into an event beside itself.
+   */
+  await page.evaluate(async (text) => {
+    const db = await new Promise((res) => {
+      const r = indexedDB.open('slate')
+      r.onsuccess = () => res(r.result)
+    })
+    const tx = db.transaction('files', 'readwrite')
+    tx.objectStore('files').put({
+      path: 'Novel.md',
+      kind: 'note',
+      text,
+      mime: 'text/markdown',
+      size: text.length,
+      hash: 'novel',
+      mtime: Date.now(),
+      ctime: Date.now(),
+      dirty: true,
+      dirtyFlag: 1,
+      sync: {},
+    })
+    await new Promise((res) => {
+      tx.oncomplete = res
+    })
+  }, '---\nStart: chapter three\n---\n\nThe novel.\n')
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForSelector('.note-row')
+  await page.locator('.note-row', { hasText: 'Novel' }).first().click()
+  await page.waitForTimeout(600)
+  let novelHops = 0
+  for (; novelHops < 3 && (await page.locator('.editor-date-button').count()) === 0; novelHops++) {
+    await page.keyboard.press('Control+Shift+m')
+    await page.waitForTimeout(400)
+  }
+  await page.locator('.editor-date-button').click()
+  await page.waitForTimeout(500)
+  check(
+    'a Start that is not start is an ordinary text field',
+    (await page.locator('[aria-label="Start value"]').getAttribute('type')) === 'text',
+    (await page.locator('[aria-label="Start value"]').getAttribute('type')) ?? 'missing',
+  )
+  await page.locator('[aria-label="Start value"]').fill('chapter four')
+  await page.waitForTimeout(900)
+  await page.locator('[aria-label="Start value"]').blur()
+  await page.waitForTimeout(900)
+  const novel = await page.evaluate(async () => {
+    const db = await new Promise((res) => {
+      const r = indexedDB.open('slate')
+      r.onsuccess = () => res(r.result)
+    })
+    const tx = db.transaction('files', 'readonly')
+    const all = await new Promise((res) => {
+      const q = tx.objectStore('files').getAll()
+      q.onsuccess = () => res(q.result)
+    })
+    return all.find((f) => f.path === 'Novel.md')?.text ?? ''
+  })
+  check(
+    'and editing it leaves one key, not two',
+    (novel.match(/^start:/gim) ?? []).length === 1 && novel.includes('Start: chapter four'),
+    novel.split('\n').slice(0, 4).join(' / '),
+  )
+
+  // And back to the mode this block found, so what follows is unsurprised.
+  for (let i = novelHops; i > 0 && i < 3; i++) {
+    await page.keyboard.press('Control+Shift+m')
+    await page.waitForTimeout(300)
+  }
+
+  // Back to the whole vault: clicking a day filtered the list, and what comes
+  // after this looks for a note by name.
   await page.locator('.side-row:has-text("All Notes")').first().click()
   await page.waitForTimeout(400)
 

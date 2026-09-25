@@ -10,6 +10,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks'
 import { signal } from '@preact/signals'
 import { IconClose } from './Icons'
+import { claimEscape, useModalLayer } from './modal'
 
 interface Draft {
   title: string
@@ -29,6 +30,7 @@ export function openPrompt(d: Draft) {
 
 export function PromptDialog() {
   const d = draft.value
+  const { isTop, root } = useModalLayer(!!d)
   const [value, setValue] = useState('')
   const ref = useRef<HTMLInputElement>(null)
 
@@ -48,7 +50,7 @@ export function PromptDialog() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') draft.value = null
+      if (e.key === 'Escape' && isTop() && claimEscape(e)) draft.value = null
     }
     if (d) addEventListener('keydown', onKey)
     return () => removeEventListener('keydown', onKey)
@@ -65,7 +67,7 @@ export function PromptDialog() {
   }
 
   return (
-    <div class="scrim" onClick={close}>
+    <div class="scrim" ref={root} onClick={close}>
       <div
         class="dialog"
         style={{ width: 'min(420px, 100%)' }}

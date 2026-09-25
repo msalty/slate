@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest'
 import { STARTER_TEMPLATES } from './starters'
 import { expandTemplate } from './templates'
 import { readProperties } from './properties'
-import { parseFrontmatter, scanTasks } from './markdown'
+import { eventFor, parseFrontmatter, scanTasks } from './markdown'
 import { parseYmd, safeSegment } from './util'
 import { calloutSpec } from '../editor/callout'
 
@@ -134,8 +134,28 @@ describe('the meeting note', () => {
   it('carries the fields you would search a year later by', () => {
     const keys = readProperties(filled(byName('Meeting').text).text).map((p) => p.key)
     expect(keys).toEqual(
-      expect.arrayContaining(['date', 'time', 'tags', 'client', 'project', 'attendees', 'location']),
+      expect.arrayContaining(['start', 'end', 'tags', 'client', 'project', 'attendees', 'location']),
     )
+  })
+
+  it('is an event, so a meeting note lands on the agenda for the day it happened', () => {
+    const text = filled(byName('Meeting').text).text
+    const ev = eventFor(parseFrontmatter(text).data)!
+    expect(ev.allDay).toBe(false)
+    expect(ev.start).toBe(AT)
+  })
+
+  it('leaves the end empty rather than guessing, and an hour is assumed', () => {
+    const text = filled(byName('Meeting').text).text
+    expect(text).toContain('\nend:\n')
+    const ev = eventFor(parseFrontmatter(text).data)!
+    expect(ev.end - ev.start).toBe(60 * 60 * 1000)
+  })
+
+  it('offers start and end as pickers rather than as text to be spelled', () => {
+    const props = readProperties(filled(byName('Meeting').text).text)
+    expect(props.find((p) => p.key === 'start')?.kind).toBe('datetime')
+    expect(props.find((p) => p.key === 'end')?.kind).toBe('datetime')
   })
 
   it('offers attendees as a list, so the form takes "Ana, Bo"', () => {

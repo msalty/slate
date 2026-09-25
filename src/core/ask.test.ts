@@ -14,9 +14,11 @@ import { describe, expect, it } from 'vitest'
 import {
   ALL,
   answerSystem,
+  answerUser,
   appendTurn,
   citedNotes,
   citedWithoutReading,
+  settleCitations,
   isDerived,
   conversationTitle,
   dropLastTurn,
@@ -508,6 +510,39 @@ describe('checking what an answer cited', () => {
     expect(citedWithoutReading('See [[Migration plans]].', ['Migration plan'])).toEqual([
       'Migration plans',
     ])
+  })
+
+  /*
+   * Two notes called `Name`: the one sent was `Work/Name`, and `[[Name]]` leads
+   * to the other. Compared as text, the citation matched what was sent.
+   */
+  it('checks where a citation leads, not what it says', () => {
+    const lead = (t: string) =>
+      ({ name: 'Home/Name.md', 'work/name': 'Work/Name.md', 'work/name.md': 'Work/Name.md' })[
+        t.toLowerCase()
+      ]
+    expect(citedWithoutReading('See [[Name]].', ['Work/Name.md'], lead)).toEqual(['Name'])
+    expect(citedWithoutReading('See [[Work/Name]].', ['Work/Name.md'], lead)).toEqual([])
+    expect(citedWithoutReading('See [[Nowhere]].', ['Work/Name.md'], lead)).toEqual(['Nowhere'])
+  })
+
+  /*
+   * Sent as the only `Name`; by the time the answer came back, another `Name`
+   * had arrived and the bare citation led to it.
+   */
+  it('writes a citation to lead to the note that was sent, as things are now', () => {
+    const sent = new Map([['name', 'Work/Name.md']])
+    const nameFor = (p: string) => p.replace(/\.md$/, '')
+    const answer = 'See [[Name#Costs|the costs]] and [[Other]].\n\n```\n[[Name]]\n```'
+    expect(settleCitations(answer, sent, nameFor)).toBe(
+      'See [[Work/Name#Costs|the costs]] and [[Other]].\n\n```\n[[Name]]\n```',
+    )
+    expect(settleCitations('See [[Name]].', sent, () => 'Name')).toBe('See [[Name]].')
+  })
+
+  it('heads each note with the link that cites it', () => {
+    const body = answerUser('q', [{ title: 'Name', cite: 'Work/Name', body: 'b' }], '')
+    expect(body).toContain('## [[Work/Name]]')
   })
 
   it('ignores a code sample that happens to contain brackets', () => {

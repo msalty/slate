@@ -7,7 +7,8 @@
  * broken feature, but a note it refuses is lost work.
  */
 
-import { normPath, parseYmd, startOfDay, titleFromPath, ymd } from './util'
+import { WIKI_SOURCE, splitWikiInner, unescapeWiki } from './wikilink'
+import { normPath, parseYmd, splitInlineList, startOfDay, titleFromPath, unquote, ymd } from './util'
 
 /** What a single frontmatter key can hold, once parsed. */
 export type FrontmatterValue = string | string[] | boolean | number
@@ -42,11 +43,8 @@ export function parseFrontmatter(text: string): Frontmatter {
     if (rawVal === '') {
       data[lastKey] = ''
     } else if (rawVal.startsWith('[') && rawVal.endsWith(']')) {
-      data[lastKey] = rawVal
-        .slice(1, -1)
-        .split(',')
-        .map((s) => unquote(s.trim()))
-        .filter(Boolean)
+      // Quote-aware: a comma inside `"Doe, Jane"` is part of the name.
+      data[lastKey] = splitInlineList(rawVal.slice(1, -1)).map(unquote).filter(Boolean)
     } else if (rawVal === 'true' || rawVal === 'false') {
       data[lastKey] = rawVal === 'true'
     } else if (/^-?\d+(\.\d+)?$/.test(rawVal)) {
@@ -56,12 +54,6 @@ export function parseFrontmatter(text: string): Frontmatter {
     }
   }
   return { data, bodyStart: m[0].length, raw: m[0] }
-}
-
-function unquote(s: string): string {
-  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'")))
-    return s.slice(1, -1)
-  return s
 }
 
 /** Replace or insert a single frontmatter key, preserving everything else. */
@@ -544,8 +536,12 @@ export interface WikiLink {
  * an anchor with no note in front of it means a heading in *this* note. Both
  * halves empty is not a link at all — see the guard in the scan — so `[[]]`
  * and `[[|alias]]` stay inert text the way they always were.
+ *
+ * What is inside is taken apart by `splitWikiInner`, the one reading of the
+ * syntax everything shares, so an escaped `\#` in a name is part of the name
+ * here exactly as it is in the editor.
  */
-const WIKI = /(!?)\[\[([^\]\n|#]*)(?:#([^\]\n|]+))?(?:\|([^\]\n]*))?\]\]/g
+const WIKI = new RegExp(WIKI_SOURCE, 'g')
 
 export function scanWikiLinks(text: string, regions = codeRegions(text)): WikiLink[] {
   const out: WikiLink[] = []
@@ -553,8 +549,7 @@ export function scanWikiLinks(text: string, regions = codeRegions(text)): WikiLi
   let m: RegExpExecArray | null
   while ((m = WIKI.exec(text))) {
     if (inRegions(regions, m.index)) continue
-    const target = m[2].trim()
-    const anchor = m[3]?.trim()
+    const { target, anchor, alias } = splitWikiInner(m[2])
     // Brackets round nothing. Naming neither a note nor a place in one, it
     // points at nothing that could be opened.
     if (!target && !anchor) continue
@@ -563,11 +558,19 @@ export function scanWikiLinks(text: string, regions = codeRegions(text)): WikiLi
       to: m.index + m[0].length,
       target,
       anchor,
-      alias: m[4]?.trim(),
+      alias,
       embed: m[1] === '!',
     })
   }
   return out
+}
+
+/** A wikilink as the words it shows: its display text, or what it names. */
+function wikiAsText(s: string): string {
+  return s.replace(new RegExp(WIKI_SOURCE, 'g'), (_, _bang: string, inner: string) => {
+    const { alias, head } = splitWikiInner(inner)
+    return alias || unescapeWiki(head.trim())
+  })
 }
 
 export interface MdLink {
@@ -777,8 +780,7 @@ export function withDue(line: string, date: number | undefined): string {
  * used for what's shown, so nothing round-trips through it.
  */
 export function stripInline(s: string): string {
-  return s
-    .replace(/!?\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/g, (_, t, a) => a || t)
+  return wikiAsText(s)
     .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/(\*\*|__|~~|\*|_|`)/g, '')
     .replace(DUE_CUT, '')
@@ -805,15 +807,13 @@ export function excerptOf(
     if (/^#{1,6}\s/.test(line)) continue
     if (/^(-{3,}|\*{3,}|_{3,})$/.test(line)) continue
     if (/^```/.test(line)) continue
-    const clean = line
-      /*
-       * A callout's `[!NOTE]` is a marker, not the note's first words: the
-       * app draws it as an icon, and a list row that led with "[!NOTE] In one
-       * line" would be reading out the punctuation. Taken off before the
-       * blockquote `>` goes, so the pattern can still see which line it is on.
-       */
-      .replace(/^>\s*\[![A-Za-z]+\][+-]?\s*/, '')
-      .replace(/!?\[\[([^\]|]+)(?:\|([^\]]*))?\]\]/g, (_, t, a) => a || t)
+    /*
+     * A callout's `[!NOTE]` is a marker, not the note's first words: the app
+     * draws it as an icon, and a list row that led with "[!NOTE] In one line"
+     * would be reading out the punctuation. Taken off before the blockquote `>`
+     * goes, so the pattern can still see which line it is on.
+     */
+    const clean = wikiAsText(line.replace(/^>\s*\[![A-Za-z]+\][+-]?\s*/, ''))
       .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
       .replace(/[*_~`>]/g, '')
       .replace(/^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s*)?/, '')
@@ -917,6 +917,257 @@ export function findHeading(text: string, anchor: string): Heading | undefined {
  *   2. a YYYY-MM-DD prefix or suffix in the filename (daily notes)
  *   3. the file's creation time
  */
+/* ------------------------------------------------------------------ events */
+
+/**
+ * When a note says it happens.
+ *
+ * `start:` is what makes a note an event — nothing else has to be written, and
+ * a note without it is an ordinary note. The three shapes it can take are
+ * iCalendar's three, transliterated rather than invented, because that is what
+ * the data arriving from a calendar actually is:
+ *
+ *   start: 2026-09-21              all day, no time to be wrong about
+ *   start: 2026-09-21T09:30        a wall-clock time, wherever you are
+ *   start: 2026-09-21T14:00        the same, read in the zone `tz:` names
+ *   tz: America/New_York
+ *
+ * `start` and `end` are always written in the zone `tz` names, and in the
+ * device's own zone when there isn't one — so the file reads as the time the
+ * meeting was described to you in, "two o'clock in New York", and the zone is
+ * there for the app to convert rather than for you to have done the sum first.
+ *
+ * `end` is **inclusive** for an all-day event, which is the one place this
+ * deliberately parts with iCalendar: `DTEND` there is exclusive, so a one-day
+ * event is written as ending the next morning. Copy that through and every
+ * single-day event draws itself two days long.
+ */
+export interface NoteEvent {
+  /** Instant the event starts, ms epoch. Local midnight when all-day. */
+  start: number
+  /** Instant it ends, ms epoch. The last day's midnight when all-day. */
+  end: number
+  allDay: boolean
+  /** The IANA zone `start` and `end` were written in, when one was named. */
+  tz?: string
+  /**
+   * A `tz:` this engine cannot use, kept as written.
+   *
+   * Dropping it was silent and therefore the worst shape of wrong: a mistyped
+   * `Amercia/New_York` resolved to exactly the same instant as no zone at all,
+   * with nothing anywhere to say the line had been ignored. Held on to so the
+   * agenda and the properties form can show that it is not doing anything.
+   */
+  badZone?: string
+  /**
+   * The title the event was given when it was made, from its `title:`.
+   *
+   * Not a display name on its own: `eventTitle` trusts it only while the
+   * filename is still exactly what this title would have been named, so a note
+   * renamed since reads as its new name. It exists because a filename cannot
+   * say which of its parts somebody typed.
+   */
+  title?: string
+}
+
+/**
+ * A `title:` as the text it was written as.
+ *
+ * The property writer leaves `true` and `123` bare, which is right for the
+ * checkbox and number fields it writes them for and means a meeting called
+ * `123` reads back as a number. `String` gives those back exactly; the few it
+ * cannot — `007`, `1.50` — fail the filename check in `eventTitle` and are read
+ * by shape instead, which gets every one of them right, since none can look
+ * like a stamp.
+ */
+function recordedTitle(v: FrontmatterValue | undefined): string | undefined {
+  if (typeof v === 'string') return v.trim() || undefined
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v)
+  return undefined
+}
+
+const EVENT_TIME_RE = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?$/
+
+/**
+ * What a zone's clocks were offset by at a given instant, in milliseconds.
+ *
+ * `Intl` will format an instant in any zone but will not do the sum backwards,
+ * so this asks it to format one and reads the answer as though it were UTC. The
+ * difference between that and the instant is the offset.
+ */
+export function zoneOffsetAt(at: number, tz: string): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).formatToParts(at)
+  const get = (t: string) => Number(parts.find((p) => p.type === t)?.value)
+  // `hour12: false` still says 24 for midnight in some engines; 24:00 today is
+  // 00:00 today as far as the arithmetic below is concerned.
+  const h = get('hour') % 24
+  return Date.UTC(get('year'), get('month') - 1, get('day'), h, get('minute'), get('second')) - at
+}
+
+/**
+ * An instant written back out as a wall clock, in a zone or where you are.
+ *
+ * The other direction from `instantInZone`, and needed for the same reason: a
+ * field holding `14:30` holds it *in the zone that was chosen*, so anything
+ * that works in instants and then has to put a value back in that field has to
+ * be told which clock to read it by. Serialising in the device's zone instead
+ * is how a dialog ends up disagreeing with the note it is about to write.
+ */
+export function wallClockIn(at: number, tz?: string): string {
+  const p = (n: number) => `${n}`.padStart(2, '0')
+  // A zone this engine cannot read is one the whole app already falls back to
+  // local time over; a formatter is the last place that should throw about it.
+  if (tz && !isKnownZone(tz)) tz = undefined
+  if (!tz) {
+    const d = new Date(at)
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`
+  }
+  const d = new Date(at + zoneOffsetAt(at, tz))
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}T${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`
+}
+
+/**
+ * The instant a wall-clock time names in a given zone.
+ *
+ * Twice a year a wall clock does not name one instant. An hour is *skipped* in
+ * spring, so 02:30 never happens; an hour is *repeated* in autumn, so 01:30
+ * happens twice. A rule is needed for both, and the rule here is the one
+ * `Temporal` calls `compatible` and every calendar has settled on: a time that
+ * was skipped moves forward by the gap, and a time that happened twice means
+ * the first of them.
+ *
+ * Two candidates, built from the offsets a day either side — far enough to be
+ * on opposite sides of any transition, close enough that no zone has two. When
+ * they agree there was no transition and either will do. When only one of them
+ * reads back as the wall time asked for, that is the answer. When *both* do,
+ * the hour happened twice and the earlier wins. When *neither* does, the hour
+ * did not happen at all, and the later of the two is that time plus the gap.
+ *
+ * The previous version guessed twice and hoped the second guess converged. It
+ * did for the repeated hour and not for the skipped one: 02:30 in New York came
+ * back as 01:30 — an hour *before* what was asked for, and an hour and a half
+ * from what the same time with no zone on it resolves to.
+ */
+const A_DAY = 86_400_000
+
+function instantInZone(
+  y: number,
+  mo: number,
+  d: number,
+  h: number,
+  mi: number,
+  sec: number,
+  tz: string,
+): number {
+  const wall = Date.UTC(y, mo - 1, d, h, mi, sec)
+  const a = wall - zoneOffsetAt(wall - A_DAY, tz)
+  const b = wall - zoneOffsetAt(wall + A_DAY, tz)
+  if (a === b) return a
+  const holds = (at: number) => at + zoneOffsetAt(at, tz) === wall
+  const okA = holds(a)
+  const okB = holds(b)
+  if (okA && okB) return Math.min(a, b)
+  if (okA) return a
+  if (okB) return b
+  return Math.max(a, b)
+}
+
+/** One `start:`/`end:` value. Undefined for anything that is not a date. */
+function parseEventTime(
+  raw: FrontmatterValue | undefined,
+  tz: string | undefined,
+): { at: number; allDay: boolean } | undefined {
+  if (typeof raw !== 'string') return undefined
+  const m = EVENT_TIME_RE.exec(raw.trim())
+  if (!m) return undefined
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])]
+  /*
+   * A date that does not exist is not a date. `Date` would take the 13th month
+   * and hand back next January without complaining, and the 31st of September
+   * lands on the 1st of October — so an event whose year was mistyped by one
+   * digit would not fail, it would quietly happen on the wrong day. Building
+   * it and checking the parts come back out is the whole test.
+   */
+  const probe = new Date(y, mo - 1, d)
+  if (probe.getFullYear() !== y || probe.getMonth() !== mo - 1 || probe.getDate() !== d)
+    return undefined
+  if (m[4] === undefined) {
+    /*
+     * A day has no time to put a zone on: "the 21st" is the 21st wherever the
+     * calendar came from, and converting it would slide it onto the 20th for
+     * anybody far enough west. So an all-day event ignores `tz` entirely.
+     */
+    return { at: probe.getTime(), allDay: true }
+  }
+  const [h, mi, sec] = [Number(m[4]), Number(m[5]), Number(m[6] ?? 0)]
+  if (h > 23 || mi > 59 || sec > 59) return undefined
+  const at = tz
+    ? instantInZone(y, mo, d, h, mi, sec, tz)
+    : new Date(y, mo - 1, d, h, mi, sec).getTime()
+  return { at, allDay: false }
+}
+
+/** True for a zone name this engine will accept; a typo is not a zone. */
+export function isKnownZone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz.trim() })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** The `tz:` as written, and whether anything can be done with it. */
+function readZone(raw: FrontmatterValue | undefined): { tz?: string; badZone?: string } {
+  if (typeof raw !== 'string' || !raw.trim()) return {}
+  const tz = raw.trim()
+  return isKnownZone(tz) ? { tz } : { badZone: tz }
+}
+
+/** An hour, which is what an event with no end is assumed to take. */
+const DEFAULT_DURATION = 60 * 60 * 1000
+
+/**
+ * The event a note describes, or undefined when it does not describe one.
+ *
+ * Lenient in the same way the rest of this file is lenient: a `start:` nobody
+ * can parse makes an ordinary note rather than a broken event, and an `end:`
+ * that is missing, unreadable or before its start is replaced rather than
+ * refused. A note is a text file somebody may have typed by hand.
+ */
+export function eventFor(fm: Record<string, FrontmatterValue>): NoteEvent | undefined {
+  const { tz, badZone } = readZone(fm.tz)
+  const start = parseEventTime(fm.start, tz)
+  if (!start) return undefined
+  const title = recordedTitle(fm.title)
+  const end = parseEventTime(fm.end, tz)
+  /*
+   * An end written in the other shape is not an end this can use: a day cannot
+   * say when an appointment finished, and a time cannot close an event filed as
+   * a whole day. Fall back rather than mix the two.
+   */
+  const usable = end && end.allDay === start.allDay && end.at >= start.at ? end.at : undefined
+  return {
+    start: start.at,
+    end: usable ?? (start.allDay ? start.at : start.at + DEFAULT_DURATION),
+    allDay: start.allDay,
+    ...(start.allDay ? {} : tz ? { tz } : {}),
+    // Reported whatever the shape: a zone nobody can read is worth saying on an
+    // all-day event too, since it means a line of the file is doing nothing.
+    ...(badZone ? { badZone } : {}),
+    ...(title ? { title } : {}),
+  }
+}
+
 export function calendarDateFor(
   path: string,
   fm: Record<string, unknown>,

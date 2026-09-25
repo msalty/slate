@@ -83,14 +83,21 @@ energy:
  * later — who it was with and what it was about — above the ones that only
  * matter in the room.
  *
- * Attendees are plain names in a list field, so they can be typed on a phone
- * in one go. Link the ones who have a note of their own in the body instead:
- * a `[[Ana Ruiz]]` in the notes puts this meeting in her backlinks, which is
- * the half of the wiring that a frontmatter field cannot do.
+ * It opens with `start:`, which makes it an *event*: the note lands on the
+ * agenda for the day it happened, so a year of meeting notes is also a year of
+ * where you were. `end:` is left empty rather than guessed at — an hour is
+ * assumed when nothing says otherwise, and the properties form offers a picker
+ * for it the moment you want to disagree.
+ *
+ * Attendees are plain names in a list field, so they can be typed on a phone in
+ * one go — but a `[[Ana Ruiz]]` among them is a real link, and puts this
+ * meeting in her backlinks. Frontmatter is scanned for wikilinks like any other
+ * part of the file; an earlier version of this note said otherwise and was
+ * simply wrong about it.
  */
 const MEETING = `---
-date: {{date}}
-time: {{time}}
+start: {{date}}T{{time}}
+end:
 tags: [meeting]
 client:
 project:
