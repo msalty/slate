@@ -538,6 +538,18 @@ describe('two notes with one name', () => {
     expect(vault.getRaw(ref)?.text).toBe('see [[Archive/Name]]')
   })
 
+  it('and when a deleted note comes back by a save of what the editor held', async () => {
+    const { vault } = await fresh()
+    const root = await vault.createNote('', 'Name', 'root')
+    const work = await vault.createNote('Work', 'Name', 'work')
+    await vault.deleteNote(root)
+    const ref = await vault.createNote('', 'Ref', 'see [[Name]]')
+    expect(vault.resolveLink('Name')).toBe(work)
+    await vault.saveNote(root, 'root, edited as it was deleted')
+    expect(vault.resolveLink('Name')).toBe(root)
+    expect(vault.getText(ref)).toBe('see [[Work/Name]]')
+  })
+
   it('leaves a link alone when the note it led to goes and nothing takes the name', async () => {
     const { vault } = await fresh()
     const only = await vault.createNote('Archive', 'Only', 'only')

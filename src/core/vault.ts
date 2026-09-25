@@ -1350,8 +1350,13 @@ export async function saveNote(path: string, text: string): Promise<void> {
       dirty: true,
       deleted: false,
     }
-    // An edit to `aliases:` can take a name from another note, or give one up.
-    const plan = mayRename(f.text, text) ? planChange({ arrivals: [next] }) : undefined
+    /*
+     * An edit to `aliases:` can take a name from another note, or give one up —
+     * and so can a save that brings a deleted note back (the editor saving what
+     * it held as the note went), which is a note arriving like any other.
+     */
+    const renames = f.deleted || mayRename(f.text, text)
+    const plan = renames ? planChange({ arrivals: [next] }) : undefined
     await writeFile(next)
     reindex(path)
     bump()
