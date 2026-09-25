@@ -315,7 +315,7 @@ to, so nothing moves under it. A link that would simply lead nowhere is left as
 it is. A conversation's note scope is kept the same
 way, and an AI answer's citations are written to lead to the notes that were
 actually sent, even if another of the same name arrived, or the note was
-renamed, while it was thinking.
+renamed — or a new note took its old name — while it was thinking.
 
 **A name can use the characters a link does.** `#`, `|` and `]` all mean
 something inside `[[…]]` — `[[C# Notes]]` is the note `C` and its heading

@@ -219,4 +219,28 @@ describe('an answer to notes that moved while it was being written', () => {
     expect(provenance.citedNotRead ?? []).toEqual([])
     expect(provenance.citedNotFound ?? []).toEqual([])
   })
+
+  /*
+   * `A` renamed `B`, then a new `A` made and asked about: its citation went to
+   * `B`, because the path it was sent under had once moved there.
+   */
+  it('and a new note under an old name is itself, not the note that had it', async () => {
+    vi.resetModules()
+    ;(globalThis as { __SLATE_DB__?: string }).__SLATE_DB__ = `slate-ask-${++seq}`
+    const vault = await import('../core/vault')
+    vi.doMock('../adapters/llm', () => ({
+      streamText: async () => 'Alpha is covered in [[A]].',
+    }))
+    const ask = await import('./ask')
+    await vault.initVault()
+    await vault.createNote('', 'A', 'Old notes.\n')
+    await vault.renameNote('A.md', 'B')
+    await vault.createNote('', 'A', 'Alpha facts, about alpha.\n')
+    const { answer, provenance } = await ask.askTurn('what about alpha?', '# Chat\n', ALL, 'Chat.md', {
+      terms: ['alpha'],
+    })
+    vi.doUnmock('../adapters/llm')
+    expect(answer).toBe('Alpha is covered in [[A]].')
+    expect(provenance.read).toEqual(['A'])
+  })
 })

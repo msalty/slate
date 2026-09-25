@@ -554,14 +554,51 @@ export class SyncEngine {
       // would erase an edit the target has never seen — merge it instead.
       const raced = this.racedLocalEdit(path, hash)
       if (raced) return this.resolve(path, raced, R, conflicts, text)
-      await installFromRemote([
+      const installed = await installFromRemote(
+        [
+          this.rowFrom(
+            {
+              path,
+              kind: 'note',
+              text,
+              mime: mimeForPath(path),
+              size: text.length,
+              hash,
+              mtime: mtime ?? now,
+              ctime: existing?.ctime ?? mtime ?? now,
+              deleted: false,
+            },
+            existing,
+            {
+              baseHash: hash,
+              baseText: text,
+              remoteRev: rev ?? R.rev,
+              remoteMtime: mtime ?? R.mtime,
+              lastSyncedAt: now,
+            },
+          ),
+        ],
+        // Asked again under the note's lock: an edit saved while this was downloading.
+        (p) => !!this.racedLocalEdit(p, hash),
+      )
+      const since = installed ? undefined : this.racedLocalEdit(path, hash)
+      if (since) return this.resolve(path, since, R, conflicts, text)
+      return
+    }
+
+    const { blob, rev, mtime } = await this.remote().getBlob(R)
+    const hash = await hashBlob(blob)
+    const raced = this.racedLocalEdit(path, hash)
+    if (raced) return this.resolve(path, raced, R, conflicts)
+    const installed = await installFromRemote(
+      [
         this.rowFrom(
           {
             path,
-            kind: 'note',
-            text,
-            mime: mimeForPath(path),
-            size: text.length,
+            kind: 'attachment',
+            blob,
+            mime: blob.type || mimeForPath(path),
+            size: blob.size,
             hash,
             mtime: mtime ?? now,
             ctime: existing?.ctime ?? mtime ?? now,
@@ -570,42 +607,16 @@ export class SyncEngine {
           existing,
           {
             baseHash: hash,
-            baseText: text,
             remoteRev: rev ?? R.rev,
             remoteMtime: mtime ?? R.mtime,
             lastSyncedAt: now,
           },
         ),
-      ])
-      return
-    }
-
-    const { blob, rev, mtime } = await this.remote().getBlob(R)
-    const hash = await hashBlob(blob)
-    const raced = this.racedLocalEdit(path, hash)
-    if (raced) return this.resolve(path, raced, R, conflicts)
-    await installFromRemote([
-      this.rowFrom(
-        {
-          path,
-          kind: 'attachment',
-          blob,
-          mime: blob.type || mimeForPath(path),
-          size: blob.size,
-          hash,
-          mtime: mtime ?? now,
-          ctime: existing?.ctime ?? mtime ?? now,
-          deleted: false,
-        },
-        existing,
-        {
-          baseHash: hash,
-          remoteRev: rev ?? R.rev,
-          remoteMtime: mtime ?? R.mtime,
-          lastSyncedAt: now,
-        },
-      ),
-    ])
+      ],
+      (p) => !!this.racedLocalEdit(p, hash),
+    )
+    const since = installed ? undefined : this.racedLocalEdit(path, hash)
+    if (since) return this.resolve(path, since, R, conflicts)
   }
 
   /**
@@ -737,19 +748,28 @@ export class SyncEngine {
           remoteRev: R.rev,
           remoteMtime: R.mtime,
         }
-        await installFromRemote([
-          {
-            ...L,
-            text: m.merged,
-            hash,
-            size: m.merged.length,
-            mtime: now,
-            // Merged text is new to *both* targets, whichever one produced it.
-            dirty: true,
-            sync: slot === 'cloud' ? stamped : L.sync,
-            folder: slot === 'folder' ? stamped : L.folder,
-          },
-        ])
+        const installed = await installFromRemote(
+          [
+            {
+              ...L,
+              text: m.merged,
+              hash,
+              size: m.merged.length,
+              mtime: now,
+              // Merged text is new to *both* targets, whichever one produced it.
+              dirty: true,
+              sync: slot === 'cloud' ? stamped : L.sync,
+              folder: slot === 'folder' ? stamped : L.folder,
+            },
+          ],
+          // The merge was of the local text as it was; an edit since means merging again.
+          (p) => getRaw(p)?.hash !== L.hash,
+        )
+        if (!installed) {
+          const fresh = getRaw(path)
+          if (fresh && !fresh.deleted) return this.resolve(path, fresh, R, conflicts, remoteText)
+          return
+        }
         const merged = getRaw(path)
         if (merged) await this.push(path, merged, R.rev)
         return

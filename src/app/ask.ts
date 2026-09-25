@@ -36,10 +36,11 @@ import { parseQuery } from '../core/tagquery'
 import {
   backlinkMap,
   createNote,
-  currentPath,
   getEntry,
   getText,
   linkNameFor,
+  noteId,
+  notePath,
   resolveLink,
   search,
 } from '../core/vault'
@@ -238,8 +239,11 @@ export function resolvePins(titles: string[], self: string): ResolvedPins {
   return { entries, missing }
 }
 
-/** A gathered note, carrying the path so the caller can tell pins from hits. */
-type Gathered = AskSource & { path: string }
+/**
+ * A gathered note, carrying the path so the caller can tell pins from hits, and
+ * which note it is (`noteId`) so the answer can find it wherever it has gone.
+ */
+type Gathered = AskSource & { path: string; id: number | undefined }
 
 /** Fill the budget with whole notes, best first. */
 function gather(
@@ -258,7 +262,8 @@ function gather(
     if (!body) continue
     const cost = estimateTokens(body) + 8
     if (sources.length && tokens + cost > room) break
-    sources.push({ title: entry.title, cite: linkNameFor(entry.path), body, path: entry.path })
+    const { path, title } = entry
+    sources.push({ title, cite: linkNameFor(path), body, path, id: noteId(path) })
     tokens += cost
   }
   return { sources, tokens }
@@ -336,14 +341,16 @@ export async function askTurn(
   /*
    * Cited by the names they were sent under, which may since mean other notes —
    * or none, if a note was renamed while the model was answering. Each is
-   * followed to where it is now.
+   * followed to where it is now: by which note it is, since its old path may
+   * even be another note's by now.
    */
-  const sent = new Map(sources.map((s) => [s.cite.toLowerCase(), s.path]))
-  const answer = settleCitations(said, sent, (p) => {
-    const at = currentPath(p)
+  const now = (s: Gathered) => (s.id === undefined ? undefined : notePath(s.id))
+  const sent = new Map(sources.map((s) => [s.cite.toLowerCase(), s]))
+  const answer = settleCitations(said, sent, (s) => {
+    const at = now(s)
     return at && linkNameFor(at)
   })
-  const sentNow = sources.map((s) => currentPath(s.path) ?? s.path)
+  const sentNow = sources.map((s) => now(s) ?? s.path)
 
   /*
    * `matched` stays what the *search* found, so the number keeps meaning what

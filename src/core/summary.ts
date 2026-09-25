@@ -50,6 +50,8 @@ export interface SummarySource {
    * note has that title too — a bare shared title means whichever comes first.
    */
   cite: string
+  /** Which note it is, for following it if it moves while the summary is written. */
+  id?: number
   /** The body, with frontmatter removed. */
   body: string
   tokens: number

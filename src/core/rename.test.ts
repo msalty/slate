@@ -543,16 +543,23 @@ describe('two notes with one name', () => {
     expect(vault.getRaw(ref)?.text).toBe('see [[Only]]')
   })
 
-  it('follows a note renamed while something held its old path', async () => {
+  /*
+   * Followed by path, `A.md` renamed `B.md` and a new `A.md` made could not be
+   * told apart: the old note's citations went to the new one.
+   */
+  it('is one note wherever it goes, and never the note that takes its old name', async () => {
     const { vault } = await fresh()
     const a = await vault.createNote('', 'A', 'a')
+    const id = vault.noteId(a)!
     const b = await vault.renameNote(a, 'B')
-    expect(vault.currentPath(a)).toBe(b)
-    const back = await vault.renameNote(b, 'A')
-    expect(vault.currentPath(a)).toBe(back)
-    expect(vault.currentPath(b)).toBe(back)
-    await vault.deleteNote(back)
-    expect(vault.currentPath(a)).toBeUndefined()
+    expect(vault.notePath(id)).toBe(b)
+    const newA = await vault.createNote('', 'A', 'another a')
+    expect(newA).toBe(a)
+    expect(vault.noteId(newA)).not.toBe(id)
+    expect(vault.notePath(vault.noteId(newA)!)).toBe(newA)
+    expect(vault.notePath(id)).toBe(b)
+    await vault.deleteNote(b)
+    expect(vault.notePath(id)).toBeUndefined()
   })
 
   it('keeps a conversation’s scope on its note, through arrivals and moves', async () => {
@@ -670,6 +677,53 @@ describe('a rename racing an edit to another note it rewrites', () => {
     expect(vault.getText(one)).toBe('one [[B]] plus my edit')
     await vault.initVault()
     expect(vault.getText(one)).toBe('one [[B]] plus my edit')
+  })
+})
+
+describe('two notes made at once with one name', () => {
+  it('are two notes', async () => {
+    const { vault } = await fresh()
+    const [one, two] = await Promise.all([
+      vault.createNote('', 'Same', 'one'),
+      vault.createNote('', 'Same', 'two'),
+    ])
+    expect(one).not.toBe(two)
+    expect([vault.getText(one), vault.getText(two)].sort()).toEqual(['one', 'two'])
+    await vault.initVault()
+    expect([vault.getText(one), vault.getText(two)].sort()).toEqual(['one', 'two'])
+  })
+})
+
+describe('a sync pull and an edit at the same moment', () => {
+  /*
+   * The engine checked for a local edit, then the install awaited history and
+   * the database with nothing held: an autosave in that gap was written, and
+   * then the downloaded text written over it.
+   */
+  it('keeps the edit made while the pull was being installed', async () => {
+    const { vault } = await fresh()
+    const path = await vault.createNote('', 'Note', 'base')
+    const f = vault.getRaw(path)!
+    const pulled = { ...f, text: 'remote', hash: 'remote-hash', size: 6, dirty: false }
+    const changed = (p: string) => vault.getRaw(p)?.hash !== f.hash
+    await Promise.all([vault.installFromRemote([pulled], changed), vault.saveNote(path, 'local edit')])
+    expect(vault.getText(path)).toBe('local edit')
+    await vault.initVault()
+    expect(vault.getText(path)).toBe('local edit')
+  })
+
+  it('and installs nothing when the edit got there first, so it can be merged', async () => {
+    const { vault } = await fresh()
+    const path = await vault.createNote('', 'Note', 'base')
+    const f = vault.getRaw(path)!
+    const pulled = { ...f, text: 'remote', hash: 'remote-hash', size: 6, dirty: false }
+    const changed = (p: string) => vault.getRaw(p)?.hash !== f.hash
+    const [, installed] = await Promise.all([
+      vault.saveNote(path, 'local edit'),
+      vault.installFromRemote([pulled], changed),
+    ])
+    expect(installed).toBe(false)
+    expect(vault.getText(path)).toBe('local edit')
   })
 })
 

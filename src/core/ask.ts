@@ -482,24 +482,24 @@ export function citedWithoutReading(
  * A note is sent under the name that led to it when the request went out —
  * `[[Name]]` if it was the only `Name` — and the answer can take long enough
  * for another `Name` to arrive by sync and take that name. So what a citation
- * meant is looked up in `sent` (lowercased cite → path), not in the vault, and
+ * meant is looked up in `sent` (lowercased cite → the note), not in the vault, and
  * written as `nameFor` that path says, at the moment the answer is written in —
  * following the note if it was renamed meanwhile, and left as the model wrote
  * it if `nameFor` has nothing, the note having gone.
  * Once it is in a note, moves and arrivals keep it pointing where it did.
  */
-export function settleCitations(
+export function settleCitations<T>(
   answer: string,
-  sent: ReadonlyMap<string, string>,
-  nameFor: (path: string) => string | undefined,
+  sent: ReadonlyMap<string, T>,
+  nameFor: (source: T) => string | undefined,
 ): string {
   let out = answer
   const links = scanWikiLinks(answer, codeRegions(answer))
   // Right to left, so earlier offsets stay valid.
   for (const l of links.sort((a, b) => b.from - a.from)) {
-    const path = sent.get(l.target.trim().toLowerCase())
-    if (path === undefined) continue
-    const target = nameFor(path)
+    const key = l.target.trim().toLowerCase()
+    if (!sent.has(key)) continue
+    const target = nameFor(sent.get(key)!)
     if (target === undefined || target === l.target) continue
     const insert = formatWikiLink({ target, anchor: l.anchor, alias: l.alias, embed: l.embed })
     out = `${out.slice(0, l.from)}${insert}${out.slice(l.to)}`

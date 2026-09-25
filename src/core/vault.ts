@@ -132,6 +132,8 @@ function setFile(path: string, f: VaultFile): void {
   if (f.dirty) dirtyFiles++
   if (pendingFor(f, 'folder')) folderPendingFiles++
   files.set(path, f)
+  // A file gone from a path takes its identity with it; see `noteId`.
+  if (f.deleted) dropId(path)
 }
 
 function dropFile(path: string): void {
@@ -139,6 +141,7 @@ function dropFile(path: string): void {
   if (prev?.dirty) dirtyFiles--
   if (prev && pendingFor(prev, 'folder')) folderPendingFiles--
   files.delete(path)
+  dropId(path)
 }
 
 /** Files with local content the remote has not confirmed. Drives the status pill. */
@@ -1041,7 +1044,31 @@ export async function initVault(): Promise<void> {
  * devices. That is the whole mechanism by which an edit made in Obsidian
  * reaches a phone.
  */
-export async function installFromRemote(list: VaultFile[]): Promise<void> {
+export async function installFromRemote(
+  list: VaultFile[],
+  /**
+   * Asked once more of each path, under its lock, immediately before anything is
+   * written: true means something has happened here since the rows were made —
+   * an edit saved while they were being downloaded, say — and nothing is
+   * installed. The engine checked before; this is the check that nothing can
+   * slip in behind.
+   */
+  changedSince?: (path: string) => boolean,
+): Promise<boolean> {
+  const paths = [...new Set(list.map((f) => f.path))].sort()
+  const plan = await withPathLocks(paths, async () => {
+    if (changedSince && paths.some(changedSince)) return false
+    return install(list)
+  })
+  if (plan === false) return false
+  if (plan) {
+    const incoming = new Set(paths)
+    await writePlanned(plan, (p) => !incoming.has(p), (p) => p)
+  }
+  return true
+}
+
+async function install(list: VaultFile[]): Promise<Plan | undefined> {
   // Device files first: a note pulled in the same batch can then be credited to
   // whoever pushed it, rather than to "somewhere else".
   loadDeviceRecords(list)
@@ -1073,10 +1100,7 @@ export async function installFromRemote(list: VaultFile[]): Promise<void> {
   await putFiles(list)
   for (const f of list) reindex(f.path)
   bump()
-  if (plan) {
-    const incoming = new Set(list.map((f) => f.path))
-    await writePlanned(plan, (p) => !incoming.has(p), (p) => p)
-  }
+  return plan
 }
 
 /**
@@ -1180,29 +1204,43 @@ export async function createNote(
   nameFor: (n: number) => string = (n) => numberedSegment(safeSegment(title), n),
 ): Promise<string> {
   const dir = normPath(folder)
-  let n = 1
-  let path = joinPath(dir, `${nameFor(n)}.md`)
-  while (occupied(path)) path = joinPath(dir, `${nameFor(++n)}.md`)
-  const now = Date.now()
   const text = body
-  const f: VaultFile = {
-    path,
-    kind: 'note',
-    text,
-    mime: 'text/markdown',
-    size: text.length,
-    hash: await hashText(text),
-    mtime: now,
-    ctime: now,
-    dirty: true,
-    ...inheritedSync(path),
-  }
-  const plan = planChange({ arrivals: [f] })
-  await writeFile(f)
-  reindex(path)
-  bump()
+  const hash = await hashText(text)
+  /*
+   * A free name is chosen and taken in one step per folder. Two notes made at
+   * once — two quick adds, a template and a paste — both found `Same.md` free
+   * before either was written, and the second write replaced the first.
+   */
+  const { path, plan } = await withPathLock(folderKey(dir), async () => {
+    let n = 1
+    let path = joinPath(dir, `${nameFor(n)}.md`)
+    while (occupied(path)) path = joinPath(dir, `${nameFor(++n)}.md`)
+    const now = Date.now()
+    const f: VaultFile = {
+      path,
+      kind: 'note',
+      text,
+      mime: 'text/markdown',
+      size: text.length,
+      hash,
+      mtime: now,
+      ctime: now,
+      dirty: true,
+      ...inheritedSync(path),
+    }
+    const plan = planChange({ arrivals: [f] })
+    await writeFile(f)
+    reindex(path)
+    bump()
+    return { path, plan }
+  })
   if (plan) await writePlanned(plan, (p) => p !== path, (p) => p)
   return path
+}
+
+/** The lock for choosing a name in `dir` — kept apart from every file path's. */
+function folderKey(dir: string): string {
+  return `\u0000folder:${dir}`
 }
 
 /** Save note text. Called from the editor's debounced autosave. */
@@ -1260,6 +1298,13 @@ function mayRename(before: string | undefined, after: string): boolean {
  * went on reload, written over in the database by the batch's copy.
  */
 const pathLocks = new Map<string, Promise<unknown>>()
+
+/** Several paths' locks, taken in order so two holders can never wait on each other. */
+async function withPathLocks<T>(paths: readonly string[], fn: () => Promise<T>): Promise<T> {
+  if (!paths.length) return fn()
+  const [first, ...rest] = paths
+  return withPathLock(first, () => withPathLocks(rest, fn))
+}
 
 async function withPathLock<T>(path: string, fn: () => Promise<T>): Promise<T> {
   const before = pathLocks.get(path) ?? Promise.resolve()
@@ -1366,32 +1411,51 @@ export function onPathMoved(fn: (from: string, to: string) => void | Promise<voi
 }
 
 /**
- * Where each path that has moved went, most recent last — this session's moves
- * only, and only the last few hundred.
+ * Which note is which, for this session — a number that goes where the note
+ * goes, and is never given to another.
  *
- * For whatever held a note's path across a wait: a question sent to a model
- * with `A.md` in it can come back after `A` was renamed `B`, and the citation
- * it holds has to follow. A path moved *to* is live again, so its own entry
- * goes — renaming `A` to `B` and back leaves `A` meaning `A`.
+ * For whatever holds on to a note across a wait: a question sent to a model
+ * with `A.md` in it can come back after `A` was renamed `B` and a new `A` made.
+ * A path cannot tell those apart; this can. Numbered on first asking, carried
+ * by every move (the trash and back included), and dropped when the file goes.
  */
-const movedTo = new Map<string, string>()
-const MOVES_KEPT = 500
+let nextNoteId = 1
+const idAt = new Map<string, number>()
+const pathOfId = new Map<number, string>()
 
-function recordMove(from: string, to: string): void {
-  movedTo.delete(to)
-  movedTo.delete(from)
-  movedTo.set(from, to)
-  if (movedTo.size > MOVES_KEPT) movedTo.delete(movedTo.keys().next().value!)
+/** The note at `path`, as something that stays that note. Nothing if there is none. */
+export function noteId(path: string): number | undefined {
+  const f = files.get(path)
+  if (!f || f.deleted) return undefined
+  let id = idAt.get(path)
+  if (id === undefined) {
+    id = nextNoteId++
+    idAt.set(path, id)
+    pathOfId.set(id, path)
+  }
+  return id
 }
 
-/**
- * Where the note that was at `path` is now, following any moves since — or
- * nothing, if it has gone (to the trash, or for good) or was never a note.
- */
-export function currentPath(path: string): string | undefined {
-  let at = path
-  for (let hops = 0; movedTo.has(at) && hops < MOVES_KEPT; hops++) at = movedTo.get(at)!
-  return getEntry(at) && !isHidden(at) ? at : undefined
+/** Where the note `noteId` gave `id` to is now — nothing if it has gone. */
+export function notePath(id: number): string | undefined {
+  const at = pathOfId.get(id)
+  return at && getEntry(at) && !isHidden(at) ? at : undefined
+}
+
+function dropId(path: string): void {
+  const id = idAt.get(path)
+  if (id === undefined) return
+  idAt.delete(path)
+  pathOfId.delete(id)
+}
+
+function carryId(from: string, to: string): void {
+  dropId(to)
+  const id = idAt.get(from)
+  if (id === undefined) return
+  idAt.delete(from)
+  idAt.set(to, id)
+  pathOfId.set(id, to)
 }
 
 /** Move a file to a new path, preserving history and sync bookkeeping. */
@@ -1421,12 +1485,12 @@ export async function movePath(from: string, to: string): Promise<void> {
     ...inheritedSync(to),
   }
   setFile(to, moved)
+  carryId(from, to)
   await putFile(moved)
   await renameVersions(from, to)
   await tombstone(from)
   reindex(to)
   bump()
-  recordMove(from, to)
   for (const fn of moveListeners) await fn(from, to)
 }
 
