@@ -166,11 +166,6 @@ function NoteRow({ entry }: { entry: NoteIndexEntry }) {
  * sheet on touch, so moving a note is two taps in the same place.
  */
 function openMoveMenu(entry: NoteIndexEntry) {
-  // The phone's swipe reaches this without the menu's disabled row in the way.
-  if (isExternal(entry)) {
-    notify(`"${entry.title}" is kept up to date from ${entry.source}. Detach it to move it.`)
-    return
-  }
   const folders = ['', ...allFolderPaths.value].filter((p) => p !== entry.folder)
   if (!folders.length) {
     notify('There are no other folders yet')
@@ -255,10 +250,10 @@ export function noteMenu(entry: NoteIndexEntry): MenuItem[] {
 
   /*
    * A note an importer owns shows up here only while browsing its folder, and
-   * everything on this menu that writes to it or moves it is off: a pin is an
-   * edit, written over on the importer's next run, and a moved file is one it
-   * no longer knows about and writes afresh beside the one you moved (the
-   * move itself refuses too — see `moveNoteToFolder`). Detach is on the note.
+   * what on this menu would write to it is off: a pin is an edit, written over
+   * on the importer's next run. Moving it is not an edit — the importer finds
+   * its files by `uid:` wherever they are (docs/calendar-contacts.md §6.2) —
+   * so Move stays. Detach is on the note itself.
    */
   const imported = isExternal(entry)
 
@@ -307,12 +302,8 @@ export function noteMenu(entry: NoteIndexEntry): MenuItem[] {
       onSelect: () => shareNote(entry.path),
     },
     {
-      label: imported
-        ? 'Move to… (detach it first)'
-        : folders.length
-          ? 'Move to…'
-          : 'Move to… (no other folders)',
-      disabled: imported || !folders.length,
+      label: folders.length ? 'Move to…' : 'Move to… (no other folders)',
+      disabled: !folders.length,
       separated: true,
       onSelect: () => openMoveMenu(entry),
     },

@@ -148,6 +148,35 @@ describe('which surfaces an imported note reaches', () => {
   })
 })
 
+describe('renaming what an imported note links to', () => {
+  /*
+   * Renaming a contact rewrote her name into every meeting she was in. The
+   * importer rewrites those links itself from the current names on its next
+   * run — and it takes a file that no longer matches what it wrote to be
+   * edited by hand, and never updates it again. One rename froze them all.
+   */
+  it('rewrites your notes and leaves the imported ones to the importer', async () => {
+    const vault = await fresh()
+    const jane = await vault.createNote('', 'Jane Doe', '# Jane\n')
+    const meeting = await vault.createNote('Calendar', 'Design review', IMPORTED)
+    const mine = await vault.createNote('', 'Mine', 'Ask [[Jane Doe]].\n')
+    await vault.renameNote(jane, 'Jane Smith')
+    expect(vault.getText(mine)).toBe('Ask [[Jane Smith]].\n')
+    expect(vault.getText(meeting)).toBe(IMPORTED)
+  })
+
+  it('and an attachment’s new name the same way', async () => {
+    const vault = await fresh()
+    const img = await vault.addAttachment(new Blob(['x'], { type: 'image/png' }), 'photo.png')
+    const text = `${fm('source: work', 'uid: u')}![[${img}]]\n`
+    const meeting = await vault.createNote('', 'Meeting', text)
+    const mine = await vault.createNote('', 'Mine', `![[${img}]]\n`)
+    await vault.renameAttachment(img, 'renamed.png')
+    expect(vault.getText(mine)).toContain('renamed.png')
+    expect(vault.getText(meeting)).toBe(text)
+  })
+})
+
 describe('writing to an imported note from outside it', () => {
   it('will not tick its tasks or date them', async () => {
     const vault = await fresh()

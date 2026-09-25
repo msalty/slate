@@ -21,7 +21,6 @@
 
 import { signal } from '@preact/signals'
 import { moveNoteToFolder } from '../core/folders'
-import { getEntry, isExternal } from '../core/vault'
 import { basename, dirname, titleFromPath } from '../core/util'
 import { activePath, notify } from './state'
 
@@ -51,15 +50,10 @@ export function noteDragProps(path: string) {
   }
 }
 
-/**
- * True when the note in flight would actually move by landing here — which an
- * imported one never would, so no folder lights up under it (see `onDrop`).
- */
+/** True when the note in flight would actually move by landing here. */
 export function acceptsDrop(folder: string): boolean {
   const path = draggingNote.value
-  if (!path || dirname(path) === folder) return false
-  const entry = getEntry(path)
-  return !entry || !isExternal(entry)
+  return !!path && dirname(path) !== folder
 }
 
 /**
@@ -96,13 +90,6 @@ export function folderDropProps(folder: string, onDropped?: (dest: string) => vo
       draggingNote.value = null
       if (!path || dirname(path) === folder) return
       e.preventDefault()
-      // As in the note's menu: an importer finds its files by path, and would
-      // write a fresh copy where this one used to be.
-      const entry = getEntry(path)
-      if (entry && isExternal(entry)) {
-        notify(`"${entry.title}" is kept up to date from ${entry.source}. Detach it to move it.`)
-        return
-      }
       const dest = await moveNoteToFolder(path, folder)
       if (dest === path) return
       // The note that moved is the one you are looking at, often enough that

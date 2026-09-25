@@ -2059,6 +2059,17 @@ async function writePlanned(
       const done = await withPathLock(at, async () => {
         const f = files.get(at)
         if (!f || f.deleted) return true
+        /*
+         * Not into a note an importer owns. It rewrites its links itself, from
+         * the current names, every run (docs/calendar-contacts.md §6.4) — and a
+         * file that no longer matches what it last wrote is one it takes to be
+         * edited by hand and never updates again (§6.2). Renaming one contact
+         * rewrote her name into every meeting she was in, and froze all of
+         * them. Checked here, under the lock and against the text as it is,
+         * because every rewrite — a rename, a move, a pinned shared name, an
+         * attachment's new name — comes through here.
+         */
+        if (externalSource(parseFrontmatter(f.text ?? '').data) !== undefined) return true
         if (f.text !== was) return false
         await writeFile({ ...f, text, hash, size: text.length, mtime: Date.now(), dirty: true })
         reindex(at)

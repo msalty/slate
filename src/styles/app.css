@@ -2105,6 +2105,11 @@ button.property-kind:hover {
   background: var(--row-hover);
   color: var(--text);
 }
+/* Written about: always visible, and in the accent, so a day reads at a glance. */
+.agenda-notes[data-written='1'] {
+  opacity: 1;
+  color: var(--accent);
+}
 /* No hover on a phone: the button is simply there, and thumb-sized. */
 @media (hover: none) {
   .agenda-notes {

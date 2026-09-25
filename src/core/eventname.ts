@@ -109,6 +109,29 @@ export function nameAfterCollision(stem: string, recorded?: string): (n: number)
  * read as a stamp on the front of a meeting called `- 2026-09-22`.
  */
 const HEAD_RE = /^\d{4}-\d{2}-\d{2}(?:[ T]\d{4})?\s+(?!-\s)/
+
+/**
+ * What the importer calls an event — `Standup (a41b)` — and the contract it
+ * writes to (docs/calendar-contacts.md §2.1).
+ *
+ * The title, made safe and cut the same way a hand-made one is, then a space
+ * and a few lowercase hex digits from the record's `uid`, in brackets. Not a
+ * date, because the importer rewrites its files and a date would rename the
+ * file every time a meeting moved; the tag is stable for the life of the
+ * record. Reserved out of the length budget before the title is cut, for the
+ * reason `eventNoteName` reserves its date.
+ *
+ * Defined here although Slate never writes one, because the agenda has to
+ * read one back: `eventTitle` believes the recorded `title:` only while the
+ * filename is exactly what this makes of it.
+ */
+export function importedNoteName(title: string, tag: string): string {
+  const tail = ` (${tag})`
+  return `${fitSegment(safeSegment(title), SEGMENT_MAX - tail.length)}${tail}`
+}
+
+/** The tag on the end of an importer's name, taken apart. */
+const TAG_RE = /^(.*) \(([0-9a-f]{4,8})\)$/
 /** `Standup - 2026-09-21`, with or without a counter after it. */
 const TAIL_RE = /\s+-\s+\d{4}-\d{2}-\d{2}(?:\s+\d+)?$/
 
@@ -140,11 +163,18 @@ const TAIL_RE = /\s+-\s+\d{4}-\d{2}-\d{2}(?:\s+\d+)?$/
  *
  * A date is only taken off when something is left after it — a note genuinely
  * called `2026-09-21` keeps its name rather than losing it.
+ *
+ * An importer's `Standup (a41b)` is read against the record too (see
+ * `importedNoteName`), and only against it: without a record, brackets on the
+ * end are something a person types, and are left alone.
  */
 export function eventTitle(name: string, recorded?: string): string {
   if (recorded) {
     const m = SUFFIX_RE.exec(name)
     if (m && eventNoteName(recorded, m[2], m[3] ? Number(m[3]) : 1) === name) return recorded
+    // The importer's shape, read against the record the same way.
+    const t = TAG_RE.exec(name)
+    if (t && importedNoteName(recorded, t[2]) === name) return recorded
   }
   const head = name.replace(HEAD_RE, '')
   const stripped = head !== name ? head : name.replace(TAIL_RE, '')

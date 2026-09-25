@@ -48,6 +48,7 @@ import { DueChip } from './DueChip'
 import { openQuickAdd } from './QuickAdd'
 import { openNewEvent } from './newEvent'
 import { openMeetingNotes } from './meetingNotes'
+import { notesForMeeting } from '../core/imports'
 import { Highlight } from './Highlight'
 import {
   IconCheck,
@@ -301,14 +302,22 @@ export function AgendaPanel({ big = false }: { big?: boolean } = {}) {
            * the one a day is most often opened for.
            */
           if (e.source === undefined) return row
+          /*
+           * Lit when you have written about it, so a day can be read for what
+           * is written up without opening anything — the difference between
+           * the meeting you took notes in and the three you only sat through.
+           */
+          const written = notesForMeeting(e.path).length > 0
+          const name = eventTitle(e.title, ev.title)
           return (
             <div key={e.path} class="agenda-item">
               {row}
               <button
                 class="agenda-notes"
+                data-written={written ? '1' : '0'}
                 onClick={() => void openMeetingNotes(e.path)}
-                aria-label={`Notes on ${eventTitle(e.title, ev.title)}`}
-                title="Your notes on this meeting"
+                aria-label={written ? `Open your notes on ${name}` : `Write notes on ${name}`}
+                title={written ? 'Open your notes on this meeting' : 'Write notes on this meeting'}
               >
                 <IconPencil size={13} />
               </button>

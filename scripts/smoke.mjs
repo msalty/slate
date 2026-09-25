@@ -7678,15 +7678,11 @@ try {
   await page.locator('.mentions-source-head').click()
   await page.waitForTimeout(200)
   const importedRow = page.locator('.mentions-source .mention-row')
-  /*
-   * By its name, not yet without the importer's disambiguator: reading
-   * `(a41b)` off the end is the second filename shape §2.1 of the design says
-   * `eventTitle` needs once the helper settles how it writes one.
-   */
+  // By its name: the importer's `(a41b)` is read off against its `title:`.
   check(
     'and the group opens to the meeting, by its name',
     (await importedRow.count()) === 1 &&
-      (await importedRow.locator('.mention-title').innerText()).startsWith('Platform sync'),
+      (await importedRow.locator('.mention-title').innerText()) === 'Platform sync',
     await importedRow.allInnerTexts().then((t) => t.join(' | ')),
   )
   await importedRow.click()
@@ -7696,10 +7692,12 @@ try {
     'an imported note opens with a banner naming who keeps it',
     (await banner.count()) === 1 && (await banner.innerText()).includes('fastmail'),
   )
+  // Its contents are the importer's; where it lives and what the file is
+  // called are yours, so the title stays a field.
   check(
-    'and nothing that would start editing it — no pencil, a title that cannot be renamed',
+    'and nothing that would start editing it — no pencil',
     (await page.locator('[aria-label="Edit note"]').count()) === 0 &&
-      (await page.locator('.editor-title-input').getAttribute('readonly')) !== null,
+      (await page.locator('.editor-title-input').getAttribute('readonly')) === null,
   )
   const importPath = `Calendar/Subscribed/Fastmail/${isoDay(2).slice(0, 4)}/${isoDay(2).slice(5, 7)}/Platform sync (a41b).md`
   const ownFolder = `Calendar/${isoDay(2).slice(0, 4)}/${isoDay(2).slice(5, 7)}`
@@ -7752,9 +7750,14 @@ try {
   await page.waitForTimeout(400)
   const meetingRows = await page.locator('.rail .agenda .agenda-row').allInnerTexts()
   check(
-    'the meeting is still on the agenda once, not twice',
-    meetingRows.filter((r) => r.includes('Platform sync')).length === 1,
+    'the meeting is still on the agenda once, not twice, by its name',
+    meetingRows.filter((r) => r.includes('Platform sync')).length === 1 &&
+      !meetingRows.join(' | ').includes('(a41b)'),
     meetingRows.join(' | '),
+  )
+  check(
+    'and its row says it has been written about',
+    (await page.locator('.rail .agenda .agenda-notes[data-written="1"]').count()) === 1,
   )
   await page.locator('.rail .agenda .agenda-notes').first().click()
   await page.waitForTimeout(600)

@@ -231,10 +231,17 @@ land on the same filenames every run, and a date would force a rename every time
 a meeting moved, breaking every link pointing at it. A hand-made event is
 written once and never rewritten by anything, so it can afford a date that goes
 stale; an imported one cannot. Same problem, two answers, and the difference is
-who rewrites the file. The importer should write `title:` too — and the agenda's
-check, which today recognises only the names `eventNoteName` makes, then needs
-the importer's naming as a second shape it can confirm, or every imported row
-reads as `Standup (a41b)`.
+who rewrites the file. The importer writes `title:` too.
+
+**The importer's name, exactly** (`importedNoteName` in `src/core/eventname.ts`
+is the reference): the title made safe for a filename and cut to fit the same
+way a hand-made one is (`safeSegment`, then 120 characters in all), a space,
+and four to eight **lowercase hex** digits from the record's `uid` in brackets.
+The agenda, Linked Mentions and *Write notes* read a name against its `title:`
+as they do a hand-made one — `Standup (a41b)` with `title: Standup` reads as
+`Standup`, colon and all when the title has one — and a name in any other shape
+is read as its filename. One ambiguity is accepted: a file renamed by hand to
+exactly `<its title> (<hex>)` reads as its title.
 
 **Bodies stay short.** The description is truncated to roughly 500 characters,
 conference boilerplate is stripped, and the join link goes in `url` rather than
@@ -427,12 +434,23 @@ never lands on the agenda — a real hazard given §5.4.
 | **Backlinks (as target)** | `titleIndex` | **✓** | **✓** |
 | **Search** | `notes` | **✓** | **✓** |
 | **`[[` autocomplete, ⌘K** | `notes` | **✓** | **✓** |
-| Orphan scan, rename repointing | `notes` | ✓ *(correctness)* | ✓ *(correctness)* |
+| Orphan scan | `notes` | ✓ *(correctness)* | ✓ *(correctness)* |
+| Rename repointing, as a *target* | `notes` | ✓ | ✓ |
+| Rename repointing, as a *file to rewrite* | — | ✗ | ✗ |
 
-That last row is not a preference. The orphan scan must see every file that
+The orphan scan row is not a preference. The orphan scan must see every file that
 references an attachment, or an image used only by an imported note is reported
 unused and offered for deletion — the same reason templates are exempted from
 the roll-ups but never from the orphan scan.
+
+Repointing is split on purpose. A link *to* an imported note, written in one of
+yours, follows it when it moves or is renamed, like any link. A link written
+*in* an imported note is never rewritten by Slate: the helper rewrites those
+itself from the current names on every run (§6.4), and a file that no longer
+matches what it last wrote is one it treats as edited by hand and stops
+updating (§6.2) — so renaming one contact froze every meeting she was in. Until
+the helper's next run such a link may point at the old name; that is the cost,
+and it lasts one run.
 
 **A consequence to design for:** Jane Doe's Linked Mentions panel will hold
 three notes you wrote and two hundred meetings. `LinkedMentions.tsx` groups by
@@ -541,26 +559,23 @@ under the name `>New event` would have given it; a contact goes to `Contacts/`
 under the name it had, which is its link target. The move goes through the
 same rename machinery as any other, so every link to it follows.
 
-Read-only means everything in Slate that would change the file or its path:
+Read-only means everything in Slate that would change the file's *contents*:
 the body and the properties form, ticking or dating its tasks from a list,
-Quick Add and transcripts, *Change this passage*, restoring a version, pinning,
-and renaming or moving it — an importer finds its files by path, so a moved one
-is written afresh where it was. The move is refused in the move itself, not only
-at the buttons, so no way in (a menu, a drag, the phone's swipe) can do it.
-Duplicate is off as well: a copy beside an import lands in the importer's
-folder and keeps its `start:`, so the meeting would be on the agenda twice —
-*Write notes* and *Detach* are what a copy would have been for. Reading,
-linking, searching and asking about it all still work. Deleting still works
-too; whether the file comes back is the importer's business.
+Quick Add, transcripts and Insert, *Change this passage*, restoring a version,
+pinning, and rewriting links in it (§4.3). Duplicate is off as well: a copy
+beside an import lands in the importer's folder and keeps its `start:`, so the
+meeting would be on the agenda twice — *Write notes* and *Detach* are what a
+copy would have been for.
+
+Where it lives is yours. Moving an imported note, renaming it, or renaming or
+moving a folder of them all work as they do for any file, because the helper
+finds its files by `uid:` wherever they are (§6.2). No folder is fixed in the
+app. Reading, linking, searching and asking about it all work too, and so does
+deleting; whether the file comes back is the importer's business.
 
 Restoring an old version of a note you have detached restores its text
 without `source:` and `uid:` — a version from before the Detach still carries
 them, and would otherwise hand the note straight back to the importer.
-
-What stays deliberately open is **link repointing**: renaming a note you own
-rewrites `[[links]]` to it wherever they are, imported files included (§4.3,
-last row). The importer sees a file that no longer matches its hash and leaves
-it alone from then on (§6.2) rather than putting the dead link back.
 
 Without this the failure is concrete rather than theoretical. You fix a typo;
 the helper rewrites the file on its next run; the folder adapter has no
@@ -625,10 +640,24 @@ Fail (3) and the file has been edited by hand — leave it, log it, never touch 
 again. Fail (2) and it has been detached. This is what makes §5.5's Detach mean
 something durable rather than cosmetic.
 
+**A file is followed by its `uid:`, not held to its path.** When a manifest
+entry's file is not at the recorded path, the helper looks through the vault for
+a file whose `source:` names this provider and whose `uid:` is the entry's —
+reading only frontmatter, and only on a miss, so it costs nothing on an ordinary
+run. Found, the file was moved or renamed in Slate: the manifest takes the new
+path and the file is kept up to date there, under whatever name it now has.
+This is what lets a person move `Calendar/Subscribed` wholesale, or file one
+meeting somewhere else, with no setting to change and nothing duplicated —
+Slate fixes no folders, and the helper's are only where it starts.
+
+Two files claiming one `uid:` (a copy made outside Slate, say): the one whose
+hash matches what the helper last wrote is the record, and the other is left
+alone and logged. Neither is deleted.
+
 **A manifest entry whose file is gone is written afresh**, as a new file, if the
-record is still upstream. Gone means deleted in Slate, or detached — Detach
-moves the note out of the importer's folder (§5.5), so the helper finds nothing
-at the path it recorded. Chosen over remembering detached records and skipping
+record is still upstream. Gone means not found by `uid:` either: deleted in
+Slate, or detached — Detach takes out `source:` and `uid:`, so the search above
+finds nothing. Chosen over remembering detached records and skipping
 them, so that a detached meeting does not take the live one with it: the copy
 you detached stops changing, and the one the calendar keeps goes on following
 it — moved, renamed, cancelled. The cost is that a detached meeting that is
@@ -670,7 +699,11 @@ For each attendee on an event:
 
 1. Match by **email** against the contact projection. Exact match only — no name
    fuzzing.
-2. Matched: write `"[[Jane Doe]]"`, using the contact's current filename.
+2. Matched: write `"[[Jane Doe]]"`, using the contact's current filename —
+   the name it has *now*, found by its `uid:` (§6.2), since it may have been
+   renamed or moved in Slate. Slate leaves these links alone when a contact is
+   renamed (§4.3) and relies on this step to bring them up to date. Where two
+   notes share that name, write the contact's path instead, as Slate does.
 3. Unmatched: write the display name as **plain text**, never a wikilink. This
    is what keeps unresolved-link noise at exactly zero.
 4. Skip yourself.

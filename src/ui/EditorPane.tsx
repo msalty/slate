@@ -389,6 +389,23 @@ export function EditorPane() {
   }, [path, rev])
 
   /*
+   * A note that becomes an import under your hand — a sync pull bringing the
+   * importer's keys while you are typing — is a page from then on, and the
+   * chrome has to say so. The editor already refuses the next keystroke; left
+   * in the writing state it kept Done, Insert and the formatting bar around a
+   * text that took nothing, and Insert still wrote, since a dispatch is not
+   * stopped by `readOnly`. Done here, after the render, because the change is
+   * noticed inside CodeMirror's own update, where no new one may be started.
+   */
+  useEffect(() => {
+    const view = viewRef.current
+    if (!owner || !view || readingMode.peek()) return
+    readingMode.value = true
+    formatSheetOpen.value = false
+    endEditing(view)
+  }, [owner])
+
+  /*
    * Being taken to a line — a task from a list, a heading from the outline.
    *
    * Reading mode either way: you asked to be shown something, not to type in
@@ -686,15 +703,9 @@ export function EditorPane() {
           class="editor-title-input"
           value={entry.title}
           aria-label="Note title"
-          /*
-           * The filename is the importer's too: it finds its files by path, so
-           * a renamed one is a file it no longer knows about and a fresh copy
-           * written beside it on the next run.
-           */
-          readOnly={!!owner}
           onBlur={async (e) => {
             const next = (e.target as HTMLInputElement).value.trim()
-            if (owner || !next || next === entry.title) return
+            if (!next || next === entry.title) return
             flush()
             const p = await renameNote(path, next)
             // The note reopens under its new path, which would otherwise put

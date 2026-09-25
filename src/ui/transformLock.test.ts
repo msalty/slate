@@ -32,6 +32,35 @@ function editor(doc: string): EditorView {
   return view
 }
 
+describe('inserting a file', () => {
+  /*
+   * Insert's two ways in dispatch straight into the editor, which `readOnly`
+   * does not stop — so a file picked from the header went into a locked note,
+   * or into an imported one the importer would then write over.
+   */
+  it('puts nothing into a note that refuses edits', async () => {
+    const { insertVaultFiles, insertFiles } = await import('../editor/paste')
+    for (const doc of [
+      '---\nsource: work\nuid: u1\n---\n\nBody\n',
+      '---\nread-only: true\n---\n\nBody\n',
+    ]) {
+      const view = editor(doc)
+      insertVaultFiles(view, ['photo.png'])
+      insertFiles(view, [new File(['x'], 'a.png', { type: 'image/png' })])
+      expect(view.state.doc.toString()).toBe(doc)
+      view.destroy()
+    }
+  })
+
+  it('puts it into one that does not', async () => {
+    const { insertVaultFiles } = await import('../editor/paste')
+    const view = editor('Body\n')
+    insertVaultFiles(view, ['photo.png'])
+    expect(view.state.doc.toString()).toContain('![[photo.png]]')
+    view.destroy()
+  })
+})
+
 describe('changing a passage', () => {
   it('is refused on a note an importer owns', () => {
     const view = editor('---\nsource: fastmail\nuid: u1\n---\n\nBody text\n')

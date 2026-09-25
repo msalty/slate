@@ -50,6 +50,13 @@ async function ingest(file: File): Promise<string> {
  * so a photo from the camera is resizable and lightboxable like any other.
  */
 export function insertFiles(view: EditorView, files: File[]) {
+  /*
+   * Asked here as well as by the paste and drop handlers, because this is a
+   * dispatch and `readOnly` does not stop one: the header's Insert → Upload
+   * reaches it without passing through either, and put a file into a locked
+   * note, or an imported one the importer would then write over.
+   */
+  if (view.state.readOnly) return
   const tokens = files.map(() => `<!--slate-uploading:${uid(6)}-->`)
   const head = view.state.selection.main
   view.dispatch({
@@ -88,7 +95,8 @@ export function insertFiles(view: EditorView, files: File[]) {
  * two notes instead of being uploaded twice.
  */
 export function insertVaultFiles(view: EditorView, paths: string[]): void {
-  if (!paths.length) return
+  // As above: Insert → File in Slate is a dispatch too.
+  if (!paths.length || view.state.readOnly) return
   const text = `${paths.map((p) => formatWikiLink({ target: p, embed: true })).join('\n')}\n`
   const head = view.state.selection.main
   view.dispatch({

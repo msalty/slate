@@ -4,9 +4,9 @@
  *
  * Two things it used to get wrong. Pin wrote the note as it was when the menu
  * opened, so anything that changed it before the tap — the other window, a
- * pull — was written back over. And on a note an importer owns, every item
- * that writes to the file or moves it made a copy the importer would not know:
- * an edit it overwrites, or a file it writes afresh where the moved one was.
+ * pull — was written back over. And on a note an importer owns, the items that
+ * write to the file made an edit the importer overwrites. Moving one is not an
+ * edit: the importer finds its files by `uid:` wherever they are.
  */
 
 import { describe, expect, it, vi } from 'vitest'
@@ -36,13 +36,13 @@ describe('the note menu', () => {
     expect(text).toContain('second')
   })
 
-  it('offers no pin, and no move, on a note an importer owns', async () => {
+  it('offers no pin on a note an importer owns, and still offers to move it', async () => {
     const { vault, noteMenu } = await fresh()
     await vault.createNote('Elsewhere', 'Other', 'x\n')
     const path = await vault.createNote('Calendar', 'Standup', IMPORTED)
     const items = noteMenu(vault.getEntry(path)!)
     expect(items.some((i) => /Pin|Unpin/.test(i.label))).toBe(false)
-    expect(items.find((i) => i.label.startsWith('Move to'))?.disabled).toBe(true)
+    expect(items.find((i) => i.label.startsWith('Move to'))?.disabled).toBe(false)
   })
 
   /*
@@ -55,12 +55,14 @@ describe('the note menu', () => {
     expect(noteMenu(vault.getEntry(path)!).some((i) => i.label === 'Duplicate')).toBe(false)
   })
 
-  it('will not move an import, from the menu, a swipe or anywhere else', async () => {
+  it('moves an import like any other file, leaving its text as the importer wrote it', async () => {
     const { vault } = await fresh()
     const folders = await import('../core/folders')
     const path = await vault.createNote('Calendar', 'Standup', IMPORTED)
-    expect(await folders.moveNoteToFolder(path, 'Work')).toBe(path)
-    expect(vault.exists(path)).toBe(true)
+    const dest = await folders.moveNoteToFolder(path, 'Work')
+    expect(dest).toBe('Work/Standup.md')
+    expect(vault.getText(dest)).toBe(IMPORTED)
+    expect(vault.getEntry(dest)?.source).toBe('work')
   })
 })
 
@@ -72,18 +74,7 @@ describe('dragging a note onto a folder', () => {
       dataTransfer: { getData: () => path },
     }) as unknown as DragEvent
 
-  it('does not move a note an importer owns, and lights no folder for it', async () => {
-    const { vault } = await fresh()
-    const drag = await import('./dragNote')
-    const path = await vault.createNote('Calendar', 'Standup', IMPORTED)
-    drag.draggingNote.value = path
-    expect(drag.acceptsDrop('Work')).toBe(false)
-    await drag.folderDropProps('Work').onDrop(drop(path))
-    expect(vault.getEntry(path)).toBeDefined()
-    expect(vault.notes.value.map((n) => n.path)).toEqual([path])
-  })
-
-  it('still moves one of your own', async () => {
+  it('moves one of your own', async () => {
     const { vault } = await fresh()
     const drag = await import('./dragNote')
     const path = await vault.createNote('', 'Mine', 'x\n')

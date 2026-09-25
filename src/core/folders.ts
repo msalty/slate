@@ -19,9 +19,7 @@ import { computed, signal } from '@preact/signals'
 import {
   contentNotes,
   deleteNote,
-  getEntry,
   getRaw,
-  isExternal,
   isFree,
   isHidden,
   listAll,
@@ -253,14 +251,6 @@ export async function moveNoteToFolder(
 ): Promise<string> {
   const f = getRaw(notePath)
   if (!f) return notePath
-  /*
-   * An imported note stays where the importer put it: it finds its files by
-   * path, and writes a moved one afresh where it was. Refused here rather than
-   * only at each button — the menu, a drag and the phone's swipe each once
-   * moved one, the swipe because it was the entry point nobody remembered.
-   */
-  const entry = getEntry(notePath)
-  if (entry && isExternal(entry)) return notePath
   const dir = normPath(folder)
   // An event keeps its date through the counter; see `nameAfterCollision`.
   const again = collisionNamesFor(notePath)
