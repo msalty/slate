@@ -236,7 +236,10 @@ who rewrites the file. The importer writes `title:` too.
 **The importer's name, exactly** (`importedNoteName` in `src/core/eventname.ts`
 is the reference): the title made safe for a filename and cut to fit the same
 way a hand-made one is (`safeSegment`, then 120 characters in all), a space,
-and four to eight **lowercase hex** digits from the record's `uid` in brackets.
+and in brackets a tag: the first four **lowercase hex** digits of the SHA-256 of
+the record's `uid` (UTF-8), lengthened a digit at a time, up to eight, only when
+another file in the same folder already has it. Worked examples, as files, are
+in `docs/examples/`.
 The agenda, Linked Mentions and *Write notes* read a name against its `title:`
 as they do a hand-made one — `Standup (a41b)` with `title: Standup` reads as
 `Standup`, colon and all when the title has one — and a name in any other shape
