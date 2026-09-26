@@ -225,6 +225,35 @@ describe('taking the owner out of a text', () => {
   })
 })
 
+describe('Quick Add to a note deleted as it was chosen', () => {
+  /*
+   * The write found nothing to write to and was not refused, and capture said
+   * it had worked — so Quick Add cleared the box and the tasks were nowhere.
+   */
+  it('says so rather than reporting tasks it did not keep', async () => {
+    const vault = await fresh()
+    // The day's note as it was chosen, gone by the time it is written to.
+    const chosen = await vault.createNote('Daily', '2026-09-21', '# 2026-09-21\n')
+    await vault.deleteNote(chosen)
+    vi.doMock('./daily', async (orig) => ({
+      ...(await orig<typeof import('./daily')>()),
+      dailyNotePath: async () => ({ path: chosen, created: false }),
+    }))
+    try {
+      const settings = await import('./settings')
+      const capture = await import('./capture')
+      settings.settings.value = { ...settings.settings.value, quickAddTaskTarget: 'daily' }
+      expect(await capture.captureTasks({ text: 'Call Jane' })).toEqual({
+        ok: false,
+        reason: 'gone',
+      })
+      expect(vault.occupied(chosen)).toBe(false)
+    } finally {
+      vi.doUnmock('./daily')
+    }
+  })
+})
+
 describe('Detach', () => {
   it('takes out `source:` and `uid:` and leaves the rest as written', async () => {
     const vault = await fresh()

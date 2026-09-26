@@ -16,7 +16,7 @@ import {
   trashTitle,
 } from '../core/vault'
 import { dailyNoteFor } from '../core/daily'
-import { excerptOf, setFrontmatterKey } from '../core/markdown'
+import { excerptOf, externalSource, parseFrontmatter, setFrontmatterKey } from '../core/markdown'
 import { editNote, getRaw, isExternal } from '../core/vault'
 import type { AppSettings, NoteIndexEntry, VaultFile } from '../core/types'
 
@@ -267,9 +267,22 @@ export function noteMenu(entry: NoteIndexEntry): MenuItem[] {
               // From the text as it is when the write happens, not as it was
               // when the menu opened: a note that changed in between had the
               // change written back over by the pin.
-              await editNote(entry.path, (text) =>
-                setFrontmatterKey(text, 'pinned', entry.pinned ? 'false' : 'true'),
+              const pinned = await editNote(entry.path, (text) =>
+                /*
+                 * Asked again here, under the note's lock: the menu was built
+                 * from the note as it was when it opened, and a pull that made
+                 * it an import in between would otherwise have a pin written
+                 * into a file the importer owns.
+                 */
+                externalSource(parseFrontmatter(text).data) !== undefined
+                  ? undefined
+                  : setFrontmatterKey(text, 'pinned', entry.pinned ? 'false' : 'true'),
               )
+              if (!pinned)
+                notify(
+                  `"${entry.title}" changed before it could be ${entry.pinned ? 'unpinned' : 'pinned'}.`,
+                  'error',
+                )
             },
           },
         ]),

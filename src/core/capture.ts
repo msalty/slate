@@ -203,7 +203,7 @@ async function inboxPath(): Promise<string> {
 
 export type CaptureResult =
   | { ok: true; path: string; count: number }
-  | { ok: false; reason: 'empty' | 'locked' }
+  | { ok: false; reason: 'empty' | 'locked' | 'gone' }
 
 /**
  * Write captured tasks into the configured note.
@@ -237,7 +237,7 @@ export async function captureTasks(input: {
    * to, and text read before waiting for the lock was written back over that.
    */
   let refused = false
-  await editNote(path, (text) => {
+  const wrote = await editNote(path, (text) => {
     if (isWriteProtected(parseFrontmatter(text).data)) {
       refused = true
       return undefined
@@ -245,6 +245,13 @@ export async function captureTasks(input: {
     return insertLines(text, settings.value.quickAddTaskHeading, lines)
   })
   if (refused) return { ok: false, reason: 'locked' }
+  /*
+   * Nothing was written and nothing refused: the note went between being
+   * chosen and being written to — deleted on another device, say. Reported
+   * as success, Quick Add cleared what had been typed and the tasks were in
+   * nothing; failing keeps them in the box to add again.
+   */
+  if (!wrote) return { ok: false, reason: 'gone' }
   return { ok: true, path, count: lines.length }
 }
 

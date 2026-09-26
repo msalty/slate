@@ -25,6 +25,19 @@ async function fresh() {
 const IMPORTED = '---\ntitle: Standup\nsource: work\nuid: u1\n---\n\nNotes.\n'
 
 describe('the note menu', () => {
+  /*
+   * The menu decides what to offer when it opens. A pull that made the note
+   * an import while the menu was up still had Pin write into it.
+   */
+  it('will not pin a note that became an import while the menu was open', async () => {
+    const { vault, noteMenu } = await fresh()
+    const path = await vault.createNote('', 'Standup', 'Notes.\n')
+    const items = noteMenu(vault.getEntry(path)!)
+    await vault.saveNote(path, IMPORTED)
+    await items.find((i) => i.label === 'Pin to top')!.onSelect()
+    expect(vault.getText(path)).toBe(IMPORTED)
+  })
+
   it('pins the note as it is now, not as it was when the menu opened', async () => {
     const { vault, noteMenu } = await fresh()
     const path = await vault.createNote('', 'Note', 'first\n')

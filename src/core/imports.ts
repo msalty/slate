@@ -164,7 +164,15 @@ async function findOrMake(
 
   const title = meetingTitle(entry)
   const day = startDate(parseFrontmatter(text).data, entry.event)
-  let body = setPropertyValue(`# ${title}\n\n`, 'date', day)
+  /*
+   * Filed under the day the meeting is on *here*, which is the day the agenda
+   * lists it under and the folder it goes in — not the date its own zone
+   * writes. A 00:30 Tokyo meeting on the first of October is on the thirtieth
+   * of September in New York, and notes dated the first were filed in
+   * September's folder and missing from the day the meeting was shown on. The
+   * name keeps the meeting's own date, as a hand-made event's does.
+   */
+  let body = setPropertyValue(`# ${title}\n\n`, 'date', ymd(entry.event.start))
   body = setPropertyValue(body, 'meeting', formatWikiLink({ target: linkNameFor(meeting) }))
   const path = await createNote(eventFolderFor(entry.event.start), title, body, (n) =>
     eventNoteName(title, day, n),

@@ -101,6 +101,21 @@ describe('Detach, for a contact', () => {
 })
 
 describe('writing notes about a meeting', () => {
+  /*
+   * A 00:30 Tokyo meeting on the first of October is on the thirtieth of
+   * September anywhere west of Tokyo's date line — the agenda lists it there
+   * and the notes went into September's folder, but were dated the first,
+   * and so were missing from the day the meeting was shown on.
+   */
+  it('dates the notes on the day the meeting is on here', async () => {
+    const { vault, imports } = await fresh()
+    await seedMeeting(vault, meeting('2026-10-01T00:30', 'tz: Asia/Tokyo\n'))
+    const e = vault.getEntry(MEETING)!
+    const r = await imports.notesAboutMeeting(MEETING)
+    expect(vault.getEntry(r!.path)!.calendarDate).toBe(e.calendarDate)
+    expect(vault.notesByDay.value.get(e.calendarDate)).toContain(r!.path)
+  })
+
   it('makes a note of your own on its day, linked to it', async () => {
     const { vault, imports } = await fresh()
     await seedMeeting(vault)
