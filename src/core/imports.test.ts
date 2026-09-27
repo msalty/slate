@@ -229,7 +229,8 @@ describe('writing notes about a meeting', () => {
 
 describe('writing notes about a person', () => {
   const CONTACT = 'Contacts/Address Book/Fastmail/Jane Doe.md'
-  const card = '---\nname: Jane Doe\nemail_work: jane@example.com\nsource: fastmail\nuid: j1\n---\n\n# Jane Doe\n'
+  const card =
+    '---\nname: Jane Doe\nemail_work: jane@example.com\nsource: fastmail\nuid: j1\n---\n\n# Jane Doe\n'
 
   async function seedContact(vault: typeof import('./vault')) {
     return vault.createNote('Contacts/Address Book/Fastmail', 'Jane Doe', card, () => 'Jane Doe')
