@@ -326,3 +326,15 @@ describe('grouping linked mentions by origin', () => {
     expect(g.external[0].notes.map((e) => e.path)).toEqual(['new.md', 'old.md'])
   })
 })
+
+describe('your notes on a person, in their mentions', () => {
+  const entry = (path: string) => ({ path, title: path, mtime: 0 }) as NoteIndexEntry
+
+  it('come before the notes that only mention them', () => {
+    const g = groupMentions(
+      [entry('diary.md'), entry('Notes on Jane.md'), entry('lunch.md')],
+      new Set(['Notes on Jane.md']),
+    )
+    expect(g.own.map((e) => e.path)).toEqual(['Notes on Jane.md', 'diary.md', 'lunch.md'])
+  })
+})

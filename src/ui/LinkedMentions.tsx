@@ -17,6 +17,7 @@ import { useState } from 'preact/hooks'
 import type { NoteIndexEntry } from '../core/types'
 import { backlinkMap, getEntry } from '../core/vault'
 import { groupMentions } from '../core/mentions'
+import { notesForContact, notesForMeeting } from '../core/imports'
 import { eventTitle } from '../core/eventname'
 import { openNote } from './state'
 import { IconChevron } from './Icons'
@@ -73,7 +74,10 @@ export function LinkedMentions({ path }: { path: string }) {
    */
   const [openSources, setOpenSources] = useState<ReadonlySet<string>>(() => new Set())
   if (!mentions.length) return null
-  const { own, external } = groupMentions(mentions)
+  const { own, external } = groupMentions(
+    mentions,
+    new Set([...notesForContact(path), ...notesForMeeting(path)]),
+  )
 
   const shown = open.value
   return (
@@ -136,7 +140,7 @@ export function LinkedMentions({ path }: { path: string }) {
  */
 function MentionRow({ entry: e }: { entry: NoteIndexEntry }) {
   const ev = e.event
-  const title = ev ? eventTitle(e.title, ev.title) : e.title
+  const title = ev ? eventTitle(e.title, ev.title, e.source !== undefined) : e.title
   const day = ev
     ? new Date(ev.start).toLocaleDateString(undefined, {
         year: 'numeric',

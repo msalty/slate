@@ -628,7 +628,10 @@ export function EditorPane() {
   const insertMenu = (e: { clientX: number; clientY: number }) => {
     const view = viewRef.current
     if (!view) return
-    const upload = () => pickAndInsert(view, 'file')
+    // The note may stop taking edits while a picker is open; say so rather
+    // than let what was picked vanish.
+    const refused = () => notify('This note is read-only now, so nothing was inserted.', 'error')
+    const upload = () => pickAndInsert(view, 'file', refused)
     const items: MenuItem[] = [
       {
         label: 'File in Slate…',
@@ -637,7 +640,7 @@ export function EditorPane() {
           openFilePicker({
             onPick: (p) => {
               view.focus()
-              insertVaultFiles(view, [p])
+              if (!insertVaultFiles(view, [p])) refused()
             },
             onUpload: upload,
             // Nothing inserted, so put the caret back where they left it.
@@ -650,7 +653,7 @@ export function EditorPane() {
         label: 'Take Photo',
         icon: <IconCamera size={16} />,
         separated: true,
-        onSelect: () => pickAndInsert(view, 'camera'),
+        onSelect: () => pickAndInsert(view, 'camera', refused),
       })
     }
     if (hasPhotoLibrary()) {
@@ -658,7 +661,7 @@ export function EditorPane() {
         label: 'Photo Library',
         icon: <IconImagePlus size={16} />,
         separated: !hasCamera(),
-        onSelect: () => pickAndInsert(view, 'library'),
+        onSelect: () => pickAndInsert(view, 'library', refused),
       })
     }
     items.push({
@@ -1010,13 +1013,9 @@ export function EditorPane() {
           <span>Kept up to date from {owner}, so it can't be edited here.</span>
           <span class="spacer" />
           {/*
-            * First, because it is what a meeting is usually opened for: your
-            * own notes about it, beside it on its day and linked to it, while
-            * the meeting itself keeps up with the calendar.
-            */}
-          {/*
-            * For a person as for a meeting: the contact is the importer's, and
-            * what you know about them goes in a note of your own beside it.
+            * First, because it is what an import is usually opened for: your
+            * own notes on the meeting or the person, linked to it, while the
+            * import itself keeps up with the calendar or the address book.
             */}
           <button
             class="row-action"

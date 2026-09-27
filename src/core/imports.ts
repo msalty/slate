@@ -18,6 +18,7 @@
  * files go and imports the vault to put them there.
  */
 
+import { computed } from '@preact/signals'
 import { eventFor, parseFrontmatter, type FrontmatterValue } from './markdown'
 import { setPropertyValue } from './properties'
 import { eventFolderFor, eventNoteName } from './eventnote'
@@ -55,76 +56,93 @@ function startDate(data: Record<string, FrontmatterValue>, event: { start: numbe
 
 /** What an event is called: what the importer recorded, or its filename read by shape. */
 function meetingTitle(entry: NoteIndexEntry): string {
-  return entry.event?.title?.trim() || eventTitle(entry.title, entry.event?.title)
+  return (
+    entry.event?.title?.trim() ||
+    eventTitle(entry.title, entry.event?.title, entry.source !== undefined)
+  )
 }
 
 /* ------------------------------------------------------------------ detach */
 
 /**
  * Detach a note and file it where your own notes of its kind live. Resolves to
- * where it ended up and whether it got there, or undefined when there was
- * nothing to detach.
+ * where it ended up, or undefined when nothing owns it.
  *
  * An event goes to `Calendar/<year>/<month>/` under the name `>New event` would
  * have given it — `Standup - 2026-09-21` rather than the importer's
  * `Standup (a41b)` — so it reads and sorts like the rest of that folder. A
  * contact goes to `Contacts/`, keeping its name, which is the link target.
  *
- * Detached first and moved second. The other way round, a move that landed
- * and a detach that did not would leave a note the importer still claims in
- * the middle of your own; this way round, the worst case is a note that is
- * yours but still sitting in the importer's folder — which is reported as
- * exactly that (`filed: false`), not as a detach that failed, because the
- * detach did not.
+ * Moved first and detached second. The other way round, a move that failed
+ * left a meeting that was no longer an import in backstage — off the agenda,
+ * because the agenda takes only imports from there, and off every list and
+ * search, because it is backstage: a note nothing on screen could reach. This
+ * way round, a move that fails changes nothing, and a detach that fails after
+ * it leaves an import in your own folder, still read-only and still one press
+ * from detaching — the importer follows a moved file by its `uid:` (§6.2), so
+ * nothing is duplicated in the meantime.
  *
- * The move goes through `relocate`, so every link to the note follows it. The
- * importer, finding its file gone, writes the meeting afresh where it was
- * (docs/calendar-contacts.md, §6.2): the copy you detached stops changing, and
- * the live one keeps up with the calendar.
+ * The move goes through `relocate`, so every link to the note follows it. Once
+ * detached, the importer finds no file with the record's `uid:` and writes the
+ * meeting afresh (docs/calendar-contacts.md, §6.2): the copy you detached stops
+ * changing, and the live one keeps up with the calendar.
  */
-export async function detachAndFile(
-  path: string,
-): Promise<{ path: string; filed: boolean } | undefined> {
-  if (!(await detachNote(path))) return undefined
+export async function detachAndFile(path: string): Promise<string | undefined> {
   const entry = getEntry(path)
   const text = getText(path)
-  if (!entry || text === undefined) return { path, filed: false }
+  if (!entry || entry.source === undefined || text === undefined) return undefined
 
   const data = parseFrontmatter(text).data
   const event = eventFor(data)
-  try {
-    const dest = event
-      ? await moveNoteToFolder(
-          path,
-          eventFolderFor(event.start),
-          (n) => `${eventNoteName(meetingTitle(entry), startDate(data, event), n)}.md`,
-        )
-      : await moveNoteToFolder(path, CONTACTS_FOLDER)
-    return { path: dest, filed: true }
-  } catch (e) {
-    console.error('[slate] detached, but could not move the note', e)
-    return { path, filed: false }
-  }
+  const dest = event
+    ? await moveNoteToFolder(
+        path,
+        eventFolderFor(event.start),
+        (n) => `${eventNoteName(meetingTitle(entry), startDate(data, event), n)}.md`,
+      )
+    : await moveNoteToFolder(path, CONTACTS_FOLDER)
+  await detachNote(dest)
+  return dest
 }
 
 /* ------------------------------------------------------------- write notes */
 
 /**
- * Your own notes that name `target` in their `key:` property — `meeting:` for a
- * meeting, `contact:` for a person. Found through the backlinks, so only notes
- * that link to it are read, and a note that merely mentions it in passing does
- * not count: the property is what says "these are my notes on this".
+ * Your own notes on each import, by what names it: `meeting:` for a meeting,
+ * `contact:` for a person. Keyed `<key>\u0000<target path>`.
+ *
+ * Found through the backlinks, so only notes that link to an import are read,
+ * and a note that merely mentions one in passing does not count: the property
+ * is what says "these are my notes on this". Worked out once per change to the
+ * vault rather than per question — the agenda asks for every imported row on
+ * every render, and each answer re-read the frontmatter of every note linking
+ * to that meeting.
  */
-function notesNaming(key: string, target: string): string[] {
-  const out: string[] = []
-  for (const p of backlinkMap.value.get(target) ?? []) {
-    const e = getEntry(p)
-    if (!e || isExternal(e)) continue
-    const v = parseFrontmatter(getText(p) ?? '').data[key]
-    const link = typeof v === 'string' ? /^\s*\[\[(.*)\]\]\s*$/.exec(v)?.[1] : undefined
-    if (link !== undefined && resolveLink(splitWikiInner(link).target) === target) out.push(p)
+const notesNamed = computed(() => {
+  const out = new Map<string, string[]>()
+  for (const [target, sources] of backlinkMap.value) {
+    if (getEntry(target)?.source === undefined) continue
+    for (const p of sources) {
+      const e = getEntry(p)
+      if (!e || isExternal(e)) continue
+      const data = parseFrontmatter(getText(p) ?? '').data
+      for (const key of ['meeting', 'contact']) {
+        const v = data[key]
+        const link = typeof v === 'string' ? /^\s*\[\[(.*)\]\]\s*$/.exec(v)?.[1] : undefined
+        if (link === undefined || resolveLink(splitWikiInner(link).target) !== target) continue
+        const k = `${key}\u0000${target}`
+        const list = out.get(k)
+        if (list) list.push(p)
+        else out.set(k, [p])
+      }
+    }
   }
-  return out.sort()
+  for (const list of out.values()) list.sort()
+  return out
+})
+
+function notesNaming(key: string, target: string): string[] {
+  return notesNamed.value.get(`${key}\u0000${target}`) ?? []
 }
 
 /** Your own notes about a meeting: the ones whose `meeting:` names it. */
@@ -172,16 +190,22 @@ export function notesAbout(
 
 const inFlight = new Map<string, Promise<{ path: string; created: boolean } | undefined>>()
 
-/** The same, for a meeting — the name it had before contacts had notes too. */
-export const notesAboutMeeting = notesAbout
-
 async function findOrMake(
-  meeting: string,
+  imported: string,
 ): Promise<{ path: string; created: boolean } | undefined> {
-  const entry = getEntry(meeting)
-  const text = getText(meeting)
-  if (!entry || text === undefined) return undefined
-  if (!entry.event) return entry.source !== undefined ? contactNotes(meeting, entry) : undefined
+  const entry = getEntry(imported)
+  const text = getText(imported)
+  if (!entry || entry.source === undefined || text === undefined) return undefined
+  /*
+   * A person is an import with no `start:` at all. One that has a `start:`
+   * nobody could read is a meeting with a broken time, not a contact — asked
+   * about as one, it got `Contacts/Notes on Standup (a41b).md`.
+   */
+  if (!entry.event) {
+    const said = parseFrontmatter(text).data
+    return 'start' in said ? undefined : contactNotes(imported, entry)
+  }
+  const meeting = imported
   const existing = notesForMeeting(meeting)
   if (existing.length) return { path: existing[0], created: false }
 

@@ -286,7 +286,9 @@ export function AgendaPanel({ big = false }: { big?: boolean } = {}) {
               onClick={() => openNote(e.path)}
             >
               <span class="agenda-when">{eventTimeLabel(ev, day)}</span>
-              <span class="agenda-what">{eventTitle(e.title, ev.title)}</span>
+              <span class="agenda-what">
+                {eventTitle(e.title, ev.title, e.source !== undefined)}
+              </span>
               {broken ? (
                 <em class="agenda-zone" data-invalid="1" title={`${broken} is not a time zone this browser knows, so it is being ignored`}>
                   {broken}?
@@ -308,7 +310,7 @@ export function AgendaPanel({ big = false }: { big?: boolean } = {}) {
            * the meeting you took notes in and the three you only sat through.
            */
           const written = notesForMeeting(e.path).length > 0
-          const name = eventTitle(e.title, ev.title)
+          const name = eventTitle(e.title, ev.title, true)
           return (
             <div key={e.path} class="agenda-item">
               {row}

@@ -127,7 +127,7 @@ Short description, if any.
 | `location` | string | Optional. |
 | `url` | string | Optional. The join link, lifted out of the description. Kept apart from `location` because on a video meeting the "where" is a link: you click one and read the other. |
 | `attendees` | list | Wikilinks where a contact matched, plain strings otherwise. |
-| `calendar` | string | Optional. Which source calendar it came from — Work, Personal, Family. Nothing reads it yet; reserved because colouring the agenda by it is the obvious next thing, and vdir stores a `displayname` per collection so the importer gets it free. |
+| `calendar` | string | Optional. Which source calendar it came from — Work, Personal, Family. Nothing reads it yet; reserved because colouring the agenda by it is the obvious next thing, and EventKit gives the importer every calendar's title free. |
 | `source` | string | Provider slug. **With `uid`, its presence means the file is externally owned** — see §2.3. |
 | `uid` | string | The source system's identity key. Helper-owned; Slate reads only whether it is there. |
 
@@ -244,6 +244,12 @@ agenda takes any imported event anywhere in backstage outside its trash —
 and where Slate files something (your notes, a detached meeting) is worked out
 from its `start:`. So the folders under `backstage/calendar/` are the helper's
 setting to change.
+
+**A file's name is stable for the life of its record.** When a meeting is
+renamed upstream the helper updates `title:` and leaves the filename alone —
+renaming would break every path link to it, your notes' `meeting:` among them.
+Slate reads an import in the importer's shape by its `title:` whatever the front
+of its name says, so the agenda shows the new name.
 
 **The importer disambiguates differently**, and deliberately. It uses a short
 stable suffix derived from the `uid` — `Standup (a41b).md` — because it writes
@@ -729,35 +735,29 @@ format is a contract with two sides.
 
 ### 6.1 Architecture
 
+*Revised: the helper is `slate-bridge-mac`, a macOS menu-bar app in Swift
+(https://github.com/msalty/slate-bridge-mac). An earlier plan — vdirsyncer for
+transport and a Python projector — is superseded; a helper for another OS
+would be a separate app writing the same format.*
+
 ```
-CalDAV / CardDAV ──vdirsyncer──┐
-                               ├──> vdir/ ──project──> <vault>/backstage/calendar/<Account>/
-macOS EventKit ──swift dumper──┘      .ics  .vcf       <vault>/Contacts/Address Book/<Account>/
+macOS Calendar accounts ──EventKit──┐
+                                    ├──> records ──project──> <vault>/backstage/calendar/<Account>/
+macOS Contacts accounts ──Contacts──┘                          <vault>/Contacts/Address Book/<Account>/
 ```
 
-Two stages, and the split is the design. Stage one is **transport** — auth,
-discovery, incremental sync, deletion detection — and is either
-[vdirsyncer](https://vdirsyncer.pimutils.org/) or a small Swift binary that
-reads EventKit and writes `.ics` into the same layout. Stage two, `project`, is
-a **pure function from a directory of `.ics`/`.vcf` to a directory of `.md`**:
-no network, no credentials, no daemon, and testable against a folder of
-fixtures.
+EventKit and the Contacts framework already read every account the Mac has in
+System Settings — iCloud, Google, CalDAV, Exchange and Microsoft 365 — so the
+helper handles no credentials, speaks no protocol and needs no network code.
+What is left is the part that is the design: **projection**, a pure function
+from records to files (frontmatter, names, bodies, attendee links), kept apart
+from the frameworks so it is tested against the example vault
+(`docs/examples/`) without permissions; and the **writer**, which applies §6.2
+to a real folder.
 
-vdirsyncer's vdir format is one directory per collection and one file per item,
-which is already the shape the projection wants. Its `read_only` storage option
-enforces the one-way rule at the source, `start_date`/`end_date` bound the
-window server-side, and its status database is what distinguishes "cancelled
-upstream" from "the fetch failed" — the single hardest thing here to get right
-by hand, and the one that deletes real data when it is got wrong.
-
-EventKit exists to cover Exchange and Microsoft 365, which do not speak CalDAV
-at all. Defining stage two's input as "a directory of `.ics`/`.vcf`" rather than
-"whatever vdirsyncer produces" is what makes the two producers interchangeable,
-and mixable per account.
-
-Python 3 for stage two (`icalendar`, `recurring-ical-events`, `vobject`). A
-launchd or systemd timer runs `sync && project` every 15 minutes. Not a
-resident daemon.
+It runs as a menu-bar app started at login: at launch, every 15 minutes, on
+*Sync Now*, and when the calendar or contacts store says it changed. The vault
+folder is chosen once and kept as a security-scoped bookmark.
 
 ### 6.2 Ownership and deletion
 
@@ -815,17 +815,22 @@ action, not Detach.
 - *Slid out of the window* — the occurrence now falls outside the window.
   Delete, but by generation rather than by absence.
 
-A partial or failed fetch triggers neither. Stage two must never infer deletion
-from an empty or short directory listing.
+A partial or failed read triggers neither. The helper must never infer
+deletion from an empty or short result — no permission, a calendar or account
+temporarily missing, a store that returned nothing where it had events: skip
+deletion for that source, and say so.
 
 ### 6.3 Window and recurrence
 
 The window is **now − 1 month → now + 3 months**, recomputed each run.
 
-Recurrence is expanded **in the helper**: one markdown file per occurrence,
-in-window only, with `RRULE`, `EXDATE` and `RECURRENCE-ID` overrides all
-resolved before anything is written. Slate never sees a recurrence rule and
-contains no code that understands one.
+Recurrence is expanded **before Slate sees it**: one markdown file per
+occurrence, in-window only, with exceptions and moved occurrences already
+resolved. EventKit's date-range query returns occurrences, not series, so the
+helper has no recurrence engine either. Each occurrence needs a `uid:` that is
+the same on every run — the item's external identifier plus the occurrence's
+original start does it, and is what keeps a moved occurrence the same file.
+Slate never sees a recurrence rule and contains no code that understands one.
 
 The alternatives were considered and rejected. One file per *series* with Slate
 expanding the rule puts an iCalendar engine inside Slate, which is the bloat
@@ -839,8 +844,8 @@ Per-occurrence costs roughly 300–600 files for a meeting-heavy calendar, which
 
 For each attendee on an event:
 
-1. Match by **email** against the contact projection. Exact match only — no name
-   fuzzing.
+1. Match by **email** against the contact projection — every `email_*` value
+   of every contact (§2.2). Exact match only — no name fuzzing.
 2. Matched: write `"[[Jane Doe]]"`, using the contact's current filename —
    the name it has *now*, found by its `uid:` (§6.2), since it may have been
    renamed or moved in Slate. Slate leaves these links alone when a contact is
@@ -919,10 +924,11 @@ contacts browser.
 | Risk | Mitigation |
 | --- | --- |
 | An upstream display-name change breaks `[[links]]` | `aliases:` (§4.4); the helper records every prior name |
-| Exchange / M365 are unreachable by CalDAV | The EventKit path on macOS; no answer on Linux |
+| A meeting renamed upstream | Its file keeps its name for the life of the record; `title:` changes, and Slate reads an import by its record (§2.1) |
+| Only macOS is covered | Accepted; another OS gets its own helper writing the same format |
 | Two machines running the helper | Specified as one machine only; the manifest is machine-local |
 | The phone shows a stale projection | Accepted — it is read-only there by nature, and the window is three months wide |
-| Jane's backlinks drowned by 200 meetings | Grouped Linked Mentions (§4.3) |
+| Jane's backlinks drowned by 200 meetings | Meetings live in backstage and make no mentions; your notes carry the attendees (§1.1, §5.5) |
 | The vault crosses the index threshold | Short bodies and a bounded window (§7) |
 
 ---
@@ -964,27 +970,27 @@ six hundred events flood the note list.
 
 ### Phase C — the helper
 
-**6 · Transport.** vdirsyncer configuration, the Swift EventKit dumper, both
-landing in one vdir layout. **No markdown produced.** Verified by pointing
-`khal` and `khard` at the result — which de-risks the load-bearing half of the
-plan before a line of projection code exists.
+In `slate-bridge-mac` (§6.1), in this order:
 
-**7 · Contacts projection.** vCard to markdown, the manifest, the
-three-condition delete rule, idempotence tests. Contacts come first
-deliberately: no recurrence, no window, no expansion. It exercises the entire
-ownership and safety machinery against the easy data shape, so those bugs are
-found before recurrence is in the picture.
+**6 · Core projection.** Records to files, against `docs/examples/` as golden
+files: names, frontmatter, bodies, attendee linking. No frameworks, no
+permissions.
 
-**8 · Events projection.** Recurrence expansion, the rolling window, both
-deletion paths, body truncation.
+**7 · Writer.** §6.2 against a real folder: the manifest, the three-condition
+rule, following files by `uid:` and never into `backstage/trash/`, re-creating
+missing files, both deletion paths, idempotence (§6.5).
 
-**9 · Attendee linking.** Email matching, the plain-text fallback,
-self-exclusion, the size cap. Depends on 7.
+**8 · Contacts.** The Contacts framework source (§2.2), projected before events
+because attendee linking reads them.
 
-**10 · Polish.** Provider marks, agenda refinements, whatever the first month of
-real use asks for.
+**9 · Events.** The EventKit source: occurrences in the window, stable
+per-occurrence `uid:`, the inclusive all-day `end`, zones (§3), attendee
+linking (§6.4).
+
+**10 · The app.** Menu bar, settings, login item, scheduling.
 
 The ordering has one deliberate property: **every slice up to 5 is worth having
-even if the helper is never written**, and every slice from 6 on is worth having
-even if vdirsyncer is later swapped for something else. Nothing in the middle is
-load-bearing on something that does not exist yet.
+even if the helper is never written**, and the helper's slices build its
+correctness (projection, then ownership) before anything touches a real
+calendar. Nothing in the middle is load-bearing on something that does not exist
+yet.

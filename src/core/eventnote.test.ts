@@ -829,3 +829,22 @@ describe('reading the importer’s names', () => {
     expect(eventTitle('Budget (abc)', 'Budget')).toBe('Budget (abc)')
   })
 })
+
+describe('an imported name that has moved on', () => {
+  it('reads a counter after the tag, from a collision, as the record', async () => {
+    const { eventTitle } = await import('./eventname')
+    expect(eventTitle('Standup (a41b) 2', 'Standup')).toBe('Standup')
+  })
+
+  /*
+   * The importer keeps a file's name for the life of the record and updates
+   * `title:` when the meeting is renamed upstream, so on an import the name
+   * goes stale and the record is the truth.
+   */
+  it('reads an import renamed upstream by its new title', async () => {
+    const { eventTitle } = await import('./eventname')
+    expect(eventTitle('Standup (a41b)', 'Daily sync', true)).toBe('Daily sync')
+    // On a note of your own the name you gave it stands.
+    expect(eventTitle('Team lunch (cafe)', 'Lunch')).toBe('Team lunch (cafe)')
+  })
+})

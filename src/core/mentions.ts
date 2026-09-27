@@ -27,7 +27,16 @@ function when(e: NoteIndexEntry): number {
   return e.event?.start ?? e.mtime
 }
 
-export function groupMentions(entries: readonly NoteIndexEntry[]): MentionGroups {
+export function groupMentions(
+  entries: readonly NoteIndexEntry[],
+  /**
+   * Your notes *on* this note — the ones whose `contact:` or `meeting:` names
+   * it — which go first among your own, ahead of every note that only
+   * mentions it in passing. Without this they sat wherever their last edit
+   * put them, and the note you keep on a person sank under a month of diary.
+   */
+  first: ReadonlySet<string> = new Set(),
+): MentionGroups {
   const own: NoteIndexEntry[] = []
   const bySource = new Map<string, NoteIndexEntry[]>()
   for (const e of entries) {
@@ -45,5 +54,6 @@ export function groupMentions(entries: readonly NoteIndexEntry[]): MentionGroups
       source,
       notes: notes.sort((a, b) => when(b) - when(a) || (a.path < b.path ? -1 : 1)),
     }))
+  own.sort((a, b) => Number(first.has(b.path)) - Number(first.has(a.path)))
   return { own, external }
 }

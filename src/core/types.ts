@@ -161,6 +161,8 @@ export interface NoteIndexEntry {
    * material. See `contentNotes`.
    */
   source?: string
+  /** The importer's record key from `uid:`, set alongside `source`. */
+  uid?: string
   hasTasks: boolean
   /**
    * This note's tasks, already parsed.

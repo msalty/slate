@@ -49,14 +49,15 @@ async function ingest(file: File): Promise<string> {
  * as a paste — same optimization, same attachment folder, same embed syntax,
  * so a photo from the camera is resizable and lightboxable like any other.
  */
-export function insertFiles(view: EditorView, files: File[]) {
+/** Returns false when the note refuses edits and nothing went in. */
+export function insertFiles(view: EditorView, files: File[]): boolean {
   /*
    * Asked here as well as by the paste and drop handlers, because this is a
    * dispatch and `readOnly` does not stop one: the header's Insert → Upload
    * reaches it without passing through either, and put a file into a locked
    * note, or an imported one the importer would then write over.
    */
-  if (view.state.readOnly) return
+  if (view.state.readOnly) return false
   const tokens = files.map(() => `<!--slate-uploading:${uid(6)}-->`)
   const head = view.state.selection.main
   view.dispatch({
@@ -83,6 +84,7 @@ export function insertFiles(view: EditorView, files: File[]) {
       changes: { from: at, to: at + token.length, insert: replacement },
     })
   })
+  return true
 }
 
 /**
@@ -94,9 +96,9 @@ export function insertFiles(view: EditorView, files: File[]) {
  * lightboxable like every other embed — and what lets the same file be used by
  * two notes instead of being uploaded twice.
  */
-export function insertVaultFiles(view: EditorView, paths: string[]): void {
+export function insertVaultFiles(view: EditorView, paths: string[]): boolean {
   // As above: Insert → File in Slate is a dispatch too.
-  if (!paths.length || view.state.readOnly) return
+  if (!paths.length || view.state.readOnly) return false
   const text = `${paths.map((p) => formatWikiLink({ target: p, embed: true })).join('\n')}\n`
   const head = view.state.selection.main
   view.dispatch({
@@ -104,6 +106,7 @@ export function insertVaultFiles(view: EditorView, paths: string[]): void {
     selection: { anchor: head.from + text.length },
     scrollIntoView: true,
   })
+  return true
 }
 
 /**

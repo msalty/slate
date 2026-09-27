@@ -45,8 +45,8 @@ describe('inserting a file', () => {
       '---\nread-only: true\n---\n\nBody\n',
     ]) {
       const view = editor(doc)
-      insertVaultFiles(view, ['photo.png'])
-      insertFiles(view, [new File(['x'], 'a.png', { type: 'image/png' })])
+      expect(insertVaultFiles(view, ['photo.png'])).toBe(false)
+      expect(insertFiles(view, [new File(['x'], 'a.png', { type: 'image/png' })])).toBe(false)
       expect(view.state.doc.toString()).toBe(doc)
       view.destroy()
     }
@@ -55,7 +55,7 @@ describe('inserting a file', () => {
   it('puts it into one that does not', async () => {
     const { insertVaultFiles } = await import('../editor/paste')
     const view = editor('Body\n')
-    insertVaultFiles(view, ['photo.png'])
+    expect(insertVaultFiles(view, ['photo.png'])).toBe(true)
     expect(view.state.doc.toString()).toContain('![[photo.png]]')
     view.destroy()
   })

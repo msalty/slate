@@ -22,11 +22,9 @@ async function fresh() {
   return { vault, imports, eventTitle }
 }
 
-/** Where Detach put the note, having checked it got there. */
+/** Where Detach put the note. */
 async function detached(imports: typeof import('./imports'), path: string) {
-  const r = await imports.detachAndFile(path)
-  if (r) expect(r.filed).toBe(true)
-  return r?.path
+  return imports.detachAndFile(path)
 }
 
 const SUBSCRIBED = 'backstage/calendar/Fastmail/2026/09'
@@ -138,7 +136,7 @@ describe('an imported meeting in backstage', () => {
       meeting('2026-09-21T09:00', 'attendees:\n  - "[[Jane Doe]]"\n  - "Sam Ortiz"\n'),
     )
     expect(vault.backlinkMap.value.get(jane)).toBeUndefined()
-    const r = await imports.notesAboutMeeting(MEETING)
+    const r = await imports.notesAbout(MEETING)
     expect(vault.backlinkMap.value.get(jane)).toEqual([r!.path])
     expect(vault.getText(r!.path)).toContain('Sam Ortiz')
   })
@@ -146,7 +144,7 @@ describe('an imported meeting in backstage', () => {
   it('is linked from your notes by its path, which is the only name that reaches it', async () => {
     const { vault, imports } = await fresh()
     await seedMeeting(vault)
-    const r = await imports.notesAboutMeeting(MEETING)
+    const r = await imports.notesAbout(MEETING)
     expect(vault.getText(r!.path)).toContain(`meeting: "[[${MEETING.slice(0, -3)}]]"`)
     expect(vault.resolveLink('Standup (a41b)')).toBeUndefined()
   })
@@ -163,7 +161,7 @@ describe('writing notes about a meeting', () => {
     const { vault, imports } = await fresh()
     await seedMeeting(vault, meeting('2026-10-01T00:30', 'tz: Asia/Tokyo\n'))
     const e = vault.getEntry(MEETING)!
-    const r = await imports.notesAboutMeeting(MEETING)
+    const r = await imports.notesAbout(MEETING)
     expect(vault.getEntry(r!.path)!.calendarDate).toBe(e.calendarDate)
     expect(vault.notesByDay.value.get(e.calendarDate)).toContain(r!.path)
   })
@@ -171,7 +169,7 @@ describe('writing notes about a meeting', () => {
   it('makes a note of your own on its day, linked to it', async () => {
     const { vault, imports } = await fresh()
     await seedMeeting(vault)
-    const r = await imports.notesAboutMeeting(MEETING)
+    const r = await imports.notesAbout(MEETING)
     expect(r).toEqual({ path: 'Calendar/2026/09/Standup - 2026-09-21.md', created: true })
     const e = vault.getEntry(r!.path)!
     // Yours, on the day, and not a second event on the agenda.
@@ -189,18 +187,15 @@ describe('writing notes about a meeting', () => {
   it('opens the notes you already have rather than making more', async () => {
     const { vault, imports } = await fresh()
     await seedMeeting(vault)
-    const first = await imports.notesAboutMeeting(MEETING)
-    expect(await imports.notesAboutMeeting(MEETING)).toEqual({ path: first!.path, created: false })
+    const first = await imports.notesAbout(MEETING)
+    expect(await imports.notesAbout(MEETING)).toEqual({ path: first!.path, created: false })
     expect(vault.notes.value.filter((n) => !n.source)).toHaveLength(1)
   })
 
   it('makes one note however quickly it is asked twice', async () => {
     const { vault, imports } = await fresh()
     await seedMeeting(vault)
-    const [a, b] = await Promise.all([
-      imports.notesAboutMeeting(MEETING),
-      imports.notesAboutMeeting(MEETING),
-    ])
+    const [a, b] = await Promise.all([imports.notesAbout(MEETING), imports.notesAbout(MEETING)])
     expect(a!.path).toBe(b!.path)
     expect(imports.notesForMeeting(MEETING)).toEqual([a!.path])
   })
@@ -209,21 +204,23 @@ describe('writing notes about a meeting', () => {
     const { vault, imports } = await fresh()
     await seedMeeting(vault)
     await vault.createNote('', 'Diary', `Sat through [[${MEETING.slice(0, -3)}]] again.\n`)
-    expect((await imports.notesAboutMeeting(MEETING))?.created).toBe(true)
+    expect((await imports.notesAbout(MEETING))?.created).toBe(true)
   })
 
-  it('still finds them after the meeting is detached and moved', async () => {
+  it('keeps its link to the meeting when the meeting is detached and moved', async () => {
     const { vault, imports } = await fresh()
     await seedMeeting(vault)
-    const notes = await imports.notesAboutMeeting(MEETING)
+    const notes = await imports.notesAbout(MEETING)
     const moved = await detached(imports, MEETING)
-    expect(imports.notesForMeeting(moved!)).toEqual([notes!.path])
+    const link = /^meeting: "\[\[(.*)\]\]"$/m.exec(vault.getText(notes!.path)!)![1]
+    expect(vault.resolveLink(link)).toBe(moved)
+    expect(vault.backlinkMap.value.get(moved!)).toEqual([notes!.path])
   })
 
   it('is not offered for a note that is not an event', async () => {
     const { vault, imports } = await fresh()
     const path = await vault.createNote('', 'Plain', '# Plain\n')
-    expect(await imports.notesAboutMeeting(path)).toBeUndefined()
+    expect(await imports.notesAbout(path)).toBeUndefined()
   })
 })
 
@@ -273,5 +270,35 @@ describe('writing notes about a person', () => {
     const { vault, imports } = await fresh()
     const mine = await vault.createNote('', 'Sam Ortiz', '# Sam\n')
     expect(await imports.notesAbout(mine)).toBeUndefined()
+  })
+})
+
+describe('Write notes on a meeting whose time cannot be read', () => {
+  /*
+   * An import with no readable event used to be taken for a contact, so a
+   * meeting with a broken `start:` got `Contacts/Notes on Standup (a41b).md`.
+   */
+  it('makes nothing, rather than taking it for a person', async () => {
+    const { vault, imports } = await fresh()
+    await seedMeeting(vault, meeting('next tuesday'))
+    expect(vault.getEntry(MEETING)?.event).toBeUndefined()
+    expect(await imports.notesAbout(MEETING)).toBeUndefined()
+    expect(vault.notes.value.filter((n) => n.path.startsWith('Contacts/'))).toEqual([])
+  })
+})
+
+describe('two files for one imported meeting', () => {
+  /*
+   * A trashed meeting restored beside the copy the importer wrote afresh, or a
+   * sync conflict copy: both carry the same `source:` and `uid:`, and each was
+   * a row on the agenda.
+   */
+  it('are one row on the agenda, the importer’s own', async () => {
+    const { vault } = await fresh()
+    await seedMeeting(vault)
+    const restored = await vault.createNote('', 'Standup (a41b)', meeting(), () => 'Standup (a41b)')
+    const rows = vault.eventsByDay.value.get(parseYmd('2026-09-21')!)?.map((e) => e.path)
+    expect(rows).toEqual([MEETING])
+    expect(vault.getEntry(restored)?.uid).toBe('a41b@fastmail.com')
   })
 })

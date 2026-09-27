@@ -324,3 +324,30 @@ describe('an edit from a list, to a note deleted meanwhile', () => {
     expect(vault.occupied(path)).toBe(true)
   })
 })
+
+describe('a Detach whose move out of backstage fails', () => {
+  /*
+   * Detached first and moved second, a move that failed left a meeting that
+   * was no longer an import sitting in backstage — off the agenda, off every
+   * list and search: a note nothing on screen could reach.
+   */
+  it('changes nothing, so the meeting is still on the agenda to try again', async () => {
+    const hooks: Hooks = {}
+    const vault = await vaultWith(hooks)
+    const imports = await import('./imports')
+    const path = await vault.createNote(
+      'backstage/calendar/Work/2026/09',
+      'Standup (a41b)',
+      '---\ntitle: Standup\nstart: 2026-09-21T09:00\nsource: work\nuid: u1\n---\n',
+      () => 'Standup (a41b)',
+    )
+    hooks.putFile = (f) => {
+      if (f.path.startsWith('Calendar/')) throw new Error('disk full')
+    }
+    await expect(imports.detachAndFile(path)).rejects.toThrow()
+    expect(vault.getEntry(path)?.source).toBe('work')
+    expect(vault.eventsByDay.value.get(new Date(2026, 8, 21).getTime())?.map((e) => e.path)).toEqual([
+      path,
+    ])
+  })
+})

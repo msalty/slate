@@ -420,6 +420,14 @@ function aliasesIn(value: unknown): string[] {
   return aliases
 }
 
+/** Who owns a note and under what key: both or neither, as `externalSource` decides. */
+function owner(
+  data: Parameters<typeof externalSource>[0],
+): Pick<NoteIndexEntry, 'source' | 'uid'> {
+  const source = externalSource(data)
+  return source === undefined ? {} : { source, uid: String(data.uid).trim() }
+}
+
 function buildEntry(f: VaultFile): NoteIndexEntry | undefined {
   if (f.kind !== 'note' || f.deleted) return undefined
   const text = f.text ?? ''
@@ -490,7 +498,7 @@ function buildEntry(f: VaultFile): NoteIndexEntry | undefined {
     pinned: fm.data.pinned === true,
     event,
     aliases,
-    source: externalSource(fm.data),
+    ...owner(fm.data),
     hasTasks: raw.length > 0,
     tasks: raw.map((t) => ({
       id: `${f.path}:${t.line}`,
@@ -877,9 +885,34 @@ export const backstageEvents = computed<NoteIndexEntry[]>(() => {
   return out
 })
 
+/**
+ * One note per imported record. Two files can carry the same `source:` and
+ * `uid:` — a trashed meeting restored beside the copy the importer wrote
+ * afresh, a sync conflict copy — and each was a row on the agenda, the same
+ * meeting twice. The importer's own (the one in backstage) is kept, or failing
+ * that the first by path, so every device keeps the same one.
+ */
+function oneEachRecord(entries: NoteIndexEntry[]): NoteIndexEntry[] {
+  const kept = new Map<string, NoteIndexEntry>()
+  const out: NoteIndexEntry[] = []
+  for (const e of entries) {
+    if (e.source === undefined) {
+      out.push(e)
+      continue
+    }
+    const key = `${e.source}\u0000${e.uid}`
+    const other = kept.get(key)
+    const better =
+      !other ||
+      (isHidden(e.path) !== isHidden(other.path) ? isHidden(e.path) : e.path < other.path)
+    if (better) kept.set(key, e)
+  }
+  return [...out, ...kept.values()]
+}
+
 export const eventsByDay = computed(() => {
   const m = new Map<number, NoteIndexEntry[]>()
-  for (const e of [...linkableNotes.value, ...backstageEvents.value]) {
+  for (const e of oneEachRecord([...linkableNotes.value, ...backstageEvents.value])) {
     const ev = e.event
     if (!ev) continue
     const first = startOfDay(ev.start)
@@ -2098,11 +2131,12 @@ async function writePlanned(
          * file that no longer matches what it last wrote is one it takes to be
          * edited by hand and never updates again (§6.2). Renaming one contact
          * rewrote her name into every meeting she was in, and froze all of
-         * them. Checked here, under the lock and against the text as it is,
-         * because every rewrite — a rename, a move, a pinned shared name, an
-         * attachment's new name — comes through here.
+         * them. Checked here, under the lock, because every rewrite — a
+         * rename, a move, a pinned shared name, an attachment's new name —
+         * comes through here; and off the index, which every write to the file
+         * refreshes, rather than by parsing each note in the plan again.
          */
-        if (externalSource(parseFrontmatter(f.text ?? '').data) !== undefined) return true
+        if (indexMap.get(at)?.source !== undefined) return true
         if (f.text !== was) return false
         await writeFile({ ...f, text, hash, size: text.length, mtime: Date.now(), dirty: true })
         reindex(at)
