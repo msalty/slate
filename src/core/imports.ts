@@ -109,22 +109,40 @@ export async function detachAndFile(
 
 /* ------------------------------------------------------------- write notes */
 
-/** Your own notes about a meeting: the ones whose `meeting:` names it. */
-export function notesForMeeting(meeting: string): string[] {
+/**
+ * Your own notes that name `target` in their `key:` property — `meeting:` for a
+ * meeting, `contact:` for a person. Found through the backlinks, so only notes
+ * that link to it are read, and a note that merely mentions it in passing does
+ * not count: the property is what says "these are my notes on this".
+ */
+function notesNaming(key: string, target: string): string[] {
   const out: string[] = []
-  for (const p of backlinkMap.value.get(meeting) ?? []) {
+  for (const p of backlinkMap.value.get(target) ?? []) {
     const e = getEntry(p)
     if (!e || isExternal(e)) continue
-    const m = parseFrontmatter(getText(p) ?? '').data.meeting
-    const link = typeof m === 'string' ? /^\s*\[\[(.*)\]\]\s*$/.exec(m)?.[1] : undefined
-    if (link !== undefined && resolveLink(splitWikiInner(link).target) === meeting) out.push(p)
+    const v = parseFrontmatter(getText(p) ?? '').data[key]
+    const link = typeof v === 'string' ? /^\s*\[\[(.*)\]\]\s*$/.exec(v)?.[1] : undefined
+    if (link !== undefined && resolveLink(splitWikiInner(link).target) === target) out.push(p)
   }
   return out.sort()
 }
 
+/** Your own notes about a meeting: the ones whose `meeting:` names it. */
+export function notesForMeeting(meeting: string): string[] {
+  return notesNaming('meeting', meeting)
+}
+
+/** Your own notes about a person: the ones whose `contact:` names them. */
+export function notesForContact(contact: string): string[] {
+  return notesNaming('contact', contact)
+}
+
 /**
- * The note to write about a meeting in: the one you already have, or a new
- * one. `created` says which, so the caller knows whether to open it for typing.
+ * The note to write about an import in — a meeting, or a person (see
+ * `contactNotes` at the end) — the one you already have, or a new one.
+ * `created` says which, so the caller knows whether to open it for typing.
+ *
+ * For a meeting:
  *
  * A new one is filed on the meeting's day in `Calendar/<year>/<month>/` and
  * carries two things: `date:`, which puts it in that day's list and on the
@@ -136,30 +154,34 @@ export function notesForMeeting(meeting: string): string[] {
  * `start:`, and that would make your notes an event of their own — the same
  * meeting twice on the agenda.
  */
-export function notesAboutMeeting(
-  meeting: string,
+export function notesAbout(
+  imported: string,
 ): Promise<{ path: string; created: boolean } | undefined> {
   /*
-   * One at a time per meeting. The look for existing notes and the note made
+   * One at a time per import. The look for existing notes and the note made
    * when there are none are an await apart, so a double press — or the banner
    * and the agenda pencil in quick succession — both found none and made two.
    * A press while one is under way gets that one's answer.
    */
-  const running = inFlight.get(meeting)
+  const running = inFlight.get(imported)
   if (running) return running
-  const p = findOrMake(meeting).finally(() => inFlight.delete(meeting))
-  inFlight.set(meeting, p)
+  const p = findOrMake(imported).finally(() => inFlight.delete(imported))
+  inFlight.set(imported, p)
   return p
 }
 
 const inFlight = new Map<string, Promise<{ path: string; created: boolean } | undefined>>()
+
+/** The same, for a meeting — the name it had before contacts had notes too. */
+export const notesAboutMeeting = notesAbout
 
 async function findOrMake(
   meeting: string,
 ): Promise<{ path: string; created: boolean } | undefined> {
   const entry = getEntry(meeting)
   const text = getText(meeting)
-  if (!entry?.event || text === undefined) return undefined
+  if (!entry || text === undefined) return undefined
+  if (!entry.event) return entry.source !== undefined ? contactNotes(meeting, entry) : undefined
   const existing = notesForMeeting(meeting)
   if (existing.length) return { path: existing[0], created: false }
 
@@ -192,4 +214,32 @@ async function findOrMake(
     eventNoteName(title, day, n),
   )
   return { path, created: true }
+}
+
+/**
+ * The note to write about a person in — the one you have, or a new one.
+ *
+ * A contact file is the importer's and read-only, so what you know about
+ * somebody ("prefers email, met in Lisbon") needs a note of your own. One per
+ * person rather than one per occasion: meetings have dates, people do not.
+ * Filed beside the contacts you keep by hand, in `Contacts/`, and called
+ * `Notes on Jane Doe` — not `Jane Doe`, which would share the contact's name,
+ * and a shared name turns every `[[Jane Doe]]` into a question of which one.
+ *
+ * `contact:` is the link back: it puts the note first in the contact's Linked
+ * Mentions, and it is how the next press finds it rather than making another.
+ */
+async function contactNotes(
+  contact: string,
+  entry: NoteIndexEntry,
+): Promise<{ path: string; created: boolean }> {
+  const existing = notesForContact(contact)
+  if (existing.length) return { path: existing[0], created: false }
+  const title = `Notes on ${entry.title}`
+  const body = setPropertyValue(
+    `# ${title}\n\n`,
+    'contact',
+    formatWikiLink({ target: linkNameFor(contact) }),
+  )
+  return { path: await createNote(CONTACTS_FOLDER, title, body), created: true }
 }

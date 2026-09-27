@@ -95,7 +95,7 @@ import { hasCamera, hasPhotoLibrary, pickAndInsert } from '../editor/pickImage'
 import { openFilePicker } from './pickFile'
 import { insertVaultFiles } from '../editor/paste'
 import { LinkedMentions } from './LinkedMentions'
-import { detachAndOpen, openMeetingNotes } from './meetingNotes'
+import { detachAndOpen, openNotesAbout } from './meetingNotes'
 
 /**
  * A save that did not land.
@@ -1014,15 +1014,21 @@ export function EditorPane() {
             * own notes about it, beside it on its day and linked to it, while
             * the meeting itself keeps up with the calendar.
             */}
-          {entry.event && (
-            <button
-              class="row-action"
-              title="Open your notes on this meeting, or start them"
-              onClick={() => void openMeetingNotes(path)}
-            >
-              Write notes
-            </button>
-          )}
+          {/*
+            * For a person as for a meeting: the contact is the importer's, and
+            * what you know about them goes in a note of your own beside it.
+            */}
+          <button
+            class="row-action"
+            title={
+              entry.event
+                ? 'Open your notes on this meeting, or start them'
+                : 'Open your notes on this person, or start them'
+            }
+            onClick={() => void openNotesAbout(path)}
+          >
+            Write notes
+          </button>
           <button
             class="row-action"
             title={`Stop ${owner} updating this note, and file it with your own`}

@@ -273,27 +273,122 @@ being left in prose. See §7 for why this matters more than it looks.
 
 ### 2.2 Contact notes
 
+A contact is written twice over, on purpose: the **frontmatter** holds the data,
+one key per kind of detail and label, for Slate and anything else that reads
+properties; the **body** is the same data laid out the way a contacts app shows
+it, for a person to read. The helper writes both from one record on every run,
+so they cannot drift — and the body is plain Markdown, so it reads the same in
+source mode and in any other Markdown app, with tappable `tel:` and `mailto:`
+links. (`$(name)` substitution was considered for the body and rejected: a
+missing field shows as a literal `$(phone_work)`, it renders only in Slate's
+rich modes, and it cannot make a link.)
+
 ```markdown
 ---
-emails: [jane@example.com, j.doe@work.example]
-phones: ["+1 555 0143"]
+name: Jane Doe
+nickname: Janey
 org: Example Corp
-title: Head of Design
+department: Design
+job_title: Head of Design
+phone_mobile: "+1 555 0143"
+phone_work: "+1 555 0100"
+email_home: [jane@example.com, jd@me.com]
+email_work: j.doe@work.example
+address_home: "12 Rua Augusta, 1100-053 Lisboa, Portugal"
+url_homepage: https://jane.example
 birthday: 1984-03-02
+date_anniversary: 2010-06-14
+related_spouse: Sam Doe
 aliases: [Jane Smith, JD]
 source: fastmail
-uid: a41b...
+uid: jane-doe@fastmail.com
 ---
 
-Met at the Lisbon conference. Prefers email.
+# Jane Doe
+
+Head of Design · Design · Example Corp
+
+## Phone
+
+- mobile · [+1 555 0143](tel:+15550143)
+- work · [+1 555 0100](tel:+15550100)
+
+## Email
+
+…
 ```
+
+The complete file is `docs/examples/vault/Contacts/Address Book/Fastmail/Jane
+Doe.md`, and it is the reference for every detail below.
+
+**Keys.** Flat, because Slate's frontmatter is: a value is text, a list, a
+number or true/false, and there are no nested objects. So the label goes into
+the key — `<kind>_<label>` — and a list is used only when the same label
+repeats, in the order the contact has them.
+
+| Kind | Keys | Value |
+| --- | --- | --- |
+| Name | `name` | The display name as the contacts app shows it. |
+| | `nickname`, `org`, `department`, `job_title` | Text. **`job_title`, never `title`**: on an event `title:` is its name (§2.1), and one key must not mean two things. |
+| Phone | `phone_<label>` | As the contact has it written (`+1 555 0143`). |
+| Email | `email_<label>` | The address. |
+| Address | `address_<label>` | One line: the street lines, then locality, region and postcode as the country writes them, then the country, joined by `, `. |
+| URL | `url_<label>` | The URL. |
+| Birthday | `birthday` | `YYYY-MM-DD`, or `--MM-DD` when the year is not known. |
+| Other dates | `date_<label>` | As `birthday`. **Never a bare `date:`** — in Slate that files a note on the calendar; an unlabelled date is `date_other`. |
+| Related | `related_<label>` | The person's name, as plain text. |
+| Social | `social_<service>` | The username, or the URL when there is no username. |
+| Messaging | `im_<service>` | The username. |
+
+Then `aliases`, `source` and `uid` (§2.3, §4.4). Keys are written in exactly
+this order, kind by kind, and within a kind by first appearance on the card.
+Kinds with nothing in them are left out entirely.
+
+**Labels** become lowercase slugs. Apple's built-in labels map to their plain
+names — `home`, `work`, `school`, `other`, `mobile`, `iphone`, `main`,
+`home_fax`, `work_fax`, `other_fax`, `pager`, `homepage`, `anniversary`, and
+the relation names (`spouse`, `partner`, `child`, `parent`, `mother`,
+`father`, `sibling`, `friend`, `manager`, `assistant`, …). A custom label is
+lowercased, every run of characters outside `a–z` and `0–9` becomes `_`, and
+leading and trailing `_` go: "Lake house" → `address_lake_house`. A value with
+no label, or a label that slugs to nothing, takes the bare kind — `phone`,
+`email`, `address`, `url` — except dates, which take `date_other` (above).
+
+**Not written:** photos (megabytes into a sync set that reaches your phone);
+vCard categories as `#tags` (somebody else's taxonomy inflating your tag
+counts); and the contact's note field, which Apple only lets an app read with
+an entitlement granted case by case. What you know about a person goes in your
+own note instead — *Write notes* (§5.5).
+
+**Body.** A level-one heading with `name`; then, if there are any, one line of
+`job_title`, `department` and `org` joined by ` · `; then, if there is one, a
+line with the nickname in quotation marks (“Janey”). Then one section per kind
+that has anything in it, **in the order Apple's Contacts shows them**:
+
+1. `## Phone` — `- <label> · [<number>](tel:<digits>)`, the link keeping only
+   digits and a leading `+`.
+2. `## Email` — `- <label> · [<address>](mailto:<address>)`.
+3. `## Address` — `- **<label>**`, then the address one line at a time,
+   indented two spaces under the item; every line but the last, the label's
+   included, ends in two spaces (a Markdown line break).
+4. `## URL` — `- <label> · <<url>>`.
+5. `## Birthday` — the date alone: `2 March 1984`, or `2 March` without a year.
+6. `## Dates` — `- <label> · 14 June 2010`.
+7. `## Related` — `- <label> · <name>`.
+8. `## Social` — `- <service> · <value>`.
+9. `## Messaging` — `- <service> · <value>`.
+
+A label is shown as its slug with `_` read as a space (`home fax`); an
+unlabelled value shows no label and no ` · `. Month names are English and
+fixed, never the machine's locale, so the file comes out the same on every run
+(§6.5). One blank line between blocks, one newline at the end.
 
 **Filenames.** `Contacts/Address Book/<Account>/Jane Doe.md` — flat within the
 account, because the filename *is* the link target and `[[Jane Doe]]` is the
 entire point. A link resolves by filename wherever the file is, so the folders
 above it cost nothing. "Address Book" because it says what the folder is.
-Contacts you keep by
-hand, and contacts you detach, live in `Contacts/` itself.
+Contacts you keep by hand, contacts you detach, and your notes on people
+(`Notes on Jane Doe.md`, §5.5) live in `Contacts/` itself.
 
 Collisions take a disambiguator from `org` or the email local-part:
 `Jane Doe (Example Corp).md`. **The check is vault-wide, not per folder.** With
@@ -302,10 +397,6 @@ one folder per account the same person can arrive from two, and two
 means whichever sorts first by path, which is to say whichever account happens
 to be named earlier in the alphabet. So a name any other note in the vault
 already has, imported or yours, is disambiguated.
-
-No photos — an address book's worth of them is megabytes into a sync set that
-reaches your phone. No `#tags` derived from vCard categories, which would
-inflate tag counts with somebody else's taxonomy.
 
 ### 2.3 The `source:` marker
 
@@ -574,7 +665,7 @@ No event editor and no date-picker widget. The frontmatter form in
 ### 5.5 Read-only, and Detach
 
 Any note with `source:` set opens read-only, with a banner naming the provider
-and, for a meeting, two actions.
+and two actions, for a meeting and a contact alike.
 
 **Write notes** is the one a meeting is usually opened for. It makes a note of
 your own in `Calendar/<year>/<month>/`, named as a hand-made event would be
@@ -612,6 +703,12 @@ meeting, delete it in the calendar.
 
 *Write notes* also copies the meeting's `attendees:` into your note — a copy of
 who was there, not a live view — and links the meeting by its path.
+
+A contact has *Write notes* too. It makes one note per person, not per
+occasion — `Contacts/Notes on Jane Doe.md`, with `contact: "[[Jane Doe]]"`
+linking back — and opens it again on every later press. Its own name, not the
+contact's: a second `Jane Doe` would make every `[[Jane Doe]]` ambiguous. The
+note is first in the contact's Linked Mentions.
 
 Restoring an old version of a note you have detached restores its text
 without `source:` and `uid:` — a version from before the Detach still carries

@@ -4,23 +4,23 @@
  * open what it made and say what happened.
  */
 
-import { detachAndFile, notesAboutMeeting } from '../core/imports'
+import { detachAndFile, notesAbout } from '../core/imports'
 import { syncSoon } from '../core/sync'
 import { notify, openNote } from './state'
 
 /**
- * Open your notes on a meeting, making them first if there are none. A new
- * note opens ready to type in; one you already have opens to be read, like
- * any note you go back to.
+ * Open your notes on a meeting or a person, making them first if there are
+ * none. A new note opens ready to type in; one you already have opens to be
+ * read, like any note you go back to.
  */
-export async function openMeetingNotes(meeting: string): Promise<void> {
+export async function openNotesAbout(imported: string): Promise<void> {
   try {
-    const r = await notesAboutMeeting(meeting)
+    const r = await notesAbout(imported)
     if (!r) return
     openNote(r.path, { editing: r.created })
     if (r.created) syncSoon()
   } catch (e) {
-    console.error('[slate] could not make meeting notes', e)
+    console.error('[slate] could not make notes', e)
     notify('Those notes could not be made on this device.', 'error')
   }
 }

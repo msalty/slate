@@ -49,6 +49,7 @@ const JANE = 'Contacts/Address Book/Fastmail/Jane Doe.md'
 const JANE_WORK = 'Contacts/Address Book/Work/Jane Doe (Example Corp).md'
 const NOTES = 'Calendar/2026/09/Design review - 2026-09-21.md'
 const STANDUP = 'Calendar/2026/09/Standup - 2026-09-22.md'
+const JANE_NOTES = 'Contacts/Notes on Jane Doe.md'
 
 async function sha256hex(s: string): Promise<string> {
   const d = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)))
@@ -58,7 +59,7 @@ async function sha256hex(s: string): Promise<string> {
 describe('the example vault', () => {
   it('has every file the README describes', () => {
     expect(examples.map((e) => e.path).sort()).toEqual(
-      [MEETING, OFFICE, TOKYO, JANE, JANE_WORK, NOTES, STANDUP].sort(),
+      [MEETING, OFFICE, TOKYO, JANE, JANE_WORK, NOTES, STANDUP, JANE_NOTES].sort(),
     )
   })
 
@@ -68,7 +69,9 @@ describe('the example vault', () => {
       expect(vault.getEntry(path)?.source !== undefined, path).toBe(IMPORTED.test(path))
     }
     // Off the note list and every roll-up; searchable and linkable all the same.
-    expect(vault.contentNotes.value.map((n) => n.path).sort()).toEqual([NOTES, STANDUP].sort())
+    expect(vault.contentNotes.value.map((n) => n.path).sort()).toEqual(
+      [NOTES, STANDUP, JANE_NOTES].sort(),
+    )
     expect(vault.tasks.value.map((t) => t.text)).toEqual(['Send Jane the revised flow'])
   })
 
@@ -132,7 +135,7 @@ describe('links, as the example contacts and meetings make them', () => {
    */
   it('makes mentions of your notes’ attendees, and none of a meeting’s', async () => {
     const { vault } = await exampleVault()
-    expect(vault.backlinkMap.value.get(JANE)).toEqual([NOTES])
+    expect(vault.backlinkMap.value.get(JANE)?.sort()).toEqual([NOTES, JANE_NOTES].sort())
     expect(vault.backlinkMap.value.get(JANE_WORK)).toBeUndefined()
     // "Sam Ortiz" is plain text, and the meeting link resolves by its path:
     // nothing unresolved.
@@ -167,5 +170,48 @@ describe('links, as the example contacts and meetings make them', () => {
     expect(vault.eventsByDay.value.get(parseYmd('2026-09-22')!)?.map((x) => x.path)).toContain(
       STANDUP,
     )
+  })
+})
+
+describe('contacts, as the example cards write them', () => {
+  const KINDS =
+    /^(name|nickname|org|department|job_title|birthday|aliases|source|uid|(phone|email|address|url)(_[a-z0-9_]+)?|(date|related|social|im)_[a-z0-9_]+)$/
+  const cards = examples.filter((e) => e.path.startsWith('Contacts/Address Book/'))
+
+  it('uses only the documented keys, and never `title:` or a bare `date:`', async () => {
+    const { vault } = await exampleVault()
+    for (const { path } of cards) {
+      const data = (await import('./markdown')).parseFrontmatter(vault.getText(path)!).data
+      for (const key of Object.keys(data)) expect(key, `${path}: ${key}`).toMatch(KINDS)
+      expect(data.title, path).toBeUndefined()
+      expect(data.date, path).toBeUndefined()
+    }
+  })
+
+  /*
+   * The body is the frontmatter laid out for reading, written by the helper
+   * from the same record. Every number and address in one is a link in the
+   * other, or the two have drifted.
+   */
+  it('shows every phone and email in the body as a link, and nothing else', async () => {
+    const { parseFrontmatter } = await import('./markdown')
+    for (const { path, text } of cards) {
+      const fm = parseFrontmatter(text)
+      const body = text.slice(fm.bodyStart)
+      const values = (prefix: string) =>
+        Object.entries(fm.data)
+          .filter(([k]) => k === prefix || k.startsWith(`${prefix}_`))
+          .flatMap(([, v]) => (Array.isArray(v) ? v : [String(v)]))
+      const tel = values('phone').map((n) => `[${n}](tel:${n.replace(/[^\d+]/g, '')})`)
+      const mail = values('email').map((a) => `[${a}](mailto:${a})`)
+      for (const link of [...tel, ...mail]) expect(body, path).toContain(link)
+      expect((body.match(/\]\((tel|mailto):/g) ?? []).length, path).toBe(tel.length + mail.length)
+    }
+  })
+
+  it('finds your notes on a person by their `contact:` link, first in their mentions', async () => {
+    const { vault, imports } = await exampleVault()
+    expect(imports.notesForContact(JANE)).toEqual([JANE_NOTES])
+    expect(vault.resolveLink('Jane Doe')).toBe(JANE)
   })
 })

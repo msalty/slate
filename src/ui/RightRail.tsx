@@ -47,7 +47,7 @@ import {
 import { DueChip } from './DueChip'
 import { openQuickAdd } from './QuickAdd'
 import { openNewEvent } from './newEvent'
-import { openMeetingNotes } from './meetingNotes'
+import { openNotesAbout } from './meetingNotes'
 import { notesForMeeting } from '../core/imports'
 import { Highlight } from './Highlight'
 import {
@@ -315,7 +315,7 @@ export function AgendaPanel({ big = false }: { big?: boolean } = {}) {
               <button
                 class="agenda-notes"
                 data-written={written ? '1' : '0'}
-                onClick={() => void openMeetingNotes(e.path)}
+                onClick={() => void openNotesAbout(e.path)}
                 aria-label={written ? `Open your notes on ${name}` : `Write notes on ${name}`}
                 title={written ? 'Open your notes on this meeting' : 'Write notes on this meeting'}
               >

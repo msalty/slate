@@ -226,3 +226,51 @@ describe('writing notes about a meeting', () => {
     expect(await imports.notesAboutMeeting(path)).toBeUndefined()
   })
 })
+
+describe('writing notes about a person', () => {
+  const CONTACT = 'Contacts/Address Book/Fastmail/Jane Doe.md'
+  const card = '---\nname: Jane Doe\nemail_work: jane@example.com\nsource: fastmail\nuid: j1\n---\n\n# Jane Doe\n'
+
+  async function seedContact(vault: typeof import('./vault')) {
+    return vault.createNote('Contacts/Address Book/Fastmail', 'Jane Doe', card, () => 'Jane Doe')
+  }
+
+  it('makes one note of your own for them, beside your contacts, linked back', async () => {
+    const { vault, imports } = await fresh()
+    expect(await seedContact(vault)).toBe(CONTACT)
+    const r = await imports.notesAbout(CONTACT)
+    expect(r).toEqual({ path: 'Contacts/Notes on Jane Doe.md', created: true })
+    expect(vault.getText(r!.path)).toContain('contact: "[[Jane Doe]]"')
+    expect(vault.getEntry(r!.path)!.source).toBeUndefined()
+    // First in the contact's mentions, which is where you'd look for it.
+    expect(vault.backlinkMap.value.get(CONTACT)).toEqual([r!.path])
+    // And its own name, so `[[Jane Doe]]` still means the contact.
+    expect(vault.resolveLink('Jane Doe')).toBe(CONTACT)
+  })
+
+  it('opens the note you have rather than making another', async () => {
+    const { vault, imports } = await fresh()
+    await seedContact(vault)
+    const first = await imports.notesAbout(CONTACT)
+    const [again, twice] = await Promise.all([
+      imports.notesAbout(CONTACT),
+      imports.notesAbout(CONTACT),
+    ])
+    expect(again).toEqual({ path: first!.path, created: false })
+    expect(twice).toEqual(again)
+    expect(imports.notesForContact(CONTACT)).toEqual([first!.path])
+  })
+
+  it('is not fooled by a note that merely mentions them', async () => {
+    const { vault, imports } = await fresh()
+    await seedContact(vault)
+    await vault.createNote('', 'Diary', 'Lunch with [[Jane Doe]].\n')
+    expect((await imports.notesAbout(CONTACT))?.created).toBe(true)
+  })
+
+  it('is not offered for a note of your own', async () => {
+    const { vault, imports } = await fresh()
+    const mine = await vault.createNote('', 'Sam Ortiz', '# Sam\n')
+    expect(await imports.notesAbout(mine)).toBeUndefined()
+  })
+})
