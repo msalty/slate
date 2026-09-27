@@ -1,6 +1,7 @@
 ---
 date: 2026-09-21
-meeting: "[[Design review (b361)]]"
+meeting: "[[backstage/calendar/Fastmail/2026/09/Design review (b361)]]"
+attendees: ["[[Jane Doe]]", Sam Ortiz]
 ---
 
 # Design review

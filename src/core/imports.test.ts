@@ -1,11 +1,10 @@
 /**
  * Writing about an imported meeting, and taking one off the importer's hands.
  *
- * The importer keeps its files in folders of its own — `Calendar/Subscribed/
- * <Account>/…`, `Contacts/Address Book/<Account>/…` — so that emptying one
- * clears the imports and nothing else. That only holds if nothing of yours is
- * left inside them: your notes on a meeting are filed with your own events, and
- * so is a meeting once you detach it.
+ * The importer keeps meetings in backstage (`backstage/calendar/<Account>/…`),
+ * out of search, lists and mentions, and the agenda is the way in to them.
+ * Nothing of yours is left in there: your notes on a meeting are filed with
+ * your own events, and so is a meeting once you detach it.
  */
 
 import { describe, expect, it, vi } from 'vitest'
@@ -30,7 +29,7 @@ async function detached(imports: typeof import('./imports'), path: string) {
   return r?.path
 }
 
-const SUBSCRIBED = 'Calendar/Subscribed/Fastmail/2026/09'
+const SUBSCRIBED = 'backstage/calendar/Fastmail/2026/09'
 const MEETING = `${SUBSCRIBED}/Standup (a41b).md`
 const meeting = (start = '2026-09-21T09:00', extra = '') =>
   `---\ntitle: Standup\nstart: ${start}\n${extra}source: fastmail\nuid: a41b@fastmail.com\n---\n\nDaily.\n`
@@ -56,7 +55,7 @@ describe('Detach, for a meeting', () => {
   it('takes every link to it along', async () => {
     const { vault, imports } = await fresh()
     await seedMeeting(vault)
-    const mine = await vault.createNote('', 'Mine', 'See [[Standup (a41b)]].\n')
+    const mine = await vault.createNote('', 'Mine', `See [[${MEETING.slice(0, -3)}]].\n`)
     const dest = await detached(imports, MEETING)
     expect(vault.resolveLink(vault.getEntry(mine)!.links[0])).toBe(dest)
   })
@@ -97,6 +96,59 @@ describe('Detach, for a contact', () => {
     expect(dest).toBe('Contacts/Jane Doe.md')
     expect(vault.resolveLink('Jane Doe')).toBe(dest)
     expect(vault.getEntry(dest!)?.source).toBeUndefined()
+  })
+})
+
+describe('an imported meeting in backstage', () => {
+  it('is on the agenda, and nowhere a note of yours would be', async () => {
+    const { vault } = await fresh()
+    await seedMeeting(vault)
+    const day = parseYmd('2026-09-21')!
+    expect(vault.eventsByDay.value.get(day)?.map((e) => e.path)).toEqual([MEETING])
+    expect(vault.notes.value.map((n) => n.path)).not.toContain(MEETING)
+    expect(vault.search('Standup').map((h) => h.entry.path)).not.toContain(MEETING)
+  })
+
+  /*
+   * A meeting deleted in Slate goes to `backstage/trash/` with its keys still
+   * on it — still backstage, still an import, and on nobody's day.
+   */
+  it('is off the agenda once deleted', async () => {
+    const { vault } = await fresh()
+    await seedMeeting(vault)
+    await vault.deleteNote(MEETING)
+    expect(vault.eventsByDay.value.get(parseYmd('2026-09-21')!) ?? []).toEqual([])
+  })
+
+  it('is not on the agenda unless it is an import', async () => {
+    const { vault } = await fresh()
+    await vault.createNote(SUBSCRIBED, 'Stray', '---\nstart: 2026-09-21\n---\n')
+    expect(vault.eventsByDay.value.get(parseYmd('2026-09-21')!) ?? []).toEqual([])
+  })
+
+  /*
+   * Its attendee links are no one's mentions: a contact's mentions were every
+   * meeting they sat through. Your notes carry the list instead.
+   */
+  it('gives its attendees no mentions, and your notes on it do', async () => {
+    const { vault, imports } = await fresh()
+    const jane = await vault.createNote('', 'Jane Doe', '# Jane\n')
+    await seedMeeting(
+      vault,
+      meeting('2026-09-21T09:00', 'attendees:\n  - "[[Jane Doe]]"\n  - "Sam Ortiz"\n'),
+    )
+    expect(vault.backlinkMap.value.get(jane)).toBeUndefined()
+    const r = await imports.notesAboutMeeting(MEETING)
+    expect(vault.backlinkMap.value.get(jane)).toEqual([r!.path])
+    expect(vault.getText(r!.path)).toContain('Sam Ortiz')
+  })
+
+  it('is linked from your notes by its path, which is the only name that reaches it', async () => {
+    const { vault, imports } = await fresh()
+    await seedMeeting(vault)
+    const r = await imports.notesAboutMeeting(MEETING)
+    expect(vault.getText(r!.path)).toContain(`meeting: "[[${MEETING.slice(0, -3)}]]"`)
+    expect(vault.resolveLink('Standup (a41b)')).toBeUndefined()
   })
 })
 
@@ -156,7 +208,7 @@ describe('writing notes about a meeting', () => {
   it('is not fooled by a note that merely mentions the meeting', async () => {
     const { vault, imports } = await fresh()
     await seedMeeting(vault)
-    await vault.createNote('', 'Diary', 'Sat through [[Standup (a41b)]] again.\n')
+    await vault.createNote('', 'Diary', `Sat through [[${MEETING.slice(0, -3)}]] again.\n`)
     expect((await imports.notesAboutMeeting(MEETING))?.created).toBe(true)
   })
 

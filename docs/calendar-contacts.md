@@ -41,7 +41,27 @@ of CalDAV in this codebase.
 5. **The format is the contract, and it lives in this repository**, because
    Slate is the reader and the reader is what must not break.
 
-### 1.1 Why not `backstage/`
+### 1.1 Contacts in the vault, meetings in `backstage/`
+
+*Revised after the first weeks of real use.* The argument below — that the
+projection must not live in `backstage/` — holds for **contacts**, which exist
+to be linked to, searched for and found. It turned out not to hold for
+**meetings**. What a meeting import is wanted for is the agenda: a quick way
+in to writing notes about it. In search, folder listings, ⌘K and autocomplete
+it was noise, and as a source of mentions it was worse — a contact's mentions
+were every meeting of a recurring series they sat in, none of them written
+about. That list of surfaces to switch off is, almost exactly, the list
+`backstage/` already switches off by one rule. Hiding meetings one surface at a
+time would have been a growing set of exceptions to reproduce what the
+backstage prefix already means.
+
+So the helper writes meetings to `backstage/calendar/` (§2.1), and Slate makes
+two deliberate inclusions and no other exceptions: the **agenda** reads
+imported events from backstage (never from its trash), and a link to one is
+written **by path**, since a backstage note has no name the name index knows.
+Contacts stay in the vault proper, as argued below.
+
+What follows is the original argument, which still decides where contacts go.
 
 `backstage/` is not "a hidden folder" — it is the one path prefix meaning *this
 is the app's own bookkeeping, not your material*. `isHidden()`
@@ -199,30 +219,31 @@ all, so `[[Lunch with Joe]]` resolves to nothing and a link names a date or goes
 through `aliases:`. That is a better trade than eleven notes reachable only by a
 number that starts over in October.
 
-**The importer's files go in a folder of their own**:
-`Calendar/Subscribed/<Account>/<year>/<month>/`, with `<Account>` the name the
-account already has (vdir stores a `displayname` per collection) —
-`Calendar/Subscribed/Fastmail/2026/09/Standup (a41b).md`. "Subscribed" because
-that is the word calendar apps already use for a calendar you can see and
-cannot edit, which is exactly what this is; "Imported" was considered and
-rejected for reading like an inbox, something waiting to be dealt with.
+**The importer's files go in backstage**:
+`backstage/calendar/<Account>/<year>/<month>/`, with `<Account>` the name the
+account already has — `backstage/calendar/Fastmail/2026/09/Standup (a41b).md`.
+Why backstage rather than a visible folder is §1.1: a meeting import is for the
+agenda, and everywhere else it was noise. (An earlier layout used a visible
+`Calendar/Subscribed/`; the helper moves anything it finds there on its first
+run with this one.)
 
-Kept apart so that two things hold. Everything under `Calendar/Subscribed/` is
-the importer's, so emptying it clears the imports and nothing of yours — which
-is why your notes on a meeting and a meeting you detach are both filed in
-`Calendar/<year>/<month>/` (§5.5), never in there. And your own month folders
-stay yours to read, not buried under a few hundred meetings.
+Everything under `backstage/calendar/` is the importer's, so emptying it clears
+the imports and nothing of yours — which is why your notes on a meeting and a
+meeting you detach are both filed in `Calendar/<year>/<month>/` (§5.5), never in
+there.
 
 The account level is there from the first account on, not added with the
 second: added later, it would move every file already written, which breaks
 links and the manifest's paths (§6.2) alike. The year and month levels are the
 same browsability argument as for hand-made events.
 
-**Slate reads none of these names**, and must not start to. What a note *is*
-comes from its frontmatter; where Slate files something — your notes, a
-detached meeting — is worked out from its `start:`. So the folders are the
-helper's setting to change, and principle 3 stands: origin is a property of the
-file, and the folder is only a convention for keeping it tidy.
+**Slate reads none of the names below `backstage/`**, and must not start to.
+The only folder it knows is `backstage/` itself, which predates this design and
+means what it always has. What a note *is* comes from its frontmatter — the
+agenda takes any imported event anywhere in backstage outside its trash —
+and where Slate files something (your notes, a detached meeting) is worked out
+from its `start:`. So the folders under `backstage/calendar/` are the helper's
+setting to change.
 
 **The importer disambiguates differently**, and deliberately. It uses a short
 stable suffix derived from the `uid` — `Standup (a41b).md` — because it writes
@@ -270,8 +291,8 @@ Met at the Lisbon conference. Prefers email.
 **Filenames.** `Contacts/Address Book/<Account>/Jane Doe.md` — flat within the
 account, because the filename *is* the link target and `[[Jane Doe]]` is the
 entire point. A link resolves by filename wherever the file is, so the folders
-above it cost nothing. "Address Book" because it says what the folder is; the
-calendar's word, "Subscribed", reads oddly for people. Contacts you keep by
+above it cost nothing. "Address Book" because it says what the folder is.
+Contacts you keep by
 hand, and contacts you detach, live in `Contacts/` itself.
 
 Collisions take a disambiguator from `org` or the email local-part:
@@ -396,6 +417,9 @@ notes          = everything visible          → search, ⌘K, autocomplete,
                                                orphan scan, rename repointing
 linkableNotes  = notes − templates           → backlink SOURCES, eventsByDay
 contentNotes   = notes − templates − external → every roll-up
+
+eventsByDay also reads backstageEvents: imported events in backstage, outside
+its trash (§1.1).
 ```
 
 `contentNotes` gains one more exclusion, and because the roll-ups already read
@@ -432,14 +456,19 @@ never lands on the agenda — a real hazard given §5.4.
 | Task roll-up | `contentNotes` | ✗ | ✗ |
 | Related notes | `contentNotes` | ✗ | ✗ |
 | Unlinked mentions | `contentNotes` | ✗ | ✗ |
-| **Agenda** | `linkableNotes` | **✓** | n/a |
-| **Backlinks (as source)** | `linkableNotes` | **✓** | ✓ |
-| **Backlinks (as target)** | `titleIndex` | **✓** | **✓** |
-| **Search** | `notes` | **✓** | **✓** |
-| **`[[` autocomplete, ⌘K** | `notes` | **✓** | **✓** |
-| Orphan scan | `notes` | ✓ *(correctness)* | ✓ *(correctness)* |
-| Rename repointing, as a *target* | `notes` | ✓ | ✓ |
+| **Agenda** | `linkableNotes` + `backstageEvents` | **✓** | n/a |
+| Backlinks (as source) | `linkableNotes` | ✗ *(backstage)* | ✓ |
+| **Backlinks (as target)** | `titleIndex` / path | **✓** *by path only* | **✓** |
+| Search | `notes` | ✗ *(backstage)* | **✓** |
+| `[[` autocomplete, ⌘K | `notes` | ✗ *(backstage)* | **✓** |
+| Folder listings, sidebar | `notes` | ✗ *(backstage)* | ✓ |
+| Orphan scan | `notes` | ✗ *(backstage)* | ✓ *(correctness)* |
+| Rename repointing, as a *target* | path | ✓ | ✓ |
 | Rename repointing, as a *file to rewrite* | — | ✗ | ✗ |
+
+Imported events are in backstage (§1.1), so every surface that reads `notes`
+skips them by the rule it already had. The agenda is the way in; your notes on a
+meeting link back to it by path; the meeting's Linked Mentions are those notes.
 
 The orphan scan row is not a preference. The orphan scan must see every file that
 references an attachment, or an image used only by an imported note is reported
@@ -455,10 +484,12 @@ updating (§6.2) — so renaming one contact froze every meeting she was in. Unt
 the helper's next run such a link may point at the old name; that is the cost,
 and it lasts one run.
 
-**A consequence to design for:** Jane Doe's Linked Mentions panel will hold
-three notes you wrote and two hundred meetings. `LinkedMentions.tsx` groups by
-origin — your own notes first and expanded, external sources collapsed under a
-count.
+**A consequence designed away:** Jane Doe's Linked Mentions panel would have
+held three notes you wrote and two hundred meetings. With meetings in backstage
+their attendee links are no one's mentions; *Write notes* copies the attendees
+into your notes instead (§5.5), so Jane's mentions are the meetings you wrote
+about. `LinkedMentions.tsx` still groups by origin, your own notes first and
+imports folded under a count, for what imported contacts link to.
 
 ### 4.4 Aliases
 
@@ -572,9 +603,15 @@ copy would have been for.
 
 Where it lives is yours. Moving an imported note, renaming it, or renaming or
 moving a folder of them all work as they do for any file, because the helper
-finds its files by `uid:` wherever they are (§6.2). No folder is fixed in the
-app. Reading, linking, searching and asking about it all work too, and so does
-deleting; whether the file comes back is the importer's business.
+finds its files by `uid:` wherever they are (§6.2). (For meetings this is
+mostly moot: they are in backstage, and reached from the agenda.) Reading,
+linking and asking about it all work too, and so does deleting — a deleted
+meeting goes to `backstage/trash/`, off the agenda, and the helper writes it
+afresh on its next run while the calendar still has it (§6.2). To be rid of a
+meeting, delete it in the calendar.
+
+*Write notes* also copies the meeting's `attendees:` into your note — a copy of
+who was there, not a live view — and links the meeting by its path.
 
 Restoring an old version of a note you have detached restores its text
 without `source:` and `uid:` — a version from before the Detach still carries
@@ -597,7 +634,7 @@ format is a contract with two sides.
 
 ```
 CalDAV / CardDAV ──vdirsyncer──┐
-                               ├──> vdir/ ──project──> <vault>/Calendar/Subscribed/<Account>/
+                               ├──> vdir/ ──project──> <vault>/backstage/calendar/<Account>/
 macOS EventKit ──swift dumper──┘      .ics  .vcf       <vault>/Contacts/Address Book/<Account>/
 ```
 
@@ -630,7 +667,7 @@ resident daemon.
 State lives **outside the vault**, in the helper's own directory:
 
 ```json
-{ "uid@provider": { "path": "Calendar/Subscribed/Fastmail/2026/09/….md", "hash": "sha256…", "gen": 41 } }
+{ "uid@provider": { "path": "backstage/calendar/Fastmail/2026/09/….md", "hash": "sha256…", "gen": 41 } }
 ```
 
 A file is overwritten or deleted only when **all three** hold:
@@ -649,9 +686,14 @@ a file whose `source:` names this provider and whose `uid:` is the entry's —
 reading only frontmatter, and only on a miss, so it costs nothing on an ordinary
 run. Found, the file was moved or renamed in Slate: the manifest takes the new
 path and the file is kept up to date there, under whatever name it now has.
-This is what lets a person move `Calendar/Subscribed` wholesale, or file one
-meeting somewhere else, with no setting to change and nothing duplicated —
-Slate fixes no folders, and the helper's are only where it starts.
+This is what lets a person move `Contacts/Address Book` wholesale, or file one
+contact somewhere else, with no setting to change and nothing duplicated.
+
+**Never follow a file into `backstage/trash/`.** Deleting a note in Slate moves
+it there, `source:` and `uid:` intact, and a search by `uid:` finds it. Followed,
+the helper kept the trashed copy up to date and never wrote the meeting again —
+a deleted meeting stayed deleted while the calendar still had it. The trash is
+not a place a file was moved to; a file found only there is gone.
 
 Two files claiming one `uid:` (a copy made outside Slate, say): the one whose
 hash matches what the helper last wrote is the record, and the other is left

@@ -2,9 +2,10 @@
  * What you do with a note an importer owns: write your own notes about it, or
  * take it off the importer's hands.
  *
- * The importer files what it writes under folders of its own —
- * `Calendar/Subscribed/<Account>/…` and `Contacts/Address Book/<Account>/…` —
- * so that everything in them is the importer's and emptying one clears it. Your
+ * The importer files what it writes under folders of its own — meetings in
+ * `backstage/calendar/<Account>/…`, out of every list and search and reached
+ * from the agenda, contacts in `Contacts/Address Book/<Account>/…` — so that
+ * everything in them is the importer's and emptying one clears it. Your
  * writing belongs where hand-made events already live, `Calendar/<year>/<month>`,
  * and so does anything you detach: a detached note left among the imports would
  * go with them the day that folder is emptied.
@@ -163,7 +164,8 @@ async function findOrMake(
   if (existing.length) return { path: existing[0], created: false }
 
   const title = meetingTitle(entry)
-  const day = startDate(parseFrontmatter(text).data, entry.event)
+  const data = parseFrontmatter(text).data
+  const day = startDate(data, entry.event)
   /*
    * Filed under the day the meeting is on *here*, which is the day the agenda
    * lists it under and the folder it goes in — not the date its own zone
@@ -174,6 +176,18 @@ async function findOrMake(
    */
   let body = setPropertyValue(`# ${title}\n\n`, 'date', ymd(entry.event.start))
   body = setPropertyValue(body, 'meeting', formatWikiLink({ target: linkNameFor(meeting) }))
+  /*
+   * Who was there, copied from the meeting as it is now. The meeting lives in
+   * backstage, so its own `attendees:` are no one's mentions — which is the
+   * point: a contact's mentions were two hundred meetings they only sat
+   * through. Your notes carry the list instead, so a person's mentions are
+   * the meetings you wrote something about. A copy, not a live view: notes
+   * from the day say who was there that day.
+   */
+  const attendees = Array.isArray(data.attendees)
+    ? data.attendees.map((a) => String(a).trim()).filter(Boolean)
+    : []
+  if (attendees.length) body = setPropertyValue(body, 'attendees', attendees)
   const path = await createNote(eventFolderFor(entry.event.start), title, body, (n) =>
     eventNoteName(title, day, n),
   )

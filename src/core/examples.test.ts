@@ -41,10 +41,10 @@ async function exampleVault() {
   return { vault, imports, eventTitle }
 }
 
-const IMPORTED = /^(Calendar\/Subscribed|Contacts\/Address Book)\//
-const MEETING = 'Calendar/Subscribed/Fastmail/2026/09/Design review (b361).md'
-const OFFICE = 'Calendar/Subscribed/Fastmail/2026/09/Office closed (3a77).md'
-const TOKYO = 'Calendar/Subscribed/Work/2026/10/Tokyo sync (43ce).md'
+const IMPORTED = /^(backstage\/calendar|Contacts\/Address Book)\//
+const MEETING = 'backstage/calendar/Fastmail/2026/09/Design review (b361).md'
+const OFFICE = 'backstage/calendar/Fastmail/2026/09/Office closed (3a77).md'
+const TOKYO = 'backstage/calendar/Work/2026/10/Tokyo sync (43ce).md'
 const JANE = 'Contacts/Address Book/Fastmail/Jane Doe.md'
 const JANE_WORK = 'Contacts/Address Book/Work/Jane Doe (Example Corp).md'
 const NOTES = 'Calendar/2026/09/Design review - 2026-09-21.md'
@@ -124,12 +124,31 @@ describe('links, as the example contacts and meetings make them', () => {
     expect(vault.resolveLink('Jane Doe (Example Corp)')).toBe(JANE_WORK)
   })
 
-  it('counts a matched attendee as a mention, and leaves an unmatched one as text', async () => {
+  /*
+   * A meeting's attendees are nobody's mentions — it lives in backstage — so a
+   * person's mentions are the notes you wrote with them in, which carry the
+   * list: Jane's are your Design review notes, and the Tokyo sync, which you
+   * wrote nothing about, gives her work twin none at all.
+   */
+  it('makes mentions of your notes’ attendees, and none of a meeting’s', async () => {
     const { vault } = await exampleVault()
-    expect(vault.backlinkMap.value.get(JANE)).toEqual([MEETING])
-    expect(vault.backlinkMap.value.get(JANE_WORK)).toEqual([TOKYO])
-    // "Sam Ortiz" is plain text: no link, so nothing unresolved either.
+    expect(vault.backlinkMap.value.get(JANE)).toEqual([NOTES])
+    expect(vault.backlinkMap.value.get(JANE_WORK)).toBeUndefined()
+    // "Sam Ortiz" is plain text, and the meeting link resolves by its path:
+    // nothing unresolved.
     expect([...vault.unresolvedLinks.value.keys()]).toEqual([])
+  })
+
+  it('keeps the meetings out of search and every list, and on the agenda', async () => {
+    const { vault } = await exampleVault()
+    for (const path of [MEETING, OFFICE, TOKYO]) {
+      expect(vault.notes.value.map((n) => n.path)).not.toContain(path)
+      expect(vault.search('sync review closed').map((h) => h.entry.path)).not.toContain(path)
+    }
+    expect(vault.eventsByDay.value.get(parseYmd('2026-09-21')!)?.map((e) => e.path)).toEqual([
+      OFFICE,
+      MEETING,
+    ])
   })
 
   it('finds your notes on a meeting by their `meeting:` link', async () => {

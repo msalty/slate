@@ -7598,12 +7598,12 @@ try {
   await page.locator('.side-row:has-text("All Notes")').first().click()
   await page.waitForTimeout(400)
 
-  /* ---- notes an importer owns --------------------------------------------
-   * A `source:` key says a program outside Slate keeps this note up to date.
-   * Such a note is on the agenda and in a person's mentions, and it is not
-   * your material: it stays off the note list, and it opens as a page with a
-   * banner and one way out — Detach. Seeded straight into the database, the
-   * way an importer's files arrive: never opened, never typed.
+  /* ---- meetings an importer owns ------------------------------------------
+   * `source:` with `uid:` says a program outside Slate keeps this note up to
+   * date. A meeting import lives in backstage: on the agenda, and nowhere else
+   * — not the note list, not search, not a person's mentions. It opens from the
+   * agenda as a page with a banner: Write notes, or Detach. Seeded straight into
+   * the database, the way an importer's files arrive: never opened, never typed.
    */
   await page.evaluate(async (seed) => {
     const hash = async (t) => {
@@ -7629,7 +7629,7 @@ try {
     ['Priya Natarajan.md', '# Priya Natarajan\n\nRuns the platform team.\n'],
     ['Notes on Priya.md', '# Notes on Priya\n\nAsk [[Priya Natarajan]] about the migration.\n'],
     [
-      `Calendar/Subscribed/Fastmail/${isoDay(2).slice(0, 4)}/${isoDay(2).slice(5, 7)}/Platform sync (a41b).md`,
+      `backstage/calendar/Fastmail/${isoDay(2).slice(0, 4)}/${isoDay(2).slice(5, 7)}/Platform sync (a41b).md`,
       `---\ntitle: Platform sync\nstart: ${isoDay(2)}T09:00\nend: ${isoDay(2)}T09:30\nattendees:\n  - "[[Priya Natarajan]]"\nsource: fastmail\nuid: a41b@fastmail.com\n---\n\n- [ ] Imported homework\n`,
     ],
   ])
@@ -7655,37 +7655,33 @@ try {
   await page.locator('.side-row:has-text("All Notes")').first().click()
   await page.waitForTimeout(400)
 
+  /*
+   * A person's mentions are the notes you wrote with them in, not every
+   * meeting they sat through: the meeting's attendee link is no one's mention.
+   */
   await page.locator('.note-row', { hasText: 'Priya Natarajan' }).first().click()
   await page.waitForTimeout(600)
-  const grouped = await page.evaluate(() => {
-    const m = document.querySelector('.mentions')
-    if (!m) return undefined
-    return {
-      own: [...m.querySelectorAll('.mentions-list > .mention-row')].map((r) => r.textContent),
-      head: m.querySelector('.mentions-source-head')?.textContent?.replace(/\s+/g, ' ').trim(),
-      hidden: m.querySelectorAll('.mentions-source .mention-row').length,
-    }
-  })
+  const mentionRows = () =>
+    page.evaluate(() =>
+      [...document.querySelectorAll('.mentions .mention-row')].map((r) => r.textContent),
+    )
+  const priyaBefore = await mentionRows()
   check(
-    'a person’s mentions put your own notes first, and fold an importer’s under a count',
-    !!grouped &&
-      grouped.own.length === 1 &&
-      grouped.own[0].includes('Notes on Priya') &&
-      grouped.head === 'From fastmail 1' &&
-      grouped.hidden === 0,
-    JSON.stringify(grouped),
+    'a person’s mentions are your notes, not the meetings they were in',
+    priyaBefore.length === 1 &&
+      priyaBefore[0].includes('Notes on Priya') &&
+      (await page.locator('.mentions-source-head').count()) === 0,
+    JSON.stringify(priyaBefore),
   )
-  await page.locator('.mentions-source-head').click()
-  await page.waitForTimeout(200)
-  const importedRow = page.locator('.mentions-source .mention-row')
-  // By its name: the importer's `(a41b)` is read off against its `title:`.
+
+  // The agenda is the way in to the meeting, read by its name.
+  await (await showDay(2)).click()
+  await page.waitForTimeout(400)
   check(
-    'and the group opens to the meeting, by its name',
-    (await importedRow.count()) === 1 &&
-      (await importedRow.locator('.mention-title').innerText()) === 'Platform sync',
-    await importedRow.allInnerTexts().then((t) => t.join(' | ')),
+    'the agenda reads the meeting by its name, not its filename',
+    (await page.locator('.rail .agenda .agenda-what').allInnerTexts()).includes('Platform sync'),
   )
-  await importedRow.click()
+  await page.locator('.rail .agenda .agenda-row', { hasText: 'Platform sync' }).first().click()
   await page.waitForTimeout(600)
   const banner = page.locator('.source-banner')
   check(
@@ -7699,7 +7695,7 @@ try {
     (await page.locator('[aria-label="Edit note"]').count()) === 0 &&
       (await page.locator('.editor-title-input').getAttribute('readonly')) === null,
   )
-  const importPath = `Calendar/Subscribed/Fastmail/${isoDay(2).slice(0, 4)}/${isoDay(2).slice(5, 7)}/Platform sync (a41b).md`
+  const importPath = `backstage/calendar/Fastmail/${isoDay(2).slice(0, 4)}/${isoDay(2).slice(5, 7)}/Platform sync (a41b).md`
   const ownFolder = `Calendar/${isoDay(2).slice(0, 4)}/${isoDay(2).slice(5, 7)}`
   const importedText = (at = importPath) =>
     page.evaluate(async (path) => {
@@ -7734,9 +7730,10 @@ try {
   const notesPath = `${ownFolder}/Platform sync - ${isoDay(2)}.md`
   const notesText = await importedText(notesPath)
   check(
-    'Write notes makes a note of your own on the meeting’s day, linked to it',
+    'Write notes makes a note of your own on the meeting’s day, linked to it, with its attendees',
     notesText.includes(`date: ${isoDay(2)}`) &&
-      notesText.includes('meeting: "[[Platform sync (a41b)]]"') &&
+      notesText.includes(`meeting: "[[${importPath.replace(/\.md$/, '')}]]"`) &&
+      notesText.includes('[[Priya Natarajan]]') &&
       !/^(start|source|uid):/m.test(notesText),
     notesText.split('\n').slice(0, 5).join(' / '),
   )
@@ -7803,6 +7800,16 @@ try {
   await page.locator('.side-row:has-text("All Notes")').first().click()
   await page.waitForTimeout(400)
   const afterDetach = await page.locator('.note-row').allInnerTexts()
+  await page.locator('.note-row', { hasText: 'Priya Natarajan' }).first().click()
+  await page.waitForTimeout(600)
+  const priyaAfter = await mentionRows()
+  check(
+    'and the notes you wrote are in the attendee’s mentions',
+    priyaAfter.some((r) => r.includes(`Platform sync - ${isoDay(2)}`)),
+    JSON.stringify(priyaAfter),
+  )
+  await page.locator('.side-row:has-text("All Notes")').first().click()
+  await page.waitForTimeout(400)
   check(
     'and it joins the note list, beside its notes',
     afterDetach.filter((r) => r.includes('Platform sync')).length === 2,

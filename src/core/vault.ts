@@ -783,7 +783,14 @@ export const sharedTitles = computed(() => {
  */
 export function linkNameFor(path: string): string {
   const title = titleFromPath(path)
-  return sharedTitles.value.has(title.toLowerCase()) ? path.replace(/\.md$/i, '') : title
+  /*
+   * A note in backstage — an imported meeting — is not in the name index at
+   * all, so its bare name resolves to nothing; only its path reaches it.
+   */
+  if (isHidden(path) || sharedTitles.value.has(title.toLowerCase())) {
+    return path.replace(/\.md$/i, '')
+  }
+  return title
 }
 
 export const pathSet = computed(() => {
@@ -844,9 +851,35 @@ const MAX_EVENT_DAYS = 400
  * All-day first and then by start, which is the order a day is read in — the
  * things that are true of the whole day, and then the day itself.
  */
+/**
+ * Imported events kept in backstage — the one thing from there the agenda
+ * shows.
+ *
+ * A meeting a program keeps up to date is not your material, and was not
+ * wanted in search, folder listings, ⌘K or a contact's mentions — which is
+ * exactly the list backstage already stays out of, by one rule. So the helper
+ * writes events there (docs/calendar-contacts.md §1.1), and the agenda, which
+ * is the way in to them, reads them back here.
+ *
+ * Imported and an event, both, and never the trash: a meeting deleted in Slate
+ * sits in `backstage/trash/` with its keys still on it, and is not on anyone's
+ * day. Decided by what the note says rather than which folder it is in, so the
+ * helper's folder names stay its own.
+ */
+export const backstageEvents = computed<NoteIndexEntry[]>(() => {
+  revision.value
+  const out: NoteIndexEntry[] = []
+  for (const e of indexMap.values()) {
+    if (!e.event || e.source === undefined || !isHidden(e.path)) continue
+    if (e.path.startsWith(`${TRASH}/`)) continue
+    out.push(e)
+  }
+  return out
+})
+
 export const eventsByDay = computed(() => {
   const m = new Map<number, NoteIndexEntry[]>()
-  for (const e of linkableNotes.value) {
+  for (const e of [...linkableNotes.value, ...backstageEvents.value]) {
     const ev = e.event
     if (!ev) continue
     const first = startOfDay(ev.start)
