@@ -623,7 +623,11 @@ shape:
   filename carries for uniqueness, since the panel is under a heading naming the
   day and puts the clock in its own column already. A renamed note reads as its
   filename, and one with no record is read by shape (§2.1, *Filenames*).
-- Zoned events annotate with their own zone.
+- A zoned event whose clock differs from yours shows a small globe beside its
+  name; the time where it is held (`02:30 PM Budapest`) is in the row's hover
+  text. It was written out beside the name at first, and never shrinking, it
+  left a long name room for three letters.
+- Every row's hover text is the whole name, which the rail cuts short.
 - A small provider mark on external events; nothing on your own.
 - Empty state: "Nothing scheduled.", matching `rail-empty` elsewhere.
 - A row opens its note.

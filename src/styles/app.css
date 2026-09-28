@@ -2057,16 +2057,15 @@ button.property-kind:hover {
   white-space: nowrap;
 }
 /*
- * The meeting's own clock, where it disagrees with the reader's — beside the
- * title rather than inside it, so a long name ellipsises against the zone
- * instead of swallowing it. It is the half of the row you cannot infer.
+ * That the meeting keeps another zone's clock — a globe beside the title, with
+ * the time there in the row's hover text. It was the time itself, in words,
+ * and never shrinking, it left a long name room for three letters.
  */
 .agenda-zone {
   flex: none;
+  display: flex;
+  align-self: center;
   margin-left: 6px;
-  font-size: 11.5px;
-  font-style: normal;
-  white-space: nowrap;
   color: var(--text-faint);
 }
 /*

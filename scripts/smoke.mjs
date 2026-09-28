@@ -7598,6 +7598,32 @@ try {
   await page.locator('.side-row:has-text("All Notes")').first().click()
   await page.waitForTimeout(400)
 
+  /*
+   * A meeting kept in another zone, at local noon the day after tomorrow:
+   * written as the wall clock in a zone that disagrees with this machine's, so
+   * it lands on the same day wherever the suite runs.
+   */
+  function zonedNoon(offset) {
+    const d = new Date()
+    d.setDate(d.getDate() + offset)
+    d.setHours(12, 0, 0, 0)
+    const local = -d.getTimezoneOffset()
+    const zone = ['Asia/Tokyo', 'America/New_York'].find((z) => {
+      const parts = new Intl.DateTimeFormat('en-US', { timeZone: z, timeZoneName: 'longOffset' })
+        .formatToParts(d)
+        .find((p) => p.type === 'timeZoneName').value
+      const m = /GMT([+-])(\d\d):(\d\d)/.exec(parts)
+      const mins = m ? (m[1] === '-' ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3])) : 0
+      return mins !== local
+    })
+    const f = new Intl.DateTimeFormat('en-CA', {
+      timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    }).formatToParts(d)
+    const g = (t) => f.find((p) => p.type === t).value
+    return `---\nstart: ${g('year')}-${g('month')}-${g('day')}T${g('hour')}:${g('minute')}\ntz: ${zone}\n---\n`
+  }
+
   /* ---- meetings an importer owns ------------------------------------------
    * `source:` with `uid:` says a program outside Slate keeps this note up to
    * date. A meeting import lives in backstage: on the agenda, and nowhere else
@@ -7627,6 +7653,7 @@ try {
     await new Promise((res) => { tx.oncomplete = res })
   }, [
     ['Priya Natarajan.md', '# Priya Natarajan\n\nRuns the platform team.\n'],
+    ['Quarterly planning with the Budapest and Tokyo offices.md', zonedNoon(2)],
     ['Notes on Priya.md', '# Notes on Priya\n\nAsk [[Priya Natarajan]] about the migration.\n'],
     [
       `backstage/calendar/Fastmail/${isoDay(2).slice(0, 4)}/${isoDay(2).slice(5, 7)}/Platform sync (a41b).md`,
@@ -7680,6 +7707,24 @@ try {
   check(
     'the agenda reads the meeting by its name, not its filename',
     (await page.locator('.rail .agenda .agenda-what').allInnerTexts()).includes('Platform sync'),
+  )
+  /*
+   * A meeting in another zone: its clock there was words beside the name, and
+   * never shrinking, it left a long name room for three letters. A globe now,
+   * with the time in the hover text, which carries the whole name as well.
+   */
+  const zonedRow = page.locator('.rail .agenda .agenda-row', { hasText: 'Quarterly planning' })
+  const zonedTitle = (await zonedRow.getAttribute('title')) ?? ''
+  check(
+    'a meeting in another zone shows a globe, not the time there, beside its name',
+    (await zonedRow.locator('.agenda-zone svg').count()) === 1 &&
+      !/\d:\d\d/.test(await zonedRow.locator('.agenda-zone').innerText()),
+  )
+  check(
+    'and its hover text has the whole name and the time where it is held',
+    zonedTitle.startsWith('Quarterly planning with the Budapest and Tokyo offices\n') &&
+      /\d\d:\d\d/.test(zonedTitle.split('\n')[1] ?? ''),
+    JSON.stringify(zonedTitle),
   )
   await page.locator('.rail .agenda .agenda-row', { hasText: 'Platform sync' }).first().click()
   await page.waitForTimeout(600)

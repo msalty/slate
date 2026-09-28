@@ -57,6 +57,7 @@ import {
   IconClock,
   IconDots,
   IconNotes,
+  IconGlobe,
   IconPencil,
   IconPlus,
 } from './Icons'
@@ -278,23 +279,35 @@ export function AgendaPanel({ big = false }: { big?: boolean } = {}) {
           // A `tz:` nothing can read is shown rather than swallowed: the row
           // would otherwise look like any other and be silently hours out.
           const broken = eventZoneProblem(ev)
+          const title = eventTitle(e.title, ev.title, e.source !== undefined)
+          /*
+           * The meeting's own clock went beside the name as text — "02:30 PM
+           * Budapest" — and, never giving up width, left a long name room for
+           * three letters. It is a glyph now, and the words are in the row's
+           * hover text along with the whole name, which the rail cuts short.
+           */
+          const zoneNote = broken
+            ? `${broken} is not a time zone this browser knows, so it is being ignored`
+            : zone
           const row = (
             <button
               key={e.path}
               class="agenda-row"
               data-past={eventIsPast(ev, now) ? '1' : '0'}
+              title={zoneNote ? `${title}\n${zoneNote}` : title}
               onClick={() => openNote(e.path)}
             >
               <span class="agenda-when">{eventTimeLabel(ev, day)}</span>
-              <span class="agenda-what">
-                {eventTitle(e.title, ev.title, e.source !== undefined)}
-              </span>
-              {broken ? (
-                <em class="agenda-zone" data-invalid="1" title={`${broken} is not a time zone this browser knows, so it is being ignored`}>
-                  {broken}?
-                </em>
-              ) : (
-                zone && <em class="agenda-zone">{zone}</em>
+              <span class="agenda-what">{title}</span>
+              {zoneNote && (
+                <span
+                  class="agenda-zone"
+                  data-invalid={broken ? '1' : undefined}
+                  role="img"
+                  aria-label={zoneNote}
+                >
+                  <IconGlobe size={12} />
+                </span>
               )}
             </button>
           )
@@ -310,7 +323,6 @@ export function AgendaPanel({ big = false }: { big?: boolean } = {}) {
            * the meeting you took notes in and the three you only sat through.
            */
           const written = notesForMeeting(e.path).length > 0
-          const name = eventTitle(e.title, ev.title, true)
           return (
             <div key={e.path} class="agenda-item">
               {row}
@@ -318,7 +330,7 @@ export function AgendaPanel({ big = false }: { big?: boolean } = {}) {
                 class="agenda-notes"
                 data-written={written ? '1' : '0'}
                 onClick={() => void openNotesAbout(e.path)}
-                aria-label={written ? `Open your notes on ${name}` : `Write notes on ${name}`}
+                aria-label={written ? `Open your notes on ${title}` : `Write notes on ${title}`}
                 title={written ? 'Open your notes on this meeting' : 'Write notes on this meeting'}
               >
                 <IconPencil size={13} />
