@@ -343,8 +343,8 @@ export function tagsInQuery(node: QueryNode, negated = false): string[] {
   }
 }
 
-/** The folder a rule pins to, if it names exactly one. */
-export function folderInQuery(node: QueryNode): string | undefined {
+/** Every folder a rule asks for by name — not the ones it rules out. */
+export function foldersInQuery(node: QueryNode): string[] {
   const found: string[] = []
   const walk = (n: QueryNode, neg: boolean) => {
     if (n.t === 'folder' && !neg) found.push(n.path)
@@ -355,6 +355,12 @@ export function folderInQuery(node: QueryNode): string | undefined {
     }
   }
   walk(node, false)
+  return found
+}
+
+/** The folder a rule pins to, if it names exactly one. */
+export function folderInQuery(node: QueryNode): string | undefined {
+  const found = foldersInQuery(node)
   return found.length === 1 ? found[0] : undefined
 }
 

@@ -5,7 +5,6 @@ import {
   contentNotes,
   getEntry,
   getText,
-  isContent,
   notes,
   notesByDay,
   search,
@@ -19,6 +18,7 @@ import { dailyNotePath } from '../core/daily'
 import { findHeading } from '../core/markdown'
 import {
   contextFor,
+  inRuleCorpus,
   notesForSmartFolder,
   notesMatching,
   showsTasks,
@@ -631,7 +631,9 @@ export const visibleNotes = computed<NoteIndexEntry[]>(() => {
      * otherwise come back the moment a word was typed after the rule.
      */
     return node
-      ? hits.filter((n) => isContent(n) && evaluateQuery(node, contextFor(n))).slice(0, LIST_LIMIT)
+      ? hits
+          .filter((n) => inRuleCorpus(n, node) && evaluateQuery(node, contextFor(n)))
+          .slice(0, LIST_LIMIT)
       : hits
   }
 

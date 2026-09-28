@@ -17,7 +17,9 @@
 
 import { computed, signal } from '@preact/signals'
 import {
-  contentNotes,
+  isContent,
+  isExternal,
+  linkableNotes,
   deleteNote,
   getRaw,
   isFree,
@@ -43,6 +45,7 @@ import {
 } from './util'
 import {
   evaluateQuery,
+  foldersInQuery,
   parseQuery,
   type QueryContext,
   type QueryNode,
@@ -506,7 +509,25 @@ export function smartFolderAncestors(id: string): SmartFolder[] {
 
 /** Notes matching a parsed rule. */
 export function notesMatching(node: QueryNode): NoteIndexEntry[] {
-  return contentNotes.value.filter((n) => evaluateQuery(node, contextFor(n)))
+  return linkableNotes.value.filter(
+    (n) => inRuleCorpus(n, node) && evaluateQuery(node, contextFor(n)),
+  )
+}
+
+/**
+ * Whether a rule is about this note at all, before asking whether it matches.
+ *
+ * A rule is over your own material — a Tag Folder of `#work` has never held
+ * the importer's files — except where it names a folder: `in:"Contacts/Address
+ * Book/Exchange"` is a look at one named place, the same as browsing it, and
+ * browsing a folder shows what is in it. Without this that search found
+ * nothing at all, since everything in that folder is an import.
+ */
+export function inRuleCorpus(entry: NoteIndexEntry, node: QueryNode): boolean {
+  if (isContent(entry)) return true
+  if (!isExternal(entry)) return false
+  const ctx = contextFor(entry)
+  return foldersInQuery(node).some((path) => evaluateQuery({ t: 'folder', path }, ctx))
 }
 
 /**
