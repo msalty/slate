@@ -36,7 +36,7 @@ import {
   StateField,
 } from '@codemirror/state'
 import { Decoration, type DecorationSet, EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view'
-import type { SyntaxNodeRef } from '@lezer/common'
+import type { SyntaxNode, SyntaxNodeRef } from '@lezer/common'
 import {
   BulletWidget,
   CalloutFoldWidget,
@@ -602,7 +602,7 @@ function buildDecorations(view: EditorView): DecorationSet {
           if (!m) return
           // From the parser, for the reason the link above takes it from there:
           // a `)` inside the address is the address's, not the end of it.
-          const urlNode = node.node.getChild('URL')
+          const urlNode = linkDestination(state, node.node)
           // No address yet — an embed still being typed out, `![[IMG` on its
           // way to being a picture. Nothing to draw, and drawing it would take
           // the half-written target out from under the autocomplete.
@@ -643,7 +643,7 @@ function buildDecorations(view: EditorView): DecorationSet {
            * on showing the whole thing. CommonMark allows those parens and the
            * parser already gets them right.
            */
-          const urlNode = node.node.getChild('URL')
+          const urlNode = linkDestination(state, node.node)
           let url = urlNode ? state.doc.sliceString(urlNode.from, urlNode.to) : ''
           if (url.startsWith('<') && url.endsWith('>')) url = url.slice(1, -1)
           const href = normalizeUri(withProperties(url))
@@ -665,6 +665,14 @@ function buildDecorations(view: EditorView): DecorationSet {
         if (name === 'URL' || name === 'LinkTitle') {
           const parent = node.node.parent
           if (parent && (parent.name === 'Link' || parent.name === 'Image')) {
+            /*
+             * Only the address is machinery. An email or `www.` address typed
+             * as the link's *text* is a URL node too — GFM autolinks it inside
+             * the brackets — and hiding every URL under a link hid the label:
+             * `[jane@example.com](mailto:jane@example.com)` went blank the
+             * moment the dot went in.
+             */
+            if (linkDestination(state, parent)?.from !== node.from) return
             if (!touched(state, parent.from, parent.to)) out.push(hidden.range(node.from, node.to))
             return
           }
@@ -898,6 +906,23 @@ function isLiteralHere(node: { name: string; parent: unknown } | null): boolean 
     n = n.parent as { name: string; parent: unknown } | null
   }
   return false
+}
+
+/**
+ * The address of a markdown link or image: the URL after its `(`.
+ *
+ * Not its first URL. An email or `www.` address typed as the link's text is
+ * one too — GFM autolinks it inside the brackets — so the first URL of
+ * `[jane@example.com](mailto:jane@example.com)` is the label, and taking it
+ * sent the click to the wrong place while the label itself was hidden.
+ */
+export function linkDestination(state: EditorState, link: SyntaxNode): SyntaxNode | null {
+  let open = false
+  for (let c = link.firstChild; c; c = c.nextSibling) {
+    if (c.name === 'LinkMark' && state.doc.sliceString(c.from, c.to) === '(') open = true
+    else if (open && c.name === 'URL') return c
+  }
+  return null
 }
 
 /**

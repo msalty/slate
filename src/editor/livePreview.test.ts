@@ -50,3 +50,37 @@ it('prepares the content below a task before centering it, without parsing the w
     view.destroy()
   }
 })
+
+/*
+ * An email address, or anything with a dot in it, typed as a link's text is
+ * autolinked by GFM inside the brackets: a second URL node, ahead of the
+ * address. Every URL under a link was hidden as machinery, so the label went
+ * blank the moment its dot was typed — and the click went to the label, the
+ * first URL, instead of the address.
+ */
+it('shows a link whose text is itself an address, and sends it to the address', async () => {
+  const doc =
+    '- home · [jane@example.com](mailto:jane@example.com)\n' +
+    '- web · [www.example.com](https://example.com/home)\n'
+  const parent = document.body.appendChild(document.createElement('div'))
+  const view = new EditorView({
+    parent,
+    state: createEditorState({
+      doc, path: 'note.md', mode: 'rich', fontSize: 16, editable: false, onChange: () => {},
+    }),
+  })
+  try {
+    forceParsing(view, doc.length, 2000)
+    await new Promise((r) => setTimeout(r, 0))
+    const shown = view.contentDOM.textContent ?? ''
+    expect(shown).toContain('jane@example.com')
+    expect(shown).toContain('www.example.com')
+    expect(shown).not.toContain('mailto:')
+    expect(shown).not.toContain('https://example.com/home')
+    const hrefs = [...view.contentDOM.querySelectorAll('.cm-uri')].map((e) => e.getAttribute('data-href'))
+    expect(hrefs).toEqual(['mailto:jane@example.com', 'https://example.com/home'])
+  } finally {
+    view.destroy()
+    parent.remove()
+  }
+})
