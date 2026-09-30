@@ -62,6 +62,37 @@ function meetingTitle(entry: NoteIndexEntry): string {
   )
 }
 
+/* ------------------------------------------------------------------ kinds */
+
+/**
+ * What an import is, by the one rule everything that treats meetings and
+ * people differently shares: no `start:` at all is a person; a `start:` that
+ * reads as a time is a meeting; a `start:` nobody can read is a meeting with a
+ * broken time — never a person. Write notes and Detach each once had a rule of
+ * their own, and Detach's took every unreadable meeting for a contact: it moved
+ * it into `Contacts/` and took its ownership keys away.
+ */
+export type ImportKind = 'meeting' | 'contact' | 'broken-meeting'
+
+export function importKind(path: string): ImportKind | undefined {
+  const entry = getEntry(path)
+  const text = getText(path)
+  if (!entry || entry.source === undefined || text === undefined) return undefined
+  if (entry.event) return 'meeting'
+  return 'start' in parseFrontmatter(text).data ? 'broken-meeting' : 'contact'
+}
+
+/** Refused, with what to do about it: a meeting whose time cannot be read. */
+export class BrokenMeetingError extends Error {
+  constructor(path: string) {
+    super(
+      `"${getEntry(path)?.title ?? path}" has a start time Slate can't read, so it can't be filed ` +
+        'with your events. Fix the time in the calendar it comes from, and detach it once it syncs.',
+    )
+    this.name = 'BrokenMeetingError'
+  }
+}
+
 /* ------------------------------------------------------------------ detach */
 
 /**
@@ -88,9 +119,11 @@ function meetingTitle(entry: NoteIndexEntry): string {
  * changing, and the live one keeps up with the calendar.
  */
 export async function detachAndFile(path: string): Promise<string | undefined> {
-  const entry = getEntry(path)
-  const text = getText(path)
-  if (!entry || entry.source === undefined || text === undefined) return undefined
+  const kind = importKind(path)
+  if (!kind) return undefined
+  if (kind === 'broken-meeting') throw new BrokenMeetingError(path)
+  const entry = getEntry(path)!
+  const text = getText(path)!
 
   const data = parseFrontmatter(text).data
   const event = eventFor(data)
@@ -109,7 +142,7 @@ export async function detachAndFile(path: string): Promise<string | undefined> {
 
 /**
  * Your own notes on each import, by what names it: `meeting:` for a meeting,
- * `contact:` for a person. Keyed `<key>\u0000<target path>`.
+ * `contact:` for a person. Keyed `<key>\u0000<record>` (see `recordOf`).
  *
  * Found through the backlinks, so only notes that link to an import are read,
  * and a note that merely mentions one in passing does not count: the property
@@ -130,10 +163,10 @@ const notesNamed = computed(() => {
         const v = data[key]
         const link = typeof v === 'string' ? /^\s*\[\[(.*)\]\]\s*$/.exec(v)?.[1] : undefined
         if (link === undefined || resolveLink(splitWikiInner(link).target) !== target) continue
-        const k = `${key}\u0000${target}`
+        const k = `${key}\u0000${recordOf(target)}`
         const list = out.get(k)
-        if (list) list.push(p)
-        else out.set(k, [p])
+        if (!list) out.set(k, [p])
+        else if (!list.includes(p)) list.push(p)
       }
     }
   }
@@ -142,7 +175,22 @@ const notesNamed = computed(() => {
 })
 
 function notesNaming(key: string, target: string): string[] {
-  return notesNamed.value.get(`${key}\u0000${target}`) ?? []
+  return notesNamed.value.get(`${key}\u0000${recordOf(target)}`) ?? []
+}
+
+/**
+ * The record an import stands for — its `source:` and `uid:` — or, for any
+ * other note, its path.
+ *
+ * Notes are kept against the record rather than the file, because one record
+ * can have two files: a trashed meeting restored beside the copy the importer
+ * wrote afresh, or a sync conflict copy. The agenda shows one row per record
+ * (`eventsByDay`), and notes written from the other copy were not that row's —
+ * its pencil stayed unlit, and pressing it made a second `… 2.md`.
+ */
+function recordOf(path: string): string {
+  const e = getEntry(path)
+  return e?.source !== undefined ? `record\u0000${e.source}\u0000${e.uid}` : `path\u0000${path}`
 }
 
 /** Your own notes about a meeting: the ones whose `meeting:` names it. */
@@ -193,18 +241,12 @@ const inFlight = new Map<string, Promise<{ path: string; created: boolean } | un
 async function findOrMake(
   imported: string,
 ): Promise<{ path: string; created: boolean } | undefined> {
-  const entry = getEntry(imported)
-  const text = getText(imported)
-  if (!entry || entry.source === undefined || text === undefined) return undefined
-  /*
-   * A person is an import with no `start:` at all. One that has a `start:`
-   * nobody could read is a meeting with a broken time, not a contact — asked
-   * about as one, it got `Contacts/Notes on Standup (a41b).md`.
-   */
-  if (!entry.event) {
-    const said = parseFrontmatter(text).data
-    return 'start' in said ? undefined : contactNotes(imported, entry)
-  }
+  const kind = importKind(imported)
+  if (!kind || kind === 'broken-meeting') return undefined
+  const entry = getEntry(imported)!
+  const text = getText(imported)!
+  if (kind === 'contact') return contactNotes(imported, entry)
+  if (!entry.event) return undefined // a meeting always has one; this tells the type so
   const meeting = imported
   const existing = notesForMeeting(meeting)
   if (existing.length) return { path: existing[0], created: false }

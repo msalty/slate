@@ -302,3 +302,51 @@ describe('two files for one imported meeting', () => {
     expect(vault.getEntry(restored)?.uid).toBe('a41b@fastmail.com')
   })
 })
+
+describe('Detach on a meeting whose time cannot be read', () => {
+  /*
+   * Detach took every import without a readable event for a contact: a
+   * meeting with `start: next tuesday` was moved into `Contacts/` and lost
+   * its ownership keys.
+   */
+  it('refuses, says why, and changes nothing', async () => {
+    const { vault, imports } = await fresh()
+    await seedMeeting(vault, meeting('next tuesday'))
+    expect(imports.importKind(MEETING)).toBe('broken-meeting')
+    await expect(imports.detachAndFile(MEETING)).rejects.toBeInstanceOf(imports.BrokenMeetingError)
+    expect(vault.getEntry(MEETING)?.source).toBe('fastmail')
+    expect(vault.notes.value.filter((n) => n.path.startsWith('Contacts/'))).toEqual([])
+  })
+
+  it('tells a person, a meeting and a broken meeting apart by one rule', async () => {
+    const { vault, imports } = await fresh()
+    await seedMeeting(vault)
+    const card = await vault.createNote(
+      'Contacts/Address Book/Fastmail',
+      'Jane Doe',
+      '---\nname: Jane Doe\nsource: fastmail\nuid: j1\n---\n',
+    )
+    const mine = await vault.createNote('', 'Mine', '# Mine\n')
+    expect(imports.importKind(MEETING)).toBe('meeting')
+    expect(imports.importKind(card)).toBe('contact')
+    expect(imports.importKind(mine)).toBeUndefined()
+  })
+})
+
+describe('notes written from a second copy of the same meeting', () => {
+  /*
+   * The agenda shows one row per record, the importer's copy. Notes written
+   * from the other copy — a restored trash copy, a sync conflict copy — were
+   * tied to that file alone: the row's pencil stayed unlit and pressing it
+   * made a second `… 2.md`.
+   */
+  it('count for the meeting, whichever copy they were written from', async () => {
+    const { vault, imports } = await fresh()
+    await seedMeeting(vault)
+    const copy = await vault.createNote('', 'Standup (a41b)', meeting(), () => 'Standup (a41b)')
+    const written = await imports.notesAbout(copy)
+    expect(written?.created).toBe(true)
+    expect(imports.notesForMeeting(MEETING)).toEqual([written!.path])
+    expect(await imports.notesAbout(MEETING)).toEqual({ path: written!.path, created: false })
+  })
+})

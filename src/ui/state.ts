@@ -57,8 +57,20 @@ export const query = signal('')
  * always about the list underneath it.
  */
 export function setScope(s: Scope) {
+  navigations++
   query.value = ''
   scope.value = s
+}
+
+/**
+ * How many times somebody has gone somewhere — opened a note, changed what the
+ * list shows. For work that navigates when it finishes: it takes this before
+ * it starts, and if the count has moved by the end, somebody has gone
+ * somewhere since, and the newer intent wins over the older one arriving late.
+ */
+let navigations = 0
+export function navigationMark(): number {
+  return navigations
 }
 
 /**
@@ -239,6 +251,7 @@ export function openNote(
     align?: 'center' | 'start'
   },
 ) {
+  navigations++
   noteNavigation.value =
     opts?.line === undefined ? undefined : { path, line: opts.line, align: opts.align ?? 'center' }
   openForWriting = opts?.editing ? path : undefined

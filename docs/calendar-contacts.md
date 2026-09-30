@@ -692,7 +692,12 @@ note you own — and moves it out of the importer's folder, which is emptied
 wholesale and would take it along. A meeting goes to `Calendar/<year>/<month>/`
 under the name `>New event` would have given it; a contact goes to `Contacts/`
 under the name it had, which is its link target. The move goes through the
-same rename machinery as any other, so every link to it follows.
+same rename machinery as any other, so every link to it follows. A meeting
+whose `start:` cannot be read is refused rather than filed — it is still a
+meeting, not a person, and has no day to be filed under — with a note to fix
+the time in the calendar it comes from. (One rule decides the kind, for Write
+notes and Detach alike: no `start:` is a person, a readable one a meeting, an
+unreadable one a broken meeting.)
 
 Read-only means everything in Slate that would change the file's *contents*:
 the body and the properties form, ticking or dating its tasks from a list,
