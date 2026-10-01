@@ -61,7 +61,8 @@ it('prepares the content below a task before centering it, without parsing the w
 it('shows a link whose text is itself an address, and sends it to the address', async () => {
   const doc =
     '- home · [jane@example.com](mailto:jane@example.com)\n' +
-    '- web · [www.example.com](https://example.com/home)\n'
+    '- web · [www.example.com](https://example.com/home)\n' +
+    '- titled · [site](https://example.org "My Title")\n'
   const parent = document.body.appendChild(document.createElement('div'))
   const view = new EditorView({
     parent,
@@ -77,8 +78,14 @@ it('shows a link whose text is itself an address, and sends it to the address', 
     expect(shown).toContain('www.example.com')
     expect(shown).not.toContain('mailto:')
     expect(shown).not.toContain('https://example.com/home')
+    // A link's title is hidden with its address, as it always was.
+    expect(shown).not.toContain('My Title')
     const hrefs = [...view.contentDOM.querySelectorAll('.cm-uri')].map((e) => e.getAttribute('data-href'))
-    expect(hrefs).toEqual(['mailto:jane@example.com', 'https://example.com/home'])
+    expect(hrefs).toEqual([
+      'mailto:jane@example.com',
+      'https://example.com/home',
+      'https://example.org',
+    ])
   } finally {
     view.destroy()
     parent.remove()

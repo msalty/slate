@@ -26,12 +26,15 @@ import { eventTitle } from './eventname'
 import { moveNoteToFolder } from './folders'
 import { splitWikiInner, formatWikiLink } from './wikilink'
 import {
-  backlinkMap,
+  backstageEvents,
   createNote,
   detachNote,
   getEntry,
   getText,
   isExternal,
+  isHidden,
+  linkableNotes,
+  occupied,
   linkNameFor,
   resolveLink,
 } from './vault'
@@ -84,12 +87,24 @@ export function importKind(path: string): ImportKind | undefined {
 
 /** Refused, with what to do about it: a meeting whose time cannot be read. */
 export class BrokenMeetingError extends Error {
-  constructor(path: string) {
+  constructor(path: string, doing: 'detach' | 'notes') {
     super(
-      `"${getEntry(path)?.title ?? path}" has a start time Slate can't read, so it can't be filed ` +
-        'with your events. Fix the time in the calendar it comes from, and detach it once it syncs.',
+      `"${getEntry(path)?.title ?? path}" has a start time Slate can't read. Fix the time in the ` +
+        `calendar it comes from; once it syncs you can ${doing === 'detach' ? 'detach it' : 'write notes on it'}.`,
     )
     this.name = 'BrokenMeetingError'
+  }
+}
+
+/**
+ * A Detach that moved the note but could not take the importer's keys off it.
+ * Carries where it went: the note is in your own folder, still an import and
+ * still read-only, and pressing Detach there again finishes the job.
+ */
+export class DetachIncompleteError extends Error {
+  constructor(readonly dest: string) {
+    super(`Moved to ${dest}, but it is still kept up to date by its importer.`)
+    this.name = 'DetachIncompleteError'
   }
 }
 
@@ -121,7 +136,7 @@ export class BrokenMeetingError extends Error {
 export async function detachAndFile(path: string): Promise<string | undefined> {
   const kind = importKind(path)
   if (!kind) return undefined
-  if (kind === 'broken-meeting') throw new BrokenMeetingError(path)
+  if (kind === 'broken-meeting') throw new BrokenMeetingError(path, 'detach')
   const entry = getEntry(path)!
   const text = getText(path)!
 
@@ -134,40 +149,52 @@ export async function detachAndFile(path: string): Promise<string | undefined> {
         (n) => `${eventNoteName(meetingTitle(entry), startDate(data, event), n)}.md`,
       )
     : await moveNoteToFolder(path, CONTACTS_FOLDER)
-  await detachNote(dest)
+  /*
+   * Checked rather than assumed. A file deleted by a sync as the move began is
+   * moved nowhere, and the destination it was given is a path with nothing at
+   * it; reporting that as detached opened a note that did not exist.
+   */
+  if (!occupied(dest)) throw new Error(`"${entry.title}" was gone before it could be moved.`)
+  try {
+    await detachNote(dest)
+  } catch {
+    throw new DetachIncompleteError(dest)
+  }
+  if (getEntry(dest)?.source !== undefined) throw new DetachIncompleteError(dest)
   return dest
 }
 
 /* ------------------------------------------------------------- write notes */
 
 /**
- * Your own notes on each import, by what names it: `meeting:` for a meeting,
- * `contact:` for a person. Keyed `<key>\u0000<record>` (see `recordOf`).
+ * Your own notes on each note they are *about*, by the property that says so:
+ * `meeting:` for a meeting, `contact:` for a person. Keyed
+ * `<key>\u0000<record>` (see `recordOf`).
  *
- * Found through the backlinks, so only notes that link to an import are read,
- * and a note that merely mentions one in passing does not count: the property
- * is what says "these are my notes on this". Worked out once per change to the
- * vault rather than per question — the agenda asks for every imported row on
- * every render, and each answer re-read the frontmatter of every note linking
- * to that meeting.
+ * The property is what says "these are my notes on this"; a note that merely
+ * mentions something in passing does not count. Worked out once per change to
+ * the vault, each note read once — not once per import it links to, which is
+ * what walking the backlinks did — and only the notes whose frontmatter has
+ * one of the two keys are parsed at all. Not only for imports: a person you
+ * have detached is still the person your notes are about, and those notes
+ * still go first in their mentions.
  */
 const notesNamed = computed(() => {
   const out = new Map<string, string[]>()
-  for (const [target, sources] of backlinkMap.value) {
-    if (getEntry(target)?.source === undefined) continue
-    for (const p of sources) {
-      const e = getEntry(p)
-      if (!e || isExternal(e)) continue
-      const data = parseFrontmatter(getText(p) ?? '').data
-      for (const key of ['meeting', 'contact']) {
-        const v = data[key]
-        const link = typeof v === 'string' ? /^\s*\[\[(.*)\]\]\s*$/.exec(v)?.[1] : undefined
-        if (link === undefined || resolveLink(splitWikiInner(link).target) !== target) continue
-        const k = `${key}\u0000${recordOf(target)}`
-        const list = out.get(k)
-        if (!list) out.set(k, [p])
-        else if (!list.includes(p)) list.push(p)
-      }
+  for (const e of linkableNotes.value) {
+    if (isExternal(e) || !e.links.length) continue
+    const text = getText(e.path) ?? ''
+    if (!/^(meeting|contact):/m.test(text)) continue
+    const data = parseFrontmatter(text).data
+    for (const key of ['meeting', 'contact']) {
+      const v = data[key]
+      const link = typeof v === 'string' ? /^\s*\[\[(.*)\]\]\s*$/.exec(v)?.[1] : undefined
+      const target = link === undefined ? undefined : resolveLink(splitWikiInner(link).target)
+      if (!target) continue
+      const k = `${key}\u0000${recordOf(target)}`
+      const list = out.get(k)
+      if (!list) out.set(k, [e.path])
+      else if (!list.includes(e.path)) list.push(e.path)
     }
   }
   for (const list of out.values()) list.sort()
@@ -191,6 +218,30 @@ function notesNaming(key: string, target: string): string[] {
 function recordOf(path: string): string {
   const e = getEntry(path)
   return e?.source !== undefined ? `record\u0000${e.source}\u0000${e.uid}` : `path\u0000${path}`
+}
+
+/**
+ * The copy of an import everything else should use: where a record has two
+ * files, the importer's own (the one in backstage), or failing that the first
+ * by path — the same one the agenda shows (`eventsByDay`). Notes are written
+ * against it, so they link to the copy that stays when the other is cleared
+ * away, and two presses on the two copies are one request, not two notes.
+ */
+const canonical = computed(() => {
+  const out = new Map<string, string>()
+  for (const e of [...linkableNotes.value, ...backstageEvents.value]) {
+    if (e.source === undefined) continue
+    const k = recordOf(e.path)
+    const other = out.get(k)
+    const better =
+      !other || (isHidden(e.path) !== isHidden(other) ? isHidden(e.path) : e.path < other)
+    if (better) out.set(k, e.path)
+  }
+  return out
+})
+
+export function canonicalCopy(path: string): string {
+  return getEntry(path)?.source === undefined ? path : (canonical.value.get(recordOf(path)) ?? path)
 }
 
 /** Your own notes about a meeting: the ones whose `meeting:` names it. */
@@ -229,10 +280,11 @@ export function notesAbout(
    * and the agenda pencil in quick succession — both found none and made two.
    * A press while one is under way gets that one's answer.
    */
-  const running = inFlight.get(imported)
+  const target = canonicalCopy(imported)
+  const running = inFlight.get(target)
   if (running) return running
-  const p = findOrMake(imported).finally(() => inFlight.delete(imported))
-  inFlight.set(imported, p)
+  const p = findOrMake(target).finally(() => inFlight.delete(target))
+  inFlight.set(target, p)
   return p
 }
 
@@ -242,7 +294,9 @@ async function findOrMake(
   imported: string,
 ): Promise<{ path: string; created: boolean } | undefined> {
   const kind = importKind(imported)
-  if (!kind || kind === 'broken-meeting') return undefined
+  if (!kind) return undefined
+  // Said, not swallowed: the button was there, and pressing it did nothing.
+  if (kind === 'broken-meeting') throw new BrokenMeetingError(imported, 'notes')
   const entry = getEntry(imported)!
   const text = getText(imported)!
   if (kind === 'contact') return contactNotes(imported, entry)

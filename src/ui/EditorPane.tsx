@@ -96,6 +96,7 @@ import { openFilePicker } from './pickFile'
 import { insertVaultFiles } from '../editor/paste'
 import { LinkedMentions } from './LinkedMentions'
 import { detachAndOpen, openNotesAbout } from './meetingNotes'
+import { importKind } from '../core/imports'
 
 /**
  * A save that did not land.
@@ -1020,9 +1021,9 @@ export function EditorPane() {
           <button
             class="row-action"
             title={
-              entry.event
-                ? 'Open your notes on this meeting, or start them'
-                : 'Open your notes on this person, or start them'
+              importKind(path) === 'contact'
+                ? 'Open your notes on this person, or start them'
+                : 'Open your notes on this meeting, or start them'
             }
             onClick={() => void openNotesAbout(path)}
           >

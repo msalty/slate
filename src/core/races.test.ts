@@ -346,8 +346,33 @@ describe('a Detach whose move out of backstage fails', () => {
     }
     await expect(imports.detachAndFile(path)).rejects.toThrow()
     expect(vault.getEntry(path)?.source).toBe('work')
-    expect(vault.eventsByDay.value.get(new Date(2026, 8, 21).getTime())?.map((e) => e.path)).toEqual([
-      path,
-    ])
+    expect(
+      vault.eventsByDay.value.get(new Date(2026, 8, 21).getTime())?.map((e) => e.path),
+    ).toEqual([path])
+  })
+})
+
+describe('a Detach whose keys cannot be taken off after the move', () => {
+  /*
+   * Reported as "could not be detached" with the editor left on a path that
+   * no longer existed, and nothing saying where the note had gone.
+   */
+  it('says where the note went, which is still an import there', async () => {
+    const hooks: Hooks = {}
+    const vault = await vaultWith(hooks)
+    const imports = await import('./imports')
+    const path = await vault.createNote(
+      'backstage/calendar/Work/2026/09',
+      'Standup (a41b)',
+      '---\ntitle: Standup\nstart: 2026-09-21T09:00\nsource: work\nuid: u1\n---\n',
+      () => 'Standup (a41b)',
+    )
+    hooks.putFile = (f) => {
+      if (f.path.startsWith('Calendar/') && !f.text?.includes('source:')) throw new Error('quota')
+    }
+    const err = await imports.detachAndFile(path).catch((e) => e)
+    expect(err).toBeInstanceOf(imports.DetachIncompleteError)
+    expect(err.dest).toBe('Calendar/2026/09/Standup - 2026-09-21.md')
+    expect(vault.getEntry(err.dest)?.source).toBe('work')
   })
 })

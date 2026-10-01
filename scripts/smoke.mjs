@@ -1870,8 +1870,27 @@ try {
    * today: pick an empty cell in this month, take the offer, and the note has
    * to come back filed under that day rather than under the day it was made.
    */
-  const otherDay = page.locator('.cal-day[data-outside="0"][data-today="0"]').first()
-  const otherLabel = await otherDay.getAttribute('aria-label')
+  /*
+   * Not today, and not the next few days either: later sections put events
+   * and their offers on those, and a daily note made here on the 1st of a
+   * month — when the first day that is not today is tomorrow — took the offer
+   * they look for.
+   */
+  const soonDays = [0, 1, 2, 3].map((n) => {
+    const d = new Date()
+    d.setDate(d.getDate() + n)
+    return d.toDateString()
+  })
+  const otherLabel = await page
+    .locator('.cal-day[data-outside="0"][data-today="0"]')
+    .filter({ hasNot: page.locator('.cal-dot') })
+    .and(page.locator(soonDays.map((t) => `:not([aria-label^="${t}"])`).join('')))
+    .first()
+    .getAttribute('aria-label')
+  // Held to that day by its label: a locator is asked again each time it is
+  // used, and once this day has its note it no longer matches "no dot".
+  // The date only: the label goes on to count the day's notes, which changes.
+  const otherDay = page.locator(`.cal-day[aria-label^="${otherLabel.split(',')[0]},"]`)
   await otherDay.click()
   await page.waitForTimeout(300)
   check('an empty day offers a daily note', (await page.locator('.list-pane .daily-row').count()) === 1, otherLabel)
@@ -1920,11 +1939,15 @@ try {
   await page.click('.dialog-foot .btn-primary')
   await page.waitForTimeout(250)
 
-  const blankDay = page
+  // Clear of the next few days for the reason `otherDay` is, and held to the
+  // day it picks.
+  const blankLabel = await page
     .locator('.cal-day[data-outside="0"][data-today="0"]')
     .filter({ hasNot: page.locator('.cal-dot') })
+    .and(page.locator(soonDays.map((t) => `:not([aria-label^="${t}"])`).join('')))
     .first()
-  const blankLabel = await blankDay.getAttribute('aria-label')
+    .getAttribute('aria-label')
+  const blankDay = page.locator(`.cal-day[aria-label^="${blankLabel.split(',')[0]},"]`)
   await blankDay.click()
   await page.waitForTimeout(300)
   const asked = page.locator('.dialog:has-text("Start a note for this day?")')
@@ -5593,7 +5616,8 @@ try {
     const written = await opfsPaths()
     // Named fixtures rather than a count, so what the check means does not
     // depend on how many notes the rest of the run happens to have left behind.
-    const expected = ['Budget.md', 'Groceries.md', 'Daily/2026-09-01.md', 'backstage/config.json']
+    // The daily note is whichever day the calendar section picked, named then.
+    const expected = ['Budget.md', 'Groceries.md', `Daily/${dailyName}`, 'backstage/config.json']
     const missing = expected.filter((p) => !written.includes(p))
     check(
       'connecting writes the vault out as ordinary files, in its own folders',
@@ -7654,6 +7678,10 @@ try {
   }, [
     ['Priya Natarajan.md', '# Priya Natarajan\n\nRuns the platform team.\n'],
     ['Quarterly planning with the Budapest and Tokyo offices.md', zonedNoon(2)],
+    [
+      'Contacts/Address Book/Fastmail/Dana Reyes.md',
+      '---\nname: Dana Reyes\nemail_work: dana@example.com\nsource: fastmail\nuid: dana-1\n---\n\n# Dana Reyes\n\n## Email\n\n- work · [dana@example.com](mailto:dana@example.com)\n',
+    ],
     ['Notes on Priya.md', '# Notes on Priya\n\nAsk [[Priya Natarajan]] about the migration.\n'],
     [
       `backstage/calendar/Fastmail/${isoDay(2).slice(0, 4)}/${isoDay(2).slice(5, 7)}/Platform sync (a41b).md`,
@@ -7853,6 +7881,42 @@ try {
     priyaAfter.some((r) => r.includes(`Platform sync - ${isoDay(2)}`)),
     JSON.stringify(priyaAfter),
   )
+  await page.locator('.side-row:has-text("All Notes")').first().click()
+  await page.waitForTimeout(400)
+  /*
+   * A person, as the bridge writes one. Found by a search that names its
+   * folder — everything in there is an import, and a rule used to search
+   * your own notes only — and opened as the importer's, with Write notes for
+   * a note of your own on them.
+   */
+  await page.fill('.search-box input', 'in:"contacts/address book/fastmail"')
+  await page.waitForTimeout(500)
+  const contactRows = await page.locator('.note-row').allInnerTexts()
+  check(
+    'a search naming an importer’s folder finds the contacts in it',
+    contactRows.length === 1 && contactRows[0].includes('Dana Reyes'),
+    contactRows.join(' | '),
+  )
+  await page.locator('.note-row', { hasText: 'Dana Reyes' }).first().click()
+  await page.waitForTimeout(600)
+  const contactBanner = page.locator('.source-banner')
+  check(
+    'an imported contact opens with the banner, and Write notes for a person',
+    (await contactBanner.count()) === 1 &&
+      ((await contactBanner.locator('button', { hasText: 'Write notes' }).getAttribute('title')) ?? '')
+        .includes('person'),
+  )
+  await contactBanner.locator('button', { hasText: 'Write notes' }).click()
+  await page.waitForTimeout(700)
+  const personNotes = await importedText('Contacts/Notes on Dana Reyes.md')
+  check(
+    'Write notes on a person makes one note of your own, linked back',
+    personNotes.includes('contact: "[[Dana Reyes]]"') &&
+      (await page.locator('.editor-title-input').inputValue()) === 'Notes on Dana Reyes',
+    personNotes.split('\n').slice(0, 3).join(' / '),
+  )
+  await page.fill('.search-box input', '')
+  await page.waitForTimeout(300)
   await page.locator('.side-row:has-text("All Notes")').first().click()
   await page.waitForTimeout(400)
   check(

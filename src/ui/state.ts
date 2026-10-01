@@ -643,9 +643,10 @@ export const visibleNotes = computed<NoteIndexEntry[]>(() => {
      * your own material, and six hundred meetings tagged by an importer would
      * otherwise come back the moment a word was typed after the rule.
      */
+    const about = node ? inRuleCorpus(node) : () => true
     return node
       ? hits
-          .filter((n) => inRuleCorpus(n, node) && evaluateQuery(node, contextFor(n)))
+          .filter((n) => about(n) && evaluateQuery(node, contextFor(n)))
           .slice(0, LIST_LIMIT)
       : hits
   }

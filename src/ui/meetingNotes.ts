@@ -4,7 +4,12 @@
  * open what it made and say what happened.
  */
 
-import { BrokenMeetingError, detachAndFile, notesAbout } from '../core/imports'
+import {
+  BrokenMeetingError,
+  DetachIncompleteError,
+  detachAndFile,
+  notesAbout,
+} from '../core/imports'
 import { syncSoon } from '../core/sync'
 import { activePath, navigationMark, notify, openNote } from './state'
 import { titleFromPath } from '../core/util'
@@ -33,6 +38,10 @@ export async function openNotesAbout(imported: string): Promise<void> {
         run: () => openNote(r.path, { editing: true }),
       })
   } catch (e) {
+    if (e instanceof BrokenMeetingError) {
+      notify(e.message, 'error')
+      return
+    }
     console.error('[slate] could not make notes', e)
     notify('Those notes could not be made on this device.', 'error')
   }
@@ -53,6 +62,16 @@ export async function detachAndOpen(path: string, owner: string): Promise<void> 
   } catch (e) {
     if (e instanceof BrokenMeetingError) {
       notify(e.message, 'error')
+      return
+    }
+    /*
+     * Moved, but still the importer's: say where it is and follow it there —
+     * the path it was opened at no longer exists — and Detach is still on
+     * its banner to finish the job.
+     */
+    if (e instanceof DetachIncompleteError) {
+      if (stillHere(mark, from)) openNote(e.dest)
+      notify(`${e.message} Press Detach again to finish.`, 'error')
       return
     }
     console.error('[slate] could not detach note', e)

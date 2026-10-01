@@ -672,7 +672,9 @@ function buildDecorations(view: EditorView): DecorationSet {
              * `[jane@example.com](mailto:jane@example.com)` went blank the
              * moment the dot went in.
              */
-            if (linkDestination(state, parent)?.from !== node.from) return
+            // A title (`"My Title"`) is always machinery; only a URL can be
+            // the label's own address instead.
+            if (name === 'URL' && linkDestination(state, parent)?.from !== node.from) return
             if (!touched(state, parent.from, parent.to)) out.push(hidden.range(node.from, node.to))
             return
           }

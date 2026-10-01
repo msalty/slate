@@ -46,6 +46,7 @@ import {
 import {
   evaluateQuery,
   foldersInQuery,
+  inFolder,
   parseQuery,
   type QueryContext,
   type QueryNode,
@@ -509,9 +510,8 @@ export function smartFolderAncestors(id: string): SmartFolder[] {
 
 /** Notes matching a parsed rule. */
 export function notesMatching(node: QueryNode): NoteIndexEntry[] {
-  return linkableNotes.value.filter(
-    (n) => inRuleCorpus(n, node) && evaluateQuery(node, contextFor(n)),
-  )
+  const about = inRuleCorpus(node)
+  return linkableNotes.value.filter((n) => about(n) && evaluateQuery(node, contextFor(n)))
 }
 
 /**
@@ -523,11 +523,13 @@ export function notesMatching(node: QueryNode): NoteIndexEntry[] {
  * browsing a folder shows what is in it. Without this that search found
  * nothing at all, since everything in that folder is an import.
  */
-export function inRuleCorpus(entry: NoteIndexEntry, node: QueryNode): boolean {
-  if (isContent(entry)) return true
-  if (!isExternal(entry)) return false
-  const ctx = contextFor(entry)
-  return foldersInQuery(node).some((path) => evaluateQuery({ t: 'folder', path }, ctx))
+export function inRuleCorpus(node: QueryNode): (entry: NoteIndexEntry) => boolean {
+  // Once per rule rather than once per note: a rule-only search over a vault
+  // of imports walked the rule for every one of them.
+  const named = foldersInQuery(node)
+  return (entry) =>
+    isContent(entry) ||
+    (isExternal(entry) && named.some((path) => inFolder(entry.folder, path)))
 }
 
 /**

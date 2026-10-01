@@ -278,11 +278,15 @@ describe('Write notes on a meeting whose time cannot be read', () => {
    * An import with no readable event used to be taken for a contact, so a
    * meeting with a broken `start:` got `Contacts/Notes on Standup (a41b).md`.
    */
-  it('makes nothing, rather than taking it for a person', async () => {
+  /*
+   * And says so: it used to return nothing, and the button it sits behind did
+   * nothing at all when pressed.
+   */
+  it('makes nothing, rather than taking it for a person, and says why', async () => {
     const { vault, imports } = await fresh()
     await seedMeeting(vault, meeting('next tuesday'))
     expect(vault.getEntry(MEETING)?.event).toBeUndefined()
-    expect(await imports.notesAbout(MEETING)).toBeUndefined()
+    await expect(imports.notesAbout(MEETING)).rejects.toBeInstanceOf(imports.BrokenMeetingError)
     expect(vault.notes.value.filter((n) => n.path.startsWith('Contacts/'))).toEqual([])
   })
 })
@@ -348,5 +352,43 @@ describe('notes written from a second copy of the same meeting', () => {
     expect(written?.created).toBe(true)
     expect(imports.notesForMeeting(MEETING)).toEqual([written!.path])
     expect(await imports.notesAbout(MEETING)).toEqual({ path: written!.path, created: false })
+  })
+})
+
+describe('the copy notes are written against', () => {
+  /*
+   * Notes started from a second copy of a meeting linked to that copy, so
+   * clearing the copy away cut them off from the meeting; and a press on each
+   * copy at once made two notes.
+   */
+  it('is the importer’s own, whichever copy was pressed', async () => {
+    const { vault, imports } = await fresh()
+    await seedMeeting(vault)
+    const copy = await vault.createNote('', 'Standup (a41b)', meeting(), () => 'Standup (a41b)')
+    expect(imports.canonicalCopy(copy)).toBe(MEETING)
+    const [a, b] = await Promise.all([imports.notesAbout(copy), imports.notesAbout(MEETING)])
+    expect(a!.path).toBe(b!.path)
+    expect(vault.getText(a!.path)).toContain(`meeting: "[[${MEETING.slice(0, -3)}]]"`)
+    await vault.deleteNote(copy)
+    expect(imports.notesForMeeting(MEETING)).toEqual([a!.path])
+  })
+})
+
+describe('your notes on a person you have detached', () => {
+  /*
+   * Notes on a note were only worked out for imports, so detaching a contact
+   * dropped its "Notes on" from the front of its mentions.
+   */
+  it('are still your notes on them', async () => {
+    const { vault, imports } = await fresh()
+    const card = await vault.createNote(
+      'Contacts/Address Book/Fastmail',
+      'Jane Doe',
+      '---\nname: Jane Doe\nsource: fastmail\nuid: j1\n---\n',
+      () => 'Jane Doe',
+    )
+    const notes = await imports.notesAbout(card)
+    const moved = await imports.detachAndFile(card)
+    expect(imports.notesForContact(moved!)).toEqual([notes!.path])
   })
 })
