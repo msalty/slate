@@ -41,7 +41,27 @@ of CalDAV in this codebase.
 5. **The format is the contract, and it lives in this repository**, because
    Slate is the reader and the reader is what must not break.
 
-### 1.1 Why not `backstage/`
+### 1.1 Contacts in the vault, meetings in `backstage/`
+
+*Revised after the first weeks of real use.* The argument below — that the
+projection must not live in `backstage/` — holds for **contacts**, which exist
+to be linked to, searched for and found. It turned out not to hold for
+**meetings**. What a meeting import is wanted for is the agenda: a quick way
+in to writing notes about it. In search, folder listings, ⌘K and autocomplete
+it was noise, and as a source of mentions it was worse — a contact's mentions
+were every meeting of a recurring series they sat in, none of them written
+about. That list of surfaces to switch off is, almost exactly, the list
+`backstage/` already switches off by one rule. Hiding meetings one surface at a
+time would have been a growing set of exceptions to reproduce what the
+backstage prefix already means.
+
+So the helper writes meetings to `backstage/calendar/` (§2.1), and Slate makes
+two deliberate inclusions and no other exceptions: the **agenda** reads
+imported events from backstage (never from its trash), and a link to one is
+written **by path**, since a backstage note has no name the name index knows.
+Contacts stay in the vault proper, as argued below.
+
+What follows is the original argument, which still decides where contacts go.
 
 `backstage/` is not "a hidden folder" — it is the one path prefix meaning *this
 is the app's own bookkeeping, not your material*. `isHidden()`
@@ -107,13 +127,14 @@ Short description, if any.
 | `location` | string | Optional. |
 | `url` | string | Optional. The join link, lifted out of the description. Kept apart from `location` because on a video meeting the "where" is a link: you click one and read the other. |
 | `attendees` | list | Wikilinks where a contact matched, plain strings otherwise. |
-| `calendar` | string | Optional. Which source calendar it came from — Work, Personal, Family. Nothing reads it yet; reserved because colouring the agenda by it is the obvious next thing, and vdir stores a `displayname` per collection so the importer gets it free. |
-| `source` | string | Provider slug. **Its presence means the file is externally owned.** |
-| `uid` | string | The source system's identity key. Helper-owned; Slate only round-trips it. |
+| `calendar` | string | Optional. Which source calendar it came from — Work, Personal, Family. Nothing reads it yet; reserved because colouring the agenda by it is the obvious next thing, and EventKit gives the importer every calendar's title free. |
+| `source` | string | Provider slug. **With `uid`, its presence means the file is externally owned** — see §2.3. |
+| `uid` | string | The source system's identity key. Helper-owned; Slate reads only whether it is there. |
 
 **Only the first four are read by code.** `start` (with `end` and `tz`) is the
 whole of what Slate parses for *when*, `title` is read for what a row is called,
-and `source` and `uid` join them from §2.3 onward. Everything
+and `source` and `uid` — read together, see §2.3 — join them from §2.3
+onward. Everything
 else in the table is a *blessed name* — frontmatter is open, so any key already
 works and shows in the properties form; naming these buys nothing but the
 guarantee that a hand-written event and an imported one use the same words.
@@ -198,6 +219,38 @@ all, so `[[Lunch with Joe]]` resolves to nothing and a link names a date or goes
 through `aliases:`. That is a better trade than eleven notes reachable only by a
 number that starts over in October.
 
+**The importer's files go in backstage**:
+`backstage/calendar/<Account>/<year>/<month>/`, with `<Account>` the name the
+account already has — `backstage/calendar/Fastmail/2026/09/Standup (a41b).md`.
+Why backstage rather than a visible folder is §1.1: a meeting import is for the
+agenda, and everywhere else it was noise. (An earlier layout used a visible
+`Calendar/Subscribed/`; the helper moves anything it finds there on its first
+run with this one.)
+
+Everything under `backstage/calendar/` is the importer's, so emptying it clears
+the imports and nothing of yours — which is why your notes on a meeting and a
+meeting you detach are both filed in `Calendar/<year>/<month>/` (§5.5), never in
+there.
+
+The account level is there from the first account on, not added with the
+second: added later, it would move every file already written, which breaks
+links and the manifest's paths (§6.2) alike. The year and month levels are the
+same browsability argument as for hand-made events.
+
+**Slate reads none of the names below `backstage/`**, and must not start to.
+The only folder it knows is `backstage/` itself, which predates this design and
+means what it always has. What a note *is* comes from its frontmatter — the
+agenda takes any imported event anywhere in backstage outside its trash —
+and where Slate files something (your notes, a detached meeting) is worked out
+from its `start:`. So the folders under `backstage/calendar/` are the helper's
+setting to change.
+
+**A file's name is stable for the life of its record.** When a meeting is
+renamed upstream the helper updates `title:` and leaves the filename alone —
+renaming would break every path link to it, your notes' `meeting:` among them.
+Slate reads an import in the importer's shape by its `title:` whatever the front
+of its name says, so the agenda shows the new name.
+
 **The importer disambiguates differently**, and deliberately. It uses a short
 stable suffix derived from the `uid` — `Standup (a41b).md` — because it writes
 hundreds and *stability* is its requirement: a recurring series it re-syncs must
@@ -205,10 +258,20 @@ land on the same filenames every run, and a date would force a rename every time
 a meeting moved, breaking every link pointing at it. A hand-made event is
 written once and never rewritten by anything, so it can afford a date that goes
 stale; an imported one cannot. Same problem, two answers, and the difference is
-who rewrites the file. The importer should write `title:` too — and the agenda's
-check, which today recognises only the names `eventNoteName` makes, then needs
-the importer's naming as a second shape it can confirm, or every imported row
-reads as `Standup (a41b)`.
+who rewrites the file. The importer writes `title:` too.
+
+**The importer's name, exactly** (`importedNoteName` in `src/core/eventname.ts`
+is the reference): the title made safe for a filename and cut to fit the same
+way a hand-made one is (`safeSegment`, then 120 characters in all), a space,
+and in brackets a tag: the first four **lowercase hex** digits of the SHA-256 of
+the record's `uid` (UTF-8), lengthened a digit at a time, up to eight, only when
+another file in the same folder already has it. Worked examples, as files, are
+in `docs/examples/`.
+The agenda, Linked Mentions and *Write notes* read a name against its `title:`
+as they do a hand-made one — `Standup (a41b)` with `title: Standup` reads as
+`Standup`, colon and all when the title has one — and a name in any other shape
+is read as its filename. One ambiguity is accepted: a file renamed by hand to
+exactly `<its title> (<hex>)` reads as its title.
 
 **Bodies stay short.** The description is truncated to roughly 500 characters,
 conference boilerplate is stripped, and the join link goes in `url` rather than
@@ -216,34 +279,146 @@ being left in prose. See §7 for why this matters more than it looks.
 
 ### 2.2 Contact notes
 
+A contact is written twice over, on purpose: the **frontmatter** holds the data,
+one key per kind of detail and label, for Slate and anything else that reads
+properties; the **body** is the same data laid out the way a contacts app shows
+it, for a person to read. The helper writes both from one record on every run,
+so they cannot drift — and the body is plain Markdown, so it reads the same in
+source mode and in any other Markdown app, with tappable `tel:` and `mailto:`
+links. (`$(name)` substitution was considered for the body and rejected: a
+missing field shows as a literal `$(phone_work)`, it renders only in Slate's
+rich modes, and it cannot make a link.)
+
 ```markdown
 ---
-emails: [jane@example.com, j.doe@work.example]
-phones: ["+1 555 0143"]
+name: Jane Doe
+nickname: Janey
 org: Example Corp
-title: Head of Design
+department: Design
+job_title: Head of Design
+phone_mobile: "+1 555 0143"
+phone_work: "+1 555 0100"
+email_home: [jane@example.com, jd@me.com]
+email_work: j.doe@work.example
+address_home: "12 Rua Augusta, 1100-053 Lisboa, Portugal"
+url_homepage: https://jane.example
 birthday: 1984-03-02
+date_anniversary: 2010-06-14
+related_spouse: Sam Doe
 aliases: [Jane Smith, JD]
 source: fastmail
-uid: a41b...
+uid: jane-doe@fastmail.com
 ---
 
-Met at the Lisbon conference. Prefers email.
+# Jane Doe
+
+Head of Design · Design · Example Corp
+
+## Phone
+
+- mobile · [+1 555 0143](tel:+15550143)
+- work · [+1 555 0100](tel:+15550100)
+
+## Email
+
+…
 ```
 
-**Filenames.** `Contacts/Jane Doe.md`, flat, because the filename *is* the link
-target and `[[Jane Doe]]` is the entire point. Collisions take a disambiguator
-from `org` or the email local-part: `Contacts/Jane Doe (Example Corp).md`.
+The complete file is `docs/examples/vault/Contacts/Address Book/Fastmail/Jane
+Doe.md`, and it is the reference for every detail below.
 
-No photos — an address book's worth of them is megabytes into a sync set that
-reaches your phone. No `#tags` derived from vCard categories, which would
-inflate tag counts with somebody else's taxonomy.
+**Keys.** Flat, because Slate's frontmatter is: a value is text, a list, a
+number or true/false, and there are no nested objects. So the label goes into
+the key — `<kind>_<label>` — and a list is used only when the same label
+repeats, in the order the contact has them.
+
+| Kind | Keys | Value |
+| --- | --- | --- |
+| Name | `name` | The display name as the contacts app shows it. |
+| | `nickname`, `org`, `department`, `job_title` | Text. **`job_title`, never `title`**: on an event `title:` is its name (§2.1), and one key must not mean two things. |
+| Phone | `phone_<label>` | As the contact has it written (`+1 555 0143`). |
+| Email | `email_<label>` | The address. |
+| Address | `address_<label>` | One line: the street lines, then locality, region and postcode as the country writes them, then the country, joined by `, `. |
+| URL | `url_<label>` | The URL. |
+| Birthday | `birthday` | `YYYY-MM-DD`, or `--MM-DD` when the year is not known. |
+| Other dates | `date_<label>` | As `birthday`. **Never a bare `date:`** — in Slate that files a note on the calendar; an unlabelled date is `date_other`. |
+| Related | `related_<label>` | The person's name, as plain text. |
+| Social | `social_<service>` | The username, or the URL when there is no username. |
+| Messaging | `im_<service>` | The username. |
+
+Then `aliases`, `source` and `uid` (§2.3, §4.4). Keys are written in exactly
+this order, kind by kind, and within a kind by first appearance on the card.
+Kinds with nothing in them are left out entirely.
+
+**Labels** become lowercase slugs. Apple's built-in labels map to their plain
+names — `home`, `work`, `school`, `other`, `mobile`, `iphone`, `main`,
+`home_fax`, `work_fax`, `other_fax`, `pager`, `homepage`, `anniversary`, and
+the relation names (`spouse`, `partner`, `child`, `parent`, `mother`,
+`father`, `sibling`, `friend`, `manager`, `assistant`, …). A custom label is
+lowercased, every run of characters outside `a–z` and `0–9` becomes `_`, and
+leading and trailing `_` go: "Lake house" → `address_lake_house`. A value with
+no label, or a label that slugs to nothing, takes the bare kind — `phone`,
+`email`, `address`, `url` — except dates, which take `date_other` (above).
+
+**Not written:** photos (megabytes into a sync set that reaches your phone);
+vCard categories as `#tags` (somebody else's taxonomy inflating your tag
+counts); and the contact's note field, which Apple only lets an app read with
+an entitlement granted case by case. What you know about a person goes in your
+own note instead — *Write notes* (§5.5).
+
+**Body.** A level-one heading with `name`; then, if there are any, one line of
+`job_title`, `department` and `org` joined by ` · `; then, if there is one, a
+line with the nickname in quotation marks (“Janey”). Then one section per kind
+that has anything in it, **in the order Apple's Contacts shows them**:
+
+1. `## Phone` — `- <label> · [<number>](tel:<digits>)`, the link keeping only
+   digits and a leading `+`.
+2. `## Email` — `- <label> · [<address>](mailto:<address>)`.
+3. `## Address` — `- **<label>**`, then the address one line at a time,
+   indented two spaces under the item; every line but the last, the label's
+   included, ends in two spaces (a Markdown line break).
+4. `## URL` — `- <label> · <<url>>`.
+5. `## Birthday` — the date alone: `2 March 1984`, or `2 March` without a year.
+6. `## Dates` — `- <label> · 14 June 2010`.
+7. `## Related` — `- <label> · <name>`.
+8. `## Social` — `- <service> · <value>`.
+9. `## Messaging` — `- <service> · <value>`.
+
+A label is shown as its slug with `_` read as a space (`home fax`); an
+unlabelled value shows no label and no ` · `. Month names are English and
+fixed, never the machine's locale, so the file comes out the same on every run
+(§6.5). One blank line between blocks, one newline at the end.
+
+**Filenames.** `Contacts/Address Book/<Account>/Jane Doe.md` — flat within the
+account, because the filename *is* the link target and `[[Jane Doe]]` is the
+entire point. A link resolves by filename wherever the file is, so the folders
+above it cost nothing. "Address Book" because it says what the folder is.
+Contacts you keep by hand, contacts you detach, and your notes on people
+(`Notes on Jane Doe.md`, §5.5) live in `Contacts/` itself.
+
+Collisions take a disambiguator from `org` or the email local-part:
+`Jane Doe (Example Corp).md`. **The check is vault-wide, not per folder.** With
+one folder per account the same person can arrive from two, and two
+`Jane Doe.md` in different folders are a shared name — `[[Jane Doe]]` then
+means whichever sorts first by path, which is to say whichever account happens
+to be named earlier in the alphabet. So a name any other note in the vault
+already has, imported or yours, is disambiguated.
 
 ### 2.3 The `source:` marker
 
-One key, one meaning: *a program owns this file and will overwrite it*. It
-drives the read-only banner (§5.5), the roll-up exclusions (§4.3), and the
-helper's own delete-safety check (§6.2). It means nothing else.
+One meaning: *a program owns this file and will overwrite it*. It drives the
+read-only banner (§5.5), the roll-up exclusions (§4.3), and the helper's own
+delete-safety check (§6.2).
+
+**Slate reads it only beside `uid:`.** `source:` on its own was already taken
+before this design reached the code: an Ask conversation keeps the rule it
+searches over there (`source: all`, `source: "#work"`), an AI summary records
+what it summarised, and notes clipped from the web conventionally name their
+page with it. Read alone, every conversation became a locked page its own
+composer could not write to, and every summary and clipping vanished from the
+note list. The helper writes both keys on every file anyway, and nothing else
+writes `uid:`, so the pair is unambiguous where the one key is not. Detach
+removes both.
 
 ---
 
@@ -339,6 +514,9 @@ notes          = everything visible          → search, ⌘K, autocomplete,
                                                orphan scan, rename repointing
 linkableNotes  = notes − templates           → backlink SOURCES, eventsByDay
 contentNotes   = notes − templates − external → every roll-up
+
+eventsByDay also reads backstageEvents: imported events in backstage, outside
+its trash (§1.1).
 ```
 
 `contentNotes` gains one more exclusion, and because the roll-ups already read
@@ -375,22 +553,40 @@ never lands on the agenda — a real hazard given §5.4.
 | Task roll-up | `contentNotes` | ✗ | ✗ |
 | Related notes | `contentNotes` | ✗ | ✗ |
 | Unlinked mentions | `contentNotes` | ✗ | ✗ |
-| **Agenda** | `linkableNotes` | **✓** | n/a |
-| **Backlinks (as source)** | `linkableNotes` | **✓** | ✓ |
-| **Backlinks (as target)** | `titleIndex` | **✓** | **✓** |
-| **Search** | `notes` | **✓** | **✓** |
-| **`[[` autocomplete, ⌘K** | `notes` | **✓** | **✓** |
-| Orphan scan, rename repointing | `notes` | ✓ *(correctness)* | ✓ *(correctness)* |
+| **Agenda** | `linkableNotes` + `backstageEvents` | **✓** | n/a |
+| Backlinks (as source) | `linkableNotes` | ✗ *(backstage)* | ✓ |
+| **Backlinks (as target)** | `titleIndex` / path | **✓** *by path only* | **✓** |
+| Search | `notes` | ✗ *(backstage)* | **✓** |
+| `[[` autocomplete, ⌘K | `notes` | ✗ *(backstage)* | **✓** |
+| Folder listings, sidebar | `notes` | ✗ *(backstage)* | ✓ |
+| Orphan scan | `notes` | ✗ *(backstage)* | ✓ *(correctness)* |
+| Rename repointing, as a *target* | path | ✓ | ✓ |
+| Rename repointing, as a *file to rewrite* | — | ✗ | ✗ |
 
-That last row is not a preference. The orphan scan must see every file that
+Imported events are in backstage (§1.1), so every surface that reads `notes`
+skips them by the rule it already had. The agenda is the way in; your notes on a
+meeting link back to it by path; the meeting's Linked Mentions are those notes.
+
+The orphan scan row is not a preference. The orphan scan must see every file that
 references an attachment, or an image used only by an imported note is reported
 unused and offered for deletion — the same reason templates are exempted from
 the roll-ups but never from the orphan scan.
 
-**A consequence to design for:** Jane Doe's Linked Mentions panel will hold
-three notes you wrote and two hundred meetings. `LinkedMentions.tsx` groups by
-origin — your own notes first and expanded, external sources collapsed under a
-count.
+Repointing is split on purpose. A link *to* an imported note, written in one of
+yours, follows it when it moves or is renamed, like any link. A link written
+*in* an imported note is never rewritten by Slate: the helper rewrites those
+itself from the current names on every run (§6.4), and a file that no longer
+matches what it last wrote is one it treats as edited by hand and stops
+updating (§6.2) — so renaming one contact froze every meeting she was in. Until
+the helper's next run such a link may point at the old name; that is the cost,
+and it lasts one run.
+
+**A consequence designed away:** Jane Doe's Linked Mentions panel would have
+held three notes you wrote and two hundred meetings. With meetings in backstage
+their attendee links are no one's mentions; *Write notes* copies the attendees
+into your notes instead (§5.5), so Jane's mentions are the meetings you wrote
+about. `LinkedMentions.tsx` still groups by origin, your own notes first and
+imports folded under a count, for what imported contacts link to.
 
 ### 4.4 Aliases
 
@@ -427,7 +623,11 @@ shape:
   filename carries for uniqueness, since the panel is under a heading naming the
   day and puts the clock in its own column already. A renamed note reads as its
   filename, and one with no record is read by shape (§2.1, *Filenames*).
-- Zoned events annotate with their own zone.
+- A zoned event whose clock differs from yours shows a small globe beside its
+  name; the time where it is held (`02:30 PM Budapest`) is in the row's hover
+  text. It was written out beside the name at first, and never shrinking, it
+  left a long name room for three letters.
+- Every row's hover text is the whole name, which the rail cuts short.
 - A small provider mark on external events; nothing on your own.
 - Empty state: "Nothing scheduled.", matching `rail-empty` elsewhere.
 - A row opens its note.
@@ -475,8 +675,59 @@ No event editor and no date-picker widget. The frontmatter form in
 ### 5.5 Read-only, and Detach
 
 Any note with `source:` set opens read-only, with a banner naming the provider
-and one action: **Detach from `<source>`**, which strips `source:` and `uid:`
-and leaves an ordinary note you own.
+and two actions, for a meeting and a contact alike.
+
+**Write notes** is the one a meeting is usually opened for. It makes a note of
+your own in `Calendar/<year>/<month>/`, named as a hand-made event would be
+(`Standup - 2026-09-21`), carrying `date:` — which files it on the meeting's
+day, in that day's list and under its dot — and `meeting: "[[Standup (a41b)]]"`,
+the link back, which puts it first in the meeting's Linked Mentions. No
+`start:`, and no `Calendar/` folder template, which opens with one: either would
+make your notes an event of their own and the meeting would be on the agenda
+twice. Pressed again, it opens the notes you already have, found by that
+`meeting:` link. The same action sits on the meeting's agenda row.
+
+**Detach from `<source>`** strips `source:` and `uid:` and leaves an ordinary
+note you own — and moves it out of the importer's folder, which is emptied
+wholesale and would take it along. A meeting goes to `Calendar/<year>/<month>/`
+under the name `>New event` would have given it; a contact goes to `Contacts/`
+under the name it had, which is its link target. The move goes through the
+same rename machinery as any other, so every link to it follows. A meeting
+whose `start:` cannot be read is refused rather than filed — it is still a
+meeting, not a person, and has no day to be filed under — with a note to fix
+the time in the calendar it comes from. (One rule decides the kind, for Write
+notes and Detach alike: no `start:` is a person, a readable one a meeting, an
+unreadable one a broken meeting.)
+
+Read-only means everything in Slate that would change the file's *contents*:
+the body and the properties form, ticking or dating its tasks from a list,
+Quick Add, transcripts and Insert, *Change this passage*, restoring a version,
+pinning, and rewriting links in it (§4.3). Duplicate is off as well: a copy
+beside an import lands in the importer's folder and keeps its `start:`, so the
+meeting would be on the agenda twice — *Write notes* and *Detach* are what a
+copy would have been for.
+
+Where it lives is yours. Moving an imported note, renaming it, or renaming or
+moving a folder of them all work as they do for any file, because the helper
+finds its files by `uid:` wherever they are (§6.2). (For meetings this is
+mostly moot: they are in backstage, and reached from the agenda.) Reading,
+linking and asking about it all work too, and so does deleting — a deleted
+meeting goes to `backstage/trash/`, off the agenda, and the helper writes it
+afresh on its next run while the calendar still has it (§6.2). To be rid of a
+meeting, delete it in the calendar.
+
+*Write notes* also copies the meeting's `attendees:` into your note — a copy of
+who was there, not a live view — and links the meeting by its path.
+
+A contact has *Write notes* too. It makes one note per person, not per
+occasion — `Contacts/Notes on Jane Doe.md`, with `contact: "[[Jane Doe]]"`
+linking back — and opens it again on every later press. Its own name, not the
+contact's: a second `Jane Doe` would make every `[[Jane Doe]]` ambiguous. The
+note is first in the contact's Linked Mentions.
+
+Restoring an old version of a note you have detached restores its text
+without `source:` and `uid:` — a version from before the Detach still carries
+them, and would otherwise hand the note straight back to the importer.
 
 Without this the failure is concrete rather than theoretical. You fix a typo;
 the helper rewrites the file on its next run; the folder adapter has no
@@ -493,42 +744,36 @@ format is a contract with two sides.
 
 ### 6.1 Architecture
 
+*Revised: the helper is `slate-bridge-mac`, a macOS menu-bar app in Swift
+(https://github.com/msalty/slate-bridge-mac). An earlier plan — vdirsyncer for
+transport and a Python projector — is superseded; a helper for another OS
+would be a separate app writing the same format.*
+
 ```
-CalDAV / CardDAV ──vdirsyncer──┐
-                               ├──> vdir/ ──project──> <vault>/Calendar/
-macOS EventKit ──swift dumper──┘      .ics  .vcf       <vault>/Contacts/
+macOS Calendar accounts ──EventKit──┐
+                                    ├──> records ──project──> <vault>/backstage/calendar/<Account>/
+macOS Contacts accounts ──Contacts──┘                          <vault>/Contacts/Address Book/<Account>/
 ```
 
-Two stages, and the split is the design. Stage one is **transport** — auth,
-discovery, incremental sync, deletion detection — and is either
-[vdirsyncer](https://vdirsyncer.pimutils.org/) or a small Swift binary that
-reads EventKit and writes `.ics` into the same layout. Stage two, `project`, is
-a **pure function from a directory of `.ics`/`.vcf` to a directory of `.md`**:
-no network, no credentials, no daemon, and testable against a folder of
-fixtures.
+EventKit and the Contacts framework already read every account the Mac has in
+System Settings — iCloud, Google, CalDAV, Exchange and Microsoft 365 — so the
+helper handles no credentials, speaks no protocol and needs no network code.
+What is left is the part that is the design: **projection**, a pure function
+from records to files (frontmatter, names, bodies, attendee links), kept apart
+from the frameworks so it is tested against the example vault
+(`docs/examples/`) without permissions; and the **writer**, which applies §6.2
+to a real folder.
 
-vdirsyncer's vdir format is one directory per collection and one file per item,
-which is already the shape the projection wants. Its `read_only` storage option
-enforces the one-way rule at the source, `start_date`/`end_date` bound the
-window server-side, and its status database is what distinguishes "cancelled
-upstream" from "the fetch failed" — the single hardest thing here to get right
-by hand, and the one that deletes real data when it is got wrong.
-
-EventKit exists to cover Exchange and Microsoft 365, which do not speak CalDAV
-at all. Defining stage two's input as "a directory of `.ics`/`.vcf`" rather than
-"whatever vdirsyncer produces" is what makes the two producers interchangeable,
-and mixable per account.
-
-Python 3 for stage two (`icalendar`, `recurring-ical-events`, `vobject`). A
-launchd or systemd timer runs `sync && project` every 15 minutes. Not a
-resident daemon.
+It runs as a menu-bar app started at login: at launch, every 15 minutes, on
+*Sync Now*, and when the calendar or contacts store says it changed. The vault
+folder is chosen once and kept as a security-scoped bookmark.
 
 ### 6.2 Ownership and deletion
 
 State lives **outside the vault**, in the helper's own directory:
 
 ```json
-{ "uid@provider": { "path": "Calendar/2026/09/….md", "hash": "sha256…", "gen": 41 } }
+{ "uid@provider": { "path": "backstage/calendar/Fastmail/2026/09/….md", "hash": "sha256…", "gen": 41 } }
 ```
 
 A file is overwritten or deleted only when **all three** hold:
@@ -541,6 +786,37 @@ Fail (3) and the file has been edited by hand — leave it, log it, never touch 
 again. Fail (2) and it has been detached. This is what makes §5.5's Detach mean
 something durable rather than cosmetic.
 
+**A file is followed by its `uid:`, not held to its path.** When a manifest
+entry's file is not at the recorded path, the helper looks through the vault for
+a file whose `source:` names this provider and whose `uid:` is the entry's —
+reading only frontmatter, and only on a miss, so it costs nothing on an ordinary
+run. Found, the file was moved or renamed in Slate: the manifest takes the new
+path and the file is kept up to date there, under whatever name it now has.
+This is what lets a person move `Contacts/Address Book` wholesale, or file one
+contact somewhere else, with no setting to change and nothing duplicated.
+
+**Never follow a file into `backstage/trash/`.** Deleting a note in Slate moves
+it there, `source:` and `uid:` intact, and a search by `uid:` finds it. Followed,
+the helper kept the trashed copy up to date and never wrote the meeting again —
+a deleted meeting stayed deleted while the calendar still had it. The trash is
+not a place a file was moved to; a file found only there is gone.
+
+Two files claiming one `uid:` (a copy made outside Slate, say): the one whose
+hash matches what the helper last wrote is the record, and the other is left
+alone and logged. Neither is deleted.
+
+**A manifest entry whose file is gone is written afresh**, as a new file, if the
+record is still upstream. Gone means not found by `uid:` either: deleted in
+Slate, or detached — Detach takes out `source:` and `uid:`, so the search above
+finds nothing. Chosen over remembering detached records and skipping
+them, so that a detached meeting does not take the live one with it: the copy
+you detached stops changing, and the one the calendar keeps goes on following
+it — moved, renamed, cancelled. The cost is that a detached meeting that is
+still upcoming is on the agenda twice, once as yours and once as the
+calendar's, which is the honest picture of two copies that can now disagree.
+For notes about a meeting that should keep following it, *Write notes* is the
+action, not Detach.
+
 **Deletion has two distinct paths, and conflating them is a bug:**
 
 - *Cancelled upstream* — the UID is absent from a **complete and successful**
@@ -548,17 +824,22 @@ something durable rather than cosmetic.
 - *Slid out of the window* — the occurrence now falls outside the window.
   Delete, but by generation rather than by absence.
 
-A partial or failed fetch triggers neither. Stage two must never infer deletion
-from an empty or short directory listing.
+A partial or failed read triggers neither. The helper must never infer
+deletion from an empty or short result — no permission, a calendar or account
+temporarily missing, a store that returned nothing where it had events: skip
+deletion for that source, and say so.
 
 ### 6.3 Window and recurrence
 
 The window is **now − 1 month → now + 3 months**, recomputed each run.
 
-Recurrence is expanded **in the helper**: one markdown file per occurrence,
-in-window only, with `RRULE`, `EXDATE` and `RECURRENCE-ID` overrides all
-resolved before anything is written. Slate never sees a recurrence rule and
-contains no code that understands one.
+Recurrence is expanded **before Slate sees it**: one markdown file per
+occurrence, in-window only, with exceptions and moved occurrences already
+resolved. EventKit's date-range query returns occurrences, not series, so the
+helper has no recurrence engine either. Each occurrence needs a `uid:` that is
+the same on every run — the item's external identifier plus the occurrence's
+original start does it, and is what keeps a moved occurrence the same file.
+Slate never sees a recurrence rule and contains no code that understands one.
 
 The alternatives were considered and rejected. One file per *series* with Slate
 expanding the rule puts an iCalendar engine inside Slate, which is the bloat
@@ -572,9 +853,13 @@ Per-occurrence costs roughly 300–600 files for a meeting-heavy calendar, which
 
 For each attendee on an event:
 
-1. Match by **email** against the contact projection. Exact match only — no name
-   fuzzing.
-2. Matched: write `"[[Jane Doe]]"`, using the contact's current filename.
+1. Match by **email** against the contact projection — every `email_*` value
+   of every contact (§2.2). Exact match only — no name fuzzing.
+2. Matched: write `"[[Jane Doe]]"`, using the contact's current filename —
+   the name it has *now*, found by its `uid:` (§6.2), since it may have been
+   renamed or moved in Slate. Slate leaves these links alone when a contact is
+   renamed (§4.3) and relies on this step to bring them up to date. Where two
+   notes share that name, write the contact's path instead, as Slate does.
 3. Unmatched: write the display name as **plain text**, never a wikilink. This
    is what keeps unresolved-link noise at exactly zero.
 4. Skip yourself.
@@ -648,10 +933,11 @@ contacts browser.
 | Risk | Mitigation |
 | --- | --- |
 | An upstream display-name change breaks `[[links]]` | `aliases:` (§4.4); the helper records every prior name |
-| Exchange / M365 are unreachable by CalDAV | The EventKit path on macOS; no answer on Linux |
+| A meeting renamed upstream | Its file keeps its name for the life of the record; `title:` changes, and Slate reads an import by its record (§2.1) |
+| Only macOS is covered | Accepted; another OS gets its own helper writing the same format |
 | Two machines running the helper | Specified as one machine only; the manifest is machine-local |
 | The phone shows a stale projection | Accepted — it is read-only there by nature, and the window is three months wide |
-| Jane's backlinks drowned by 200 meetings | Grouped Linked Mentions (§4.3) |
+| Jane's backlinks drowned by 200 meetings | Meetings live in backstage and make no mentions; your notes carry the attendees (§1.1, §5.5) |
 | The vault crosses the index threshold | Short bodies and a bounded window (§7) |
 
 ---
@@ -693,27 +979,27 @@ six hundred events flood the note list.
 
 ### Phase C — the helper
 
-**6 · Transport.** vdirsyncer configuration, the Swift EventKit dumper, both
-landing in one vdir layout. **No markdown produced.** Verified by pointing
-`khal` and `khard` at the result — which de-risks the load-bearing half of the
-plan before a line of projection code exists.
+In `slate-bridge-mac` (§6.1), in this order:
 
-**7 · Contacts projection.** vCard to markdown, the manifest, the
-three-condition delete rule, idempotence tests. Contacts come first
-deliberately: no recurrence, no window, no expansion. It exercises the entire
-ownership and safety machinery against the easy data shape, so those bugs are
-found before recurrence is in the picture.
+**6 · Core projection.** Records to files, against `docs/examples/` as golden
+files: names, frontmatter, bodies, attendee linking. No frameworks, no
+permissions.
 
-**8 · Events projection.** Recurrence expansion, the rolling window, both
-deletion paths, body truncation.
+**7 · Writer.** §6.2 against a real folder: the manifest, the three-condition
+rule, following files by `uid:` and never into `backstage/trash/`, re-creating
+missing files, both deletion paths, idempotence (§6.5).
 
-**9 · Attendee linking.** Email matching, the plain-text fallback,
-self-exclusion, the size cap. Depends on 7.
+**8 · Contacts.** The Contacts framework source (§2.2), projected before events
+because attendee linking reads them.
 
-**10 · Polish.** Provider marks, agenda refinements, whatever the first month of
-real use asks for.
+**9 · Events.** The EventKit source: occurrences in the window, stable
+per-occurrence `uid:`, the inclusive all-day `end`, zones (§3), attendee
+linking (§6.4).
+
+**10 · The app.** Menu bar, settings, login item, scheduling.
 
 The ordering has one deliberate property: **every slice up to 5 is worth having
-even if the helper is never written**, and every slice from 6 on is worth having
-even if vdirsyncer is later swapped for something else. Nothing in the middle is
-load-bearing on something that does not exist yet.
+even if the helper is never written**, and the helper's slices build its
+correctness (projection, then ownership) before anything touches a real
+calendar. Nothing in the middle is load-bearing on something that does not exist
+yet.

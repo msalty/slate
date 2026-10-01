@@ -41,7 +41,8 @@ import {
   eventFor,
   codeRegions,
   excerptOf,
-  isLocked,
+  externalSource,
+  isWriteProtected,
   isTaskLine,
   noteLevelTags,
   parseFrontmatter,
@@ -58,6 +59,7 @@ import type { WikiLink } from './markdown'
 import { formatWikiLink } from './wikilink'
 import { noteScope, noteScopeRule, quoteRule } from './ask'
 import { nameAfterCollision } from './eventname'
+import { removeProperty } from './properties'
 import {
   loadDeviceRecords,
   localDeviceName,
@@ -382,6 +384,22 @@ export function isTemplatePath(path: string): boolean {
   return path === TEMPLATES_FOLDER || path.startsWith(`${TEMPLATES_FOLDER}/`)
 }
 
+/** Whether a program outside Slate owns this note. See `NoteIndexEntry.source`. */
+export function isExternal(entry: Pick<NoteIndexEntry, 'source'>): boolean {
+  return entry.source !== undefined
+}
+
+/**
+ * Whether a note is your own material — neither a template nor an import.
+ *
+ * The one predicate `contentNotes` is, exported for the places that filter a
+ * list of their own the same way: a search ranked over every note and then
+ * narrowed by a rule has to narrow it to what the rule alone would have found.
+ */
+export function isContent(entry: Pick<NoteIndexEntry, 'path' | 'source'>): boolean {
+  return !isTemplatePath(entry.path) && !isExternal(entry)
+}
+
 /* ------------------------------------------------------------------- index */
 
 /**
@@ -400,6 +418,14 @@ function aliasesIn(value: unknown): string[] {
     aliases.push(value.trim())
   }
   return aliases
+}
+
+/** Who owns a note and under what key: both or neither, as `externalSource` decides. */
+function owner(
+  data: Parameters<typeof externalSource>[0],
+): Pick<NoteIndexEntry, 'source' | 'uid'> {
+  const source = externalSource(data)
+  return source === undefined ? {} : { source, uid: String(data.uid).trim() }
 }
 
 function buildEntry(f: VaultFile): NoteIndexEntry | undefined {
@@ -472,6 +498,7 @@ function buildEntry(f: VaultFile): NoteIndexEntry | undefined {
     pinned: fm.data.pinned === true,
     event,
     aliases,
+    ...owner(fm.data),
     hasTasks: raw.length > 0,
     tasks: raw.map((t) => ({
       id: `${f.path}:${t.line}`,
@@ -635,13 +662,25 @@ export const linkableNotes = computed<NoteIndexEntry[]>(() => {
 /**
  * The notes that are *your own material*.
  *
- * Every roll-up reads this. Today it is `linkableNotes` exactly — the only
- * thing excluded is the templates, for the reasons above — and it is a separate
- * memo rather than the same one because the two answer different questions and
- * are going to stop agreeing: a note a program keeps up to date on your behalf
- * is a note you can link to and search for, and is not work you did.
+ * Every roll-up reads this: the note list, tag counts, Tag Folders, tasks, the
+ * calendar's dots, related notes. It is `linkableNotes` without the notes a
+ * program keeps up to date on your behalf (`source:`) — a note you can link to
+ * and search for, and not work you did. Six hundred imported meetings in the
+ * note list would bury everything you wrote, and every `- [ ]` in an invite
+ * would be a task you owed.
+ *
+ * Browsing a folder still shows them (see `visibleNotes`): that is a look at
+ * one named place, not a count of your work, and the only way to find an
+ * import that is not linked from anywhere. Backlinks and the agenda read
+ * `linkableNotes`, which is the reason that tier exists.
+ *
+ * The same array comes back when nothing is imported, as above.
  */
-export const contentNotes = computed<NoteIndexEntry[]>(() => linkableNotes.value)
+export const contentNotes = computed<NoteIndexEntry[]>(() => {
+  const all = linkableNotes.value
+  const out = all.filter((e) => !isExternal(e))
+  return out.length === all.length ? all : out
+})
 
 /** Non-note files the user can link to: images, PDFs, video, audio, etc. */
 export const attachments = computed(() => {
@@ -752,7 +791,14 @@ export const sharedTitles = computed(() => {
  */
 export function linkNameFor(path: string): string {
   const title = titleFromPath(path)
-  return sharedTitles.value.has(title.toLowerCase()) ? path.replace(/\.md$/i, '') : title
+  /*
+   * A note in backstage — an imported meeting — is not in the name index at
+   * all, so its bare name resolves to nothing; only its path reaches it.
+   */
+  if (isHidden(path) || sharedTitles.value.has(title.toLowerCase())) {
+    return path.replace(/\.md$/i, '')
+  }
+  return title
 }
 
 export const pathSet = computed(() => {
@@ -813,9 +859,60 @@ const MAX_EVENT_DAYS = 400
  * All-day first and then by start, which is the order a day is read in — the
  * things that are true of the whole day, and then the day itself.
  */
+/**
+ * Imported events kept in backstage — the one thing from there the agenda
+ * shows.
+ *
+ * A meeting a program keeps up to date is not your material, and was not
+ * wanted in search, folder listings, ⌘K or a contact's mentions — which is
+ * exactly the list backstage already stays out of, by one rule. So the helper
+ * writes events there (docs/calendar-contacts.md §1.1), and the agenda, which
+ * is the way in to them, reads them back here.
+ *
+ * Imported and an event, both, and never the trash: a meeting deleted in Slate
+ * sits in `backstage/trash/` with its keys still on it, and is not on anyone's
+ * day. Decided by what the note says rather than which folder it is in, so the
+ * helper's folder names stay its own.
+ */
+export const backstageEvents = computed<NoteIndexEntry[]>(() => {
+  revision.value
+  const out: NoteIndexEntry[] = []
+  for (const e of indexMap.values()) {
+    if (!e.event || e.source === undefined || !isHidden(e.path)) continue
+    if (e.path.startsWith(`${TRASH}/`)) continue
+    out.push(e)
+  }
+  return out
+})
+
+/**
+ * One note per imported record. Two files can carry the same `source:` and
+ * `uid:` — a trashed meeting restored beside the copy the importer wrote
+ * afresh, a sync conflict copy — and each was a row on the agenda, the same
+ * meeting twice. The importer's own (the one in backstage) is kept, or failing
+ * that the first by path, so every device keeps the same one.
+ */
+function oneEachRecord(entries: NoteIndexEntry[]): NoteIndexEntry[] {
+  const kept = new Map<string, NoteIndexEntry>()
+  const out: NoteIndexEntry[] = []
+  for (const e of entries) {
+    if (e.source === undefined) {
+      out.push(e)
+      continue
+    }
+    const key = `${e.source}\u0000${e.uid}`
+    const other = kept.get(key)
+    const better =
+      !other ||
+      (isHidden(e.path) !== isHidden(other.path) ? isHidden(e.path) : e.path < other.path)
+    if (better) kept.set(key, e)
+  }
+  return [...out, ...kept.values()]
+}
+
 export const eventsByDay = computed(() => {
   const m = new Map<number, NoteIndexEntry[]>()
-  for (const e of linkableNotes.value) {
+  for (const e of oneEachRecord([...linkableNotes.value, ...backstageEvents.value])) {
     const ev = e.event
     if (!ev) continue
     const first = startOfDay(ev.start)
@@ -986,6 +1083,15 @@ export function getRaw(path: string): VaultFile | undefined {
 export function occupied(path: string): boolean {
   const f = files.get(path)
   return !!f && !f.deleted
+}
+
+/**
+ * Whether a move could land at `path` now: nothing lives there, and no move in
+ * progress is on its way there. `relocate` refuses both, so a caller choosing
+ * a name by `occupied` alone could pick one it was then refused.
+ */
+export function isFree(path: string): boolean {
+  return !occupied(path) && !reservedPaths.has(path)
 }
 
 /**
@@ -1327,9 +1433,41 @@ function folderKey(dir: string): string {
 
 /** Save note text. Called from the editor's debounced autosave. */
 export async function saveNote(path: string, text: string): Promise<void> {
+  await editNote(path, () => text, { revive: true })
+}
+
+/**
+ * Change a note by what it says *now*: `edit` is handed the text as it stands
+ * once this note's lock is held, and returns the new text, or undefined to
+ * leave it alone. Resolves to whether it returned one.
+ *
+ * For every writer that is not the editor — a task ticked from a list, Quick
+ * Add, a transcript, Detach. Each used to read the note, work out the new
+ * text, and hand it to `saveNote`, which then waited for the lock: a sync pull
+ * holding it at that moment landed first, and the edit wrote the text from
+ * before the pull back over it. Only the editor's autosave, whose buffer *is*
+ * the newer truth, may hand over text it worked out earlier.
+ */
+export async function editNote(
+  path: string,
+  edit: (text: string) => string | undefined,
+  /**
+   * Whether a deleted note may come back through this write. Only the editor
+   * asks: its buffer is the note somebody is looking at, and a save of it is
+   * the note arriving again. Everything else edits a note it *remembers* — a
+   * task row, a pin, Quick Add's inbox — and a deletion that landed from
+   * another device in the meantime is the newer truth; ticking a task on it
+   * used to bring the note back, here and then everywhere.
+   */
+  opts: { revive?: boolean } = {},
+): Promise<boolean> {
+  let edited = false
   const plan = await withPathLock(path, async () => {
     const f = files.get(path)
-    if (!f) return undefined
+    if (!f || (f.deleted && !opts.revive)) return undefined
+    const text = edit(f.text ?? '')
+    if (text === undefined) return undefined
+    edited = true
     if (f.text === text) return undefined
     const hash = await hashText(text)
     if (hash === f.hash) return undefined
@@ -1364,6 +1502,7 @@ export async function saveNote(path: string, text: string): Promise<void> {
   })
   // Outside the lock: the plan takes other notes' locks, one at a time.
   if (plan) await writePlanned(plan, (p) => p !== path, (p) => p)
+  return edited
 }
 
 /** Whether an edit could have changed the note's `aliases:` — cheaply, as this is every save. */
@@ -1986,6 +2125,18 @@ async function writePlanned(
       const done = await withPathLock(at, async () => {
         const f = files.get(at)
         if (!f || f.deleted) return true
+        /*
+         * Not into a note an importer owns. It rewrites its links itself, from
+         * the current names, every run (docs/calendar-contacts.md §6.4) — and a
+         * file that no longer matches what it last wrote is one it takes to be
+         * edited by hand and never updates again (§6.2). Renaming one contact
+         * rewrote her name into every meeting she was in, and froze all of
+         * them. Checked here, under the lock, because every rewrite — a
+         * rename, a move, a pinned shared name, an attachment's new name —
+         * comes through here; and off the index, which every write to the file
+         * refreshes, rather than by parsing each note in the plan again.
+         */
+        if (indexMap.get(at)?.source !== undefined) return true
         if (f.text !== was) return false
         await writeFile({ ...f, text, hash, size: text.length, mtime: Date.now(), dirty: true })
         reindex(at)
@@ -2559,26 +2710,65 @@ function snippetAt(text: string, at: number, len: number, from = 0): string {
   return `${start > from ? '…' : ''}${clean}${end < text.length ? '…' : ''}`
 }
 
+/* ------------------------------------------------------------------ detach */
+
+/**
+ * Make an imported note yours: take out `source:` and `uid:`, and leave the
+ * rest exactly as the importer wrote it. False when there was nothing to take.
+ *
+ * Both keys, not only the one that locks the note. `source:` is what the
+ * importer checks before it touches a file again, so with it gone the file is
+ * left alone for good — and a `uid:` left behind would be the importer's
+ * identity for an event on a note it no longer owns, one careless match away
+ * from being claimed back.
+ *
+ * Read and written under the note's lock, from the text as it is then: the
+ * importer is the likeliest thing to be rewriting this file at the moment the
+ * button is pressed, and the version that arrived is the one to detach.
+ */
+export async function detachNote(path: string): Promise<boolean> {
+  return editNote(path, (text) => {
+    const next = withoutOwner(text)
+    return next === text ? undefined : next
+  })
+}
+
+/**
+ * The note's text with the importer's two keys taken out — what Detach writes,
+ * and what an old version of a detached note is restored as: restored with
+ * them, it would be the importer's again, and a second file claiming the
+ * record the importer has since written afresh.
+ *
+ * Text nothing owns comes back as it was. `source:` alone is a conversation's
+ * scope or a clipping's page (see `externalSource`), and is not the
+ * importer's to take.
+ */
+export function withoutOwner(text: string): string {
+  if (externalSource(parseFrontmatter(text).data) === undefined) return text
+  let next = text
+  for (const key of ['source', 'uid']) {
+    // Every copy of the key: a block that says `source:` twice is still
+    // owned by whichever one a reader believes.
+    for (let prev = ''; prev !== next; ) {
+      prev = next
+      next = removeProperty(next, key)
+    }
+  }
+  return next
+}
+
 /* ------------------------------------------------------------------- tasks */
 
-/** Toggle a checkbox in a note's source and save. */
 /**
  * Tick a task from a list. False when the note it lives on will not have it —
- * a note whose own properties say it is read-only, which the list has no other
- * way to know.
+ * a note whose own properties say it is read-only, or one an importer owns,
+ * which the list has no other way to know.
  */
-export async function toggleTask(path: string, line: number): Promise<boolean> {
-  const f = files.get(path)
-  if (!f?.text) return false
-  if (isLocked(parseFrontmatter(f.text).data)) return false
-  const lines = f.text.split('\n')
-  const l = lines[line]
-  if (l === undefined) return false
-  const m = /^(\s*(?:[-*+]|\d+[.)])\s+\[)([ xX])(\].*)$/.exec(l)
-  if (!m) return false
-  lines[line] = `${m[1]}${m[2] === ' ' ? 'x' : ' '}${m[3]}`
-  await saveNote(path, lines.join('\n'))
-  return true
+export async function toggleTask(path: string, line: number, expect?: string): Promise<boolean> {
+  return editTaskLine(path, line, expect, (l) => {
+    const m = /^(\s*(?:[-*+]|\d+[.)])\s+\[)([ xX])(\].*)$/.exec(l)
+    return m ? `${m[1]}${m[2] === ' ' ? 'x' : ' '}${m[3]}` : undefined
+  })
 }
 
 /**
@@ -2594,18 +2784,51 @@ export async function setDue(
   path: string,
   line: number,
   date: number | undefined,
+  expect?: string,
 ): Promise<boolean> {
-  const f = files.get(path)
-  if (!f?.text) return false
-  if (isLocked(parseFrontmatter(f.text).data)) return false
-  const lines = f.text.split('\n')
-  const l = lines[line]
-  if (l === undefined || !isTaskLine(l)) return false
-  const next = withDue(l, date)
-  if (next === l) return false
-  lines[line] = next
-  await saveNote(path, lines.join('\n'))
-  return true
+  return editTaskLine(path, line, expect, (l) => {
+    if (!isTaskLine(l)) return undefined
+    const next = withDue(l, date)
+    return next === l ? undefined : next
+  })
+}
+
+/**
+ * Rewrite one line of a note from a list row, under the note's lock.
+ *
+ * The row was drawn from the note as it was when the list last rendered, and
+ * the note may have changed since — a sync pull, the other window. So the line
+ * has to still be the task the row showed: a pull that added a line above it
+ * moves the task down one, and ticking "line 4" regardless ticks whatever is
+ * there now. Refused instead, and the list redraws from the new text.
+ *
+ * `expect` is the row's own task text, which is the only record of what was
+ * on screen. Without it, the line as it is at the moment of the call stands in
+ * — which still catches a change that lands while the write waits for the
+ * lock, and not one that landed between the render and the click.
+ */
+async function editTaskLine(
+  path: string,
+  line: number,
+  expect: string | undefined,
+  change: (line: string) => string | undefined,
+): Promise<boolean> {
+  const shown = (l: string) => {
+    const t = scanTasks(l)[0]
+    return t && stripInline(t.text)
+  }
+  const now = files.get(path)?.text?.split('\n')[line]
+  if (now === undefined) return false
+  if (expect !== undefined && shown(now) !== expect) return false
+  return editNote(path, (text) => {
+    if (isWriteProtected(parseFrontmatter(text).data)) return undefined
+    const lines = text.split('\n')
+    if (lines[line] !== now) return undefined
+    const next = change(now)
+    if (next === undefined) return undefined
+    lines[line] = next
+    return lines.join('\n')
+  })
 }
 
 /** Notes whose calendar date is the given local day. */

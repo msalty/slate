@@ -5,7 +5,6 @@ import {
   contentNotes,
   getEntry,
   getText,
-  isTemplatePath,
   notes,
   notesByDay,
   search,
@@ -19,6 +18,7 @@ import { dailyNotePath } from '../core/daily'
 import { findHeading } from '../core/markdown'
 import {
   contextFor,
+  inRuleCorpus,
   notesForSmartFolder,
   notesMatching,
   showsTasks,
@@ -57,8 +57,20 @@ export const query = signal('')
  * always about the list underneath it.
  */
 export function setScope(s: Scope) {
+  navigations++
   query.value = ''
   scope.value = s
+}
+
+/**
+ * How many times somebody has gone somewhere — opened a note, changed what the
+ * list shows. For work that navigates when it finishes: it takes this before
+ * it starts, and if the count has moved by the end, somebody has gone
+ * somewhere since, and the newer intent wins over the older one arriving late.
+ */
+let navigations = 0
+export function navigationMark(): number {
+  return navigations
 }
 
 /**
@@ -239,6 +251,7 @@ export function openNote(
     align?: 'center' | 'start'
   },
 ) {
+  navigations++
   noteNavigation.value =
     opts?.line === undefined ? undefined : { path, line: opts.line, align: opts.align ?? 'center' }
   openForWriting = opts?.editing ? path : undefined
@@ -306,13 +319,15 @@ export function takeOpenCaret(): number | undefined {
  * new as an empty one even though the file is not empty.
  *
  * A note in Deleted always opens as a page. There is nothing to be
- * done to it until it is restored.
+ * done to it until it is restored. So does one an importer owns, until it is
+ * detached — asked for or not, it would be a caret in a page that takes
+ * nothing, with Done and Insert around it.
  */
-export function opensForWriting(path: string, text: string, trashed: boolean): boolean {
+export function opensForWriting(path: string, text: string, readOnly: boolean): boolean {
   // Consumed either way: a request left lying around would answer for whichever
   // note happened to be opened next.
   const asked = takeEditRequest(path)
-  return !trashed && (asked || text.trim() === '')
+  return !readOnly && (asked || text.trim() === '')
 }
 
 /**
@@ -624,10 +639,14 @@ export const visibleNotes = computed<NoteIndexEntry[]>(() => {
      * defines it would be worse than finding it — so without this the corpus
      * changed underneath the rule, and typing a word after `#work` to narrow
      * the answer widened it with templates `#work` had correctly left out.
+     * Imported notes are left out for the same reason: a Tag Folder is over
+     * your own material, and six hundred meetings tagged by an importer would
+     * otherwise come back the moment a word was typed after the rule.
      */
+    const about = node ? inRuleCorpus(node) : () => true
     return node
       ? hits
-          .filter((n) => !isTemplatePath(n.path) && evaluateQuery(node, contextFor(n)))
+          .filter((n) => about(n) && evaluateQuery(node, contextFor(n)))
           .slice(0, LIST_LIMIT)
       : hits
   }
