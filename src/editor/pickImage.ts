@@ -29,7 +29,17 @@ export type ImageSource = 'camera' | 'library' | 'file'
  * a detached input, and removed on the next tick after the change event —
  * removing it synchronously cancels the picker on some Android builds.
  */
-export function pickAndInsert(view: EditorView, source: ImageSource): void {
+export function pickAndInsert(
+  view: EditorView,
+  source: ImageSource,
+  /**
+   * Told when the files came back to a note that no longer takes them — it
+   * was locked, or became an import, while the picker was open. The picker is
+   * the one way in where time passes between asking and inserting, and a
+   * photo just taken disappearing without a word was the result.
+   */
+  onRefused?: () => void,
+): void {
   const input = document.createElement('input')
   input.type = 'file'
   input.style.position = 'fixed'
@@ -54,7 +64,7 @@ export function pickAndInsert(view: EditorView, source: ImageSource): void {
     const files = Array.from(input.files ?? [])
     if (files.length) {
       view.focus()
-      insertFiles(view, files)
+      if (!insertFiles(view, files)) onRefused?.()
     }
     cleanup()
   })

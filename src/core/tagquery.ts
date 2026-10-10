@@ -305,12 +305,8 @@ export function evaluateQuery(node: QueryNode, ctx: QueryContext): boolean {
       // "soon" is today and the six days after it — the week you can see.
       return due >= today && due < today + 7 * 86_400_000
     }
-    case 'folder': {
-      const want = node.path.replace(/^\/+|\/+$/g, '').toLowerCase()
-      const have = ctx.folder.toLowerCase()
-      if (!want) return have === ''
-      return have === want || have.startsWith(`${want}/`)
-    }
+    case 'folder':
+      return inFolder(ctx.folder, node.path)
     case 'has':
       return node.what === 'tasks'
         ? ctx.hasTasks
@@ -343,8 +339,16 @@ export function tagsInQuery(node: QueryNode, negated = false): string[] {
   }
 }
 
-/** The folder a rule pins to, if it names exactly one. */
-export function folderInQuery(node: QueryNode): string | undefined {
+/** Whether a note's folder is `path` or under it, as `folder:`/`in:` reads it. */
+export function inFolder(folder: string, path: string): boolean {
+  const want = path.replace(/^\/+|\/+$/g, '').toLowerCase()
+  const have = folder.toLowerCase()
+  if (!want) return have === ''
+  return have === want || have.startsWith(`${want}/`)
+}
+
+/** Every folder a rule asks for by name — not the ones it rules out. */
+export function foldersInQuery(node: QueryNode): string[] {
   const found: string[] = []
   const walk = (n: QueryNode, neg: boolean) => {
     if (n.t === 'folder' && !neg) found.push(n.path)
@@ -355,6 +359,12 @@ export function folderInQuery(node: QueryNode): string | undefined {
     }
   }
   walk(node, false)
+  return found
+}
+
+/** The folder a rule pins to, if it names exactly one. */
+export function folderInQuery(node: QueryNode): string | undefined {
+  const found = foldersInQuery(node)
   return found.length === 1 ? found[0] : undefined
 }
 

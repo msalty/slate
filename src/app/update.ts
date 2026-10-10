@@ -17,8 +17,8 @@
  *
  * What none of this reaches, on Android: the installed package itself. Chrome
  * bakes the web app manifest into a WebAPK when it mints it, and that layer
- * sits below every cache in here — `reinstall()` unregisters the workers and
- * empties Cache Storage, and the manifest values Chrome installed with are
+ * sits below every cache in here — `reinstall()` unregisters the worker and
+ * empties Slate's caches, and the manifest values Chrome installed with are
  * still whatever they were on the day it was installed. So a manifest change
  * (theme_color, background_color, display, icons, name) can be live on the
  * server, past every check in this file, and still not be on the phone. The
@@ -138,11 +138,22 @@ export async function apply(): Promise<void> {
  * The escape hatch, for an install that is wedged badly enough that `check()`
  * finds nothing and the app is still stale.
  *
- * Unregisters every worker for this origin and empties Cache Storage, then
+ * Unregisters Slate's own worker and deletes Slate's own Workbox caches, then
  * re-fetches the shell straight from the network so the reload cannot be
  * answered from the HTTP cache either. This is the same ground as "clear the
- * browser cache", minus the part where that also throws away everything else
- * the browser is holding for this site.
+ * browser cache" for this app, minus the part where that also throws away
+ * everything else the browser is holding for this site.
+ *
+ * It has to stay inside Slate's own scope because the origin is shared. Slate
+ * is served from a subdirectory (msalty.github.io/slate/dist/) next to other
+ * apps on the same host, and service worker registrations and Cache Storage
+ * are both per *origin*, not per path: `getRegistrations()` and `caches.keys()`
+ * hand back every app's workers and caches, and clearing those would knock
+ * the neighbours offline. So it unregisters only the registration that covers
+ * this page, and deletes only caches whose names end with that registration's
+ * scope — Workbox names every cache `workbox-<type>-<registration.scope>`
+ * (no custom cacheName or cacheId is configured in vite.config.ts), which is
+ * exactly what makes them attributable.
  *
  * Notes are in IndexedDB and are not touched. It does need the network, though
  * — with the caches gone and no connection there would be nothing to boot from.
@@ -150,13 +161,18 @@ export async function apply(): Promise<void> {
 export async function reinstall(): Promise<void> {
   if (!navigator.onLine) throw new Error('Reinstalling needs a connection — the cached copy is what gets replaced.')
 
-  if (supported()) {
-    const regs = await navigator.serviceWorker.getRegistrations()
-    await Promise.all(regs.map((r) => r.unregister()))
-  }
+  // The scope is read before unregistering, because it is what identifies our
+  // caches afterwards. With no registration at all (it may be the thing that
+  // is wedged), fall back to the scope the worker is registered with: this
+  // page's directory, since sw.js sits next to index.html.
+  const reg = await registration()
+  const scope = reg?.scope ?? new URL('.', location.href).href
+  if (reg) await reg.unregister()
+
   if ('caches' in globalThis) {
     const keys = await caches.keys()
-    await Promise.all(keys.map((k) => caches.delete(k)))
+    const ours = keys.filter((k) => k.startsWith('workbox-') && k.endsWith(scope))
+    await Promise.all(ours.map((k) => caches.delete(k)))
   }
 
   // Pull a fresh copy of the shell before navigating: `cache: 'reload'` skips

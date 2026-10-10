@@ -54,6 +54,17 @@ export function openTransform(): boolean {
     notify('Open a note first', 'error')
     return false
   }
+  /*
+   * The change lands as a dispatch of its own, and a dispatch is not stopped by
+   * `readOnly` — that flag only stops CodeMirror's input paths. So a passage
+   * selected on a page (a locked note, or one an importer owns, where reading
+   * still lets you select) was rewritten all the same, and on an import that
+   * edit is a conflict copy on the importer's next run.
+   */
+  if (view.state.readOnly) {
+    notify('This note is read-only, so nothing in it can be changed', 'error')
+    return false
+  }
   const { from, to } = view.state.selection.main
   if (from === to) {
     notify('Select the text you want to change first', 'error')

@@ -47,6 +47,8 @@ import {
 import { DueChip } from './DueChip'
 import { openQuickAdd } from './QuickAdd'
 import { openNewEvent } from './newEvent'
+import { openNotesAbout } from './meetingNotes'
+import { notesForMeeting } from '../core/imports'
 import { Highlight } from './Highlight'
 import {
   IconCheck,
@@ -55,6 +57,8 @@ import {
   IconClock,
   IconDots,
   IconNotes,
+  IconGlobe,
+  IconPencil,
   IconPlus,
 } from './Icons'
 
@@ -275,23 +279,63 @@ export function AgendaPanel({ big = false }: { big?: boolean } = {}) {
           // A `tz:` nothing can read is shown rather than swallowed: the row
           // would otherwise look like any other and be silently hours out.
           const broken = eventZoneProblem(ev)
-          return (
+          const title = eventTitle(e.title, ev.title, e.source !== undefined)
+          /*
+           * The meeting's own clock went beside the name as text — "02:30 PM
+           * Budapest" — and, never giving up width, left a long name room for
+           * three letters. It is a glyph now, and the words are in the row's
+           * hover text along with the whole name, which the rail cuts short.
+           */
+          const zoneNote = broken
+            ? `${broken} is not a time zone this browser knows, so it is being ignored`
+            : zone
+          const row = (
             <button
               key={e.path}
               class="agenda-row"
               data-past={eventIsPast(ev, now) ? '1' : '0'}
+              title={zoneNote ? `${title}\n${zoneNote}` : title}
               onClick={() => openNote(e.path)}
             >
               <span class="agenda-when">{eventTimeLabel(ev, day)}</span>
-              <span class="agenda-what">{eventTitle(e.title, ev.title)}</span>
-              {broken ? (
-                <em class="agenda-zone" data-invalid="1" title={`${broken} is not a time zone this browser knows, so it is being ignored`}>
-                  {broken}?
-                </em>
-              ) : (
-                zone && <em class="agenda-zone">{zone}</em>
+              <span class="agenda-what">{title}</span>
+              {zoneNote && (
+                <span
+                  class="agenda-zone"
+                  data-invalid={broken ? '1' : undefined}
+                  role="img"
+                  aria-label={zoneNote}
+                >
+                  <IconGlobe size={12} />
+                </span>
               )}
             </button>
+          )
+          /*
+           * A meeting an importer keeps is a page, so the row carries the way
+           * to write about it — the same action as the note's own banner, and
+           * the one a day is most often opened for.
+           */
+          if (e.source === undefined) return row
+          /*
+           * Lit when you have written about it, so a day can be read for what
+           * is written up without opening anything — the difference between
+           * the meeting you took notes in and the three you only sat through.
+           */
+          const written = notesForMeeting(e.path).length > 0
+          return (
+            <div key={e.path} class="agenda-item">
+              {row}
+              <button
+                class="agenda-notes"
+                data-written={written ? '1' : '0'}
+                onClick={() => void openNotesAbout(e.path)}
+                aria-label={written ? `Open your notes on ${title}` : `Write notes on ${title}`}
+                title={written ? 'Open your notes on this meeting' : 'Write notes on this meeting'}
+              >
+                <IconPencil size={13} />
+              </button>
+            </div>
           )
         })
       )}
@@ -463,7 +507,7 @@ function TaskRow({
         checked={t.done}
         aria-label={t.text}
         onChange={() =>
-          void toggleTask(t.path, t.line).then((ok) => {
+          void toggleTask(t.path, t.line, t.text).then((ok) => {
             // A note can refuse: one whose own properties say it is read-only
             // is a form, and its tasks are part of the form rather than of the
             // list. Saying so beats a checkbox that springs back.
@@ -496,7 +540,7 @@ function TaskRow({
         due={t.due}
         label={t.text || 'this task'}
         onPick={(date) =>
-          void setDue(t.path, t.line, date).then((ok) => {
+          void setDue(t.path, t.line, date, t.text).then((ok) => {
             if (!ok) notify(`${t.noteTitle} is read-only`)
           })
         }

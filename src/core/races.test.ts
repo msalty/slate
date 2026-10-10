@@ -221,3 +221,158 @@ describe('a note renamed in another window', () => {
     expect(here.notePath(id)).toBe('B.md')
   })
 })
+
+describe('a task ticked from a list while the note is being written', () => {
+  /*
+   * The tick read the note, worked out the new text and handed it to
+   * `saveNote`, which then waited for the lock — so a pull holding it at that
+   * moment landed, and the tick wrote the text from before the pull back over
+   * it.
+   */
+  it('keeps what was written meanwhile', async () => {
+    const hooks: Hooks = {}
+    const vault = await vaultWith(hooks)
+    const path = await vault.createNote('', 'Note', '- [ ] Task\nbase\n')
+    let ticking: Promise<boolean> | undefined
+    hooks.putFile = async (f) => {
+      if (ticking || f.path !== path || !f.text?.includes('pulled')) return
+      ticking = vault.toggleTask(path, 0)
+      await settle()
+    }
+    await vault.saveNote(path, '- [ ] Task\nbase\npulled\n')
+    expect(await ticking).toBe(true)
+    expect(vault.getText(path)).toBe('- [x] Task\nbase\npulled\n')
+  })
+
+  it('ticks nothing when the line it was shown has moved', async () => {
+    const hooks: Hooks = {}
+    const vault = await vaultWith(hooks)
+    const path = await vault.createNote('', 'Note', '- [ ] Task\n- [ ] Other\n')
+    let ticking: Promise<boolean> | undefined
+    hooks.putFile = async (f) => {
+      if (ticking || f.path !== path || !f.text?.startsWith('- [ ] New')) return
+      ticking = vault.toggleTask(path, 0)
+      await settle()
+    }
+    await vault.saveNote(path, '- [ ] New\n- [ ] Task\n- [ ] Other\n')
+    expect(await ticking).toBe(false)
+    expect(vault.getText(path)).toBe('- [ ] New\n- [ ] Task\n- [ ] Other\n')
+  })
+})
+
+describe('a note detached while the importer is rewriting it', () => {
+  it('detaches the version that arrived, not the one before it', async () => {
+    const hooks: Hooks = {}
+    const vault = await vaultWith(hooks)
+    const path = await vault.createNote('', 'Standup', '---\nsource: work\nuid: u1\n---\n\nold\n')
+    let detaching: Promise<boolean> | undefined
+    hooks.putFile = async (f) => {
+      if (detaching || f.path !== path || !f.text?.includes('new')) return
+      detaching = vault.detachNote(path)
+      await settle()
+    }
+    await vault.saveNote(path, '---\nsource: work\nuid: u1\n---\n\nnew\n')
+    expect(await detaching).toBe(true)
+    expect(vault.getText(path)).toBe('new\n')
+  })
+})
+
+describe('a task ticked from a row drawn before the note changed', () => {
+  /*
+   * The line was checked against the note as it was when the tick was called,
+   * not as it was when the row was drawn — so a pull landing between the two
+   * moved the task down a line, and the tick went to whatever was there now.
+   */
+  it('ticks nothing when the row’s task is no longer on its line', async () => {
+    const vault = await vaultWith({})
+    const path = await vault.createNote('', 'Note', '- [ ] Task\n')
+    const [row] = vault.getEntry(path)!.tasks
+    await vault.saveNote(path, '- [ ] New\n- [ ] Task\n')
+    expect(await vault.toggleTask(path, row.line, row.text)).toBe(false)
+    expect(await vault.setDue(path, row.line, Date.now(), row.text)).toBe(false)
+    expect(vault.getText(path)).toBe('- [ ] New\n- [ ] Task\n')
+  })
+
+  it('ticks it when it is', async () => {
+    const vault = await vaultWith({})
+    const path = await vault.createNote('', 'Note', '- [ ] Task\n')
+    const [row] = vault.getEntry(path)!.tasks
+    expect(await vault.toggleTask(path, row.line, row.text)).toBe(true)
+    expect(vault.getText(path)).toBe('- [x] Task\n')
+  })
+})
+
+describe('an edit from a list, to a note deleted meanwhile', () => {
+  /*
+   * Every writer but the editor goes through `editNote`, and it wrote to a
+   * tombstone as readily as to a note — so pinning a row, or a Quick Add to a
+   * note deleted on another device a moment before, brought it back.
+   */
+  it('leaves it deleted', async () => {
+    const vault = await vaultWith({})
+    const path = await vault.createNote('', 'Note', 'Body\n')
+    await vault.deleteNote(path)
+    expect(await vault.editNote(path, (t) => `---\npinned: true\n---\n${t}`)).toBe(false)
+    expect(vault.occupied(path)).toBe(false)
+  })
+
+  it('while the editor’s own save still brings it back', async () => {
+    const vault = await vaultWith({})
+    const path = await vault.createNote('', 'Note', 'Body\n')
+    await vault.deleteNote(path)
+    await vault.saveNote(path, 'Body, kept\n')
+    expect(vault.occupied(path)).toBe(true)
+  })
+})
+
+describe('a Detach whose move out of backstage fails', () => {
+  /*
+   * Detached first and moved second, a move that failed left a meeting that
+   * was no longer an import sitting in backstage — off the agenda, off every
+   * list and search: a note nothing on screen could reach.
+   */
+  it('changes nothing, so the meeting is still on the agenda to try again', async () => {
+    const hooks: Hooks = {}
+    const vault = await vaultWith(hooks)
+    const imports = await import('./imports')
+    const path = await vault.createNote(
+      'backstage/calendar/Work/2026/09',
+      'Standup (a41b)',
+      '---\ntitle: Standup\nstart: 2026-09-21T09:00\nsource: work\nuid: u1\n---\n',
+      () => 'Standup (a41b)',
+    )
+    hooks.putFile = (f) => {
+      if (f.path.startsWith('Calendar/')) throw new Error('disk full')
+    }
+    await expect(imports.detachAndFile(path)).rejects.toThrow()
+    expect(vault.getEntry(path)?.source).toBe('work')
+    expect(
+      vault.eventsByDay.value.get(new Date(2026, 8, 21).getTime())?.map((e) => e.path),
+    ).toEqual([path])
+  })
+})
+
+describe('a Detach whose keys cannot be taken off after the move', () => {
+  /*
+   * Reported as "could not be detached" with the editor left on a path that
+   * no longer existed, and nothing saying where the note had gone.
+   */
+  it('says where the note went, which is still an import there', async () => {
+    const hooks: Hooks = {}
+    const vault = await vaultWith(hooks)
+    const imports = await import('./imports')
+    const path = await vault.createNote(
+      'backstage/calendar/Work/2026/09',
+      'Standup (a41b)',
+      '---\ntitle: Standup\nstart: 2026-09-21T09:00\nsource: work\nuid: u1\n---\n',
+      () => 'Standup (a41b)',
+    )
+    hooks.putFile = (f) => {
+      if (f.path.startsWith('Calendar/') && !f.text?.includes('source:')) throw new Error('quota')
+    }
+    const err = await imports.detachAndFile(path).catch((e) => e)
+    expect(err).toBeInstanceOf(imports.DetachIncompleteError)
+    expect(err.dest).toBe('Calendar/2026/09/Standup - 2026-09-21.md')
+    expect(vault.getEntry(err.dest)?.source).toBe('work')
+  })
+})

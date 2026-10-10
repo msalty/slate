@@ -795,3 +795,56 @@ describe('moving a start, awkwardly', () => {
     expect(after).toContain('tz: Amercia/New_York')
   })
 })
+
+describe('reading the importer’s names', () => {
+  /*
+   * An imported event is named `Standup (a41b)` — a tag from its uid, where a
+   * hand-made one has a date — and every row the agenda drew for one read
+   * `Standup (a41b)`, because only the hand-made shape was ever read back.
+   */
+  it('reads an imported name as its recorded title', async () => {
+    const { eventTitle, importedNoteName } = await import('./eventname')
+    expect(importedNoteName('Standup', 'a41b')).toBe('Standup (a41b)')
+    expect(eventTitle('Standup (a41b)', 'Standup')).toBe('Standup')
+    // A colon a filename cannot hold comes back from the record.
+    expect(eventTitle(importedNoteName('Q3: plan', 'c0ffee'), 'Q3: plan')).toBe('Q3: plan')
+  })
+
+  it('reads a long title that was cut to fit, whole', async () => {
+    const { eventTitle, importedNoteName } = await import('./eventname')
+    const long = 'x'.repeat(200)
+    const name = importedNoteName(long, 'a41b')
+    expect(name.length).toBeLessThanOrEqual(120)
+    expect(eventTitle(name, long)).toBe(long)
+  })
+
+  it('leaves brackets alone when nothing says they were added', async () => {
+    const { eventTitle } = await import('./eventname')
+    expect(eventTitle('Standup (a41b)')).toBe('Standup (a41b)')
+    expect(eventTitle('Standup (a41b)', 'Retro')).toBe('Standup (a41b)')
+    // Not a tag: too short, or not hex. (`Budget (2027)` against a record of
+    // `Budget` *would* read as one — a rename to exactly the importer's shape
+    // is the one case the record wins over the filename.)
+    expect(eventTitle('Budget (Q3)', 'Budget')).toBe('Budget (Q3)')
+    expect(eventTitle('Budget (abc)', 'Budget')).toBe('Budget (abc)')
+  })
+})
+
+describe('an imported name that has moved on', () => {
+  it('reads a counter after the tag, from a collision, as the record', async () => {
+    const { eventTitle } = await import('./eventname')
+    expect(eventTitle('Standup (a41b) 2', 'Standup')).toBe('Standup')
+  })
+
+  /*
+   * The importer keeps a file's name for the life of the record and updates
+   * `title:` when the meeting is renamed upstream, so on an import the name
+   * goes stale and the record is the truth.
+   */
+  it('reads an import renamed upstream by its new title', async () => {
+    const { eventTitle } = await import('./eventname')
+    expect(eventTitle('Standup (a41b)', 'Daily sync', true)).toBe('Daily sync')
+    // On a note of your own the name you gave it stands.
+    expect(eventTitle('Team lunch (cafe)', 'Lunch')).toBe('Team lunch (cafe)')
+  })
+})

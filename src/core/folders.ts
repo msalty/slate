@@ -17,14 +17,16 @@
 
 import { computed, signal } from '@preact/signals'
 import {
-  contentNotes,
+  isContent,
+  isExternal,
+  linkableNotes,
   deleteNote,
   getRaw,
+  isFree,
   isHidden,
   listAll,
   collisionNamesFor,
   notes,
-  occupied,
   relocate,
   relocateNote,
   readBackstage,
@@ -43,6 +45,8 @@ import {
 } from './util'
 import {
   evaluateQuery,
+  foldersInQuery,
+  inFolder,
   parseQuery,
   type QueryContext,
   type QueryNode,
@@ -239,16 +243,30 @@ export async function deleteFolder(path: string): Promise<number> {
  * everywhere. A move that has to rename also takes its links with it, since
  * `[[Foo]]` would otherwise go to the note that was there first.
  */
-export async function moveNoteToFolder(notePath: string, folder: string): Promise<string> {
+export async function moveNoteToFolder(
+  notePath: string,
+  folder: string,
+  /**
+   * The name to try on the `n`th attempt, for a move that renames as well —
+   * Detach, which files an imported meeting under the name a hand-made one
+   * would have. By default the name it has, then the collision names.
+   */
+  nameFor?: (n: number) => string,
+): Promise<string> {
   const f = getRaw(notePath)
   if (!f) return notePath
   const dir = normPath(folder)
-  let dest = joinPath(dir, basename(notePath))
-  if (dest === notePath) return notePath
   // An event keeps its date through the counter; see `nameAfterCollision`.
-  const nameFor = collisionNamesFor(notePath)
-  let n = 2
-  while (occupied(dest) && dest !== notePath) dest = joinPath(dir, nameFor(n++))
+  const again = collisionNamesFor(notePath)
+  const name = nameFor ?? ((n: number) => (n === 1 ? basename(notePath) : again(n)))
+  let dest = joinPath(dir, name(1))
+  /*
+   * Chosen and handed to `relocate` in the same tick: it checks and reserves
+   * the destination before its first await, so nothing can take the name in
+   * between.
+   */
+  for (let n = 2; dest !== notePath && !isFree(dest); n++) dest = joinPath(dir, name(n))
+  if (dest === notePath) return notePath
   await relocateNote(notePath, dest)
   await persistFolders()
   return dest
@@ -492,7 +510,26 @@ export function smartFolderAncestors(id: string): SmartFolder[] {
 
 /** Notes matching a parsed rule. */
 export function notesMatching(node: QueryNode): NoteIndexEntry[] {
-  return contentNotes.value.filter((n) => evaluateQuery(node, contextFor(n)))
+  const about = inRuleCorpus(node)
+  return linkableNotes.value.filter((n) => about(n) && evaluateQuery(node, contextFor(n)))
+}
+
+/**
+ * Whether a rule is about this note at all, before asking whether it matches.
+ *
+ * A rule is over your own material — a Tag Folder of `#work` has never held
+ * the importer's files — except where it names a folder: `in:"Contacts/Address
+ * Book/Exchange"` is a look at one named place, the same as browsing it, and
+ * browsing a folder shows what is in it. Without this that search found
+ * nothing at all, since everything in that folder is an import.
+ */
+export function inRuleCorpus(node: QueryNode): (entry: NoteIndexEntry) => boolean {
+  // Once per rule rather than once per note: a rule-only search over a vault
+  // of imports walked the rule for every one of them.
+  const named = foldersInQuery(node)
+  return (entry) =>
+    isContent(entry) ||
+    (isExternal(entry) && named.some((path) => inFolder(entry.folder, path)))
 }
 
 /**

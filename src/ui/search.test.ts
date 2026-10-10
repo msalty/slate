@@ -404,6 +404,53 @@ describe('a rule in the search box', () => {
     expect(st.visibleNotes.value.map((n) => n.title)).toContain('Weekly review')
   })
 
+  /*
+   * The same rule for an imported note: `#work` over your own material is a
+   * Tag Folder, and the importer's meetings are kept out of Tag Folders — so a
+   * word typed after the rule must not bring them back in.
+   */
+  it('keeps imported notes out of a rule with words beside it, as the rule alone does', async () => {
+    const { v, st } = await vault()
+    await v.createNote(
+      'Calendar',
+      'Budget sync',
+      '---\nsource: fastmail\nuid: u1\n---\n\n#work budget\n',
+    )
+
+    st.query.value = '#work'
+    expect(st.visibleNotes.value.map((n) => n.title).sort()).toEqual(['Quarterly review', 'Roof'])
+    st.query.value = '#work budget'
+    expect(st.visibleNotes.value.map((n) => n.title).sort()).toEqual(['Quarterly review', 'Roof'])
+    // Searched for by its words, it is found: kept out of roll-ups, not out of reach.
+    st.query.value = 'budget'
+    expect(st.visibleNotes.value.map((n) => n.title)).toContain('Budget sync')
+  })
+
+  /*
+   * A rule that names a folder is a look at that place, like browsing it —
+   * and browsing a folder shows the imports in it. Searched for by rule, the
+   * contacts an importer keeps in `Contacts/Address Book/Exchange` were
+   * nothing at all: every rule ran over your own notes only.
+   */
+  it('finds imports in a folder the rule names, and nowhere else', async () => {
+    const { v, st } = await vault()
+    const card = (who: string) => `---\nname: ${who}\nsource: exchange\nuid: ${who}\n---\n\n#work\n`
+    await v.createNote('Contacts/Address Book/Exchange', 'Ann Smoot', card('ann'))
+    await v.createNote('Contacts/Address Book/Exchange', 'Bo Lee', card('bo'))
+
+    st.query.value = 'in:"contacts/address book/exchange"'
+    expect(st.visibleNotes.value.map((n) => n.title).sort()).toEqual(['Ann Smoot', 'Bo Lee'])
+    st.query.value = 'in:"contacts/address book/exchange" ann'
+    expect(st.visibleNotes.value.map((n) => n.title)).toEqual(['Ann Smoot'])
+    st.query.value = 'in:contacts'
+    expect(st.visibleNotes.value.map((n) => n.title).sort()).toEqual(['Ann Smoot', 'Bo Lee'])
+    // A rule that does not name their folder is still over your own notes.
+    st.query.value = '#work'
+    expect(st.visibleNotes.value.map((n) => n.title)).not.toContain('Ann Smoot')
+    st.query.value = '#work -in:contacts'
+    expect(st.visibleNotes.value.map((n) => n.title)).not.toContain('Ann Smoot')
+  })
+
   it('reaches folders and the other keys the language knows', async () => {
     const { st } = await vault()
     st.query.value = 'folder:Home'

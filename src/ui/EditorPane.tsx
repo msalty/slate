@@ -65,7 +65,7 @@ import { beginEditing, endEditing, installTapToEdit } from '../editor/reading'
 import { templateBodyFor } from '../core/templates'
 import { offerTitleFromHeading } from './titleDrift'
 import { UNTITLED } from '../core/vault'
-import { isLocked, parseFrontmatter } from '../core/markdown'
+import { externalSource, isLocked, parseFrontmatter } from '../core/markdown'
 import { layoutMode, railState, toggleRail } from './layout'
 import { debounce, longDateTime } from '../core/util'
 import {
@@ -95,6 +95,8 @@ import { hasCamera, hasPhotoLibrary, pickAndInsert } from '../editor/pickImage'
 import { openFilePicker } from './pickFile'
 import { insertVaultFiles } from '../editor/paste'
 import { LinkedMentions } from './LinkedMentions'
+import { detachAndOpen, openNotesAbout } from './meetingNotes'
+import { importKind } from '../core/imports'
 
 /**
  * A save that did not land.
@@ -113,6 +115,28 @@ function reportSaveFailure(e: unknown) {
     'This note could not be saved on this device — storage may be full. Copy anything unsaved somewhere safe.',
     'error',
   )
+}
+
+/**
+ * A buffer that could not have been typed in: the note is an import in the
+ * buffer *and* in the vault. Such a buffer holds nothing to save, and saving it
+ * anyway is how a stale copy goes back over a newer one — the importer's next
+ * rewrite, arriving while an earlier one's save was still pending or as the
+ * note was left, was written over by the version before it, source and all.
+ *
+ * Both sides, not only the buffer: someone typing `source:` and `uid:` into a
+ * note of their own has a buffer that says "imported" and a vault that does
+ * not yet, and that keystroke is an edit like any other. That is the only
+ * case, though — a live note of their own under the buffer. Over a path with
+ * nothing live at it, an imported buffer is always stale: Detach moves the
+ * note away before the buffer has caught up, and the flush as the editor
+ * follows it saved the import back over the tombstone it left, reviving it.
+ */
+export function importerOwns(path: string, text: string): boolean {
+  if (externalSource(parseFrontmatter(text).data) === undefined) return false
+  const f = getRaw(path)
+  if (!f || f.deleted) return true
+  return externalSource(parseFrontmatter(f.text ?? '').data) !== undefined
 }
 
 export function EditorPane() {
@@ -136,6 +160,17 @@ export function EditorPane() {
    * form without the vault having caught up.
    */
   const [locked, setLocked] = useState(false)
+  /**
+   * The program that owns this note (`source:`), if one does.
+   *
+   * Held the same way as `locked` and for the same reason, and stricter than
+   * it: a locked note is a form whose properties are yours to fill in, and an
+   * imported one is not yours at all. Whatever is typed into it is written over
+   * on the importer's next run — or, since a folder has no conditional write,
+   * turned into a conflict copy of a meeting you do not own, every week. So it
+   * is a page with a banner, and the one thing to do is Detach it.
+   */
+  const [owner, setOwner] = useState<string | undefined>(undefined)
   const popped = !!path && isPoppedOut(path)
   /** True in a popped-out window, which is one note and no app around it. */
   const detached = isPopoutWindow()
@@ -161,6 +196,7 @@ export function EditorPane() {
    */
   const saveRef = useRef(
     debounce((p: string, text: string) => {
+      if (importerOwns(p, text)) return
       baseRef.current = text
       void saveNote(p, text).then(() => {
         syncSoon()
@@ -180,6 +216,7 @@ export function EditorPane() {
     if (!view || !p || isTrashed(p)) return Promise.resolve()
     saveRef.current.flush()
     const text = view.state.doc.toString()
+    if (importerOwns(p, text)) return Promise.resolve()
     baseRef.current = text
     return saveNote(p, text).catch(reportSaveFailure)
   }
@@ -227,7 +264,9 @@ export function EditorPane() {
      * where the tap landed. A brand new note is the exception — see
      * `opensForWriting`, which is the whole of the rule.
      */
-    const writing = opensForWriting(path, text, isTrashed(path))
+    const data = parseFrontmatter(text).data
+    const imported = externalSource(data)
+    const writing = opensForWriting(path, text, isTrashed(path) || imported !== undefined)
     // Consumed with the request, whether or not it carried one.
     const caret = takeOpenCaret()
     readingMode.value = !writing
@@ -236,7 +275,8 @@ export function EditorPane() {
     // as well, and start hidden on every one of them.
     formatSheetOpen.value = false
     propertiesOpen.value = false
-    setLocked(isLocked(parseFrontmatter(text).data))
+    setLocked(isLocked(data))
+    setOwner(imported)
 
     /*
      * The note's footer — what links here — built per editor and rendered into
@@ -270,7 +310,9 @@ export function EditorPane() {
         // The lock lives in the note's own properties, so it can be put on and
         // taken off from the form while the note is open. Read from the buffer
         // rather than from the vault, which is a debounce behind it.
-        setLocked(isLocked(parseFrontmatter(text).data))
+        const data = parseFrontmatter(text).data
+        setLocked(isLocked(data))
+        setOwner(externalSource(data))
       },
     })
     const view = new EditorView({ state, parent: hostRef.current })
@@ -346,6 +388,23 @@ export function EditorPane() {
     if (r.conflicted)
       notify('This note changed elsewhere while you were typing — both edits are marked in place')
   }, [path, rev])
+
+  /*
+   * A note that becomes an import under your hand — a sync pull bringing the
+   * importer's keys while you are typing — is a page from then on, and the
+   * chrome has to say so. The editor already refuses the next keystroke; left
+   * in the writing state it kept Done, Insert and the formatting bar around a
+   * text that took nothing, and Insert still wrote, since a dispatch is not
+   * stopped by `readOnly`. Done here, after the render, because the change is
+   * noticed inside CodeMirror's own update, where no new one may be started.
+   */
+  useEffect(() => {
+    const view = viewRef.current
+    if (!owner || !view || readingMode.peek()) return
+    readingMode.value = true
+    formatSheetOpen.value = false
+    endEditing(view)
+  }, [owner])
 
   /*
    * Being taken to a line — a task from a list, a heading from the outline.
@@ -570,7 +629,10 @@ export function EditorPane() {
   const insertMenu = (e: { clientX: number; clientY: number }) => {
     const view = viewRef.current
     if (!view) return
-    const upload = () => pickAndInsert(view, 'file')
+    // The note may stop taking edits while a picker is open; say so rather
+    // than let what was picked vanish.
+    const refused = () => notify('This note is read-only now, so nothing was inserted.', 'error')
+    const upload = () => pickAndInsert(view, 'file', refused)
     const items: MenuItem[] = [
       {
         label: 'File in Slate…',
@@ -579,7 +641,7 @@ export function EditorPane() {
           openFilePicker({
             onPick: (p) => {
               view.focus()
-              insertVaultFiles(view, [p])
+              if (!insertVaultFiles(view, [p])) refused()
             },
             onUpload: upload,
             // Nothing inserted, so put the caret back where they left it.
@@ -592,7 +654,7 @@ export function EditorPane() {
         label: 'Take Photo',
         icon: <IconCamera size={16} />,
         separated: true,
-        onSelect: () => pickAndInsert(view, 'camera'),
+        onSelect: () => pickAndInsert(view, 'camera', refused),
       })
     }
     if (hasPhotoLibrary()) {
@@ -600,7 +662,7 @@ export function EditorPane() {
         label: 'Photo Library',
         icon: <IconImagePlus size={16} />,
         separated: !hasCamera(),
-        onSelect: () => pickAndInsert(view, 'library'),
+        onSelect: () => pickAndInsert(view, 'library', refused),
       })
     }
     items.push({
@@ -667,7 +729,7 @@ export function EditorPane() {
         />
         )}
         <span class="spacer" />
-        {reading && !trashed && !locked && (
+        {reading && !trashed && !locked && !owner && (
           <button
             class="icon-btn"
             aria-label="Edit note"
@@ -682,7 +744,7 @@ export function EditorPane() {
           * and the same button is the way in to the only part of it that can
           * be changed — including the checkbox that locked it.
           */}
-        {!trashed && locked && (
+        {!trashed && locked && !owner && (
           <button
             class="icon-btn"
             aria-label="Read-only note"
@@ -941,6 +1003,42 @@ export function EditorPane() {
         </div>
       )}
 
+      {/*
+        * An imported note says whose it is, where the trash says a note is
+        * deleted, and offers the one way to change it: take it off the
+        * importer's hands. Named after the provider because "an external
+        * source" is not something anybody can go and look at.
+        */}
+      {!trashed && owner && (
+        <div class="trash-banner source-banner">
+          <span>Kept up to date from {owner}, so it can't be edited here.</span>
+          <span class="spacer" />
+          {/*
+            * First, because it is what an import is usually opened for: your
+            * own notes on the meeting or the person, linked to it, while the
+            * import itself keeps up with the calendar or the address book.
+            */}
+          <button
+            class="row-action"
+            title={
+              importKind(path) === 'contact'
+                ? 'Open your notes on this person, or start them'
+                : 'Open your notes on this meeting, or start them'
+            }
+            onClick={() => void openNotesAbout(path)}
+          >
+            Write notes
+          </button>
+          <button
+            class="row-action"
+            title={`Stop ${owner} updating this note, and file it with your own`}
+            onClick={() => void detachAndOpen(path, owner)}
+          >
+            Detach from {owner}
+          </button>
+        </div>
+      )}
+
       {rich && !compact && !trashed && !reading && (
         <FormatBar variant="bar" getView={() => viewRef.current} />
       )}
@@ -979,6 +1077,7 @@ export function EditorPane() {
           path={path}
           getText={() => viewRef.current?.state.doc.toString() ?? getRaw(path)?.text ?? ''}
           getView={() => viewRef.current}
+          readOnly={!!owner}
         />
       )}
 
@@ -1019,7 +1118,7 @@ export function EditorPane() {
         * under the phone's Format sheet, which is already competing with the
         * keyboard.
         */}
-      {!trashed && canAsk() && isConversation(noteText) &&
+      {!trashed && !owner && canAsk() && isConversation(noteText) &&
         !(compact && formatSheetOpen.value) && (
           <Composer getView={() => viewRef.current} text={noteText} path={path} />
         )}

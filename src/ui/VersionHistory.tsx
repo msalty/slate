@@ -12,7 +12,8 @@
 
 import { useEffect, useState } from 'preact/hooks'
 import { versionsFor, type Version } from '../core/db'
-import { getRaw, saveNote } from '../core/vault'
+import { getRaw, saveNote, withoutOwner } from '../core/vault'
+import { externalSource, parseFrontmatter } from '../core/markdown'
 import { activePath, historyOpen, notify } from './state'
 import { formatBytes } from '../core/util'
 import { IconClose } from './Icons'
@@ -50,6 +51,12 @@ export function VersionHistory() {
 
   if (!historyOpen.value || !path) return null
   const current = getRaw(path)
+  /*
+   * An imported note's history is still worth reading — it is what the
+   * importer wrote, run by run — but restoring one is an edit like any other,
+   * and the importer owns the file.
+   */
+  const owner = externalSource(parseFrontmatter(current?.text ?? '').data)
 
   return (
     <div class="scrim" ref={root} onClick={() => (historyOpen.value = false)}>
@@ -130,17 +137,26 @@ export function VersionHistory() {
 
         <div class="dialog-foot">
           <span style={{ flex: 1, fontSize: 12, color: 'var(--text-faint)', alignSelf: 'center' }}>
-            Restoring keeps the current text as a new version, so this is never destructive.
+            {owner
+              ? `Kept up to date from ${owner} — detach it to restore an earlier version.`
+              : 'Restoring keeps the current text as a new version, so this is never destructive.'}
           </span>
           <button class="btn" onClick={() => (historyOpen.value = false)}>
             Cancel
           </button>
           <button
             class="btn btn-primary"
-            disabled={!sel || sel.text === current?.text}
+            disabled={!sel || sel.text === current?.text || !!owner}
             onClick={async () => {
               if (!sel) return
-              await saveNote(path, sel.text)
+              /*
+               * A version from before a Detach still names the importer, and
+               * restored as it was it would hand the note straight back —
+               * read-only, off the list, and a second file claiming the uid
+               * of the meeting the importer has since written afresh. What is
+               * restored is the text; whose it is was settled by the Detach.
+               */
+              await saveNote(path, withoutOwner(sel.text))
               historyOpen.value = false
               notify('Restored earlier version')
             }}

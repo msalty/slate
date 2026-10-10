@@ -8,11 +8,13 @@
  * Picking from the list makes that failure unreachable.
  *
  * Templates are excluded, because a template is boilerplate for a note that
- * does not exist yet and is never the note you meant.
+ * does not exist yet and is never the note you meant. Imported notes are not:
+ * the meeting you want to ask about, or the person, is exactly one of them —
+ * they are kept out of the roll-ups, not out of reach.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
-import { contentNotes } from '../core/vault'
+import { linkableNotes } from '../core/vault'
 import { relativeTime, searchTerms } from '../core/util'
 import { Highlight } from './Highlight'
 import { IconClose, IconSearch } from './Icons'
@@ -33,9 +35,9 @@ export function NotePicker() {
 
   const all = useMemo(() => {
     const skip = new Set(req?.exclude ?? [])
-    const rows = contentNotes.value
+    const rows = linkableNotes.value
     return skip.size ? rows.filter((n) => !skip.has(n.path)) : rows
-  }, [contentNotes.value, req])
+  }, [linkableNotes.value, req])
   const terms = useMemo(() => searchTerms(q), [q])
   const matched = useMemo(() => rankFiles(all, q), [all, q])
   const hits = matched.length > MAX_ROWS ? matched.slice(0, MAX_ROWS) : matched
