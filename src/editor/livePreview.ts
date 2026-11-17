@@ -52,6 +52,8 @@ import {
   isDelimiterRow,
 } from './widgets'
 import { parseCallout } from './callout'
+import { type FenceRenderer, fenceRendererFor } from './fences'
+import { FenceWidget } from './fenceWidget'
 import { findDue, isTaskLine, resolveVars, scanVars, varText } from '../core/markdown'
 import { frontmatterEnd, frontmatterLines, frontmatterOf } from './vars'
 import { noteContext } from './context'
@@ -315,6 +317,17 @@ function buildDecorations(view: EditorView): DecorationSet {
       seenLines.add(line.from)
       if (editing) out.push(tableLine.range(line.from))
     }
+  }
+
+  /*
+   * A fence that is being shown as its drawing is not also a code block: the
+   * whole of it is replaced (see `fenceField`), and block styling and a copy
+   * button on lines nobody can see would be decorations inside a replaced
+   * range. With the caret in it, it is a code block like any other.
+   */
+  for (const f of findFences(state)) {
+    if (touched(state, f.from, f.to)) continue
+    for (let n = f.fromLine; n <= f.toLine; n++) seenLines.add(state.doc.line(n).from)
   }
 
   for (const { from: vFrom, to: vTo } of view.visibleRanges) {
@@ -1211,6 +1224,122 @@ export const tableField = StateField.define<DecorationSet>({
   provide: (f) => [
     EditorView.decorations.from(f),
     EditorView.atomicRanges.of((view) => view.state.field(f, false) ?? Decoration.none),
+  ],
+})
+
+/**
+ * Drawn fences: a ```mermaid block shown as its diagram.
+ *
+ * Which languages are drawn, and by what, is the registry's to say (fences.ts);
+ * this only finds the blocks and decides which of two forms each takes.
+ *
+ * With the caret elsewhere the drawing replaces the block. With the caret in
+ * it the source comes back — in rich text as well as live preview, because a
+ * diagram's source has nowhere else to be edited — and the drawing moves to
+ * just beneath it, following the text as it is typed. A diagram edited blind
+ * is a diagram edited by trial and error.
+ *
+ * A state field for the reason the tables are one: both forms are block
+ * decorations.
+ */
+interface FenceBlock {
+  from: number
+  to: number
+  fromLine: number
+  toLine: number
+  renderer: FenceRenderer
+  source: string
+}
+
+/**
+ * The fences a renderer exists for.
+ *
+ * From the syntax tree, unlike tables: the parser is right about fences, and
+ * it is what the code-block styling above goes by, so the two can never
+ * disagree about where a block ends.
+ *
+ * Top-level blocks only. A fence in a list item or a quote shares its lines
+ * with the container's own markers, and replacing those lines would take the
+ * markers with it; it stays a code block. And only a *closed* fence: an
+ * unclosed one runs to the end of the note, which would turn everything under
+ * a half-typed block into a diagram that does not parse.
+ */
+function findFences(state: EditorState): FenceBlock[] {
+  const out: FenceBlock[] = []
+  for (let node = syntaxTree(state).topNode.firstChild; node; node = node.nextSibling) {
+    if (node.name !== 'FencedCode') continue
+    const info = node.getChild('CodeInfo')
+    if (!info) continue
+    const renderer = fenceRendererFor(state.doc.sliceString(info.from, info.to))
+    if (!renderer) continue
+    const marks = node.getChildren('CodeMark')
+    if (marks.length < 2) continue
+    const first = state.doc.lineAt(node.from)
+    const last = state.doc.lineAt(marks[marks.length - 1].from)
+    if (last.number <= first.number + 1) continue
+    const source = state.doc.sliceString(first.to + 1, last.from - 1)
+    // Nothing to draw yet; an empty block is a code block someone is about to
+    // type into, not a diagram that failed.
+    if (!source.trim()) continue
+    out.push({
+      from: first.from,
+      to: last.to,
+      fromLine: first.number,
+      toLine: last.number,
+      renderer,
+      source,
+    })
+  }
+  return out
+}
+
+interface FenceDecorations {
+  all: DecorationSet
+  /** The replaced blocks alone — the ones a caret must not stop inside. */
+  atomic: DecorationSet
+}
+
+function buildFenceDecorations(state: EditorState): FenceDecorations {
+  const all: Array<Range<Decoration>> = []
+  const atomic: Array<Range<Decoration>> = []
+  for (const f of findFences(state)) {
+    if (touched(state, f.from, f.to)) {
+      all.push(
+        Decoration.widget({
+          widget: new FenceWidget(f.renderer, f.source, true),
+          block: true,
+          side: 1,
+        }).range(f.to),
+      )
+      continue
+    }
+    const deco = Decoration.replace({
+      widget: new FenceWidget(f.renderer, f.source, false),
+      block: true,
+    }).range(f.from, f.to)
+    all.push(deco)
+    atomic.push(deco)
+  }
+  return { all: RangeSet.of(all, true), atomic: RangeSet.of(atomic, true) }
+}
+
+export const fenceField = StateField.define<FenceDecorations>({
+  create: buildFenceDecorations,
+  update(value, tr) {
+    const focusChanged = tr.effects.some((e) => e.is(setFocused))
+    /*
+     * The tree as well as the text: a long note is parsed in the background,
+     * and a fence near the end of one is only found when the parser gets
+     * there — in a transaction that changes nothing else.
+     */
+    const parsed = syntaxTree(tr.startState) !== syntaxTree(tr.state)
+    if (!tr.docChanged && !tr.selection && !tr.reconfigured && !focusChanged && !parsed)
+      return { all: value.all.map(tr.changes), atomic: value.atomic.map(tr.changes) }
+    return buildFenceDecorations(tr.state)
+  },
+  provide: (f) => [
+    EditorView.decorations.from(f, (v) => v.all),
+    EditorView.atomicRanges.of((view) => view.state.field(f, false)?.atomic ?? Decoration.none),
   ],
 })
 

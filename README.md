@@ -607,6 +607,25 @@ label and could not find the ends of. Everything else about a code block stays
 hidden in rich text; this is a fence, a link's URL and a callout's `[!type]`
 being the same kind of thing.
 
+**A ` ```mermaid ` block is drawn as its diagram.** Flowcharts, sequence
+diagrams, class and state diagrams, Gantt charts, pies, mind maps and the rest
+of Mermaid's diagram types, in live preview, rich text and reading mode. Click
+the diagram and its source comes back, with the drawing moved to just beneath
+it and following the text as you type — a diagram is written by watching it
+change. While a line is half-typed and does not parse, the last drawing that
+did stays up with the reason under it. A diagram takes its colours from the
+theme, so it changes with light and dark like the rest of the note, and the
+file holds nothing but the fenced text every other Mermaid-aware tool reads.
+
+Three kinds of block stay code: one nested in a list or a quote, one with
+nothing in it, and one whose closing fence has not been typed yet. A diagram's
+own `click` links are not followed. The renderer is
+[Pele](https://github.com/obsidianmd/pele) and it is loaded the first time a
+note with a diagram is opened — a note without one never pays for it — and
+installed with the app, so diagrams draw offline. Which fences are drawn is a
+short registry (`src/editor/fences.ts`): another kind of drawn block is one
+entry there and one module beside it.
+
 A fence longer than three characters closes only on one at least as long, and a
 closing fence carries no language — which is how a ` ````markdown ` block holds
 a ` ``` ` example, and the reason writing about markdown in markdown does not

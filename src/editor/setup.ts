@@ -50,6 +50,7 @@ import {
   livePreview,
   previewMode,
   tableField,
+  fenceField,
   focusedField,
   focusWatcher,
   focusSeeder,
@@ -291,6 +292,7 @@ export function previewExtensions(mode: EditorMode): Extension {
     interactedField,
     livePreview,
     tableField,
+    fenceField,
     /*
      * A folded callout hides whole lines, which is a state field's job rather
      * than the plugin's. In both rendered modes: a fold is a way of reading,

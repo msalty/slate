@@ -313,6 +313,53 @@ export const editorTheme = EditorView.theme({
     borderBottom: '6px solid transparent',
   },
   '.cm-line.cm-table': { fontFamily: 'var(--font-mono)', fontSize: '0.88em' },
+  /*
+   * A drawn fence — a diagram in place of its source. See fences.ts.
+   *
+   * The `--pele-*` variables are how the Mermaid renderer is told its colours,
+   * and pointing them at the app's own is the whole of theming it: they
+   * resolve when the SVG is painted, so a diagram changes with the theme
+   * without being drawn again.
+   */
+  '.cm-fence': {
+    padding: '10px 0',
+    maxWidth: '100%',
+    overflowX: 'auto',
+    cursor: 'pointer',
+    '--pele-bg': 'var(--bg)',
+    '--pele-fg': 'var(--text)',
+    '--pele-muted': 'var(--text-muted)',
+    '--pele-line': 'var(--text-muted)',
+    '--pele-surface': 'var(--surface)',
+    '--pele-surface-alt': 'var(--surface-2)',
+    '--pele-border': 'var(--border-strong)',
+    '--pele-accent': 'var(--accent)',
+    '--pele-error': 'var(--danger)',
+    '--pele-font': 'var(--font-body)',
+    '--pele-font-mono': 'var(--font-mono)',
+    '--pele-radius': '6px',
+  },
+  // Under its own source while that is being edited: something to watch, not
+  // something to click.
+  '.cm-fence-beside': { cursor: 'default' },
+  // Held open while the renderer loads, so the note does not jump twice.
+  '.cm-fence-loading': { minHeight: '120px' },
+  '.cm-fence-error': {
+    marginTop: '6px',
+    fontFamily: 'var(--font-mono)',
+    fontSize: '0.8em',
+    color: 'var(--danger)',
+    whiteSpace: 'pre-wrap',
+  },
+  '.cm-fence-source': {
+    margin: '0',
+    padding: '8px 12px',
+    borderRadius: '8px',
+    backgroundColor: 'var(--code-bg)',
+    fontFamily: 'var(--font-mono)',
+    fontSize: '0.9em',
+    whiteSpace: 'pre-wrap',
+  },
   '.cm-table-wrap': {
     overflowX: 'auto',
     padding: '10px 0',
