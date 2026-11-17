@@ -184,8 +184,8 @@ export default defineConfig({
          * the launcher and installed again*. Nothing short of that does it:
          * Chrome bakes these values into the WebAPK when the package is
          * minted, and that package sits underneath everything the web layer
-         * can reach — the app's own Settings → Reinstall clears service
-         * workers and Cache Storage and does not touch it, and Chrome's
+         * can reach — the app's own Settings → Reinstall clears its service
+         * worker and caches and does not touch it, and Chrome's
          * background manifest-update path is lazy (it waits for every window
          * to close, plus power and Wi-Fi). A manifest edit verified as live on
          * the server can therefore be invisible on the phone indefinitely,

@@ -16,8 +16,8 @@ import {
   trashTitle,
 } from '../core/vault'
 import { dailyNoteFor } from '../core/daily'
-import { excerptOf, setFrontmatterKey } from '../core/markdown'
-import { getRaw, saveNote } from '../core/vault'
+import { excerptOf, externalSource, parseFrontmatter, setFrontmatterKey } from '../core/markdown'
+import { editNote, getRaw, isExternal } from '../core/vault'
 import type { AppSettings, NoteIndexEntry, VaultFile } from '../core/types'
 
 /** The three orders the list can take, named once for the menu below. */
@@ -244,28 +244,66 @@ function listMenu(compact: boolean): MenuItem[] {
 }
 
 /** Actions on a note row, shared by right-click and long-press. */
-function noteMenu(entry: NoteIndexEntry): MenuItem[] {
+export function noteMenu(entry: NoteIndexEntry): MenuItem[] {
   const f = getRaw(entry.path)
   const folders = ['', ...allFolderPaths.value].filter((p) => p !== entry.folder)
 
+  /*
+   * A note an importer owns shows up here only while browsing its folder, and
+   * what on this menu would write to it is off: a pin is an edit, written over
+   * on the importer's next run. Moving it is not an edit — the importer finds
+   * its files by `uid:` wherever they are (docs/calendar-contacts.md §6.2) —
+   * so Move stays. Detach is on the note itself.
+   */
+  const imported = isExternal(entry)
+
   return [
-    {
-      label: entry.pinned ? 'Unpin' : 'Pin to top',
-      onSelect: async () => {
-        if (!f) return
-        await saveNote(
-          entry.path,
-          setFrontmatterKey(f.text ?? '', 'pinned', entry.pinned ? 'false' : 'true'),
-        )
-      },
-    },
-    {
-      label: 'Duplicate',
-      onSelect: async () => {
-        if (!f) return
-        openNote(await createNote(entry.folder, `${entry.title} copy`, f.text ?? ''))
-      },
-    },
+    ...(imported
+      ? []
+      : [
+          {
+            label: entry.pinned ? 'Unpin' : 'Pin to top',
+            onSelect: async () => {
+              // From the text as it is when the write happens, not as it was
+              // when the menu opened: a note that changed in between had the
+              // change written back over by the pin.
+              const pinned = await editNote(entry.path, (text) =>
+                /*
+                 * Asked again here, under the note's lock: the menu was built
+                 * from the note as it was when it opened, and a pull that made
+                 * it an import in between would otherwise have a pin written
+                 * into a file the importer owns.
+                 */
+                externalSource(parseFrontmatter(text).data) !== undefined
+                  ? undefined
+                  : setFrontmatterKey(text, 'pinned', entry.pinned ? 'false' : 'true'),
+              )
+              if (!pinned)
+                notify(
+                  `"${entry.title}" changed before it could be ${entry.pinned ? 'unpinned' : 'pinned'}.`,
+                  'error',
+                )
+            },
+          },
+        ]),
+    /*
+     * Not on an import either. A copy made beside it lands in the importer's
+     * folder, which is emptied wholesale, and still says `start:`, which puts
+     * the meeting on the agenda twice. What a copy would be for is covered by
+     * the note's own two actions: Write notes, for notes that stay with the
+     * meeting, and Detach, to make the meeting itself yours.
+     */
+    ...(imported
+      ? []
+      : [
+          {
+            label: 'Duplicate',
+            onSelect: async () => {
+              if (!f) return
+              openNote(await createNote(entry.folder, `${entry.title} copy`, f.text ?? ''))
+            },
+          },
+        ]),
     {
       /*
        * One item, two behaviours, and the label says which you are getting:

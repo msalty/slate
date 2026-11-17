@@ -141,7 +141,9 @@ export function QuickAdd() {
         notify(
           r.reason === 'locked'
             ? `${dest} is read-only, so nothing was added.`
-            : 'Nothing to add.',
+            : r.reason === 'gone'
+              ? `${dest} was just deleted, so nothing was added. Try again.`
+              : 'Nothing to add.',
           'error',
         )
         return

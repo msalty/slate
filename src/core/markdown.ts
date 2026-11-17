@@ -223,6 +223,47 @@ export function isLocked(data: Record<string, FrontmatterValue>): boolean {
   })
 }
 
+/**
+ * The program that owns this note: the provider slug in `source:`, on a note
+ * that also carries the `uid:` an importer identifies its records by. Absent on
+ * everything written here.
+ *
+ * Both keys, because `source:` on its own already means other things in this
+ * vault. A conversation keeps the rule it asks over there (`source: all`), a
+ * summary records what it summarised, and a clipped article names the page it
+ * came from — read as an owner, each of those was locked against editing and
+ * dropped off the note list. An importer always writes the pair (see
+ * docs/calendar-contacts.md, §2.3), and nothing else writes `uid:`.
+ *
+ * The index reads this to keep imported notes out of the roll-ups, and the
+ * editor reads it to refuse edits, so both go through here — two readings that
+ * disagreed would put a note in the list that the editor then refuses to let
+ * you change. A number is a name too (`source: 1` is somebody's account); a
+ * list or an empty value names nobody.
+ */
+export function externalSource(data: Record<string, FrontmatterValue>): string | undefined {
+  const name = (v: FrontmatterValue | undefined) =>
+    typeof v === 'string' || typeof v === 'number' ? String(v).trim() || undefined : undefined
+  return name(data.uid) === undefined ? undefined : name(data.source)
+}
+
+/**
+ * Whether anything but the person typing may change this note's body: locked
+ * by its own properties, or owned by an importer.
+ *
+ * What every writer that edits a note from *outside* it asks — ticking a task
+ * from a list, Quick Add appending to the day, a transcript going in. An
+ * imported note is stricter than a locked one in the editor (its properties are
+ * not yours either, see EditorPane), but to these callers they are the same
+ * answer: the text is not theirs to change. The difference matters because of
+ * what happens next — a tick written into an imported meeting is overwritten on
+ * the importer's next run, or turned into a conflict copy of a meeting you do
+ * not own.
+ */
+export function isWriteProtected(data: Record<string, FrontmatterValue>): boolean {
+  return isLocked(data) || externalSource(data) !== undefined
+}
+
 /* ----------------------------------------------------------------- regions */
 
 /**

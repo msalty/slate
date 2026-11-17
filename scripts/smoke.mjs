@@ -1870,8 +1870,27 @@ try {
    * today: pick an empty cell in this month, take the offer, and the note has
    * to come back filed under that day rather than under the day it was made.
    */
-  const otherDay = page.locator('.cal-day[data-outside="0"][data-today="0"]').first()
-  const otherLabel = await otherDay.getAttribute('aria-label')
+  /*
+   * Not today, and not the next few days either: later sections put events
+   * and their offers on those, and a daily note made here on the 1st of a
+   * month — when the first day that is not today is tomorrow — took the offer
+   * they look for.
+   */
+  const soonDays = [0, 1, 2, 3].map((n) => {
+    const d = new Date()
+    d.setDate(d.getDate() + n)
+    return d.toDateString()
+  })
+  const otherLabel = await page
+    .locator('.cal-day[data-outside="0"][data-today="0"]')
+    .filter({ hasNot: page.locator('.cal-dot') })
+    .and(page.locator(soonDays.map((t) => `:not([aria-label^="${t}"])`).join('')))
+    .first()
+    .getAttribute('aria-label')
+  // Held to that day by its label: a locator is asked again each time it is
+  // used, and once this day has its note it no longer matches "no dot".
+  // The date only: the label goes on to count the day's notes, which changes.
+  const otherDay = page.locator(`.cal-day[aria-label^="${otherLabel.split(',')[0]},"]`)
   await otherDay.click()
   await page.waitForTimeout(300)
   check('an empty day offers a daily note', (await page.locator('.list-pane .daily-row').count()) === 1, otherLabel)
@@ -1920,11 +1939,15 @@ try {
   await page.click('.dialog-foot .btn-primary')
   await page.waitForTimeout(250)
 
-  const blankDay = page
+  // Clear of the next few days for the reason `otherDay` is, and held to the
+  // day it picks.
+  const blankLabel = await page
     .locator('.cal-day[data-outside="0"][data-today="0"]')
     .filter({ hasNot: page.locator('.cal-dot') })
+    .and(page.locator(soonDays.map((t) => `:not([aria-label^="${t}"])`).join('')))
     .first()
-  const blankLabel = await blankDay.getAttribute('aria-label')
+    .getAttribute('aria-label')
+  const blankDay = page.locator(`.cal-day[aria-label^="${blankLabel.split(',')[0]},"]`)
   await blankDay.click()
   await page.waitForTimeout(300)
   const asked = page.locator('.dialog:has-text("Start a note for this day?")')
@@ -5593,7 +5616,8 @@ try {
     const written = await opfsPaths()
     // Named fixtures rather than a count, so what the check means does not
     // depend on how many notes the rest of the run happens to have left behind.
-    const expected = ['Budget.md', 'Groceries.md', 'Daily/2026-09-01.md', 'backstage/config.json']
+    // The daily note is whichever day the calendar section picked, named then.
+    const expected = ['Budget.md', 'Groceries.md', `Daily/${dailyName}`, 'backstage/config.json']
     const missing = expected.filter((p) => !written.includes(p))
     check(
       'connecting writes the vault out as ordinary files, in its own folders',
@@ -7597,6 +7621,309 @@ try {
   // after this looks for a note by name.
   await page.locator('.side-row:has-text("All Notes")').first().click()
   await page.waitForTimeout(400)
+
+  /*
+   * A meeting kept in another zone, at local noon the day after tomorrow:
+   * written as the wall clock in a zone that disagrees with this machine's, so
+   * it lands on the same day wherever the suite runs.
+   */
+  function zonedNoon(offset) {
+    const d = new Date()
+    d.setDate(d.getDate() + offset)
+    d.setHours(12, 0, 0, 0)
+    const local = -d.getTimezoneOffset()
+    const zone = ['Asia/Tokyo', 'America/New_York'].find((z) => {
+      const parts = new Intl.DateTimeFormat('en-US', { timeZone: z, timeZoneName: 'longOffset' })
+        .formatToParts(d)
+        .find((p) => p.type === 'timeZoneName').value
+      const m = /GMT([+-])(\d\d):(\d\d)/.exec(parts)
+      const mins = m ? (m[1] === '-' ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3])) : 0
+      return mins !== local
+    })
+    const f = new Intl.DateTimeFormat('en-CA', {
+      timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    }).formatToParts(d)
+    const g = (t) => f.find((p) => p.type === t).value
+    return `---\nstart: ${g('year')}-${g('month')}-${g('day')}T${g('hour')}:${g('minute')}\ntz: ${zone}\n---\n`
+  }
+
+  /* ---- meetings an importer owns ------------------------------------------
+   * `source:` with `uid:` says a program outside Slate keeps this note up to
+   * date. A meeting import lives in backstage: on the agenda, and nowhere else
+   * — not the note list, not search, not a person's mentions. It opens from the
+   * agenda as a page with a banner: Write notes, or Detach. Seeded straight into
+   * the database, the way an importer's files arrive: never opened, never typed.
+   */
+  await page.evaluate(async (seed) => {
+    const hash = async (t) => {
+      const d = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t)))
+      return [...d.slice(0, 16)].map((b) => b.toString(16).padStart(2, '0')).join('')
+    }
+    const hashes = await Promise.all(seed.map(([, t]) => hash(t)))
+    const db = await new Promise((res, rej) => {
+      const r = indexedDB.open('slate')
+      r.onsuccess = () => res(r.result)
+      r.onerror = () => rej(r.error)
+    })
+    const tx = db.transaction('files', 'readwrite')
+    seed.forEach(([path, text], i) => {
+      tx.objectStore('files').put({
+        path, kind: 'note', text, mime: 'text/markdown', size: text.length,
+        hash: hashes[i], mtime: Date.now() - 60_000 - i * 100, ctime: Date.now(),
+        dirty: true, dirtyFlag: 1, sync: {},
+      })
+    })
+    await new Promise((res) => { tx.oncomplete = res })
+  }, [
+    ['Priya Natarajan.md', '# Priya Natarajan\n\nRuns the platform team.\n'],
+    ['Quarterly planning with the Budapest and Tokyo offices.md', zonedNoon(2)],
+    [
+      'Contacts/Address Book/Fastmail/Dana Reyes.md',
+      '---\nname: Dana Reyes\nemail_work: dana@example.com\nsource: fastmail\nuid: dana-1\n---\n\n# Dana Reyes\n\n## Email\n\n- work · [dana@example.com](mailto:dana@example.com)\n',
+    ],
+    ['Notes on Priya.md', '# Notes on Priya\n\nAsk [[Priya Natarajan]] about the migration.\n'],
+    [
+      `backstage/calendar/Fastmail/${isoDay(2).slice(0, 4)}/${isoDay(2).slice(5, 7)}/Platform sync (a41b).md`,
+      `---\ntitle: Platform sync\nstart: ${isoDay(2)}T09:00\nend: ${isoDay(2)}T09:30\nattendees:\n  - "[[Priya Natarajan]]"\nsource: fastmail\nuid: a41b@fastmail.com\n---\n\n- [ ] Imported homework\n`,
+    ],
+  ])
+  await page.reload({ waitUntil: 'networkidle' })
+  await page.waitForSelector('.note-row')
+  await page.locator('.side-row:has-text("All Notes")').first().click()
+  await page.waitForTimeout(400)
+  const importListed = await page.locator('.note-row').allInnerTexts()
+  check(
+    'an imported note stays off the note list',
+    !importListed.join(' | ').includes('Platform sync') && importListed.join(' | ').includes('Notes on Priya'),
+    importListed.slice(0, 6).join(' | '),
+  )
+  const importDay = await showDay(2)
+  await importDay.click()
+  await page.waitForTimeout(400)
+  const importAgenda = await page.locator('.rail .agenda .agenda-row').allInnerTexts()
+  check(
+    'and is on the agenda all the same',
+    importAgenda.join(' | ').includes('Platform sync'),
+    importAgenda.join(' | '),
+  )
+  await page.locator('.side-row:has-text("All Notes")').first().click()
+  await page.waitForTimeout(400)
+
+  /*
+   * A person's mentions are the notes you wrote with them in, not every
+   * meeting they sat through: the meeting's attendee link is no one's mention.
+   */
+  await page.locator('.note-row', { hasText: 'Priya Natarajan' }).first().click()
+  await page.waitForTimeout(600)
+  const mentionRows = () =>
+    page.evaluate(() =>
+      [...document.querySelectorAll('.mentions .mention-row')].map((r) => r.textContent),
+    )
+  const priyaBefore = await mentionRows()
+  check(
+    'a person’s mentions are your notes, not the meetings they were in',
+    priyaBefore.length === 1 &&
+      priyaBefore[0].includes('Notes on Priya') &&
+      (await page.locator('.mentions-source-head').count()) === 0,
+    JSON.stringify(priyaBefore),
+  )
+
+  // The agenda is the way in to the meeting, read by its name.
+  await (await showDay(2)).click()
+  await page.waitForTimeout(400)
+  check(
+    'the agenda reads the meeting by its name, not its filename',
+    (await page.locator('.rail .agenda .agenda-what').allInnerTexts()).includes('Platform sync'),
+  )
+  /*
+   * A meeting in another zone: its clock there was words beside the name, and
+   * never shrinking, it left a long name room for three letters. A globe now,
+   * with the time in the hover text, which carries the whole name as well.
+   */
+  const zonedRow = page.locator('.rail .agenda .agenda-row', { hasText: 'Quarterly planning' })
+  const zonedTitle = (await zonedRow.getAttribute('title')) ?? ''
+  check(
+    'a meeting in another zone shows a globe, not the time there, beside its name',
+    (await zonedRow.locator('.agenda-zone svg').count()) === 1 &&
+      !/\d:\d\d/.test(await zonedRow.locator('.agenda-zone').innerText()),
+  )
+  check(
+    'and its hover text has the whole name and the time where it is held',
+    zonedTitle.startsWith('Quarterly planning with the Budapest and Tokyo offices\n') &&
+      /\d\d:\d\d/.test(zonedTitle.split('\n')[1] ?? ''),
+    JSON.stringify(zonedTitle),
+  )
+  await page.locator('.rail .agenda .agenda-row', { hasText: 'Platform sync' }).first().click()
+  await page.waitForTimeout(600)
+  const banner = page.locator('.source-banner')
+  check(
+    'an imported note opens with a banner naming who keeps it',
+    (await banner.count()) === 1 && (await banner.innerText()).includes('fastmail'),
+  )
+  // Its contents are the importer's; where it lives and what the file is
+  // called are yours, so the title stays a field.
+  check(
+    'and nothing that would start editing it — no pencil',
+    (await page.locator('[aria-label="Edit note"]').count()) === 0 &&
+      (await page.locator('.editor-title-input').getAttribute('readonly')) === null,
+  )
+  const importPath = `backstage/calendar/Fastmail/${isoDay(2).slice(0, 4)}/${isoDay(2).slice(5, 7)}/Platform sync (a41b).md`
+  const ownFolder = `Calendar/${isoDay(2).slice(0, 4)}/${isoDay(2).slice(5, 7)}`
+  const importedText = (at = importPath) =>
+    page.evaluate(async (path) => {
+      const db = await new Promise((res) => {
+        const r = indexedDB.open('slate')
+        r.onsuccess = () => res(r.result)
+      })
+      const tx = db.transaction('files', 'readonly')
+      const f = await new Promise((res) => {
+        const q = tx.objectStore('files').get(path)
+        q.onsuccess = () => res(q.result)
+      })
+      return f?.text ?? ''
+    }, at)
+  const importedBefore = await importedText()
+  await page.locator('.editor-host .cm-content').click({ position: { x: 30, y: 10 } })
+  await page.keyboard.type('typed over')
+  await page.waitForTimeout(700)
+  check(
+    'and a click and some typing change nothing',
+    (await importedText()) === importedBefore &&
+      (await page.locator('.editor-pane').getAttribute('data-reading')) === '1',
+  )
+
+  /*
+   * Writing about it. The meeting stays the importer's; your notes are a note
+   * of your own, filed on its day beside the events you make by hand, linked
+   * back to it — and the second press opens them rather than making more.
+   */
+  await banner.locator('button', { hasText: 'Write notes' }).click()
+  await page.waitForTimeout(700)
+  const notesPath = `${ownFolder}/Platform sync - ${isoDay(2)}.md`
+  const notesText = await importedText(notesPath)
+  check(
+    'Write notes makes a note of your own on the meeting’s day, linked to it, with its attendees',
+    notesText.includes(`date: ${isoDay(2)}`) &&
+      notesText.includes(`meeting: "[[${importPath.replace(/\.md$/, '')}]]"`) &&
+      notesText.includes('[[Priya Natarajan]]') &&
+      !/^(start|source|uid):/m.test(notesText),
+    notesText.split('\n').slice(0, 5).join(' / '),
+  )
+  check(
+    'and opens it ready to type in',
+    (await page.locator('.editor-title-input').inputValue()) === `Platform sync - ${isoDay(2)}` &&
+      (await page.locator('.editor-pane').getAttribute('data-reading')) === '0',
+  )
+  await page.keyboard.press('Escape')
+  await (await showDay(2)).click()
+  await page.waitForTimeout(400)
+  const meetingRows = await page.locator('.rail .agenda .agenda-row').allInnerTexts()
+  check(
+    'the meeting is still on the agenda once, not twice, by its name',
+    meetingRows.filter((r) => r.includes('Platform sync')).length === 1 &&
+      !meetingRows.join(' | ').includes('(a41b)'),
+    meetingRows.join(' | '),
+  )
+  check(
+    'and its row says it has been written about',
+    (await page.locator('.rail .agenda .agenda-notes[data-written="1"]').count()) === 1,
+  )
+  await page.locator('.rail .agenda .agenda-notes').first().click()
+  await page.waitForTimeout(600)
+  check(
+    'and its agenda row opens the same notes rather than making more',
+    (await page.locator('.editor-title-input').inputValue()) === `Platform sync - ${isoDay(2)}` &&
+      (await importedText(`${ownFolder}/Platform sync - ${isoDay(2)} 2.md`)) === '',
+  )
+
+  await page.locator('.rail .agenda .agenda-row', { hasText: 'Platform sync' }).first().click()
+  await page.waitForTimeout(600)
+  await page
+    .locator('.source-banner button', { hasText: 'Detach from fastmail' })
+    .click()
+  await page.waitForTimeout(900)
+  /*
+   * Detached, it leaves the importer's folder for your own — the same folder
+   * and the same kind of name as an event made by hand. Its notes already have
+   * that name, so it takes the next one.
+   */
+  const detachedPath = `${ownFolder}/Platform sync - ${isoDay(2)} 2.md`
+  const detached = await importedText(detachedPath)
+  check(
+    'Detach takes the importer’s keys out and files it with your own events',
+    !/^source:/m.test(detached) &&
+      !/^uid:/m.test(detached) &&
+      detached.includes('title: Platform sync') &&
+      (await importedText()) === '',
+    detached.split('\n').slice(0, 6).join(' / '),
+  )
+  check(
+    'and the note is yours: no banner, and the pencil is back',
+    (await page.locator('.source-banner').count()) === 0 &&
+      (await page.locator('[aria-label="Edit note"]').count()) === 1,
+  )
+  check(
+    'and the notes about it follow it there',
+    (await importedText(notesPath)).includes(
+      `meeting: "[[${detachedPath.replace(/\.md$/, '')}]]"`,
+    ) || (await importedText(notesPath)).includes(`meeting: "[[Platform sync - ${isoDay(2)} 2]]"`),
+    (await importedText(notesPath)).split('\n').slice(0, 4).join(' / '),
+  )
+  await page.locator('.side-row:has-text("All Notes")').first().click()
+  await page.waitForTimeout(400)
+  const afterDetach = await page.locator('.note-row').allInnerTexts()
+  await page.locator('.note-row', { hasText: 'Priya Natarajan' }).first().click()
+  await page.waitForTimeout(600)
+  const priyaAfter = await mentionRows()
+  check(
+    'and the notes you wrote are in the attendee’s mentions',
+    priyaAfter.some((r) => r.includes(`Platform sync - ${isoDay(2)}`)),
+    JSON.stringify(priyaAfter),
+  )
+  await page.locator('.side-row:has-text("All Notes")').first().click()
+  await page.waitForTimeout(400)
+  /*
+   * A person, as the bridge writes one. Found by a search that names its
+   * folder — everything in there is an import, and a rule used to search
+   * your own notes only — and opened as the importer's, with Write notes for
+   * a note of your own on them.
+   */
+  await page.fill('.search-box input', 'in:"contacts/address book/fastmail"')
+  await page.waitForTimeout(500)
+  const contactRows = await page.locator('.note-row').allInnerTexts()
+  check(
+    'a search naming an importer’s folder finds the contacts in it',
+    contactRows.length === 1 && contactRows[0].includes('Dana Reyes'),
+    contactRows.join(' | '),
+  )
+  await page.locator('.note-row', { hasText: 'Dana Reyes' }).first().click()
+  await page.waitForTimeout(600)
+  const contactBanner = page.locator('.source-banner')
+  check(
+    'an imported contact opens with the banner, and Write notes for a person',
+    (await contactBanner.count()) === 1 &&
+      ((await contactBanner.locator('button', { hasText: 'Write notes' }).getAttribute('title')) ?? '')
+        .includes('person'),
+  )
+  await contactBanner.locator('button', { hasText: 'Write notes' }).click()
+  await page.waitForTimeout(700)
+  const personNotes = await importedText('Contacts/Notes on Dana Reyes.md')
+  check(
+    'Write notes on a person makes one note of your own, linked back',
+    personNotes.includes('contact: "[[Dana Reyes]]"') &&
+      (await page.locator('.editor-title-input').inputValue()) === 'Notes on Dana Reyes',
+    personNotes.split('\n').slice(0, 3).join(' / '),
+  )
+  await page.fill('.search-box input', '')
+  await page.waitForTimeout(300)
+  await page.locator('.side-row:has-text("All Notes")').first().click()
+  await page.waitForTimeout(400)
+  check(
+    'and it joins the note list, beside its notes',
+    afterDetach.filter((r) => r.includes('Platform sync')).length === 2,
+    afterDetach.filter((r) => r.includes('Platform sync')).join(' | '),
+  )
 
   /* ---- copying a table back out -----------------------------------------
    * The return trip. Only the HTML flavour is added: spreadsheets read it in
